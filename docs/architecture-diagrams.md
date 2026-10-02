@@ -1158,20 +1158,21 @@ platform contract.
 один descriptor. После успешного `fchown` состояние перечитывается до решения о
 необходимости `fchmod`, поскольку Linux может сбросить SUID/SGID при смене
 владельца. Проверка режима учитывает маску `07777`, включая SUID, SGID и sticky
-bit. Mode semantics задаётся contract конкретного object/profile. Collection
-Каждый executable (`df`, `chattr`, `arp`, `ip`) является отдельным logical
-object и сохраняет MaximumAllowed: исправление применяет
-`actual & allowed` и не добавляет отсутствующие permissions или special bits.
-StaticPath по умолчанию использует Exact. Arbitrary user paths не принимаются.
+bit. Каждый executable (`df`, `chattr`, `arp`, `ip`) является отдельным logical
+object. Каждый profile Mode_And_Owner — полный точный desired-state contract
+owner/group/mode: и более строгий, и более слабый фактический mode не считается
+соответствующим и исправляется до точного profile mode. Required/optional
+задаётся platform contract каждого объекта, а не единым правилом всей policy.
+Arbitrary user paths не принимаются.
 
 ALT p11 дополнительно задаёт logical object `tcb_credentials` с typed TCB
 topology: `/etc/tcb`, динамически обнаруживаемые
 каталоги локальных учётных записей и известные credential files. Вся topology
 сначала открывается descriptor-relative с `O_NOFOLLOW`, проверяется на
 неизвестные объекты, symlink, hardlink и замену inode, и только затем
-исправляется через закреплённые descriptors. Access bits по-прежнему только
-сужаются; обязательный для штатной TCB-семантики SGID каталога учётной записи
-восстанавливается отдельно. Слепой recursive chmod не используется.
+исправляется через закреплённые descriptors. Выбранный TCB profile также
+применяется точно, включая обязательный для штатной TCB-семантики SGID каталога
+учётной записи. Слепой recursive chmod не используется.
 
 Обычный конечный объект открывается с `O_NOFOLLOW`. Platform profile может
 задать для конкретного StaticPath contract точный список допустимых целей
@@ -1216,7 +1217,7 @@ Static `/etc/resolv.conf` остаётся remediate-capable: если policy pa
 provider-managed final symlink target, ожидаемые owner/group/mode берутся из
 target-specific contract этой цели, а не из `FileAccessRule`; target обязан
 быть regular file. Provider-owned target остаётся validate-only: FIC проверяет
-topology, тип объекта, owner/group и maximum mode через уже закреплённый
+topology, тип объекта, owner/group и точный mode через уже закреплённый
 descriptor, но при отклонении возвращает ошибку без `fchown` или `fchmod`:
 lifecycle generated-файла принадлежит provider, поэтому FIC не вступает с ним
 в цикл взаимных исправлений. Diagnostics при провале указывают логический

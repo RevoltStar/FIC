@@ -8,16 +8,6 @@
 #include <optional>
 #include <vector>
 
-enum class MissingFilePolicy {
-    Ignore,
-    Fail
-};
-
-enum class ModeEnforcement {
-    Exact,
-    MaximumAllowed
-};
-
 struct ModeAndOwnerExpectation {
     FileStats stats;
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
@@ -26,7 +16,6 @@ struct ModeAndOwnerExpectation {
     fic::platform::DacPlatformConfig::ObjectType objectType =
         fic::platform::DacPlatformConfig::ObjectType::RegularFile;
     bool required = false;
-    ModeEnforcement modeEnforcement = ModeEnforcement::Exact;
     bool validateOnly = false;
 };
 
@@ -43,9 +32,7 @@ protected:
 
     //Переменная с эталонными правами
     std::map<std::string, ModeAndOwnerExpectation> expected;
-    MissingFilePolicy missingFilePolicy_;
     PolicyPathResolution pathResolution_;
-    ModeEnforcement modeEnforcement_;
     // counters.fixed of the most recent apply(); -1 before the first apply.
     int lastApplyFixedCount_ = -1;
     void addExpectedRule(
@@ -55,8 +42,7 @@ protected:
                          const FileStats& expectedStats,
                          FileStats currentStats,
                          bool validateOnly,
-                         ApplyCounters& counters,
-                         mode_t requiredPermissions = 0);
+                         ApplyCounters& counters);
     virtual void applyAdditionalRules(ApplyCounters& counters);
     void applyTcbCredentialTree(
         const fic::platform::TcbCredentialStorageConfig& config,
@@ -64,9 +50,7 @@ protected:
 
 public:
     explicit ModeAndOwner(
-        MissingFilePolicy missingFilePolicy,
-        PolicyPathResolution pathResolution = PolicyPathResolution::Standard,
-        ModeEnforcement modeEnforcement = ModeEnforcement::Exact);
+        PolicyPathResolution pathResolution = PolicyPathResolution::Standard);
     virtual ~ModeAndOwner() = default;
     bool apply () override;
     // True if the most recent apply() modified system state

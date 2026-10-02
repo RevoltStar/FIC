@@ -462,6 +462,7 @@ struct ModeAndOwnerPathProfiles {
 
     FileMetadata strict;
     FileMetadata system;
+    bool required = false;
 
     std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
     std::vector<ModeAndOwnerProviderProfileTarget> providerManagedFinalSymlinkTargets;
@@ -495,7 +496,6 @@ struct TcbCredentialStorageConfig {
 struct DacPlatformConfig {
     enum class Profile { System, Minimum, Optimal, Strict };
     enum class ObjectType { RegularFile, Directory };
-    enum class ModeSemantics { Exact, MaximumAllowed };
     enum class Remediation { Remediate, ValidateOnly };
 
     struct ProviderTarget {
@@ -506,7 +506,6 @@ struct DacPlatformConfig {
     struct PathContract {
         FileMetadata metadata;
         ObjectType objectType = ObjectType::RegularFile;
-        ModeSemantics modeSemantics = ModeSemantics::Exact;
         Remediation remediation = Remediation::Remediate;
         bool required = false;
         std::vector<std::filesystem::path> allowedFinalSymlinkTargets;
@@ -560,9 +559,7 @@ struct PlatformProfile {
 // explicit and is never derived from the physical path.
 DacPlatformConfig::Object makeModeAndOwnerPathObject(
     std::string id,
-    const ModeAndOwnerPathProfiles& profiles,
-    DacPlatformConfig::ModeSemantics modeSemantics =
-        DacPlatformConfig::ModeSemantics::Exact);
+    const ModeAndOwnerPathProfiles& profiles);
 
 DacPlatformConfig::Object makeModeAndOwnerTcbObject(
     std::string id,

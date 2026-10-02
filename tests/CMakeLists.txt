@@ -545,6 +545,7 @@ add_test(NAME file_handler_options_tests COMMAND file_handler_options_tests)
 
 add_executable(mode_and_owner_tests
     fic/modules/dac/ModeAndOwnerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.cpp

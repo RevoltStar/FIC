@@ -99,8 +99,8 @@ std::vector<fic::platform::ModeAndOwnerPathProfiles> catalogRules(
         if (!path) continue;
         const auto system = path->profiles.find(Dac::Profile::System);
         if (system == path->profiles.end()) continue;
-        const bool isCommand = system->second.modeSemantics ==
-            Dac::ModeSemantics::MaximumAllowed;
+        const bool isCommand = object.id == "df" || object.id == "chattr" ||
+            object.id == "arp" || object.id == "ip";
         if (isCommand != commands) continue;
         const auto strict = path->profiles.find(Dac::Profile::Strict);
         fic::platform::ModeAndOwnerPathProfiles rule;
@@ -650,6 +650,24 @@ void testSelectedProfile() {
     }
     require(!hasLogicalObject("system_commands"),
             "aggregate system_commands logical object must not be exposed");
+    const auto requiredFlag = [&](const std::string& id) {
+        const auto found = std::find_if(
+            profile.dac.modeAndOwnerObjects.begin(),
+            profile.dac.modeAndOwnerObjects.end(),
+            [&](const auto& object) { return object.id == id; });
+        require(found != profile.dac.modeAndOwnerObjects.end(),
+                "required DAC logical object is absent: " + id);
+        using DacConfig = fic::platform::DacPlatformConfig;
+        const auto& path = std::get<DacConfig::StaticPathObject>(found->target);
+        return path.profiles.at(DacConfig::Profile::System).required;
+    };
+    for (const std::string& id : {"fstab", "group", "passwd", "shadow",
+                                  "sudoers", "df", "chattr", "arp", "ip"}) {
+        require(requiredFlag(id), "mandatory DAC object is not required: " + id);
+    }
+    for (const std::string& id : {"hosts_allow", "hosts_deny", "securetty"}) {
+        require(!requiredFlag(id), "optional DAC object is marked required: " + id);
+    }
     const auto& resolvConfRule = findRule(
         catalogRules(profile.dac, false), "/etc/resolv.conf");
     using ManagedTarget = fic::platform::ModeAndOwnerProviderProfileTarget;

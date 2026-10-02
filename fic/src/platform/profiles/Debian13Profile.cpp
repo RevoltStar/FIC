@@ -170,18 +170,18 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.grub.baseDefaultsPath = "/etc/default/grub";
     profile.grub.rebuildArguments = {};
     std::vector<ModeAndOwnerPathProfiles> modeAndOwnerPaths = {
-        {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/bash.bashrc", {"root", "root", 0644}, {"root", "root", 0644}, false},
         // Debian 12/13 ship /etc/crontab as 0644 root:root
         // (cron-daemon-common package archive). FIC hardens it to 0600 and
         // exposes packaged 0644 as system and 0600 as strict.
-        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}},
-        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, {}, {
+        {"/etc/crontab", {"root", "root", 0600}, {"root", "root", 0644}, false},
+        {"/etc/fstab", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/hostname", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/hosts", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/hosts.allow", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/hosts.deny", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/group", {"root", "root", 0644}, {"root", "root", 0644}, true},
+        {"/etc/resolv.conf", {"root", "root", 0644}, {"root", "root", 0644}, false, {}, {
             // Provider metadata is the штатное provider state: baseline ==
             // enforced for every provider-managed final target.
             {"/run/systemd/resolve/stub-resolv.conf",
@@ -202,31 +202,32 @@ PlatformProfile makeBuildPlatformProfile() {
              ManagedFileProvider::Resolvconf,
              {"root", "root", 0644}, {"root", "root", 0644}}
         }},
-        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}},
-        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}},
+        {"/etc/sysctl.conf", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/logrotate.conf", {"root", "root", 0644}, {"root", "root", 0644}, false},
+        {"/etc/passwd", {"root", "root", 0644}, {"root", "root", 0644}, true},
         // shadowconfig on (passwd package postinst) provisions
         // /etc/shadow as root:shadow 0640 on Debian.
-        {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}},
-        {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}},
+        {"/etc/shadow", {"root", "shadow", 0640}, {"root", "shadow", 0640}, true},
+        {"/boot/grub/grub.cfg", {"root", "root", 0600}, {"root", "root", 0600}, false},
         // util-linux no longer ships /etc/securetty on Debian 12+; the rule
         // stays Ignore-on-missing and the baseline matches the legacy
         // securetty file mode.
-        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}}
+        {"/etc/securetty", {"root", "root", 0600}, {"root", "root", 0600}, false}
     };
     modeAndOwnerPaths.push_back(
-        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}});
+        {profile.sudo.mainConfigPath, {"root", "root", 0440}, {"root", "root", 0440}, true});
     // Packaged executable metadata is root:root 0755 (coreutils, e2fsprogs,
     // net-tools, iproute2 archives); FIC exposes packaged 0755 as system and 0750 as strict. Debian 13 uses the merged-/usr paths; the
     // packaged /usr/sbin/ip is a symlink to /usr/bin/ip.
     std::vector<ModeAndOwnerPathProfiles> modeAndOwnerCommands = {
-        {"/usr/bin/df", {"root", "root", 0750}, {"root", "root", 0755}},
-        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}},
-        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}},
+        {"/usr/bin/df", {"root", "root", 0750}, {"root", "root", 0755}, true},
+        {"/usr/bin/chattr", {"root", "root", 0750}, {"root", "root", 0755}, true},
+        {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true},
         {
             "/usr/sbin/ip",
             {"root", "root", 0750},
             {"root", "root", 0755},
+            true,
             {"/usr/bin/ip"}
         }
     };

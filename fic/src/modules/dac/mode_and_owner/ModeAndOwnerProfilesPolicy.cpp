@@ -78,6 +78,13 @@ bool planUserHomes(const Dac::UserHomesObject& homes, Dac::Profile profile,
         }
         char* end = nullptr;
         errno = 0;
+        const unsigned long uid = std::strtoul(fields[2].c_str(), &end, 10);
+        if (errno != 0 || end == fields[2].c_str() || *end != '\0') {
+            error = "invalid local account user id";
+            return false;
+        }
+        end = nullptr;
+        errno = 0;
         const unsigned long gid = std::strtoul(fields[3].c_str(), &end, 10);
         if (errno != 0 || end == fields[3].c_str() || *end != '\0') {
             error = "invalid local account group id";
@@ -87,8 +94,11 @@ bool planUserHomes(const Dac::UserHomesObject& homes, Dac::Profile profile,
         if (home.parent_path() != homes.rootPath || home.filename() != account)
             continue;
         const struct group* groupEntry = ::getgrgid(static_cast<gid_t>(gid));
-        if (groupEntry == nullptr) {
-            error = "cannot resolve primary group for local account " + account;
+        const struct passwd* passwdEntry = ::getpwnam(account.c_str());
+        if (groupEntry == nullptr || passwdEntry == nullptr ||
+            passwdEntry->pw_uid != static_cast<uid_t>(uid) ||
+            passwdEntry->pw_gid != static_cast<gid_t>(gid)) {
+            error = "local account and NSS identity mismatch for " + account;
             return false;
         }
         Dac::PathContract contract;
@@ -122,7 +132,14 @@ bool supports(const Dac::Object& object, Dac::Profile profile) {
 
 ModeAndOwnerProfilesPolicyTypeValue::ModeAndOwnerProfilesPolicyTypeValue(
     const Dac& platform) : platform_(platform) {
-    defaultValue = "{}";
+    std::ostringstream generatedDefault;
+    for (std::size_t index = 0;
+         index < platform_.modeAndOwnerObjects.size(); ++index) {
+        if (index != 0) generatedDefault << '\n';
+        generatedDefault << platform_.modeAndOwnerObjects[index].id
+                         << "=system";
+    }
+    defaultValue = generatedDefault.str();
 }
 
 PolicyEditorSpec ModeAndOwnerProfilesPolicyTypeValue::getEditorSpec() const {
@@ -232,7 +249,7 @@ std::string ModeAndOwnerProfilesPolicyTypeValue::getPolicyRestrictionInfo() {
 }
 
 DAC_mode_and_owner_profiles::DAC_mode_and_owner_profiles(const Dac& platform)
-    : ModeAndOwner(MissingFilePolicy::Ignore), platform_(platform) {
+    : ModeAndOwner(), platform_(platform) {
     policyName = "mode_and_owner_profiles";
     policyTypeValue =
         std::make_unique<ModeAndOwnerProfilesPolicyTypeValue>(platform_);
@@ -287,9 +304,6 @@ bool DAC_mode_and_owner_profiles::apply() {
 void DAC_mode_and_owner_profiles::applyAdditionalRules(
     ApplyCounters& counters) {
     if (selectedTcb_) {
-        const ModeEnforcement saved = modeEnforcement_;
-        modeEnforcement_ = ModeEnforcement::MaximumAllowed;
         applyTcbCredentialTree(*selectedTcb_, counters);
-        modeEnforcement_ = saved;
     }
 }

@@ -13,12 +13,10 @@ bool sameMetadata(const FileMetadata& left, const FileMetadata& right) {
 }
 
 Dac::PathContract contract(const ModeAndOwnerPathProfiles& rule,
-                           const FileMetadata& metadata,
-                           Dac::ModeSemantics semantics) {
+                           const FileMetadata& metadata) {
     Dac::PathContract result;
     result.metadata = metadata;
-    result.modeSemantics = semantics;
-    result.required = false;
+    result.required = rule.required;
     result.allowedFinalSymlinkTargets = rule.allowedFinalSymlinkTargets;
     for (const ModeAndOwnerProviderProfileTarget& target :
          rule.providerManagedFinalSymlinkTargets) {
@@ -34,17 +32,16 @@ Dac::PathContract contract(const ModeAndOwnerPathProfiles& rule,
 
 Dac::Object makeModeAndOwnerPathObject(
     std::string id,
-    const ModeAndOwnerPathProfiles& profiles,
-    Dac::ModeSemantics modeSemantics) {
+    const ModeAndOwnerPathProfiles& profiles) {
     Dac::StaticPathObject target;
     target.path = profiles.path;
     target.profiles.emplace(
         Dac::Profile::System,
-        contract(profiles, profiles.system, modeSemantics));
+        contract(profiles, profiles.system));
     if (!sameMetadata(profiles.strict, profiles.system)) {
         target.profiles.emplace(
             Dac::Profile::Strict,
-            contract(profiles, profiles.strict, modeSemantics));
+            contract(profiles, profiles.strict));
     }
     return {std::move(id), std::move(target)};
 }
@@ -86,8 +83,8 @@ void appendModeAndOwnerObjects(
             makeModeAndOwnerPathObject(pathIds[i], paths[i]));
     }
     for (std::size_t i = 0; i < commands.size(); ++i) {
-        config.modeAndOwnerObjects.push_back(makeModeAndOwnerPathObject(
-            commandIds[i], commands[i], Dac::ModeSemantics::MaximumAllowed));
+        config.modeAndOwnerObjects.push_back(
+            makeModeAndOwnerPathObject(commandIds[i], commands[i]));
     }
     if (tcb) {
         config.modeAndOwnerObjects.push_back(

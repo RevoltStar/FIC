@@ -14,13 +14,9 @@ std::string formatPermissions(mode_t permissions) {
 }
 } // namespace
 
-ModeAndOwner::ModeAndOwner(MissingFilePolicy missingFilePolicy,
-                           PolicyPathResolution pathResolution,
-                           ModeEnforcement modeEnforcement)
+ModeAndOwner::ModeAndOwner(PolicyPathResolution pathResolution)
     : DAC(),
-      missingFilePolicy_(missingFilePolicy),
-      pathResolution_(pathResolution),
-      modeEnforcement_(modeEnforcement) {
+      pathResolution_(pathResolution) {
     this->submoduleName = "Mode_and_Owner";
 }
 
@@ -35,10 +31,6 @@ void ModeAndOwner::addExpectedRule(
                       contract.metadata.permissions),
             contract.allowedFinalSymlinkTargets, contract.providerTargets,
             contract.objectType, contract.required,
-            contract.modeSemantics ==
-                    fic::platform::DacPlatformConfig::ModeSemantics::Exact
-                ? ModeEnforcement::Exact
-                : ModeEnforcement::MaximumAllowed,
             contract.remediation ==
                 fic::platform::DacPlatformConfig::Remediation::ValidateOnly});
 }
@@ -49,8 +41,7 @@ void ModeAndOwner::applyOpenedRule(
     const FileStats& expectedStats,
     FileStats currentStats,
     bool validateOnly,
-    ApplyCounters& counters,
-    mode_t requiredPermissions) {
+    ApplyCounters& counters) {
     this->log("Проверка файла " + filename, logLevel::INFO);
     const std::string originalOwner = currentStats._owner;
     const std::string originalGroup = currentStats._group;
@@ -71,14 +62,18 @@ void ModeAndOwner::applyOpenedRule(
             expectedStats._group,
             expectedOwnerId,
             expectedGroupId);
+    if (!identityResult) {
+        this->log(identityResult.message, logLevel::ERROR);
+        this->log("ИТОГ: требования для " + filename + " не выполнены",
+                  logLevel::ERROR);
+        ++counters.failed;
+        return;
+    }
     const bool ownerInitiallyCorrect = identityResult &&
         currentStats.owner_id() == expectedOwnerId &&
         currentStats.group_id() == expectedGroupId;
     ownershipRequirementMet = ownerInitiallyCorrect;
-    if (!identityResult) {
-        ownershipRequirementMet = false;
-        diagnostics.push_back(identityResult.message);
-    } else if (!ownerInitiallyCorrect && validateOnly) {
+    if (!ownerInitiallyCorrect && validateOnly) {
         diagnostics.push_back(
             "Provider-managed target has incorrect owner/group and is "
             "validate-only: " + currentStats.opened_policy_path().string() +
@@ -101,6 +96,10 @@ void ModeAndOwner::applyOpenedRule(
         } else {
             ownershipRequirementMet = false;
             diagnostics.push_back(changeResult.message);
+            // Do not apply a mode from a profile whose ownership could not
+            // be established. That would leave a partially applied metadata
+            // contract and can make the object less safe than either state.
+            currentStateReadable = false;
         }
     }
 
@@ -114,29 +113,19 @@ void ModeAndOwner::applyOpenedRule(
     }
 
     const auto permissionRequirementSatisfied = [&]() {
-        if (modeEnforcement_ == ModeEnforcement::Exact) {
-            return currentStats.check_permission(expectedStats);
-        }
-        return (currentStats._permissions &
-                static_cast<mode_t>(~expectedStats._permissions)) == 0 &&
-            (currentStats._permissions & requiredPermissions) ==
-                requiredPermissions;
+        return currentStats.check_permission(expectedStats);
     };
     if (currentStateReadable && !permissionRequirementSatisfied() &&
         validateOnly) {
         diagnostics.push_back(
             "Provider-managed target has excessive permissions and is "
             "validate-only: " + currentStats.opened_policy_path().string() +
-            " (expected maximum mode " +
+            " (expected exact mode " +
             formatPermissions(expectedStats._permissions) + ", actual " +
             formatPermissions(originalPermissions) +
             "); FIC did not modify the provider-owned target");
     } else if (currentStateReadable && !permissionRequirementSatisfied()) {
-        const mode_t targetPermissions =
-            modeEnforcement_ == ModeEnforcement::Exact
-                ? expectedStats._permissions
-                : (currentStats._permissions & expectedStats._permissions) |
-                    requiredPermissions;
+        const mode_t targetPermissions = expectedStats._permissions;
         const FileStatsOperationResult changeResult =
             currentStats.change_permissions(targetPermissions);
         if (changeResult) {
@@ -263,12 +252,9 @@ bool ModeAndOwner::apply() {
                 ++counters.failed;
                 continue;
             }
-            const ModeEnforcement saved = modeEnforcement_;
-            modeEnforcement_ = expectation.modeEnforcement;
             applyOpenedRule(
                 filename, providerExpectation, std::move(currentStats),
                 true, counters);
-            modeEnforcement_ = saved;
             continue;
         }
 
@@ -289,11 +275,8 @@ bool ModeAndOwner::apply() {
             ++counters.failed;
             continue;
         }
-        const ModeEnforcement saved = modeEnforcement_;
-        modeEnforcement_ = expectation.modeEnforcement;
         applyOpenedRule(filename, expectedStats, std::move(currentStats),
                         expectation.validateOnly, counters);
-        modeEnforcement_ = saved;
     }
 
     applyAdditionalRules(counters);

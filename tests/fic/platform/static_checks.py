@@ -461,7 +461,7 @@ def main():
     ):
         pattern = (
             rf'\{{"{re.escape(path)}", \{{"root", "root", {mode}\}}, '
-            rf'\{{"root", "root", {mode}\}}, \{{'
+            rf'\{{"root", "root", {mode}\}}, false, \{{'
             rf'\s*"{re.escape(target)}"\s*\}}\}}'
         )
         require(
@@ -490,7 +490,7 @@ def main():
         )
         require(
             '{"/etc/resolv.conf", {"root", "root", 0644}, '
-            '{"root", "root", 0644}, {}, {' in profiles[name]
+            '{"root", "root", 0644}, false, {}, {' in profiles[name]
             and '"/run/systemd/resolve/stub-resolv.conf"' in profiles[name]
             and '"/run/systemd/resolve/resolv.conf"' in profiles[name]
             and '"/usr/lib/systemd/resolv.conf"' in profiles[name],

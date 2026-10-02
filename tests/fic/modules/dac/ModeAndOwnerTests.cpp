@@ -1,5 +1,7 @@
 #include "modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.h"
+#include "policy/registry/PolicyRegistryJson.h"
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include <nlohmann/json.hpp>
 #include <filesystem>
 #include <fstream>
 #include <grp.h>
@@ -44,18 +46,122 @@ void testParser(const fs::path& r) {
     const std::string stored=t.postProcessingValue("second=system\nfirst=strict");
     require(stored=="{\"first\":\"strict\",\"second\":\"system\"}","noncanonical JSON");
     require(t.reverse_postProcessingValue(stored)=="first=strict\nsecond=system","roundtrip failed");
+    const std::string expectedDefault="first=system\nsecond=system";
+    require(t.getDefaultValue()==expectedDefault,"default is not logical all-system value");
+    require(t.validate(t.getDefaultValue()),"default is invalid");
+    require(t.postProcessingValue(t.getDefaultValue())==
+        "{\"first\":\"system\",\"second\":\"system\"}","default JSON mismatch");
+    require(t.reverse_postProcessingValue("{\"first\":\"strict\"}")==
+        "first=strict","saved explicit value was auto-filled");
+    require(t.reverse_postProcessingValue("not-json")=="<invalid stored value>","malformed JSON accepted");
+    require(t.reverse_postProcessingValue("{\"first\":1}")=="<invalid stored value>","non-string JSON accepted");
+    DAC_mode_and_owner_profiles policy(d);
+    const nlohmann::json descriptor=policyToJson(
+        "DAC","Mode_and_Owner","mode_and_owner_profiles",policy);
+    require(descriptor.at("default_value")==expectedDefault,
+        "PolicyRegistryJson descriptor lost logical default");
+}
+void testExactTransitionsAndSpecialBits(const fs::path& r) {
+    const fs::path f=r/"exact";
+    Dac d; Dac::StaticPathObject object{f,{{Dac::Profile::System,contract(0755)},
+        {Dac::Profile::Strict,contract(0750)}}};
+    d.modeAndOwnerObjects.push_back({"command",std::move(object)});
+    const auto apply=[&](mode_t initial,const char* profile,mode_t expected) {
+        write(f,"x",initial); configure(r,std::string("{\"command\":\"")+profile+"\"}");
+        DAC_mode_and_owner_profiles p(d); require(p.apply(),"exact transition failed");
+        require(mode(f)==expected,"exact transition produced wrong mode");
+    };
+    apply(0755,"strict",0750); apply(0750,"system",0755);
+    apply(0700,"strict",0750); apply(0777,"strict",0750);
+    apply(04755,"system",0755); apply(06750,"strict",0750);
+    apply(01777,"strict",0750);
+
+    Dac special; Dac::StaticPathObject specialObject{f,
+        {{Dac::Profile::System,contract(04755)}}};
+    special.modeAndOwnerObjects.push_back({"special",std::move(specialObject)});
+    write(f,"x",0755); configure(r,"{\"special\":\"system\"}");
+    DAC_mode_and_owner_profiles setSpecial(special);
+    require(setSpecial.apply()&&mode(f)==04755,"required SUID bit not set");
+
+    Dac sgid; Dac::StaticPathObject sgidObject{f,
+        {{Dac::Profile::System,contract(02750)}}};
+    sgid.modeAndOwnerObjects.push_back({"special",std::move(sgidObject)});
+    write(f,"x",0750); configure(r,"{\"special\":\"system\"}");
+    DAC_mode_and_owner_profiles setSgid(sgid);
+    require(setSgid.apply()&&mode(f)==02750,"required SGID bit not set");
+
+    Dac sticky; Dac::StaticPathObject stickyObject{f,
+        {{Dac::Profile::System,contract(01750)}}};
+    sticky.modeAndOwnerObjects.push_back({"special",std::move(stickyObject)});
+    write(f,"x",0750); configure(r,"{\"special\":\"system\"}");
+    DAC_mode_and_owner_profiles setSticky(sticky);
+    require(setSticky.apply()&&mode(f)==01750,"required sticky bit not set");
+}
+void testRequiredOptionalAndIdentityFailure(const fs::path& r) {
+    const fs::path required=r/"missing-required", optional=r/"missing-optional", good=r/"required-good";
+    write(good,"x",0777); Dac d;
+    auto req=contract(0600); req.required=true; auto opt=contract(0600); opt.required=false;
+    d.modeAndOwnerObjects.push_back({"required",Dac::StaticPathObject{required,{{Dac::Profile::System,req}}}});
+    d.modeAndOwnerObjects.push_back({"optional",Dac::StaticPathObject{optional,{{Dac::Profile::System,opt}}}});
+    d.modeAndOwnerObjects.push_back({"good",Dac::StaticPathObject{good,{{Dac::Profile::System,req}}}});
+    configure(r,"{\"good\":\"system\",\"optional\":\"system\",\"required\":\"system\"}");
+    DAC_mode_and_owner_profiles aggregate(d); require(!aggregate.apply(),"missing required accepted");
+    require(mode(good)==0600,"aggregate loop stopped after missing required");
+
+    write(good,"x",0644); Dac badIdentity;
+    auto bad=contract(0600); bad.metadata.owner="fic-no-such-owner";
+    badIdentity.modeAndOwnerObjects.push_back({"bad",Dac::StaticPathObject{good,{{Dac::Profile::System,bad}}}});
+    configure(r,"{\"bad\":\"system\"}"); DAC_mode_and_owner_profiles identity(badIdentity);
+    require(!identity.apply(),"unknown owner accepted"); require(mode(good)==0644,"identity failure partially mutated mode");
+
+    write(good,"x",0644); Dac badGroup;
+    auto invalidGroup=contract(0600); invalidGroup.metadata.group="fic-no-such-group";
+    badGroup.modeAndOwnerObjects.push_back({"bad",Dac::StaticPathObject{
+        good,{{Dac::Profile::System,invalidGroup}}}});
+    configure(r,"{\"bad\":\"system\"}");
+    DAC_mode_and_owner_profiles groupIdentity(badGroup);
+    require(!groupIdentity.apply(),"unknown group accepted");
+    require(mode(good)==0644,"unknown group partially mutated mode");
+
+    if (::geteuid()!=0) {
+        write(good,"x",0644); Dac denied;
+        auto rootContract=contract(0600);
+        rootContract.metadata.owner="root"; rootContract.metadata.group="root";
+        denied.modeAndOwnerObjects.push_back({"denied",Dac::StaticPathObject{
+            good,{{Dac::Profile::System,rootContract}}}});
+        configure(r,"{\"denied\":\"system\"}");
+        DAC_mode_and_owner_profiles chownFailure(denied);
+        require(!chownFailure.apply(),"unprivileged chown unexpectedly succeeded");
+        require(mode(good)==0644,"failed chown was followed by partial chmod");
+    }
 }
 void testDesiredStateAndRelease(const fs::path& r) {
     fs::path f=r/"managed"; write(f,"data",0666); Dac d=platform(f);
     configure(r,"{\"first\":\"strict\"}"); DAC_mode_and_owner_profiles strict(d); require(strict.apply(),"strict failed"); require(mode(f)==0600,"strict not applied");
     configure(r,"{\"first\":\"system\"}"); DAC_mode_and_owner_profiles system(d); require(system.apply(),"system failed"); require(mode(f)==0644,"system not applied");
     require(::chmod(f.c_str(),0600)==0,"test chmod failed"); configure(r,"{}"); DAC_mode_and_owner_profiles released(d); require(released.apply(),"empty failed"); require(mode(f)==0600,"omitted object mutated");
+
+    const fs::path second=r/"managed-second"; write(f,"data",0644); write(second,"data",0644);
+    Dac multiple=platform(f,second);
+    configure(r,"{\"first\":\"strict\",\"second\":\"strict\"}");
+    DAC_mode_and_owner_profiles bothStrict(multiple);
+    require(bothStrict.apply()&&mode(f)==0600&&mode(second)==0600,
+        "multiple strict profiles not applied");
+    configure(r,"{\"second\":\"system\"}");
+    DAC_mode_and_owner_profiles releaseFirst(multiple);
+    require(releaseFirst.apply(),"partial release failed");
+    require(mode(f)==0600,"removed object was mutated");
+    require(mode(second)==0644,"remaining object was not enforced");
 }
 void testPreflightAndAggregation(const fs::path& r) {
     fs::path a=r/"a-first", b=r/"z-second"; write(a,"a",0666); write(b,"b",0666); Dac d=platform(a,b);
     ModeAndOwnerProfilesPolicyTypeValue t(d); require(!t.validate("first=strict\nsecond=optimal"),"late invalid accepted"); require(mode(a)==0666&&mode(b)==0666,"validation mutated");
     fs::remove(a); fs::create_directory(a); configure(r,"{\"first\":\"strict\",\"second\":\"strict\"}"); DAC_mode_and_owner_profiles p(d);
     require(!p.apply(),"aggregate failure succeeded"); require(mode(b)==0600,"runtime loop stopped early");
+    write(b,"b",0666); configure(r,"not-json"); DAC_mode_and_owner_profiles malformed(d);
+    require(!malformed.apply(),"malformed stored JSON accepted"); require(mode(b)==0666,"malformed JSON mutated object");
+    configure(r,"{\"second\":1}"); DAC_mode_and_owner_profiles nonString(d);
+    require(!nonString.apply(),"non-string stored JSON accepted"); require(mode(b)==0666,"non-string JSON mutated object");
 }
 void testUserHomesDoesNotMutateRoot(const fs::path& r) {
     const fs::path homesRoot=r/"homes";
@@ -81,15 +187,13 @@ void testCollectionAndProviderSafety(const fs::path& r) {
     Dac commands;
     Dac::PathContract system=contract(0755);
     Dac::PathContract strict=contract(0750);
-    system.modeSemantics=Dac::ModeSemantics::MaximumAllowed;
-    strict.modeSemantics=Dac::ModeSemantics::MaximumAllowed;
     Dac::CollectionMember member{command,{{Dac::Profile::System,system},{Dac::Profile::Strict,strict}}};
     Dac::PathCollectionObject collection; collection.members.push_back(std::move(member));
     commands.modeAndOwnerObjects.push_back({"df",std::move(collection)});
     configure(r,"{\"df\":\"strict\"}");
     DAC_mode_and_owner_profiles commandPolicy(commands);
     require(commandPolicy.apply(),"collection apply failed");
-    require(mode(command)==0750,"MaximumAllowed did not remove excess/special bits");
+    require(mode(command)==0750,"exact profile did not set command mode");
 
     const fs::path target=r/"provider-resolv";
     const fs::path link=r/"resolv";
@@ -111,6 +215,16 @@ void testCollectionAndProviderSafety(const fs::path& r) {
     require(!providerWrong.apply(),"wrong provider metadata accepted");
     require(mode(target)==0600,"validate-only provider target was mutated");
 
+    fs::remove(link); fs::remove(target); fs::create_directory(target);
+    require(::chmod(target.c_str(),0700)==0,"provider directory chmod failed");
+    fs::create_symlink(target,link);
+    DAC_mode_and_owner_profiles providerDirectory(resolv);
+    require(!providerDirectory.apply(),"provider directory accepted as file");
+    require(mode(target)==0700,"unexpected provider type was mutated");
+
+    fs::remove(link); fs::remove_all(target); write(target,"nameserver",0600);
+    fs::create_symlink(target,link);
+
     Dac forbidden;
     Dac::StaticPathObject forbiddenObject{
         link,{{Dac::Profile::System,contract(0644)}}};
@@ -119,6 +233,20 @@ void testCollectionAndProviderSafety(const fs::path& r) {
     DAC_mode_and_owner_profiles forbiddenPolicy(forbidden);
     require(!forbiddenPolicy.apply(),"unlisted final symlink accepted");
     require(mode(target)==0600,"forbidden symlink target was mutated");
+
+    Dac allowed; auto allowedContract=contract(0640);
+    allowedContract.allowedFinalSymlinkTargets={target};
+    allowed.modeAndOwnerObjects.push_back({"allowed",Dac::StaticPathObject{
+        link,{{Dac::Profile::System,allowedContract}}}});
+    configure(r,"{\"allowed\":\"system\"}"); DAC_mode_and_owner_profiles allowedPolicy(allowed);
+    require(allowedPolicy.apply()&&mode(target)==0640,"allowed final symlink not remediated exactly");
+
+    const fs::path fifo=r/"unsafe-fifo"; fs::remove(fifo,ignored);
+    require(::mkfifo(fifo.c_str(),0666)==0,"mkfifo failed");
+    Dac unsafe; unsafe.modeAndOwnerObjects.push_back({"fifo",Dac::StaticPathObject{
+        fifo,{{Dac::Profile::System,contract(0600)}}}});
+    configure(r,"{\"fifo\":\"system\"}"); DAC_mode_and_owner_profiles fifoPolicy(unsafe);
+    require(!fifoPolicy.apply(),"FIFO accepted as regular file");
 }
 void testTcbTopology(const fs::path& r) {
     const fs::path root=r/"tcb";
@@ -134,7 +262,7 @@ void testTcbTopology(const fs::path& r) {
     require(!missing.apply(),"missing TCB root accepted");
     fs::create_directory(root); require(::chmod(root.c_str(),0700)==0,"tcb chmod failed");
     DAC_mode_and_owner_profiles empty(d); require(empty.apply(),"empty TCB rejected");
-    require(mode(root)==0700,"TCB root mode was widened");
+    require(mode(root)==0710,"TCB root exact mode not applied");
     const fs::path account=root/owner(); fs::create_directory(account);
     require(::chmod(account.c_str(),02777)==0,"account chmod failed");
     const fs::path shadow=account/"shadow"; write(shadow,"hash",0666);
@@ -152,4 +280,4 @@ void testTcbTopology(const fs::path& r) {
     require(mode(external)==0644,"TCB hardlink target mutated");
 }
 }
-int main() { const fs::path r=fs::temp_directory_path()/("fic-mode-owner-profiles-"+std::to_string(::getpid())); fs::remove_all(r); fs::create_directories(r); setupPaths(r); testParser(r); testDesiredStateAndRelease(r); testPreflightAndAggregation(r); testUserHomesDoesNotMutateRoot(r); testCollectionAndProviderSafety(r); testTcbTopology(r); fs::remove_all(r); }
+int main() { const fs::path r=fs::temp_directory_path()/("fic-mode-owner-profiles-"+std::to_string(::getpid())); fs::remove_all(r); fs::create_directories(r); setupPaths(r); testParser(r); testExactTransitionsAndSpecialBits(r); testRequiredOptionalAndIdentityFailure(r); testDesiredStateAndRelease(r); testPreflightAndAggregation(r); testUserHomesDoesNotMutateRoot(r); testCollectionAndProviderSafety(r); testTcbTopology(r); fs::remove_all(r); }

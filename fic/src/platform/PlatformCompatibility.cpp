@@ -851,14 +851,6 @@ bool validateModeAndOwnerCatalog(const DacPlatformConfig& config,
             error = label + " has invalid expected object type";
             return false;
         }
-        switch (contract.modeSemantics) {
-        case Dac::ModeSemantics::Exact:
-        case Dac::ModeSemantics::MaximumAllowed:
-            break;
-        default:
-            error = label + " has invalid mode semantics";
-            return false;
-        }
         switch (contract.remediation) {
         case Dac::Remediation::Remediate:
         case Dac::Remediation::ValidateOnly:

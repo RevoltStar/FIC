@@ -37,7 +37,6 @@ struct CollectedTcbRule {
     std::string path;
     FileStats expected;   // metadata of the explicitly selected profile
     FileStats current;    // object state captured at collection time
-    mode_t requiredPermissions = 0;
     UniqueFd parent;
     std::string name;
     dev_t device = 0;
@@ -166,7 +165,7 @@ bool collectTcbTree(
     rules.push_back({config.rootPath.string(),
                      FileStats(config.rootOwner, config.rootGroup,
                                static_cast<mode_t>(config.rootPermissions)),
-                     std::move(rootStats), 0,
+                     std::move(rootStats),
                      duplicateDescriptor(rootParent.get()),
                      config.rootPath.filename().string(),
                      rootInfo.st_dev, rootInfo.st_ino, rootInfo.st_nlink});
@@ -205,7 +204,7 @@ bool collectTcbTree(
                          FileStats(account, config.entryGroup,
                                    static_cast<mode_t>(
                                        config.entryDirectoryPermissions)),
-                         std::move(accountStats), 02000,
+                         std::move(accountStats),
                          duplicateDescriptor(root.get()), account,
                          directoryInfo.st_dev, directoryInfo.st_ino,
                          directoryInfo.st_nlink});
@@ -252,7 +251,7 @@ bool collectTcbTree(
                              FileStats(account, config.entryGroup,
                                        static_cast<mode_t>(
                                            expectedFile->permissions)),
-                             std::move(fileStats), 0,
+                             std::move(fileStats),
                              duplicateDescriptor(accountFd.get()), fileName,
                              fileInfo.st_dev, fileInfo.st_ino,
                              fileInfo.st_nlink});
@@ -335,7 +334,7 @@ void ModeAndOwner::applyTcbCredentialTree(
     for (CollectedTcbRule& rule : rules) {
         ++counters.total;
         applyOpenedRule(rule.path, rule.expected, std::move(rule.current), false,
-                        counters, rule.requiredPermissions);
+                        counters);
     }
     if (!tcbTopologyUnchanged(directorySnapshots, rules, error)) {
         ++counters.total;
