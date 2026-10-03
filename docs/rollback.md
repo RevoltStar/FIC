@@ -597,13 +597,21 @@ I/O), это ошибка загрузки — fail closed. Существующ
   USER_CREATION login.defs политики — `Supported`; две operational
   PASSWORD_AGING политики (`password_aging_apply_to_existing_accounts`,
   `password_aging_enforce_for_root`) меняют живое состояние учётных записей
-  через `chage` и в этой стадии остаются `NotEnrolled` (без journal-rollback);
-  неизвестная политика PASSWORD_AGING — `Unsupported`. No-record preflight
+  через `chage`. Operational PASSWORD_AGING policies intentionally use a
+  non-reverting `NotEnrolled` lifecycle: disable stops future enforcement
+  and preserves the account aging state that exists at the moment of
+  disable (`sp_min/sp_max/sp_warn` не изменяются, pre-FIC значения не
+  восстанавливаются, per-user journal provenance / baseline / `chage`
+  rollback для них не существует и не планируется). Неизвестная политика
+  PASSWORD_AGING — `Unsupported` (disable fail closed, никогда не
+  наследует silent `NotEnrolled`). No-record preflight
   (`inspectUnrecordedState`) доказывает когерентность ВСЕГО shared домена
   (тот же `proveCoherence`): malformed контейнер, orphan/unknown peer
   sub-block или same-policy sub-block без provenance — `Conflict` fail
   closed (unrecorded ownership); валидный peer без target-блока и чистый
-  foreign файл — `NothingToDo`.
+  foreign файл — `NothingToDo`. Повторный periodic/manual apply disabled
+  operational политики не выполняет enforcement (`PolicyApplyStatus::
+  Disabled`, `apply()` не вызывается).
 
 ## Release-only lifecycle (DAC / Mode_and_Owner)
 
@@ -1351,7 +1359,8 @@ PamPackagingChecks.py`.
     `password_expiration_warning_days`, `regular_user_uid_min`,
     `regular_user_uid_max`) через shared backend
     (см. раздел «Shared login.defs rollback»); две operational политики
-    подмодуля — `NotEnrolled`, неизвестные — `Unsupported`;
+    подмодуля — `NotEnrolled` (намеренный non-reverting lifecycle, см.
+    раздел «Shared login.defs rollback»), неизвестные — `Unsupported`;
 * `Unsupported` — модуль в системе rollback, но автоматический откат не
   реализован: `sudo_require_authentication` (чужие NOPASSWD/PASSWD specs),
   `exclusive_firewall_control` (уничтожает внешнее состояние), DC

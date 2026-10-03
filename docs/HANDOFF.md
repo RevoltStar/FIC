@@ -3,16 +3,20 @@
 ## Current base
 
 * branch: `main`
-* base commit: `eefc282` (persistent crash-safe rollback shared
-  `/etc/login.defs` backend) + один follow-up коммит задачи (P1/P2 fixes
-  shared login.defs rollback backend)
+* base commit: `eefc282` + два follow-up коммита (P1/P2 fixes shared
+  login.defs rollback backend; operational PASSWORD_AGING lasting
+  NotEnrolled lifecycle)
 
 ## Current task
 
-Исправление подтверждённых P1/P2 edge cases shared `/etc/login.defs`
-rollback backend: full-`uid_t` UID relation, missing-UID-peer fail closed,
-Prepared-target recanonicalization после внешнего append, no-record
-whole-domain coherence, точная journal policy→key→value parity. Выполнено.
+Закрепление lasting lifecycle-контракта двух operational PASSWORD_AGING
+политик (`password_aging_apply_to_existing_accounts`,
+`password_aging_enforce_for_root`): намеренный и постоянный
+`RollbackEnrollment::NotEnrolled` (non-reverting lifecycle), disable =
+прекращение будущего enforcement с сохранением текущего `sp_min/sp_max/
+sp_warn` аккаунтов; без per-user provenance, baseline, `chage` rollback,
+нового backend или enum. Выполнено (код уже соответствовал контракту;
+закреплён regression-тестами и документацией).
 
 ## Accepted architecture / invariants
 
@@ -21,62 +25,56 @@ whole-domain coherence, точная journal policy→key→value parity. Вып
   `#@FIC_POLICY_BEGIN ref=MODULE/SUBMODULE/policy@` с одной canonical
   строкой `KEY value`. Whitelist ровно 7 политик; journal payload
   `UndoRemoveIdentityLoginDefsManagedPolicy` — provenance only.
-* Единая таблица политик — header-only
-  `IdentityLoginDefsPolicySpec.h` (policyName → submodule → key → value
-  domain → relation). Её используют ManagedConfig (`policyRoute`,
-  `validatePolicyValue`), transaction и MutationJournal payload validation —
-  writer и loader не могут разойтись.
-* UID relation (`UID_MIN <= UID_MAX`) — typed unsigned reader в полном
-  диапазоне `uid_t` (без INT_MAX-капа); missing/invalid UID peer в
-  effective состоянии кандидата — fail closed до мутации. PASS-пара —
-  signed long + `PasswordAgingMissingKeySemantics` (только для PASS_*).
-* Prepared(target) recovery после внешнего append: recanonicalization ТОГО
-  ЖЕ когерентного контейнера в EOF (одна CAS, peer/foreign byte-exact,
-  relation-пруф на кандидате) и завершение ТОЙ ЖЕ записи — никогда не
-  создаётся `Prepared(previous=target, target=target)`; third state /
-  invalid relation — fail closed.
-* No-record preflight (`inspectUnrecordedState(path, policy, journal, err)`)
-  доказывает когерентность всего shared домена через `proveCoherence`.
+* Единая таблица политик — header-only `IdentityLoginDefsPolicySpec.h`
+  (policyName → submodule → key → value domain → relation); используют
+  ManagedConfig, transaction и MutationJournal (writer/loader parity).
+* UID relation — typed unsigned reader полного диапазона `uid_t`;
+  missing/invalid UID peer — fail closed до мутации. PASS-пара — signed
+  long + `PasswordAgingMissingKeySemantics` (только PASS_*).
+* Prepared(target) recovery: recanonicalization ТОГО ЖЕ контейнера в EOF,
+  завершение ТОЙ ЖЕ записи; никогда `Prepared(previous=target,
+  target=target)`; third state / invalid relation — fail closed.
+* No-record preflight (`inspectUnrecordedState`) доказывает когерентность
+  всего shared домена через `proveCoherence`.
 * Rollback = ownership release; invalid rollback relation — `Conflict`.
-  Operational PASSWORD_AGING — NotEnrolled; неизвестные — Unsupported.
+* Operational PASSWORD_AGING: намеренный non-reverting `NotEnrolled`
+  lifecycle (disable останавливает будущий enforcement, сохраняет
+  существующий account aging state; повторный apply disabled политики —
+  `PolicyApplyStatus::Disabled`, `apply()`/`chage` не вызываются).
+  Неизвестная PASSWORD_AGING политика — `Unsupported` (disable refused,
+  никогда silent `NotEnrolled`). Пять scalar политик — `Supported`.
 
 ## Completed
 
-* `IdentityLoginDefsPolicySpec.h` (единая таблица + canonical value
-  validation); ManagedConfig/ManagedTransaction переведены на неё, дубль
-  таблицы удалён.
-* UID typed relation parse + missing-peer fail closed
-  (`relationsValidInCandidate`).
-* Prepared-target recanonicalization (`recanonicalizePreparedTarget` +
-  restart apply после recovery).
-* `inspectUnrecordedState` — journal + full-domain coherence; executor
-  передаёт journal.
-* MutationJournal: строгая policy→key→domain payload validation (writer +
-  loader); убраны loose decimal/`identityLoginDefsPolicySubmodule`.
-* Tests: новые `testUidRelationFullRange`,
-  `testPreparedTargetRecanonicalization`, `testNoRecordSharedDomainCoherence`,
-  `testJournalPolicyKeyParity`; `inspectUnrecordedState` вызовы обновлены.
+* `tests/fic/rollback/RollbackExecutorTests.cpp`: enrollment matrix
+  дополнена PASSWORD_AGING (5 scalar Supported, 2 operational NotEnrolled
+  static+effective, future Unsupported); новый
+  `testPasswordAgingOperationalNotEnrolledLifecycle` —
+  `rollbackPolicyBeforeDisable` Success без journal/outcomes для обеих,
+  production `disablePolicyAfterLookup` разрешён и не создаёт journal
+  записей, unknown future политика refuses disable (Unsupported).
+* `tests/fic/.../password_aging/PasswordAgingTests.cpp`: новый
+  `testOperationalDisablePreservesAccounts` — disabled operational
+  политики при periodic/manual apply возвращают Disabled, `chage` не
+  вызывается (runner/reader счётчики == 0), значения shadow-аккаунтов не
+  изменяются.
+* `docs/rollback.md`: «в этой стадии остаются NotEnrolled» заменено на
+  lasting contract (intentional non-reverting NotEnrolled lifecycle).
 
 ## Changed areas
 
-* `fic/src/modules/identity_access/shared/login_defs/` (новый
-  `IdentityLoginDefsPolicySpec.h`, ManagedConfig, ManagedTransaction),
-  `fic/src/rollback/MutationJournal.cpp`, `RollbackExecutor.cpp`,
-  `tests/fic/.../IdentityLoginDefsTests.cpp`, `docs/rollback.md`.
+* `tests/fic/rollback/RollbackExecutorTests.cpp`,
+  `tests/fic/modules/identity_access/password_aging/PasswordAgingTests.cpp`,
+  `docs/rollback.md`.
 
 ## Validation
 
-* Ubuntu 24.04 (host, build-check): сборка fic + identity_login_defs_tests,
-  password_aging_tests, user_creation_tests, mutation_journal_tests,
-  rollback_executor_tests, platform_profile_tests — все зелёные.
-* Debian 12, Debian 13, Ubuntu 26.04, ALT p11 (docker): те же 5 тестов
-  собраны и запущены — PASS.
-* mutation_journal_tests: 4 pre-existing fault-injection chmod-фейла во
-  всех root-контейнерах (root игнорирует permissions), на host — PASS.
+* Ubuntu 24.04 (host, build-check): password_aging_tests,
+  rollback_executor_tests (полный suite), identity_login_defs_tests,
+  user_creation_tests — PASS.
 * `git diff --check` — чисто.
 
 ## Remaining
 
-* Полный CTest/E2E не запускался по scope задачи; runtime policy apply на
-  хосте не выполнялся.
+* Полный CTest/E2E не запускался по scope задачи.
 * Build-каталоги `build-*` — untracked artifacts.

@@ -703,6 +703,76 @@ void testDependencies(const fs::path& root) {
             "root dependency metadata wrong");
 }
 
+// Lasting operational lifecycle contract: disabling an operational
+// PASSWORD_AGING policy means FIC stops enforcing its aging targets for the
+// affected accounts. A repeated periodic/manual apply of a disabled policy
+// must not run chage at all and must not change the account aging values
+// that exist at the moment of disable (no revert, no baseline restore).
+void testOperationalDisablePreservesAccounts(const fs::path& root) {
+    auto platform = platformFor(root);
+    writeFile(platform.loginDefsPath,
+        "PASS_MIN_DAYS 1\nPASS_MAX_DAYS 90\nPASS_WARN_AGE 7\n"
+        "UID_MIN 1000\nUID_MAX 60000\n");
+    const fs::path chage = root / "bin/chage";
+    auto resolver = resolverFor(chage);
+    int reads = 0;
+    int commands = 0;
+    LocalAccountSnapshot state = sampleAccounts();
+    // Deliberately non-conforming: if any enforcement ran, the fake chage
+    // would rewrite these values and the command counter would grow.
+    for (auto& [name, aging] : state.shadowAccounts) {
+        aging.minDays = 0;
+        aging.maxDays = 99999;
+        aging.warningDays = 0;
+    }
+    auto reader = [&](const auto&, LocalAccountSnapshot& result, std::string&) {
+        ++reads;
+        result = state;
+        return true;
+    };
+
+    // Both operational policies DISABLE, all scalar dependencies ENABLE.
+    writeFile(root / "config/IDENTITY_ACCESS.conf",
+        "_schema_version=1\n"
+        "password_min_age_days.status=ENABLE\n"
+        "password_min_age_days.value=1\n"
+        "password_max_age_days.status=ENABLE\n"
+        "password_max_age_days.value=90\n"
+        "password_expiration_warning_days.status=ENABLE\n"
+        "password_expiration_warning_days.value=7\n"
+        "regular_user_uid_min.status=ENABLE\n"
+        "regular_user_uid_min.value=1000\n"
+        "regular_user_uid_max.status=ENABLE\n"
+        "regular_user_uid_max.value=60000\n"
+        "password_aging_apply_to_existing_accounts.status=DISABLE\n"
+        "password_aging_apply_to_existing_accounts.value=yes\n"
+        "password_aging_enforce_for_root.status=DISABLE\n"
+        "password_aging_enforce_for_root.value=yes\n");
+    PolicyRegistry disabled = makeRegistry(platform, resolver, reader, commands);
+    for (const char* name : {"password_aging_apply_to_existing_accounts",
+                             "password_aging_enforce_for_root"}) {
+        const PolicyApplySummary summary = applyPolicy(
+            disabled, "IDENTITY_ACCESS", name);
+        const auto& results = summary.getResults();
+        const auto found = std::find_if(results.begin(), results.end(),
+            [&](const PolicyApplyResult& result) {
+                return result.policyName == name;
+            });
+        require(found != results.end(), "missing apply result for " +
+                                            std::string(name));
+        require(found->status == PolicyApplyStatus::Disabled,
+                std::string("disabled operational policy was not reported "
+                            "Disabled: ") + name);
+    }
+    require(commands == 0 && reads == 0,
+            "disabled operational apply reached the chage runtime");
+    for (const auto& [name, aging] : state.shadowAccounts) {
+        require(aging.minDays == 0 && aging.maxDays == 99999 &&
+                    aging.warningDays == 0,
+            "disabled operational apply changed account aging for " + name);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -719,6 +789,7 @@ int main() {
         testOperationalPolicies(root);
         testOperationalFailures(root);
         testDependencies(root);
+        testOperationalDisablePreservesAccounts(root);
         fs::remove_all(root);
         std::cout << "PasswordAgingTests passed\n";
         return 0;

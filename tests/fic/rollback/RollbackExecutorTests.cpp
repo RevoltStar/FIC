@@ -380,6 +380,45 @@ void testEnrollmentMatrix() {
                 RollbackEnrollment::NotEnrolled,
             "other IDENTITY_ACCESS submodules stay outside the rollback "
             "system");
+    // Lasting contract: the five scalar login.defs PASSWORD_AGING policies
+    // are journal-backed; the two operational policies intentionally use a
+    // non-reverting NotEnrolled lifecycle (disable stops future chage
+    // enforcement and preserves account aging state); an unknown future
+    // PASSWORD_AGING policy must never silently inherit NotEnrolled.
+    for (const std::string& name : {"password_min_age_days",
+                                    "password_max_age_days",
+                                    "password_expiration_warning_days",
+                                    "regular_user_uid_min",
+                                    "regular_user_uid_max"}) {
+        require(rollbackEnrollment({"IDENTITY_ACCESS", "PASSWORD_AGING",
+                                    name}) == RollbackEnrollment::Supported,
+                "scalar PASSWORD_AGING policy must stay rollback-supported: " +
+                    name);
+    }
+    for (const std::string& name :
+         {"password_aging_apply_to_existing_accounts",
+          "password_aging_enforce_for_root"}) {
+        const PolicyRef policy{"IDENTITY_ACCESS", "PASSWORD_AGING", name};
+        require(rollbackEnrollment(policy) ==
+                    RollbackEnrollment::NotEnrolled,
+                "operational PASSWORD_AGING policy must be intentionally "
+                "NotEnrolled: " + name);
+        require(effectiveRollbackEnrollment(policy, RollbackExecutorDeps{}) ==
+                    RollbackEnrollment::NotEnrolled,
+                "operational PASSWORD_AGING policy must stay NotEnrolled in "
+                "the contextual enrollment: " + name);
+    }
+    const PolicyRef futureAging{
+        "IDENTITY_ACCESS", "PASSWORD_AGING", "future_policy"};
+    require(rollbackEnrollment(futureAging) ==
+                RollbackEnrollment::Unsupported,
+            "unknown future PASSWORD_AGING policy must be Unsupported, "
+            "never a silent NotEnrolled");
+    require(effectiveRollbackEnrollment(futureAging,
+                                        RollbackExecutorDeps{}) ==
+                RollbackEnrollment::Unsupported,
+            "unknown future PASSWORD_AGING policy must stay Unsupported in "
+            "the contextual enrollment");
 }
 
 void testUserCreationExecutorOwnershipRelease() {
@@ -751,6 +790,71 @@ void testNotEnrolledPolicyKeepsLegacyDisable() {
     require(report.status == RollbackStatus::Success,
             "not enrolled policy must allow legacy disable");
     require(report.rollbackCompleted(), "legacy disable must not be refused");
+}
+
+// Operational PASSWORD_AGING policies intentionally use a non-reverting
+// NotEnrolled lifecycle: disable stops future enforcement and preserves the
+// account aging state that exists at the moment of disable. No journal
+// provenance, no chage undo, no baseline exists for them by design.
+void testPasswordAgingOperationalNotEnrolledLifecycle() {
+    const PolicyRef bulk{"IDENTITY_ACCESS", "PASSWORD_AGING",
+                         "password_aging_apply_to_existing_accounts"};
+    const PolicyRef root{"IDENTITY_ACCESS", "PASSWORD_AGING",
+                         "password_aging_enforce_for_root"};
+
+    for (const PolicyRef& policy : {bulk, root}) {
+        // NotEnrolled early-return branch: no journal access by construction
+        // (the message is unique to that branch and no outcomes are produced).
+        const RollbackReport report =
+            rollbackPolicyBeforeDisable(policy, "", RollbackExecutorDeps{});
+        require(report.status == RollbackStatus::Success &&
+                    report.rollbackCompleted() && report.outcomes.empty() &&
+                    report.message.find("не участвует в системе rollback") !=
+                        std::string::npos,
+            "operational PASSWORD_AGING disable must complete without "
+            "rollback work: " + policy.policyName + " — " + report.message);
+    }
+
+    // Production disable flow: allowed for both operational policies and
+    // must not create any mutation journal records.
+    TempJournal journal;
+    const std::filesystem::path journalPath =
+        journal.tree.root / "journal.json";
+    JournalOverride overrideGuard(journalPath);
+    writeFile(fic::core::FicRuntimePaths::get().configDir /
+                  "IDENTITY_ACCESS.conf",
+              "_schema_version=1\n"
+              "password_aging_apply_to_existing_accounts.status=ENABLE\n"
+              "password_aging_apply_to_existing_accounts.value=yes\n"
+              "password_aging_enforce_for_root.status=ENABLE\n"
+              "password_aging_enforce_for_root.value=yes\n");
+    for (const PolicyRef& policy : {bulk, root}) {
+        const fic::daemon::PolicyMutationResult result =
+            fic::daemon::disablePolicyAfterLookup(policy, "",
+                                                  RollbackExecutorDeps{});
+        require(result.ok,
+                "production disable refused for operational PASSWORD_AGING "
+                "policy: " + policy.policyName + " — " + result.detail);
+    }
+    const std::string config = readFile(
+        fic::core::FicRuntimePaths::get().configDir / "IDENTITY_ACCESS.conf");
+    require(config.find("password_aging_apply_to_existing_accounts."
+                        "status=DISABLE") != std::string::npos &&
+                config.find("password_aging_enforce_for_root.status=DISABLE") !=
+                    std::string::npos,
+            "production disable flow did not persist DISABLE for both "
+            "operational policies");
+    require(!std::filesystem::exists(journalPath),
+            "operational PASSWORD_AGING disable created journal records");
+
+    // Unknown future PASSWORD_AGING policy: Unsupported refuses the disable
+    // fail-closed instead of silently inheriting NotEnrolled.
+    const RollbackReport future = rollbackPolicyBeforeDisable(
+        {"IDENTITY_ACCESS", "PASSWORD_AGING", "future_policy"}, "",
+        RollbackExecutorDeps{});
+    require(future.status == RollbackStatus::Unsupported &&
+                !future.rollbackCompleted(),
+            "unknown future PASSWORD_AGING policy must refuse disable");
 }
 
 void testModeAndOwnerProductionDisableFlowIsReleaseOnly() {
@@ -2878,6 +2982,8 @@ int main() {
         {"kerberos executor drift conflict refuses disable",
          testKerberosExecutorDriftConflictRefusesDisable},
         {"not enrolled policy keeps legacy disable", testNotEnrolledPolicyKeepsLegacyDisable},
+        {"operational password aging policies are not enrolled",
+         testPasswordAgingOperationalNotEnrolledLifecycle},
         {"mode-and-owner production disable is release-only",
          testModeAndOwnerProductionDisableFlowIsReleaseOnly},
         {"unsupported policy refuses disable", testUnsupportedPolicyRefusesDisable},
