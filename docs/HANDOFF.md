@@ -3,60 +3,60 @@
 ## Current base
 
 * branch: `main`
-* base commit: `673b9ea75f4e4b16f301a4dce4aef30a2f6bc1a5`
+* base commit: `b062092a4118eaf68b67c6a48fa6b4ee9e3b65d8`
 
 ## Current task
 
-Crash-safe ownership-release apply/rollback for all production
-`IDENTITY_ACCESS/USER_CREATION` policies.
+Follow-up fixes for crash-safe ownership and native-consumer semantics of all
+production `IDENTITY_ACCESS/USER_CREATION` policies.
 
 ## Accepted architecture / invariants
 
-* `/etc/default/useradd`, `/etc/login.defs` and `/etc/adduser.conf` retain all
-  foreign bytes; FIC owns only strict per-policy sub-blocks in one logical-EOF
-  container.
-* Journal payload is typed provenance, never a foreign-value or file snapshot.
-  Refresh A to B is one conditional atomic replacement with durable previous
-  and target bodies in `Prepared`.
-* Rollback releases only an exact owned sub-block. Missing ownership is already
-  released; malformed, orphan or edited ownership fails closed.
-* `/etc/default/useradd` lookup semantics are profile metadata: legacy-prefix
-  on Debian 12/Ubuntu 24.04 and conservatively ALT p11; exact-key on Debian 13
-  and Ubuntu 26.04.
+* Strict FIC managed-block grammar and native consumer-effective parsing are
+  separate; only exact journal-bound managed bodies prove ownership.
+* Foreign configuration remains byte-for-byte outside per-policy blocks; the
+  journal contains typed FIC provenance, never foreign snapshots.
+* Refresh `A -> B` remains one physical CAS replacement. If rollback proves
+  physical `A` while the journal is `Prepared(A -> B)`, the same record is
+  durably normalized to `Prepared(target=A)` before any physical release.
+* Ordinary apply cannot replace unresolved `Prepared` or `RollbackFailed`
+  USER_CREATION provenance.
+* All supported `/etc/default/useradd` packages are modeled exact-key and
+  last-wins. Empty shadow `GROUPS=` is ignored after a non-empty assignment;
+  it is not a neutralizer.
 
 ## Completed
 
-* Added strict managed-container parsing, consumer-effective last-wins parsing,
-  exact in-memory transformations and CAS/durability/compensation transaction.
-* Added `MutationBackend::UserCreation`, validated typed payload, explicit
-  enrollment/current-route validation and executor dispatch under the shared
-  identity configuration mutex.
-* Integrated all seven policies, including `GROUPS=` neutralization and atomic
-  Debian adduser relation updates.
-* Added lifecycle, crash recovery, durability, compensation-race,
-  multi-policy, journal, enrollment and executor regression coverage.
+* Added consumer-effective parsing for shadow `login.defs`, adduser.conf and
+  useradd defaults without weakening managed-block ownership parsing.
+* Corrected all five profiles to package-proven exact-key useradd semantics,
+  including ALT p11 shadow-utils 4.17.4-alt2.
+* Empty shadow supplementary groups now release an owned block only when the
+  remaining foreign state is already empty; otherwise apply fails closed.
+* Added durable previous-side normalization, USER_CREATION journal transition
+  guards and executor-level retry/crash/third-state regression tests.
+* Native disposable probes covered actual shadow/adduser behavior on Debian
+  12/13, Ubuntu 24.04/26.04 and ALT p11 without changing the host.
 
 ## Changed areas
 
 * `fic/src/modules/identity_access/user_creation/`
 * `fic/src/platform/`
 * `fic/src/rollback/`
-* related CMake/tests and rollback/architecture documentation
+* related USER_CREATION/platform/journal/executor tests and rollback docs
 
 ## Validation
 
-* Ubuntu 24.04: `fic` and affected test targets built; targeted CTest suite
-  (platform static checks, `user_creation`, mutation journal, rollback executor,
-  platform profile, identity concrete policies, SSH apply/rollback) passed 7/7.
+* Ubuntu 24.04: affected targets including `fic` built; targeted suite passed
+  7/7 (`user_creation`, journal, executor, platform/static, identity and SSH).
 * Debian 12, Debian 13 and Ubuntu 26.04: `user_creation_tests` and
-  `platform_profile_tests` passed 2/2 per profile.
-* ALT p11 profile source passed direct C++ syntax validation.
-* Full E2E/full project CTest intentionally not run per task scope.
+  `platform_profile_tests` built and passed 2/2 per profile.
+* ALT p11: native builder configured successfully; both affected targets built
+  and their executables passed (the image has no `ctest` command).
+* Native package probes used real user creation in disposable containers to
+  validate login.defs and adduser.conf, plus `useradd -D` for defaults.
 
 ## Remaining
 
-* ALT p11 exact-key behavior was not provable from available distro source, so
-  its profile deliberately uses the safer legacy-prefix model; supplementary
-  groups remain `Unsupported`/`NotEnrolled` there.
-* No native package/runtime test was run against real distro useradd/adduser
-  binaries; parser/provider behavior is covered by targeted contract tests.
+* Full project CTest and E2E were intentionally not run per task scope.
+* No host policy/configuration files were modified by runtime probes.

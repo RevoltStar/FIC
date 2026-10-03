@@ -2389,6 +2389,18 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             return false;
         }
         if (!validateUserCreationUndoPayload(*payload, error)) return false;
+        const bool refreshesActiveRecord = std::any_of(
+            records_.begin(), records_.end(), [&](const MutationRecord& current) {
+                return current.isActive() && current.policy == record.policy &&
+                    current.undo.backend == record.undo.backend &&
+                    current.resource == record.resource;
+            });
+        if (!refreshesActiveRecord &&
+            !payload->previousAppliedAssignments.empty()) {
+            error = "fresh USER_CREATION mutation must not claim previous "
+                    "applied assignments (fail closed)";
+            return false;
+        }
     }
 
     // PAM provider lifecycle guards: provenance must never be silently
@@ -2491,6 +2503,47 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             existing.policy == record.policy &&
             existing.undo.backend == record.undo.backend &&
             existing.resource == record.resource) {
+            if (record.undo.backend == MutationBackend::UserCreation) {
+                const auto* oldUserCreation = std::get_if<
+                    UndoRemoveUserCreationManagedPolicy>(
+                    &existing.undo.payload);
+                const auto* newUserCreation = std::get_if<
+                    UndoRemoveUserCreationManagedPolicy>(
+                    &record.undo.payload);
+                if (oldUserCreation == nullptr || newUserCreation == nullptr ||
+                    oldUserCreation->policyName !=
+                        newUserCreation->policyName ||
+                    oldUserCreation->configKind !=
+                        newUserCreation->configKind ||
+                    oldUserCreation->configPath !=
+                        newUserCreation->configPath) {
+                    error = "USER_CREATION refresh changed ownership identity "
+                            "(fail closed)";
+                    return false;
+                }
+                if (existing.status == MutationStatus::Prepared) {
+                    if (oldUserCreation->appliedAssignments !=
+                            newUserCreation->appliedAssignments ||
+                        oldUserCreation->previousAppliedAssignments !=
+                            newUserCreation->previousAppliedAssignments) {
+                        error = "USER_CREATION refresh conflicts with an "
+                                "unresolved Prepared transition (fail closed)";
+                        return false;
+                    }
+                } else if (existing.status ==
+                           MutationStatus::RollbackFailed) {
+                    error = "USER_CREATION RollbackFailed provenance cannot "
+                            "be refreshed by ordinary apply (fail closed)";
+                    return false;
+                } else if (existing.status == MutationStatus::Applied &&
+                           newUserCreation->previousAppliedAssignments !=
+                               oldUserCreation->appliedAssignments) {
+                    error = "USER_CREATION refresh does not carry the "
+                            "currently owned assignments as previous state "
+                            "(fail closed)";
+                    return false;
+                }
+            }
             // PAM provider refresh guards: deterministic transition
             // semantics, no provenance loss on an in-place refresh.
             if (record.undo.backend == MutationBackend::Pam) {
@@ -2635,6 +2688,53 @@ bool MutationJournal::prepareMutation(MutationRecord record,
     }
     // Indeterminate: keep the new record (it matches the installed document)
     // and poison the journal.
+    health_ = JournalHealth::Indeterminate;
+    return false;
+}
+
+bool MutationJournal::normalizeUserCreationPreparedToProvenState(
+    MutationId id,
+    const std::vector<UserCreationManagedAssignment>& provenAssignments,
+    std::string& error) {
+    if (!loaded_) {
+        error = "Mutation journal не загружен";
+        return false;
+    }
+    if (health_ == JournalHealth::Indeterminate) {
+        error = "Mutation journal в состоянии Indeterminate: normalization "
+                "запрещена до успешного reload";
+        return false;
+    }
+    MutationRecord* record = find(id);
+    if (record == nullptr || record->status != MutationStatus::Prepared ||
+        record->undo.backend != MutationBackend::UserCreation) {
+        error = "USER_CREATION rollback normalization requires its existing "
+                "Prepared record";
+        return false;
+    }
+    auto* payload = std::get_if<UndoRemoveUserCreationManagedPolicy>(
+        &record->undo.payload);
+    if (payload == nullptr || payload->previousAppliedAssignments.empty() ||
+        payload->previousAppliedAssignments != provenAssignments) {
+        error = "USER_CREATION rollback normalization does not match the "
+                "durable previous-side provenance";
+        return false;
+    }
+    const MutationRecord previous = *record;
+    payload->appliedAssignments = provenAssignments;
+    payload->previousAppliedAssignments.clear();
+    record->error.clear();
+    record->updatedAtEpoch = currentEpochSeconds();
+    if (!validateUserCreationUndoPayload(*payload, error)) {
+        *record = previous;
+        return false;
+    }
+    const PersistOutcome outcome = persist(error);
+    if (outcome == PersistOutcome::Persisted) return true;
+    if (outcome == PersistOutcome::NotInstalled) {
+        *record = previous;
+        return false;
+    }
     health_ = JournalHealth::Indeterminate;
     return false;
 }

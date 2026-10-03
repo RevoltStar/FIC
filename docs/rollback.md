@@ -487,7 +487,9 @@ I/O), это ошибка загрузки — fail closed. Существующ
   marker/orphan state — `Conflict`. Peer FIC sub-blocks остаются byte-for-byte,
   пустой top-level container удаляется. После release становится effective
   актуальное foreign значение, а не историческое. Supplementary groups — одна
-  relation-level mutation: `GROUPS=` нейтрализует ранний shadow GROUPS;
+  relation-level mutation. Native shadow 4.17 ignores an empty `GROUPS=` after
+  a non-empty value, поэтому empty policy либо атомарно освобождает FIC block,
+  когда resulting foreign state уже пуст, либо fail closed без записи.
   DebianAdduser empty state владеет только `ADD_EXTRA_GROUPS=0`.
 * `UndoDisableDeviceFeature{feature}` — отключение category-level desired
   state DC и пересборка `99-fic-devices.rules` через device daemon;

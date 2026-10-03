@@ -600,17 +600,25 @@ void testUserCreationUndoRoundTrip() {
     MutationJournal journal(file.path);
     std::string error;
     require(journal.load(error), error);
-    MutationRecord record;
-    record.policy = {"IDENTITY_ACCESS", "USER_CREATION",
-                     "user_default_supplementary_groups"};
-    record.resource = "/etc/default/useradd";
+    MutationRecord previous;
+    previous.policy = {"IDENTITY_ACCESS", "USER_CREATION",
+                       "user_default_supplementary_groups"};
+    previous.resource = "/etc/default/useradd";
+    previous.undo = {MutationBackend::UserCreation,
+        UndoRemoveUserCreationManagedPolicy{
+            "user_default_supplementary_groups",
+            UserCreationConfigKind::UseraddDefaults,
+            "/etc/default/useradd", {{"GROUPS", "GROUPS=audio,video"}}, {}}};
+    MutationId id = 0;
+    require(journal.prepareMutation(previous, id, error), error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    MutationRecord record = previous;
     record.undo = {MutationBackend::UserCreation,
         UndoRemoveUserCreationManagedPolicy{
             "user_default_supplementary_groups",
             UserCreationConfigKind::UseraddDefaults,
             "/etc/default/useradd", {{"GROUPS", "GROUPS="}},
             {{"GROUPS", "GROUPS=audio,video"}}}};
-    MutationId id = 0;
     require(journal.prepareMutation(record, id, error), error);
     MutationJournal reloaded(file.path);
     require(reloaded.load(error), error);
@@ -621,6 +629,67 @@ void testUserCreationUndoRoundTrip() {
                 payload->previousAppliedAssignments.front().appliedLine ==
                     "GROUPS=audio,video",
             "USER_CREATION ownership payload did not round-trip");
+}
+
+MutationRecord userCreationRecord(
+    const std::string& target,
+    const std::optional<std::string>& previous = std::nullopt) {
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "USER_CREATION",
+                     "user_home_base_directory"};
+    record.resource = "/etc/default/useradd";
+    UndoRemoveUserCreationManagedPolicy undo{
+        record.policy.policyName, UserCreationConfigKind::UseraddDefaults,
+        record.resource, {{"HOME", "HOME=" + target}}, {}};
+    if (previous.has_value())
+        undo.previousAppliedAssignments.push_back(
+            {"HOME", "HOME=" + *previous});
+    record.undo = {MutationBackend::UserCreation, std::move(undo)};
+    return record;
+}
+
+void testUserCreationTransitionGuards() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationId id = 0;
+
+    require(!journal.prepareMutation(
+                userCreationRecord("/target", "/invented"), id, error),
+            "fresh USER_CREATION record claimed previous provenance");
+    require(journal.prepareMutation(userCreationRecord("/a"), id, error),
+            error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+
+    require(!journal.prepareMutation(
+                userCreationRecord("/b", "/wrong"), id, error),
+            "refresh lost the currently owned Applied side");
+    require(journal.prepareMutation(
+                userCreationRecord("/b", "/a"), id, error), error);
+    require(journal.prepareMutation(
+                userCreationRecord("/b", "/a"), id, error),
+            "exact idempotent Prepared re-prepare was rejected");
+    require(!journal.prepareMutation(
+                userCreationRecord("/c", "/b"), id, error),
+            "unresolved Prepared transition was replaced");
+
+    require(journal.normalizeUserCreationPreparedToProvenState(
+                id, {{"HOME", "HOME=/a"}}, error), error);
+    const auto* normalized = std::get_if<
+        UndoRemoveUserCreationManagedPolicy>(
+        &journal.records().front().undo.payload);
+    require(normalized != nullptr &&
+                normalized->appliedAssignments ==
+                    std::vector<UserCreationManagedAssignment>{
+                        {"HOME", "HOME=/a"}} &&
+                normalized->previousAppliedAssignments.empty(),
+            "Prepared previous-side normalization is not unambiguous");
+    require(journal.setStatus(id, MutationStatus::RollbackFailed, error),
+            error);
+    require(!journal.prepareMutation(
+                userCreationRecord("/b", "/a"), id, error),
+            "ordinary apply refreshed RollbackFailed USER_CREATION provenance");
 }
 
 void testDaemonJournalOverrideAndHelpers() {
@@ -2728,6 +2797,7 @@ int main() {
         {"duplicate id fails closed", testDuplicateIdFailsClosed},
         {"status and backend string round trip", testStatusAndBackendStringRoundTrip},
         {"user creation undo round trip", testUserCreationUndoRoundTrip},
+        {"user creation transition guards", testUserCreationTransitionGuards},
         {"ssh undo payload round trip", testSshUndoPayloadRoundTrip},
         {"ssh undo malformed payloads fail closed", testSshUndoMalformedPayloadsFailClosed},
         {"grub undo payload round trip", testGrubUndoPayloadRoundTrip},

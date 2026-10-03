@@ -861,9 +861,12 @@ defaults не получает. На Debian 13 и Ubuntu 26.04 она управ
 платформах вызывает `useradd` без `-G`, но затем может добавить memberships из
 `USERGROUPS`/`USERS_GROUP` и `EXTRA_GROUPS`, поэтому policy не обещает полный
 итоговый exact set для каждого frontend. Логический список хранится как
-canonical JSON array; пустой список задаёт authoritative `GROUPS=` для shadow
-provider либо managed `ADD_EXTRA_GROUPS=0` без managed `EXTRA_GROUPS` для
-adduser provider. Foreign значения при этом не удаляются.
+canonical JSON array. Для shadow provider пустой список не может быть
+нейтрализован `GROUPS=`: реальные shadow 4.17 игнорируют такую пустую запись
+после непустой. Поэтому FIC освобождает свой block только если оставшийся
+foreign state уже empty, иначе apply завершается fail closed без мутации. Для
+adduser provider empty задаётся managed `ADD_EXTRA_GROUPS=0` без managed
+`EXTRA_GROUPS`. Foreign значения при этом не удаляются.
 
 USER_CREATION rollback использует ownership-release: journal хранит только
 точные FIC assignments текущего/предыдущего refresh, но не foreign значения и
@@ -871,9 +874,9 @@ USER_CREATION rollback использует ownership-release: journal хран�
 refresh A→B выполняется одной conditional atomic replacement без окна release.
 Rollback удаляет только доказанный sub-block, сохраняя peer sub-blocks и foreign
 bytes; после удаления естественно проявляется актуальное последнее foreign
-значение. На Debian 12/Ubuntu 24.04 модель `/etc/default/useradd` учитывает
-legacy prefix matching shadow 4.13; Debian 13/Ubuntu 26.04 используют exact-key
-семантику shadow 4.17. ALT p11 консервативно моделируется legacy-prefix и не
+значение. Native probes пакетов shadow 4.13 и 4.17 на всех пяти production
+profiles подтвердили exact-key/last-wins semantics `/etc/default/useradd`;
+`HOME_FOO` не является `HOME`, а `GROUPS` не является `GROUP`. ALT p11 не
 enroll-ит unsupported supplementary-groups route.
 
 ALT p11 `alterator-users 10.25-alt1` читает непустой

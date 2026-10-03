@@ -155,6 +155,14 @@ public:
     // Inserts a new Prepared record, or updates an existing active record for
     // the same (policy, backend, resource) triple. Returns the record id.
     bool prepareMutation(MutationRecord record, MutationId& id, std::string& error);
+    // Durable recovery transition used only after the physical block was
+    // proven to equal the previous side of an unresolved USER_CREATION
+    // refresh. Rewrites Prepared(previous=A,target=B) to Prepared(target=A)
+    // on the same id before rollback or compensation can resolve it.
+    bool normalizeUserCreationPreparedToProvenState(
+        MutationId id,
+        const std::vector<UserCreationManagedAssignment>& provenAssignments,
+        std::string& error);
     bool setStatus(MutationId id, MutationStatus status, std::string& error);
     bool setStatusWithMessage(MutationId id, MutationStatus status,
                               const std::string& message, std::string& error);

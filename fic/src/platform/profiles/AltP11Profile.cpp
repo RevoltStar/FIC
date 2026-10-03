@@ -22,11 +22,10 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.hostCompatibility.altBranchIds = {"p11"};
     profile.userCreation.supplementaryGroupsProvider =
         UserSupplementaryGroupsProviderKind::Unsupported;
-    // Conservative verified contract for ALT p11: keep the legacy prefix
-    // parser model. Exact-key behavior must not be assumed without distro
-    // source evidence; EOF overrides are safe under this stricter model.
+    // Verified in the ALT p11 builder with shadow-utils 4.17.4-alt2: useradd
+    // uses exact assignment keys and later duplicate assignments win.
     profile.userCreation.useraddDefaultsLookup =
-        UseraddDefaultsLookupSemantics::LegacyPrefixMatch;
+        UseraddDefaultsLookupSemantics::ExactKey;
     profile.userCreation.adduserConfigPath.clear();
     profile.executables.entries = {
         {

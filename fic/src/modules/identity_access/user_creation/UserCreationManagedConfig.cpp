@@ -39,8 +39,8 @@ bool parseMarkerName(const std::string& line, const char* prefix,
         std::string::npos;
 }
 
-bool parseAssignment(const std::string& line, ConfigKind kind,
-                     Assignment& assignment) {
+bool parseManagedAssignment(const std::string& line, ConfigKind kind,
+                            Assignment& assignment) {
     assignment = {};
     if (line.empty() || line[0] == '#' ||
         std::isspace(static_cast<unsigned char>(line[0]))) return false;
@@ -83,6 +83,91 @@ bool parseAssignment(const std::string& line, ConfigKind kind,
     return true;
 }
 
+std::string trimSpaces(std::string value) {
+    const std::size_t first = value.find_first_not_of(" \t");
+    if (first == std::string::npos) return {};
+    const std::size_t last = value.find_last_not_of(" \t");
+    return value.substr(first, last - first + 1);
+}
+
+std::string trimLeadingSpaces(std::string value) {
+    const std::size_t first = value.find_first_not_of(" \t");
+    if (first == std::string::npos) return {};
+    return value.substr(first);
+}
+
+std::string uppercaseAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](char ch) {
+        return static_cast<char>(
+            std::toupper(static_cast<unsigned char>(ch)));
+    });
+    return value;
+}
+
+bool parseNativeAssignment(const std::string& raw, ConfigKind kind,
+                           Assignment& assignment, bool& ignored) {
+    assignment = {};
+    ignored = false;
+    std::string line = raw;
+    if (kind == ConfigKind::LoginDefs || kind == ConfigKind::Adduser) {
+        const std::size_t first = line.find_first_not_of(" \t");
+        if (first == std::string::npos) {
+            ignored = true;
+            return true;
+        }
+        line.erase(0, first);
+    }
+    if (line.empty() || line[0] == '#') {
+        ignored = true;
+        return true;
+    }
+    if (kind == ConfigKind::LoginDefs) {
+        const std::size_t split = line.find_first_of(" \t");
+        if (split == std::string::npos) return false;
+        const std::size_t valueStart = line.find_first_not_of(" \t", split);
+        if (valueStart == std::string::npos) {
+            ignored = true;
+            return true;
+        }
+        assignment.key = line.substr(0, split);
+        assignment.line = assignment.key + " " + line.substr(valueStart);
+        return true;
+    }
+    if (kind == ConfigKind::UseraddDefaults &&
+        std::isspace(static_cast<unsigned char>(line[0]))) {
+        ignored = true;
+        return true;
+    }
+    const std::size_t equal = line.find('=');
+    if (equal == std::string::npos || equal == 0) return false;
+    std::string key = line.substr(0, equal);
+    std::string value = line.substr(equal + 1);
+    if (kind == ConfigKind::Adduser) {
+        key = uppercaseAscii(trimSpaces(key));
+        // adduser strips whitespace before the value but preserves trailing
+        // bytes. EXTRA_GROUPS="audio"<spaces> is therefore not "audio" on
+        // the supported 3.134--3.153 consumers.
+        value = trimLeadingSpaces(value);
+        if (value.size() >= 2 && value.front() == '"' &&
+            value.back() == '"') {
+            value = value.substr(1, value.size() - 2);
+        } else if (!value.empty() &&
+                   (value.front() == '\'' || value.back() == '\'')) {
+            // adduser 3.134/3.137 accept shell-style single quotes, while
+            // 3.152/3.153 do not. Never claim a cross-version foreign no-op
+            // for syntax whose consumer meaning is not uniform. Preserve the
+            // quotes in the opaque value so a later canonical EOF assignment
+            // safely overrides it instead of treating it as malformed.
+        }
+    } else if (key.find_first_of(" \t") != std::string::npos) {
+        return false;
+    }
+    if (key.empty()) return false;
+    assignment.key = std::move(key);
+    assignment.line = assignment.key + "=" + value;
+    return true;
+}
+
 std::string valueFromLine(const Assignment& assignment, ConfigKind kind) {
     if (kind == ConfigKind::LoginDefs) {
         const std::size_t split = assignment.line.find_first_of(" \t");
@@ -90,16 +175,9 @@ std::string valueFromLine(const Assignment& assignment, ConfigKind kind) {
         return assignment.line.substr(start);
     }
     std::string value = assignment.line.substr(assignment.line.find('=') + 1);
-    if (kind == ConfigKind::Adduser) {
-        const std::size_t first = value.find_first_not_of(" \t");
-        if (first == std::string::npos) value.clear();
-        else value.erase(0, first);
-        const std::size_t last = value.find_last_not_of(" \t");
-        if (last != std::string::npos) value.erase(last + 1);
-    }
+    if (kind == ConfigKind::Adduser) value = trimLeadingSpaces(value);
     if (kind == ConfigKind::Adduser && value.size() >= 2 &&
-        ((value.front() == '"' && value.back() == '"') ||
-         (value.front() == '\'' && value.back() == '\''))) {
+        value.front() == '"' && value.back() == '"') {
         value = value.substr(1, value.size() - 2);
     }
     return value;
@@ -202,7 +280,7 @@ bool parseManagedConfig(const std::string& content, ConfigKind kind,
         if (line.rfind(kMarkerIntroducer, 0) != 0) {
             if (inPolicy) {
                 Assignment assignment;
-                if (!parseAssignment(line, kind, assignment) ||
+                if (!parseManagedAssignment(line, kind, assignment) ||
                     !keys.insert(assignment.key).second) {
                     error = "invalid or duplicate assignment in FIC policy block";
                     return false;
@@ -346,26 +424,34 @@ bool effectiveValue(const std::string& content, ConfigKind kind,
                     std::optional<std::string>& value,
                     std::string& error) {
     value.reset();
+    (void)semantics;
     for (const auto& [line, offset] : linesWithOffsets(content)) {
         (void)offset;
-        if (line.rfind(kMarkerIntroducer, 0) == 0 || line.empty() ||
-            line[0] == '#' || std::isspace(static_cast<unsigned char>(line[0])))
-            continue;
         Assignment assignment;
-        if (!parseAssignment(line, kind, assignment)) {
-            const bool targetLike = line.rfind(key, 0) == 0;
+        bool ignored = false;
+        if (line.rfind(kMarkerIntroducer, 0) == 0) continue;
+        if (!parseNativeAssignment(line, kind, assignment, ignored)) {
+            const std::string candidate = kind == ConfigKind::Adduser
+                ? uppercaseAscii(trimSpaces(line)) : trimSpaces(line);
+            const bool targetLike = candidate.rfind(key, 0) == 0;
             if (targetLike) {
                 error = "malformed target assignment for " + key;
                 return false;
             }
             continue;
         }
-        bool matches = assignment.key == key;
-        if (kind == ConfigKind::UseraddDefaults &&
-            semantics == fic::platform::UseraddDefaultsLookupSemantics::LegacyPrefixMatch) {
-            matches = assignment.key.rfind(key, 0) == 0;
+        if (ignored) continue;
+        const bool matches = assignment.key == key;
+        if (matches) {
+            const std::string parsed = valueFromLine(assignment, kind);
+            // shadow 4.17's useradd defaults parser ignores an empty GROUPS=
+            // after a previously parsed list; native container probes on
+            // Debian 13, Ubuntu 26.04 and ALT p11 confirm this behavior.
+            if (kind != ConfigKind::UseraddDefaults || key != "GROUPS" ||
+                !parsed.empty()) {
+                value = parsed;
+            }
         }
-        if (matches) value = valueFromLine(assignment, kind);
     }
     return true;
 }

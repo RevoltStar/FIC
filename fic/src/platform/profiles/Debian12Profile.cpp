@@ -10,9 +10,10 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.hostCompatibility.versionIds = {"12"};
     profile.userCreation.supplementaryGroupsProvider =
         UserSupplementaryGroupsProviderKind::DebianAdduser;
-    // shadow 4.13 useradd defaults use the legacy requested-key prefix lookup.
+    // Verified with Debian 12 passwd 4.13+dfsg1-1+deb12u2: useradd -D uses
+    // exact assignment keys and later duplicate assignments win.
     profile.userCreation.useraddDefaultsLookup =
-        UseraddDefaultsLookupSemantics::LegacyPrefixMatch;
+        UseraddDefaultsLookupSemantics::ExactKey;
     profile.executables.entries = {
         {
             ExecutableId::Sshd,

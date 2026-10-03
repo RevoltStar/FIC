@@ -80,6 +80,9 @@ enum class UserCreationConfigKind { UseraddDefaults, LoginDefs, Adduser };
 struct UserCreationManagedAssignment {
     std::string key;
     std::string appliedLine;
+    bool operator==(const UserCreationManagedAssignment& other) const {
+        return key == other.key && appliedLine == other.appliedLine;
+    }
 };
 
 // Ownership-release provenance for one USER_CREATION policy sub-block. It

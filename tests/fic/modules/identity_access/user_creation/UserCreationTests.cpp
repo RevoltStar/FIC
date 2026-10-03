@@ -294,15 +294,15 @@ void writeSupplementaryConfig(
               "user_default_supplementary_groups.value=" + serialized + "\n");
 }
 
-// Independent test model of shadow 4.17 useradd's documented GROUPS path:
-// each later GROUPS= assignment replaces the saved text and get_groups("")
-// clears the resulting list. This deliberately does not call FIC's
-// effectiveValue() implementation.
+// Independent test model of the observed shadow 4.17 useradd GROUPS path.
+// Non-empty later assignments replace the list, while GROUPS= is ignored.
+// This deliberately does not call FIC's effectiveValue() implementation.
 std::vector<std::string> shadow417Groups(const std::string& content) {
     std::string value;
     std::istringstream lines(content);
     for (std::string line; std::getline(lines, line);) {
-        if (line.rfind("GROUPS=", 0) == 0) value = line.substr(7);
+        if (line.rfind("GROUPS=", 0) == 0 && line.size() > 7)
+            value = line.substr(7);
     }
     std::vector<std::string> groups;
     std::size_t start = 0;
@@ -354,14 +354,27 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
 
     writeSupplementaryConfig(root, "[]");
     UserDefaultSupplementaryGroupsPolicy clear(platform);
-    require(clear.apply() &&
-                readFile(platform.useraddDefaultsPath).find("GROUPS=\n") !=
-                    std::string::npos &&
-                shadow417Groups(readFile(platform.useraddDefaultsPath)).empty(),
-            "empty shadow list did not install the neutralizing GROUPS=");
-    const std::string cleared = readFile(platform.useraddDefaultsPath);
-    require(clear.apply() && readFile(platform.useraddDefaultsPath) == cleared,
-            "empty shadow list is not idempotent");
+    const std::string nonEmptyForeign = readFile(platform.useraddDefaultsPath);
+    require(!clear.apply() &&
+                readFile(platform.useraddDefaultsPath) == nonEmptyForeign &&
+                !shadow417Groups(nonEmptyForeign).empty(),
+            "unsafe GROUPS= empty neutralizer was installed over foreign state");
+
+    writeFile(platform.useraddDefaultsPath, "HOME=/home\n");
+    useJournal(root, "shadow-empty-fresh");
+    UserDefaultSupplementaryGroupsPolicy freshEmpty(platform);
+    require(freshEmpty.apply() &&
+                readFile(platform.useraddDefaultsPath) == "HOME=/home\n",
+            "already-empty shadow state was not a foreign no-op");
+
+    writeSupplementaryConfig(root, "[\"audio\"]");
+    UserDefaultSupplementaryGroupsPolicy ownedNonEmpty(platform);
+    require(ownedNonEmpty.apply(), "managed non-empty GROUPS apply failed");
+    writeSupplementaryConfig(root, "[]");
+    UserDefaultSupplementaryGroupsPolicy releaseToEmpty(platform);
+    require(releaseToEmpty.apply() &&
+                readFile(platform.useraddDefaultsPath) == "HOME=/home\n",
+            "managed GROUPS was not atomically released to empty foreign state");
 
     writeFile(platform.useraddDefaultsPath,
               "GROUPS=audio\nGROUPS=video\nHOME=/home\n");
@@ -771,16 +784,16 @@ void testManagedOwnershipLifecycle(const fs::path& root) {
             "HOME release restored history or damaged peer ownership");
 
     std::optional<std::string> effective;
-    require(effectiveValue("GROUP=users\nGROUPS=audio,video\nGROUP=staff\n",
+    require(effectiveValue("GROUP=root\nGROUPS=audio,video\n",
                 ConfigKind::UseraddDefaults,
-                fic::platform::UseraddDefaultsLookupSemantics::LegacyPrefixMatch,
-                "GROUP", effective, error) && effective == "staff",
-            "legacy GROUP/GROUPS prefix collision semantics are wrong");
-    require(effectiveValue("HOME=/home\nHOME_FOO=/bad\nHOME=/srv/home\n",
+                fic::platform::UseraddDefaultsLookupSemantics::ExactKey,
+                "GROUP", effective, error) && effective == "root",
+            "GROUPS was incorrectly treated as a GROUP assignment");
+    require(effectiveValue("HOME=/home\nHOME_FOO=/bad\n",
                 ConfigKind::UseraddDefaults,
-                fic::platform::UseraddDefaultsLookupSemantics::LegacyPrefixMatch,
-                "HOME", effective, error) && effective == "/srv/home",
-            "legacy HOME prefix collision was not neutralized by EOF value");
+                fic::platform::UseraddDefaultsLookupSemantics::ExactKey,
+                "HOME", effective, error) && effective == "/home",
+            "HOME_FOO was incorrectly treated as a HOME assignment");
 }
 
 void testManagedDriftAndCas(const fs::path& root) {
@@ -820,6 +833,57 @@ void testManagedDriftAndCas(const fs::path& root) {
     setBeforeUserCreationWriteHookForTests({});
     require(readFile(path) == "HOME=/admin-race\n",
             "CAS failure overwrote the external writer");
+}
+
+void testNativeConsumerSemantics() {
+    using namespace fic::identity::user_creation;
+    using Semantics = fic::platform::UseraddDefaultsLookupSemantics;
+    std::string error;
+    std::optional<std::string> value;
+    require(effectiveValue(
+                "CREATE_HOME yes\n    CREATE_HOME no\n",
+                ConfigKind::LoginDefs, Semantics::ExactKey,
+                "CREATE_HOME", value, error) && value == "no",
+            "login.defs leading-space assignment was not authoritative");
+    require(effectiveValue(
+                "USERGROUPS_ENAB no\n\tUSERGROUPS_ENAB yes\n",
+                ConfigKind::LoginDefs, Semantics::ExactKey,
+                "USERGROUPS_ENAB", value, error) && value == "yes",
+            "login.defs leading-tab assignment was not authoritative");
+
+    const std::string adduser =
+        "ADD_EXTRA_GROUPS=0\n"
+        "    add_extra_groups = 1\n"
+        "EXTRA_GROUPS = \"audio video\"\n";
+    require(effectiveAssignmentsMatch(adduser, ConfigKind::Adduser,
+                Semantics::ExactKey,
+                {{"ADD_EXTRA_GROUPS", "ADD_EXTRA_GROUPS=1"},
+                 {"EXTRA_GROUPS", "EXTRA_GROUPS=\"audio video\""}}, error),
+            error);
+    error.clear();
+    require(!effectiveAssignmentsMatch(
+                "ADD_EXTRA_GROUPS=1\nEXTRA_GROUPS='audio'\n",
+                ConfigKind::Adduser, Semantics::ExactKey,
+                {{"ADD_EXTRA_GROUPS", "ADD_EXTRA_GROUPS=1"},
+                 {"EXTRA_GROUPS", "EXTRA_GROUPS=\"audio\""}}, error),
+            "cross-version ambiguous single-quoted adduser value was adopted");
+    error.clear();
+    require(!effectiveAssignmentsMatch(
+                "ADD_EXTRA_GROUPS=1\nEXTRA_GROUPS=\"audio\"   \n",
+                ConfigKind::Adduser, Semantics::ExactKey,
+                {{"ADD_EXTRA_GROUPS", "ADD_EXTRA_GROUPS=1"},
+                 {"EXTRA_GROUPS", "EXTRA_GROUPS=\"audio\""}}, error),
+            "adduser value with significant trailing spaces was adopted");
+
+    require(effectiveValue("CREATE_HOME no\nCREATE_HOME   \n",
+                ConfigKind::LoginDefs, Semantics::ExactKey,
+                "CREATE_HOME", value, error) && value == "no",
+            "empty login.defs assignment was not ignored like native shadow");
+
+    require(effectiveValue("GROUPS=audio,video\nGROUPS=\n",
+                ConfigKind::UseraddDefaults, Semantics::ExactKey,
+                "GROUPS", value, error) && value == "audio,video",
+            "shadow GROUPS= was incorrectly modeled as clearing the list");
 }
 
 void testManagedPreparedRecovery(const fs::path& root) {
@@ -1057,6 +1121,7 @@ int main() {
         testGeneratedConfig();
         testManagedOwnershipLifecycle(root);
         testManagedDriftAndCas(root);
+        testNativeConsumerSemantics();
         testManagedPreparedRecovery(root);
         testManagedReleaseCrashRecovery(root);
         testManagedDurabilityAndCompensation(root);

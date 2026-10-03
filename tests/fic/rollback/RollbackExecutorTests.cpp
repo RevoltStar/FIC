@@ -7,6 +7,7 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/identity_access/pam/PamProviderManagedBlock.h"
 #include "modules/identity_access/user_creation/UserCreationManagedConfig.h"
+#include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include "modules/net/ssh/SshConfigFile.h"
@@ -1841,6 +1842,216 @@ MutationId recordPrepared(const PolicyRef& policy, const std::string& resource,
     return id;
 }
 
+UndoRemoveUserCreationManagedPolicy userCreationUndo(
+    const std::string& policy, const std::string& path,
+    const std::string& target, const std::string& previous = {}) {
+    UndoRemoveUserCreationManagedPolicy undo;
+    undo.policyName = policy;
+    undo.configKind = UserCreationConfigKind::UseraddDefaults;
+    undo.configPath = path;
+    undo.appliedAssignments = {{policy == "user_default_shell" ? "SHELL" :
+                                    "HOME", target}};
+    if (!previous.empty()) {
+        undo.previousAppliedAssignments = {{"HOME", previous}};
+    }
+    return undo;
+}
+
+struct UserCreationRollbackTree {
+    UserCreationRollbackTree()
+        : tree("/tmp/fic-rollback-user-creation-refresh-XXXXXX"),
+          journal(), guard(journal.tree.root / "journal.json") {
+        platform.useraddDefaultsPath = tree.root / "etc/default/useradd";
+        platform.loginDefsPath = tree.root / "etc/login.defs";
+        platform.adduserConfigPath = tree.root / "etc/adduser.conf";
+        writeFile(platform.useraddDefaultsPath, "HOME=/home\n");
+    }
+
+    void writeBlocks(const std::string& homeLine, bool peer) {
+        using namespace fic::identity::user_creation;
+        std::string content = "HOME=/home\n";
+        std::string transformed;
+        std::string error;
+        bool changed = false;
+        require(upsertPolicyBlock(content, ConfigKind::UseraddDefaults,
+                    "user_home_base_directory", {{"HOME", homeLine}},
+                    transformed, changed, error), error);
+        content = transformed;
+        if (peer) {
+            require(upsertPolicyBlock(content, ConfigKind::UseraddDefaults,
+                        "user_default_shell", {{"SHELL", "SHELL=/bin/zsh"}},
+                        transformed, changed, error), error);
+            content = transformed;
+        }
+        writeFile(platform.useraddDefaultsPath, content);
+    }
+
+    RollbackExecutorDeps deps() const {
+        RollbackExecutorDeps result;
+        result.userCreationPlatform = platform;
+        return result;
+    }
+
+    TempTree tree;
+    TempJournal journal;
+    JournalOverride guard;
+    fic::platform::UserCreationPlatformConfig platform;
+};
+
+void testUserCreationPreparedPreviousRollbackRetry() {
+    using namespace fic::identity::user_creation;
+    UserCreationRollbackTree fixture;
+    fixture.writeBlocks("HOME=/a", true);
+    const PolicyRef home{"IDENTITY_ACCESS", "USER_CREATION",
+                         "user_home_base_directory"};
+    const PolicyRef shell{"IDENTITY_ACCESS", "USER_CREATION",
+                          "user_default_shell"};
+    recordApplied(home, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(home.policyName,
+             fixture.platform.useraddDefaultsPath.string(), "HOME=/a")});
+    recordPrepared(home, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(home.policyName,
+             fixture.platform.useraddDefaultsPath.string(),
+             "HOME=/b", "HOME=/a")});
+    recordApplied(shell, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(shell.policyName,
+             fixture.platform.useraddDefaultsPath.string(),
+             "SHELL=/bin/zsh")});
+
+    int targetFsyncs = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) {
+            if (path != fixture.platform.useraddDefaultsPath.string())
+                return true;
+            return ++targetFsyncs > 1;
+        });
+    const RollbackReport failed = rollbackPolicyBeforeDisable(
+        home, fixture.platform.useraddDefaultsPath.string(), fixture.deps());
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(failed.status == RollbackStatus::Failed,
+            "Prepared previous-side transient failure was not reported");
+
+    std::string error;
+    MutationJournal* journal =
+        DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    const auto active = journal->activeRecords(home);
+    const auto* normalized = active.empty() ? nullptr : std::get_if<
+        UndoRemoveUserCreationManagedPolicy>(&active.front().undo.payload);
+    require(active.size() == 1 &&
+                active.front().status == MutationStatus::RollbackFailed &&
+                normalized != nullptr &&
+                normalized->previousAppliedAssignments.empty() &&
+                normalized->appliedAssignments.front().appliedLine ==
+                    "HOME=/a",
+            "failed rollback lost unambiguous previous-side authority");
+
+    const RollbackReport retried = rollbackPolicyBeforeDisable(
+        home, fixture.platform.useraddDefaultsPath.string(), fixture.deps());
+    require(retried.status == RollbackStatus::Success, retried.message);
+    const std::string released = readFile(fixture.platform.useraddDefaultsPath);
+    require(released.find("HOME=/a") == std::string::npos &&
+                released.find("SHELL=/bin/zsh") != std::string::npos,
+            "retry failed to release HOME or damaged peer block");
+}
+
+void testUserCreationPreparedTargetRollbackRetry() {
+    using namespace fic::identity::user_creation;
+    UserCreationRollbackTree fixture;
+    fixture.writeBlocks("HOME=/b", false);
+    const PolicyRef home{"IDENTITY_ACCESS", "USER_CREATION",
+                         "user_home_base_directory"};
+    recordApplied(home, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(home.policyName,
+             fixture.platform.useraddDefaultsPath.string(), "HOME=/a")});
+    recordPrepared(home, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(home.policyName,
+             fixture.platform.useraddDefaultsPath.string(),
+             "HOME=/b", "HOME=/a")});
+    int targetFsyncs = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) {
+            if (path != fixture.platform.useraddDefaultsPath.string())
+                return true;
+            return ++targetFsyncs > 1;
+        });
+    const RollbackReport failed = rollbackPolicyBeforeDisable(
+        home, fixture.platform.useraddDefaultsPath.string(), fixture.deps());
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(failed.status == RollbackStatus::Failed,
+            "Prepared target-side transient failure was not reported");
+    const RollbackReport retried = rollbackPolicyBeforeDisable(
+        home, fixture.platform.useraddDefaultsPath.string(), fixture.deps());
+    require(retried.status == RollbackStatus::Success &&
+                readFile(fixture.platform.useraddDefaultsPath) ==
+                    "HOME=/home\n",
+            "Prepared target-side retry did not release B");
+}
+
+void testUserCreationPreparedThirdStateConflict() {
+    using namespace fic::identity::user_creation;
+    UserCreationRollbackTree fixture;
+    fixture.writeBlocks("HOME=/c", false);
+    const PolicyRef home{"IDENTITY_ACCESS", "USER_CREATION",
+                         "user_home_base_directory"};
+    recordApplied(home, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(home.policyName,
+             fixture.platform.useraddDefaultsPath.string(), "HOME=/a")});
+    recordPrepared(home, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(home.policyName,
+             fixture.platform.useraddDefaultsPath.string(),
+             "HOME=/b", "HOME=/a")});
+    const std::string before = readFile(fixture.platform.useraddDefaultsPath);
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        home, fixture.platform.useraddDefaultsPath.string(), fixture.deps());
+    require(report.status == RollbackStatus::Conflict &&
+                readFile(fixture.platform.useraddDefaultsPath) == before,
+            "Prepared third state was normalized or overwritten");
+}
+
+void testUserCreationCrashAfterRollbackNormalization() {
+    using namespace fic::identity::user_creation;
+    UserCreationRollbackTree fixture;
+    fixture.writeBlocks("HOME=/a", false);
+    const PolicyRef home{"IDENTITY_ACCESS", "USER_CREATION",
+                         "user_home_base_directory"};
+    recordApplied(home, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(home.policyName,
+             fixture.platform.useraddDefaultsPath.string(), "HOME=/a")});
+    recordPrepared(home, fixture.platform.useraddDefaultsPath.string(),
+        {MutationBackend::UserCreation,
+         userCreationUndo(home.policyName,
+             fixture.platform.useraddDefaultsPath.string(),
+             "HOME=/b", "HOME=/a")});
+    setBeforeUserCreationWriteHookForTests(
+        []() { throw std::runtime_error("simulated crash after normalization"); });
+    bool crashed = false;
+    try {
+        (void)rollbackPolicyBeforeDisable(
+            home, fixture.platform.useraddDefaultsPath.string(), fixture.deps());
+    } catch (const std::runtime_error&) {
+        crashed = true;
+    }
+    setBeforeUserCreationWriteHookForTests({});
+    require(crashed, "normalization crash seam did not fire");
+    DaemonMutationJournal::instance().setOverridePath(
+        fixture.journal.tree.root / "journal.json");
+    const RollbackReport retried = rollbackPolicyBeforeDisable(
+        home, fixture.platform.useraddDefaultsPath.string(), fixture.deps());
+    require(retried.status == RollbackStatus::Success &&
+                readFile(fixture.platform.useraddDefaultsPath) ==
+                    "HOME=/home\n",
+            "normalized Prepared state was not recoverable after reopen");
+}
+
 std::string markerLine(const std::string& directive, const std::string& value) {
     return sshManagedDirectiveLine(directive, value);
 }
@@ -2638,6 +2849,14 @@ int main() {
         {"enrollment matrix", testEnrollmentMatrix},
         {"USER_CREATION executor ownership release",
          testUserCreationExecutorOwnershipRelease},
+        {"USER_CREATION Prepared previous-side rollback retry",
+         testUserCreationPreparedPreviousRollbackRetry},
+        {"USER_CREATION Prepared target-side rollback retry",
+         testUserCreationPreparedTargetRollbackRetry},
+        {"USER_CREATION Prepared third-state conflict",
+         testUserCreationPreparedThirdStateConflict},
+        {"USER_CREATION crash after rollback normalization",
+         testUserCreationCrashAfterRollbackNormalization},
         {"contextual managed provider enrollment",
          testContextualManagedProviderEnrollment},
         {"PAM ownership release", testPamOwnershipRelease},

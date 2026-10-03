@@ -181,6 +181,14 @@ bool applyManagedPolicy(
     MutationJournal& journal, std::string& error) {
     PolicyRoute route;
     if (!policyRoute(platform, policyName, route, error)) return false;
+    const bool releaseToEmptyShadowGroups = desired.empty() &&
+        policyName == "user_default_supplementary_groups" &&
+        route.kind == ConfigKind::UseraddDefaults;
+    if (desired.empty() && !releaseToEmptyShadowGroups) {
+        error = "empty USER_CREATION managed body is only valid as the "
+                "shadow supplementary-groups release operation";
+        return false;
+    }
     AtomicTargetState before;
     if (!capture(route.path, before, error)) return false;
     ManagedConfigModel model;
@@ -212,7 +220,13 @@ bool applyManagedPolicy(
             } else if (!old.empty() && same(block, old)) {
                 previous = old;
             } else if (block == nullptr) {
-                if (!journal.discard(active->id, error)) return false;
+                if (releaseToEmptyShadowGroups) {
+                    if (!journal.setStatus(active->id,
+                                           MutationStatus::RolledBack,
+                                           error)) return false;
+                } else if (!journal.discard(active->id, error)) {
+                    return false;
+                }
                 active.reset();
             } else {
                 error = "unresolved USER_CREATION Prepared state conflicts";
@@ -245,6 +259,41 @@ bool applyManagedPolicy(
         error = "unrecorded USER_CREATION ownership (fail closed)";
         return false;
     }
+    if (releaseToEmptyShadowGroups) {
+        if (!active.has_value()) {
+            std::optional<std::string> actual;
+            if (!effectiveValue(before.content, route.kind,
+                    platform.useraddDefaultsLookup, "GROUPS", actual,
+                    error)) return false;
+            if (!actual.has_value()) return true;
+            error = "native shadow GROUPS cannot be cleared by an empty EOF "
+                    "assignment while a non-empty foreign value is active";
+            return false;
+        }
+        const PolicyBlock* current = findPolicyBlock(model, policyName);
+        if (current == nullptr) {
+            error = "USER_CREATION empty release lost its owned block";
+            return false;
+        }
+        std::string candidate;
+        bool removed = false;
+        if (!removePolicyBlock(before.content, route.kind, policyName,
+                current->assignments, candidate, removed, error)) return false;
+        std::optional<std::string> afterRelease;
+        if (!effectiveValue(candidate, route.kind,
+                platform.useraddDefaultsLookup, "GROUPS", afterRelease,
+                error)) return false;
+        if (afterRelease.has_value()) {
+            error = "releasing FIC GROUPS would expose non-empty foreign "
+                    "supplementary groups (fail closed)";
+            return false;
+        }
+        const ReleaseStatus released = releaseManagedPolicy(
+            platform, *active, journal, error);
+        if (released != ReleaseStatus::Success &&
+            released != ReleaseStatus::NothingToDo) return false;
+        return journal.setStatus(active->id, MutationStatus::RolledBack, error);
+    }
     if (!active.has_value()) {
         std::string semanticError;
         if (effectiveAssignmentsMatch(before.content, route.kind,
@@ -274,10 +323,11 @@ bool applyManagedPolicy(
         if (restored) {
             if (previous.empty()) journal.discard(id, recoveryError);
             else {
-                MutationId ignored = 0;
-                journal.prepareMutation(makeRecord(route, policyName, previous, {}),
-                                        ignored, recoveryError);
-                journal.setStatus(id, MutationStatus::Applied, recoveryError);
+                if (journal.normalizeUserCreationPreparedToProvenState(
+                        id, journalAssignments(previous), recoveryError)) {
+                    journal.setStatus(id, MutationStatus::Applied,
+                                      recoveryError);
+                }
             }
         }
         return false;
@@ -290,10 +340,11 @@ bool applyManagedPolicy(
         if (compensate(route.path, write, before, compensationError)) {
             if (previous.empty()) journal.discard(id, compensationError);
             else {
-                MutationId ignored = 0;
-                journal.prepareMutation(makeRecord(route, policyName, previous, {}),
-                                        ignored, compensationError);
-                journal.setStatus(id, MutationStatus::Applied, compensationError);
+                if (journal.normalizeUserCreationPreparedToProvenState(
+                        id, journalAssignments(previous), compensationError)) {
+                    journal.setStatus(id, MutationStatus::Applied,
+                                      compensationError);
+                }
             }
         }
         return false;
@@ -323,12 +374,19 @@ ReleaseStatus releaseManagedPolicy(
     if (block == nullptr) return ReleaseStatus::NothingToDo;
     const auto target = assignments(undo->appliedAssignments);
     const auto previous = assignments(undo->previousAppliedAssignments);
-    const std::vector<Assignment>* owned = same(block, target) ? &target :
-        (!previous.empty() && record.status == MutationStatus::Prepared &&
-         same(block, previous) ? &previous : nullptr);
+    const bool ownsTarget = same(block, target);
+    const bool ownsPrevious = !previous.empty() &&
+        record.status == MutationStatus::Prepared && same(block, previous);
+    const std::vector<Assignment>* owned = ownsTarget ? &target :
+        (ownsPrevious ? &previous : nullptr);
     if (owned == nullptr) {
         error = "USER_CREATION managed body differs from journal ownership";
         return ReleaseStatus::Conflict;
+    }
+    if (ownsPrevious &&
+        !journal.normalizeUserCreationPreparedToProvenState(
+            record.id, journalAssignments(previous), error)) {
+        return ReleaseStatus::Failed;
     }
     std::string candidate;
     bool removed = false;
