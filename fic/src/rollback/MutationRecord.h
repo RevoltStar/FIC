@@ -34,7 +34,8 @@ enum class MutationBackend {
     Grub,
     Sssd,
     Kerberos,
-    Pam
+    Pam,
+    UserCreation
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -72,6 +73,24 @@ struct UndoRemoveSshManagedPolicy {
     // externally are treated as already released and are never
     // reconstructed.
     std::vector<std::string> disabledMutationIds;
+};
+
+enum class UserCreationConfigKind { UseraddDefaults, LoginDefs, Adduser };
+
+struct UserCreationManagedAssignment {
+    std::string key;
+    std::string appliedLine;
+};
+
+// Ownership-release provenance for one USER_CREATION policy sub-block. It
+// intentionally contains no foreign line/value and no file snapshot.
+struct UndoRemoveUserCreationManagedPolicy {
+    std::string policyName;
+    UserCreationConfigKind configKind = UserCreationConfigKind::UseraddDefaults;
+    std::string configPath;
+    std::vector<UserCreationManagedAssignment> appliedAssignments;
+    // Non-empty only while a Prepared in-place refresh A -> B is unresolved.
+    std::vector<UserCreationManagedAssignment> previousAppliedAssignments;
 };
 
 struct UndoRemoveFirewallPolicy {
@@ -220,6 +239,7 @@ struct UndoRemovePamProviderManagedFlag {
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoRemoveSshManagedPolicy,
+    UndoRemoveUserCreationManagedPolicy,
     UndoRemoveFirewallPolicy,
     UndoDisableDeviceFeature,
     UndoRemoveGrubManagedSetting,

@@ -22,6 +22,11 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.hostCompatibility.altBranchIds = {"p11"};
     profile.userCreation.supplementaryGroupsProvider =
         UserSupplementaryGroupsProviderKind::Unsupported;
+    // Conservative verified contract for ALT p11: keep the legacy prefix
+    // parser model. Exact-key behavior must not be assumed without distro
+    // source evidence; EOF overrides are safe under this stricter model.
+    profile.userCreation.useraddDefaultsLookup =
+        UseraddDefaultsLookupSemantics::LegacyPrefixMatch;
     profile.userCreation.adduserConfigPath.clear();
     profile.executables.entries = {
         {

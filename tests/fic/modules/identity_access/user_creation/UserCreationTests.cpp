@@ -1,9 +1,12 @@
 #include "modules/identity_access/user_creation/configuration/AdduserConfigFileHandler.h"
 #include "modules/identity_access/user_creation/configuration/UseraddDefaultsFileHandler.h"
 #include "modules/identity_access/user_creation/UserCreationPolicies.h"
+#include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include "policy/registry/PolicyRegistryMutation.h"
+#include "rollback/DaemonMutationJournal.h"
 
+#include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 
 #include <nlohmann/json.hpp>
@@ -11,6 +14,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -61,6 +65,13 @@ void initializePaths(const fs::path& root) {
               "log_level.value=DEBUG\n");
     std::string error;
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+        root / "data/user-creation-mutations.json");
+}
+
+void useJournal(const fs::path& root, const std::string& name) {
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+        root / ("data/" + name + ".json"));
 }
 
 void writePolicyConfig(
@@ -98,6 +109,40 @@ fic::platform::UserCreationPlatformConfig platformFor(const fs::path& root) {
     platform.groupPath = root / "etc/group";
     platform.shellsPath = root / "etc/shells";
     return platform;
+}
+
+fic::rollback::MutationRecord userCreationRecord(
+    const fic::platform::UserCreationPlatformConfig& platform,
+    const std::vector<fic::identity::user_creation::Assignment>& applied,
+    const std::vector<fic::identity::user_creation::Assignment>& previous = {}) {
+    using namespace fic::rollback;
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "USER_CREATION",
+                     "user_home_base_directory"};
+    record.resource = platform.useraddDefaultsPath.string();
+    UndoRemoveUserCreationManagedPolicy undo;
+    undo.policyName = record.policy.policyName;
+    undo.configKind = UserCreationConfigKind::UseraddDefaults;
+    undo.configPath = record.resource;
+    for (const auto& value : applied)
+        undo.appliedAssignments.push_back({value.key, value.line});
+    for (const auto& value : previous)
+        undo.previousAppliedAssignments.push_back({value.key, value.line});
+    record.undo = {MutationBackend::UserCreation, std::move(undo)};
+    return record;
+}
+
+fic::rollback::MutationId prepareUserCreationRecord(
+    fic::rollback::MutationJournal& journal,
+    const fic::platform::UserCreationPlatformConfig& platform,
+    const std::vector<fic::identity::user_creation::Assignment>& applied,
+    const std::vector<fic::identity::user_creation::Assignment>& previous = {}) {
+    fic::rollback::MutationId id = 0;
+    std::string error;
+    require(journal.prepareMutation(
+                userCreationRecord(platform, applied, previous), id, error),
+            error);
+    return id;
 }
 
 void testHandler(const fs::path& root) {
@@ -249,7 +294,30 @@ void writeSupplementaryConfig(
               "user_default_supplementary_groups.value=" + serialized + "\n");
 }
 
+// Independent test model of shadow 4.17 useradd's documented GROUPS path:
+// each later GROUPS= assignment replaces the saved text and get_groups("")
+// clears the resulting list. This deliberately does not call FIC's
+// effectiveValue() implementation.
+std::vector<std::string> shadow417Groups(const std::string& content) {
+    std::string value;
+    std::istringstream lines(content);
+    for (std::string line; std::getline(lines, line);) {
+        if (line.rfind("GROUPS=", 0) == 0) value = line.substr(7);
+    }
+    std::vector<std::string> groups;
+    std::size_t start = 0;
+    while (start < value.size()) {
+        const std::size_t comma = value.find(',', start);
+        groups.push_back(value.substr(start, comma == std::string::npos
+            ? std::string::npos : comma - start));
+        if (comma == std::string::npos) break;
+        start = comma + 1;
+    }
+    return groups;
+}
+
 void testShadowSupplementaryPolicy(const fs::path& root) {
+    useJournal(root, "shadow-supplementary");
     auto platform = platformFor(root);
     platform.supplementaryGroupsProvider =
         fic::platform::UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
@@ -287,9 +355,10 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
     writeSupplementaryConfig(root, "[]");
     UserDefaultSupplementaryGroupsPolicy clear(platform);
     require(clear.apply() &&
-                readFile(platform.useraddDefaultsPath).find("GROUPS=") ==
-                    std::string::npos,
-            "empty shadow list did not remove GROUPS");
+                readFile(platform.useraddDefaultsPath).find("GROUPS=\n") !=
+                    std::string::npos &&
+                shadow417Groups(readFile(platform.useraddDefaultsPath)).empty(),
+            "empty shadow list did not install the neutralizing GROUPS=");
     const std::string cleared = readFile(platform.useraddDefaultsPath);
     require(clear.apply() && readFile(platform.useraddDefaultsPath) == cleared,
             "empty shadow list is not idempotent");
@@ -299,12 +368,14 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
     writeSupplementaryConfig(root, "[\"audio\"]");
     UserDefaultSupplementaryGroupsPolicy duplicate(platform);
     const std::string before = readFile(platform.useraddDefaultsPath);
-    require(!duplicate.apply() && readFile(platform.useraddDefaultsPath) == before,
-            "duplicate native GROUPS was not fail-closed");
+    require(duplicate.apply() && readFile(platform.useraddDefaultsPath).find(
+                "#@FIC_POLICY_BEGIN name=user_default_supplementary_groups@") !=
+                std::string::npos,
+            "last-wins duplicate native GROUPS was not safely overridden");
 
     writeFile(platform.useraddDefaultsPath, "GROUPS=\nHOME=/home\n");
     UserDefaultSupplementaryGroupsPolicy malformed(platform);
-    require(!malformed.apply(), "malformed native GROUPS was accepted");
+    require(malformed.apply(), "valid empty native GROUPS was rejected");
 
     writeFile(platform.useraddDefaultsPath, "HOME=/home\n");
     writeSupplementaryConfig(root, "[\"missing\"]");
@@ -331,6 +402,7 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
 }
 
 void testAdduserSupplementaryPolicy(const fs::path& root) {
+    useJournal(root, "adduser-supplementary");
     auto platform = platformFor(root);
     platform.supplementaryGroupsProvider =
         fic::platform::UserSupplementaryGroupsProviderKind::DebianAdduser;
@@ -357,9 +429,11 @@ void testAdduserSupplementaryPolicy(const fs::path& root) {
     require(clear.apply(), "empty adduser list failed");
     const std::string cleared = readFile(platform.adduserConfigPath);
     require(cleared.find("ADD_EXTRA_GROUPS=0\n") != std::string::npos &&
-                cleared.find("EXTRA_GROUPS=\"audio video\"\n") !=
+                cleared.find("EXTRA_GROUPS='users audio'\n") !=
+                    std::string::npos &&
+                cleared.find("EXTRA_GROUPS=\"audio video\"\n") ==
                     std::string::npos,
-            "empty adduser list did not disable while preserving EXTRA_GROUPS");
+            "empty adduser list did not release managed EXTRA_GROUPS while preserving foreign state");
 
     writeFile(platform.adduserConfigPath, "EXTRA_GROUPS=users audio\n");
     UserDefaultSupplementaryGroupsPolicy explicitEmpty(platform);
@@ -373,8 +447,8 @@ void testAdduserSupplementaryPolicy(const fs::path& root) {
     writeSupplementaryConfig(root, "[\"audio\"]");
     UserDefaultSupplementaryGroupsPolicy duplicate(platform);
     const std::string before = readFile(platform.adduserConfigPath);
-    require(!duplicate.apply() && readFile(platform.adduserConfigPath) == before,
-            "duplicate adduser config was not fail-closed");
+    require(duplicate.apply() && readFile(platform.adduserConfigPath) == before,
+            "last-wins compliant adduser config was adopted or mutated");
 
     const fs::path real = root / "etc/adduser.real";
     writeFile(real, "ADD_EXTRA_GROUPS=0\nEXTRA_GROUPS=audio\n");
@@ -398,6 +472,7 @@ void testUnsupportedSupplementaryProvider(const fs::path& root) {
 }
 
 void testPolicies(const fs::path& root) {
+    useJournal(root, "scalar-policies");
     auto platform = platformFor(root);
     const fs::path home = root / "srv/home";
     const fs::path skel = root / "etc/skel";
@@ -510,8 +585,10 @@ void testFailClosedValidation(const fs::path& root) {
     writePolicyConfig(root, home.string(), skel.string(), shell.string(), "users");
     UserHomeBaseDirectoryPolicy duplicate(platform);
     const std::string before = readFile(platform.useraddDefaultsPath);
-    require(!duplicate.apply() && readFile(platform.useraddDefaultsPath) == before,
-            "duplicate native key was not fail-closed");
+    require(duplicate.apply() && readFile(platform.useraddDefaultsPath) != before &&
+                readFile(platform.useraddDefaultsPath).find(
+                    "HOME=" + home.string() + "\n") != std::string::npos,
+            "last-wins duplicate native key was not overridden at EOF");
 
     const fs::path realDefaults = root / "etc/default/useradd.real";
     writeFile(realDefaults, "HOME=/home\n");
@@ -636,6 +713,327 @@ void testGeneratedConfig() {
             "generated supplementary policy default is unsafe");
 }
 
+void testManagedOwnershipLifecycle(const fs::path& root) {
+    using namespace fic::identity::user_creation;
+    useJournal(root, "managed-lifecycle");
+    auto platform = platformFor(root);
+    const fs::path path = platform.useraddDefaultsPath;
+    const std::string foreign =
+        "# foreign\nHOME=/home\nHOME_FOO=/collision\nSHELL=/bin/sh\n";
+    writeFile(path, foreign, 0600);
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+
+    require(applyManagedPolicy(platform, "user_home_base_directory",
+                {{"HOME", "HOME=/srv/home"}}, *journal, error), error);
+    require(applyManagedPolicy(platform, "user_default_shell",
+                {{"SHELL", "SHELL=/bin/zsh"}}, *journal, error), error);
+    std::string applied = readFile(path);
+    require(applied.rfind(kBlockEnd) == applied.size() -
+                std::string(kBlockEnd).size() - 1,
+            "managed block is not at logical EOF");
+    require(applied.substr(0, foreign.size()) == foreign,
+            "foreign bytes changed during apply");
+
+    int refreshWrites = 0;
+    setBeforeUserCreationWriteHookForTests([&]() { ++refreshWrites; });
+    require(applyManagedPolicy(platform, "user_home_base_directory",
+                {{"HOME", "HOME=/data/home"}}, *journal, error), error);
+    setBeforeUserCreationWriteHookForTests({});
+    require(refreshWrites == 1 &&
+                readFile(path).find("HOME=/data/home\n") != std::string::npos &&
+                readFile(path).find("HOME=/srv/home\n") == std::string::npos,
+            "value refresh was not one in-place atomic A-to-B replacement");
+    applied = readFile(path);
+
+    const std::string shellBlock = canonicalPolicyBlock(
+        "user_default_shell", {{"SHELL", "SHELL=/bin/zsh"}});
+    const std::string edited = applied + "# edited foreign\nHOME=/actual\n";
+    writeFile(path, edited, 0600);
+    require(applyManagedPolicy(platform, "user_home_base_directory",
+                {{"HOME", "HOME=/data/home"}}, *journal, error), error);
+    applied = readFile(path);
+    require(applied.find("# edited foreign\nHOME=/actual\n") != std::string::npos &&
+                applied.find(shellBlock) != std::string::npos,
+            "foreign append canonicalization lost foreign/peer bytes");
+
+    const auto homeRecords = journal->activeRecords(
+        {"IDENTITY_ACCESS", "USER_CREATION", "user_home_base_directory"});
+    require(homeRecords.size() == 1, "HOME provenance missing");
+    require(releaseManagedPolicy(platform, homeRecords.front(), *journal, error) ==
+                ReleaseStatus::Success,
+            error);
+    const std::string released = readFile(path);
+    require(released.find("HOME=/actual\n") != std::string::npos &&
+                released.find("HOME=/data/home\n") == std::string::npos &&
+                released.find(shellBlock) != std::string::npos,
+            "HOME release restored history or damaged peer ownership");
+
+    std::optional<std::string> effective;
+    require(effectiveValue("GROUP=users\nGROUPS=audio,video\nGROUP=staff\n",
+                ConfigKind::UseraddDefaults,
+                fic::platform::UseraddDefaultsLookupSemantics::LegacyPrefixMatch,
+                "GROUP", effective, error) && effective == "staff",
+            "legacy GROUP/GROUPS prefix collision semantics are wrong");
+    require(effectiveValue("HOME=/home\nHOME_FOO=/bad\nHOME=/srv/home\n",
+                ConfigKind::UseraddDefaults,
+                fic::platform::UseraddDefaultsLookupSemantics::LegacyPrefixMatch,
+                "HOME", effective, error) && effective == "/srv/home",
+            "legacy HOME prefix collision was not neutralized by EOF value");
+}
+
+void testManagedDriftAndCas(const fs::path& root) {
+    using namespace fic::identity::user_creation;
+    useJournal(root, "managed-drift-cas");
+    auto platform = platformFor(root);
+    const fs::path path = platform.useraddDefaultsPath;
+    writeFile(path, "HOME=/home\n", 0600);
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    require(applyManagedPolicy(platform, "user_home_base_directory",
+                {{"HOME", "HOME=/srv/home"}}, *journal, error), error);
+
+    std::string drifted = readFile(path);
+    const std::size_t value = drifted.find("HOME=/srv/home");
+    require(value != std::string::npos, "managed HOME missing");
+    drifted.replace(value, std::string("HOME=/srv/home").size(),
+                    "HOME=/manual");
+    writeFile(path, drifted, 0600);
+    const std::string beforeDriftApply = readFile(path);
+    require(!applyManagedPolicy(platform, "user_home_base_directory",
+                {{"HOME", "HOME=/srv/home"}}, *journal, error) &&
+                readFile(path) == beforeDriftApply,
+            "manual FIC body edit was overwritten");
+
+    useJournal(root, "managed-cas-race");
+    writeFile(path, "HOME=/home\n", 0600);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    setBeforeUserCreationWriteHookForTests([&]() {
+        writeFile(path, "HOME=/admin-race\n", 0600);
+    });
+    require(!applyManagedPolicy(platform, "user_home_base_directory",
+                {{"HOME", "HOME=/srv/home"}}, *journal, error),
+            "concurrent replacement bypassed CAS");
+    setBeforeUserCreationWriteHookForTests({});
+    require(readFile(path) == "HOME=/admin-race\n",
+            "CAS failure overwrote the external writer");
+}
+
+void testManagedPreparedRecovery(const fs::path& root) {
+    using namespace fic::identity::user_creation;
+    using fic::rollback::MutationStatus;
+    const std::vector<Assignment> oldValue{{"HOME", "HOME=/srv/home"}};
+    const std::vector<Assignment> newValue{{"HOME", "HOME=/data/home"}};
+    const std::vector<Assignment> thirdValue{{"HOME", "HOME=/manual"}};
+    auto platform = platformFor(root);
+    const fs::path path = platform.useraddDefaultsPath;
+    std::string error;
+
+    // Crash after Prepared and before the physical write: absent ownership is
+    // released, so retry creates a fresh mutation from current foreign state.
+    useJournal(root, "prepared-before-write");
+    writeFile(path, "HOME=/home\n", 0600);
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    prepareUserCreationRecord(*journal, platform, oldValue);
+    useJournal(root, "prepared-before-write"); // reopen persisted crash state
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr &&
+                applyManagedPolicy(platform, "user_home_base_directory",
+                                   oldValue, *journal, error),
+            error);
+    auto active = journal->activeRecords(
+        {"IDENTITY_ACCESS", "USER_CREATION", "user_home_base_directory"});
+    require(active.size() == 1 && active.front().status == MutationStatus::Applied,
+            "Prepared-before-write recovery did not finish Applied");
+
+    // Crash after physical install and before Prepared -> Applied.
+    useJournal(root, "prepared-after-write");
+    writeFile(path, "HOME=/home\n", 0600);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    prepareUserCreationRecord(*journal, platform, oldValue);
+    std::string installed;
+    bool changed = false;
+    require(upsertPolicyBlock(readFile(path), ConfigKind::UseraddDefaults,
+                "user_home_base_directory", oldValue, installed, changed, error),
+            error);
+    writeFile(path, installed, 0600);
+    useJournal(root, "prepared-after-write");
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr &&
+                applyManagedPolicy(platform, "user_home_base_directory",
+                                   oldValue, *journal, error),
+            error);
+    active = journal->activeRecords(
+        {"IDENTITY_ACCESS", "USER_CREATION", "user_home_base_directory"});
+    require(active.size() == 1 && active.front().status == MutationStatus::Applied,
+            "physical target was not adopted as Applied after restart");
+
+    // Prepared refresh with the previous side present continues A -> B.
+    useJournal(root, "prepared-refresh-previous");
+    writeFile(path, "HOME=/home\n", 0600);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr &&
+                applyManagedPolicy(platform, "user_home_base_directory",
+                                   oldValue, *journal, error),
+            error);
+    prepareUserCreationRecord(*journal, platform, newValue, oldValue);
+    useJournal(root, "prepared-refresh-previous");
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr &&
+                applyManagedPolicy(platform, "user_home_base_directory",
+                                   newValue, *journal, error),
+            error);
+    require(readFile(path).find("HOME=/data/home\n") != std::string::npos,
+            "Prepared refresh did not advance the previous side");
+
+    // Prepared refresh with the target side present commits that same record.
+    useJournal(root, "prepared-refresh-target");
+    writeFile(path, "HOME=/home\n", 0600);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr &&
+                applyManagedPolicy(platform, "user_home_base_directory",
+                                   oldValue, *journal, error),
+            error);
+    prepareUserCreationRecord(*journal, platform, newValue, oldValue);
+    require(upsertPolicyBlock(readFile(path), ConfigKind::UseraddDefaults,
+                "user_home_base_directory", newValue, installed, changed, error),
+            error);
+    writeFile(path, installed, 0600);
+    useJournal(root, "prepared-refresh-target");
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr &&
+                applyManagedPolicy(platform, "user_home_base_directory",
+                                   newValue, *journal, error),
+            error);
+    active = journal->activeRecords(
+        {"IDENTITY_ACCESS", "USER_CREATION", "user_home_base_directory"});
+    require(active.size() == 1 && active.front().status == MutationStatus::Applied,
+            "Prepared target side was not committed Applied");
+
+    // A third same-policy body is neither side of the durable transition.
+    useJournal(root, "prepared-refresh-conflict");
+    writeFile(path, "HOME=/home\n", 0600);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr &&
+                applyManagedPolicy(platform, "user_home_base_directory",
+                                   oldValue, *journal, error),
+            error);
+    prepareUserCreationRecord(*journal, platform, newValue, oldValue);
+    require(upsertPolicyBlock(readFile(path), ConfigKind::UseraddDefaults,
+                "user_home_base_directory", thirdValue, installed, changed, error),
+            error);
+    writeFile(path, installed, 0600);
+    const std::string conflict = readFile(path);
+    require(!applyManagedPolicy(platform, "user_home_base_directory",
+                               newValue, *journal, error) &&
+                readFile(path) == conflict,
+            "third Prepared refresh state was overwritten");
+}
+
+void testManagedReleaseCrashRecovery(const fs::path& root) {
+    using namespace fic::identity::user_creation;
+    useJournal(root, "release-before-journal-commit");
+    auto platform = platformFor(root);
+    const fs::path path = platform.useraddDefaultsPath;
+    writeFile(path, "HOME=/home\n", 0600);
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    const std::vector<Assignment> desired{{"HOME", "HOME=/srv/home"}};
+    require(journal != nullptr &&
+                applyManagedPolicy(platform, "user_home_base_directory",
+                                   desired, *journal, error),
+            error);
+    const auto active = journal->activeRecords(
+        {"IDENTITY_ACCESS", "USER_CREATION", "user_home_base_directory"});
+    require(active.size() == 1, "release recovery provenance missing");
+    require(releaseManagedPolicy(platform, active.front(), *journal, error) ==
+                ReleaseStatus::Success,
+            error);
+    useJournal(root, "release-before-journal-commit"); // physical release won
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr &&
+                releaseManagedPolicy(platform, active.front(), *journal, error) ==
+                    ReleaseStatus::NothingToDo,
+            "released ownership was reconstructed after restart");
+    require(readFile(path) == "HOME=/home\n",
+            "release recovery changed current foreign state");
+}
+
+void testManagedDurabilityAndCompensation(const fs::path& root) {
+    using namespace fic::identity::user_creation;
+    const std::vector<Assignment> desired{{"HOME", "HOME=/srv/home"}};
+    auto platform = platformFor(root);
+    const fs::path path = platform.useraddDefaultsPath;
+    std::string error;
+
+    // The replacement was installed but its first directory fsync failed.
+    // A durable exact compensation proves that no mutation remains, so fresh
+    // Prepared provenance must be discarded.
+    useJournal(root, "durability-compensated");
+    writeFile(path, "HOME=/home\n", 0600);
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    int configFsyncs = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& fsyncPath) {
+            if (fsyncPath != path.string()) return true;
+            return ++configFsyncs > 1;
+        });
+    require(!applyManagedPolicy(platform, "user_home_base_directory",
+                                desired, *journal, error),
+            "post-rename durability failure was reported as success");
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(readFile(path) == "HOME=/home\n" &&
+                journal->activeRecords({"IDENTITY_ACCESS", "USER_CREATION",
+                    "user_home_base_directory"}).empty(),
+            "durable compensation left fresh provenance or changed bytes");
+
+    // If neither install nor compensation durability can be proven, keep the
+    // Prepared record recoverable instead of claiming a clean rollback.
+    useJournal(root, "durability-indeterminate");
+    writeFile(path, "HOME=/home\n", 0600);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& fsyncPath) {
+            return fsyncPath != path.string();
+        });
+    require(!applyManagedPolicy(platform, "user_home_base_directory",
+                                desired, *journal, error),
+            "indeterminate directory state was reported as success");
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    const auto active = journal->activeRecords(
+        {"IDENTITY_ACCESS", "USER_CREATION", "user_home_base_directory"});
+    require(active.size() == 1 &&
+                active.front().status == fic::rollback::MutationStatus::Prepared,
+            "unproven compensation discarded recoverable Prepared provenance");
+
+    // An external replacement after FIC's install invalidates compensation's
+    // CAS proof. It must survive byte-exact, with Prepared retained.
+    useJournal(root, "compensation-race");
+    writeFile(path, "HOME=/home\n", 0600);
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    setAfterUserCreationWriteHookForTests(
+        [&]() { writeFile(path, "HOME=/external\n", 0600); });
+    require(!applyManagedPolicy(platform, "user_home_base_directory",
+                                desired, *journal, error),
+            "external post-install replacement was reported as success");
+    setAfterUserCreationWriteHookForTests({});
+    require(readFile(path) == "HOME=/external\n",
+            "compensation overwrote an external replacement");
+    const auto raced = journal->activeRecords(
+        {"IDENTITY_ACCESS", "USER_CREATION", "user_home_base_directory"});
+    require(raced.size() == 1 &&
+                raced.front().status == fic::rollback::MutationStatus::Prepared,
+            "compensation race lost recoverable Prepared provenance");
+}
+
 } // namespace
 
 int main() {
@@ -657,6 +1055,11 @@ int main() {
         testFailClosedValidation(root);
         testDefaultsAndMetadata();
         testGeneratedConfig();
+        testManagedOwnershipLifecycle(root);
+        testManagedDriftAndCas(root);
+        testManagedPreparedRecovery(root);
+        testManagedReleaseCrashRecovery(root);
+        testManagedDurabilityAndCompensation(root);
         testSupplementaryGroupsDaemonContract(root);
         fs::remove_all(root);
         std::cout << "UserCreationTests passed\n";

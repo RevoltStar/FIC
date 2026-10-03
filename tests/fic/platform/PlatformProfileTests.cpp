@@ -256,16 +256,25 @@ void testSelectedProfile() {
         require(supplementaryProvider ==
                     fic::platform::UserSupplementaryGroupsProviderKind::DebianAdduser,
                 "legacy Debian-family profile must use adduser extra groups");
+        require(profile.userCreation.useraddDefaultsLookup ==
+                    fic::platform::UseraddDefaultsLookupSemantics::LegacyPrefixMatch,
+                "shadow 4.13 profile must use legacy useradd prefix lookup");
     } else if (profile.id == "debian-13" || profile.id == "ubuntu-26.04") {
         require(supplementaryProvider ==
                     fic::platform::UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults,
                 "shadow 4.17 profile must use useradd GROUPS");
+        require(profile.userCreation.useraddDefaultsLookup ==
+                    fic::platform::UseraddDefaultsLookupSemantics::ExactKey,
+                "shadow 4.17 profile must use exact useradd key lookup");
     } else if (profile.id == "alt-p11") {
         require(supplementaryProvider ==
                     fic::platform::UserSupplementaryGroupsProviderKind::Unsupported,
                 "ALT p11 cannot express replacement or empty group-list semantics");
         require(profile.userCreation.adduserConfigPath.empty(),
                 "ALT p11 must not claim a Debian adduser native path");
+        require(profile.userCreation.useraddDefaultsLookup ==
+                    fic::platform::UseraddDefaultsLookupSemantics::LegacyPrefixMatch,
+                "ALT p11 must retain conservative legacy-prefix semantics");
     }
     require(executableSpec(
                 profile,

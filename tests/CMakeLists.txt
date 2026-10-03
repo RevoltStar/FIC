@@ -790,6 +790,8 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     # Step 7F: managed provider rollback backend + its physical layer.
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
@@ -1239,6 +1241,8 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/platform/PamProviderMetadata.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/platform/PamFaillockStrategy.cpp
@@ -1743,6 +1747,10 @@ add_executable(user_creation_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/configuration/AdduserConfigFileHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/configuration/UseraddDefaultsFileHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryMutation.cpp
 )
@@ -1779,6 +1787,8 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/platform/PamProviderMetadata.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/platform/PamFaillockStrategy.cpp
@@ -1890,6 +1900,8 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp

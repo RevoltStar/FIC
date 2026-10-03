@@ -1,6 +1,7 @@
 #include "rollback/RollbackExecutor.h"
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/firewall/FirewallPolicies.h"
@@ -14,6 +15,8 @@
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "rollback/PamRollback.h"
 #include "modules/identity_access/pam/PamProviderRollback.h"
+#include "modules/identity_access/IdentityAccessPolicy.h"
+#include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
 
 #include <algorithm>
 #include <map>
@@ -94,6 +97,16 @@ bool isSupportedPamPolicy(const std::string& policyName) {
     return policyName == "enable_authentication_lockout" ||
            policyName == "enable_password_history" ||
            policyName == "enable_password_quality";
+}
+
+bool isSupportedUserCreationPolicy(const std::string& policyName) {
+    return policyName == "user_home_base_directory" ||
+           policyName == "user_create_home" ||
+           policyName == "user_skeleton_directory" ||
+           policyName == "user_default_shell" ||
+           policyName == "user_create_private_group" ||
+           policyName == "user_default_primary_group" ||
+           policyName == "user_default_supplementary_groups";
 }
 
 PamRollbackOptions pamOptions(const RollbackExecutorDeps& deps) {
@@ -510,6 +523,38 @@ MutationRollbackOutcome undoMutation(
             return undoSshManagedPolicy(deps, record, *sshPolicy);
         }
     }
+    if (const auto* userCreation = std::get_if<
+            UndoRemoveUserCreationManagedPolicy>(&record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::UserCreation) {
+            MutationRollbackOutcome outcome;
+            outcome.id = record.id;
+            outcome.resource = record.resource;
+            std::string journalError;
+            MutationJournal* journal =
+                DaemonMutationJournal::instance().tryGet(journalError);
+            if (journal == nullptr) {
+                outcome.status = RollbackStatus::Failed;
+                outcome.message = journalError;
+                return outcome;
+            }
+            const std::lock_guard<std::mutex> lock(
+                IdentityAccessPolicy::configurationMutex());
+            std::string error;
+            const auto result =
+                fic::identity::user_creation::releaseManagedPolicy(
+                    deps.userCreationPlatform, record, *journal, error);
+            outcome.status = result ==
+                    fic::identity::user_creation::ReleaseStatus::Success
+                ? RollbackStatus::Success
+                : result == fic::identity::user_creation::ReleaseStatus::NothingToDo
+                    ? RollbackStatus::NothingToDo
+                    : result == fic::identity::user_creation::ReleaseStatus::Conflict
+                        ? RollbackStatus::Conflict : RollbackStatus::Failed;
+            outcome.message = error.empty() ? "USER_CREATION ownership released"
+                                            : error;
+            return outcome;
+        }
+    }
     if (const auto* grubSetting =
             std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload)) {
         if (record.undo.backend == MutationBackend::Grub) {
@@ -676,6 +721,12 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
     }
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "USER_CREATION") {
+        return isSupportedUserCreationPolicy(policy.policyName)
+            ? RollbackEnrollment::Supported
+            : RollbackEnrollment::Unsupported;
+    }
     if (policy.moduleName == "DC" && policy.submoduleName == "DeviceControl") {
         return isDcCategoryFeature(policy.policyName)
             ? RollbackEnrollment::Supported
@@ -686,6 +737,13 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
 
 RollbackEnrollment effectiveRollbackEnrollment(const PolicyRef& policy,
                                                const RollbackExecutorDeps& deps) {
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "USER_CREATION" &&
+        policy.policyName == "user_default_supplementary_groups" &&
+        deps.userCreationPlatform.supplementaryGroupsProvider ==
+            fic::platform::UserSupplementaryGroupsProviderKind::Unsupported) {
+        return RollbackEnrollment::NotEnrolled;
+    }
     if (policy.moduleName == "IDENTITY_ACCESS" &&
         policy.submoduleName == "PAM") {
         // PAM submodule: evaluate the Step 7F contextual managed-provider
@@ -733,6 +791,37 @@ RollbackReport checkUnrecordedOwnership(
     report.status = RollbackStatus::NothingToDo;
     report.message = "Active mutation records отсутствуют; FIC не владеет "
                      "изменениями этой политики";
+
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "USER_CREATION") {
+        fic::identity::user_creation::PolicyRoute route;
+        std::string error;
+        if (!fic::identity::user_creation::policyRoute(
+                deps.userCreationPlatform, policy.policyName, route, error)) {
+            report.status = RollbackStatus::Failed;
+            report.message = error;
+            return report;
+        }
+        AtomicTargetState snapshot;
+        if (!AtomicFileWriter::captureTargetState(route.path, snapshot, &error)) {
+            report.status = RollbackStatus::Failed;
+            report.message = error;
+            return report;
+        }
+        fic::identity::user_creation::ManagedConfigModel model;
+        if (!fic::identity::user_creation::parseManagedConfig(
+                snapshot.content, route.kind, model, error)) {
+            report.status = RollbackStatus::Conflict;
+            report.message = error;
+            return report;
+        }
+        if (fic::identity::user_creation::findPolicyBlock(
+                model, policy.policyName) != nullptr) {
+            report.status = RollbackStatus::Conflict;
+            report.message = "USER_CREATION FIC block exists without journal provenance";
+        }
+        return report;
+    }
 
     if (policy.moduleName == "IDENTITY_ACCESS" &&
         policy.submoduleName == "PAM" &&
@@ -1076,6 +1165,7 @@ RollbackExecutorDeps productionRollbackDeps(
     std::function<bool(const std::string& feature, std::string& error)>
         disableDeviceFeature) {
     RollbackExecutorDeps deps;
+    deps.userCreationPlatform = platform.userCreation;
     deps.pamPlatform = platform.pam;
     const fic::platform::SysctlPlatformConfig sysctlConfig = platform.sysctl;
     deps.sysctlOptions = [sysctlConfig]() {

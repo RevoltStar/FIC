@@ -6,6 +6,7 @@
 #include "modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/identity_access/pam/PamProviderManagedBlock.h"
+#include "modules/identity_access/user_creation/UserCreationManagedConfig.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include "modules/net/ssh/SshConfigFile.h"
@@ -262,6 +263,28 @@ const PolicyRef kSudoPolicy{"DAC", "SudoEdit", "sudo_passwd_tries"};
 // ---------------------------------------------------------------- tests -----
 
 void testEnrollmentMatrix() {
+    for (const std::string& name : {
+             "user_home_base_directory", "user_create_home",
+             "user_skeleton_directory", "user_default_shell",
+             "user_create_private_group", "user_default_primary_group",
+             "user_default_supplementary_groups"}) {
+        require(rollbackEnrollment(
+                    {"IDENTITY_ACCESS", "USER_CREATION", name}) ==
+                    RollbackEnrollment::Supported,
+                "known USER_CREATION policy must be explicitly enrolled");
+    }
+    require(rollbackEnrollment(
+                {"IDENTITY_ACCESS", "USER_CREATION", "future_policy"}) ==
+                RollbackEnrollment::Unsupported,
+            "future USER_CREATION policy must not be auto-enrolled");
+    RollbackExecutorDeps unsupportedGroups;
+    unsupportedGroups.userCreationPlatform.supplementaryGroupsProvider =
+        fic::platform::UserSupplementaryGroupsProviderKind::Unsupported;
+    require(effectiveRollbackEnrollment(
+                {"IDENTITY_ACCESS", "USER_CREATION",
+                 "user_default_supplementary_groups"}, unsupportedGroups) ==
+                RollbackEnrollment::NotEnrolled,
+            "unsupported supplementary route must be contextually not enrolled");
     for (const std::string& name : {"enable_authentication_lockout",
                                     "enable_password_history",
                                     "enable_password_quality"}) {
@@ -356,6 +379,55 @@ void testEnrollmentMatrix() {
                 RollbackEnrollment::NotEnrolled,
             "other IDENTITY_ACCESS submodules stay outside the rollback "
             "system");
+}
+
+void testUserCreationExecutorOwnershipRelease() {
+    using namespace fic::identity::user_creation;
+    TempTree tree("/tmp/fic-rollback-user-creation-XXXXXX");
+    TempJournal journalTree;
+    JournalOverride overrideGuard(journalTree.tree.root / "journal.json");
+    fic::platform::UserCreationPlatformConfig platform;
+    platform.useraddDefaultsPath = tree.root / "etc/default/useradd";
+    platform.loginDefsPath = tree.root / "etc/login.defs";
+    platform.adduserConfigPath = tree.root / "etc/adduser.conf";
+    writeFile(platform.useraddDefaultsPath, "HOME=/home\n");
+
+    const std::vector<Assignment> applied{{"HOME", "HOME=/srv/home"}};
+    std::string content;
+    std::string error;
+    bool changed = false;
+    require(upsertPolicyBlock(readFile(platform.useraddDefaultsPath),
+                ConfigKind::UseraddDefaults, "user_home_base_directory",
+                applied, content, changed, error),
+            error);
+    writeFile(platform.useraddDefaultsPath, content);
+
+    const PolicyRef policy{"IDENTITY_ACCESS", "USER_CREATION",
+                           "user_home_base_directory"};
+    UndoRemoveUserCreationManagedPolicy undo;
+    undo.policyName = policy.policyName;
+    undo.configKind = UserCreationConfigKind::UseraddDefaults;
+    undo.configPath = platform.useraddDefaultsPath.string();
+    undo.appliedAssignments = {{"HOME", "HOME=/srv/home"}};
+    recordApplied(policy, undo.configPath,
+                  {MutationBackend::UserCreation, undo});
+
+    RollbackExecutorDeps deps;
+    deps.userCreationPlatform = platform;
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        policy, undo.configPath, deps);
+    require(report.status == RollbackStatus::Success, report.message);
+    require(readFile(platform.useraddDefaultsPath) == "HOME=/home\n",
+            "executor restored history instead of releasing owned sub-block");
+
+    std::string journalError;
+    MutationJournal* journal =
+        DaemonMutationJournal::instance().tryGet(journalError);
+    require(journal != nullptr, journalError);
+    const auto records = journal->records();
+    require(records.size() == 1 &&
+                records.front().status == MutationStatus::RolledBack,
+            "executor did not commit physical ownership release to journal");
 }
 
 struct FakePamState {
@@ -2564,6 +2636,8 @@ int main() {
         void (*test)();
     } tests[] = {
         {"enrollment matrix", testEnrollmentMatrix},
+        {"USER_CREATION executor ownership release",
+         testUserCreationExecutorOwnershipRelease},
         {"contextual managed provider enrollment",
          testContextualManagedProviderEnrollment},
         {"PAM ownership release", testPamOwnershipRelease},

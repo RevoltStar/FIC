@@ -586,12 +586,41 @@ void testStatusAndBackendStringRoundTrip() {
     for (const MutationBackend backend : {MutationBackend::Sysctl,
                                           MutationBackend::Sudo,
                                           MutationBackend::Firewall,
-                                          MutationBackend::DeviceControl}) {
+                                          MutationBackend::DeviceControl,
+                                          MutationBackend::UserCreation}) {
         MutationBackend parsed = MutationBackend::Sysctl;
         require(mutationBackendFromString(mutationBackendToString(backend), parsed),
                 "backend must round trip");
         require(parsed == backend, "backend round trip must preserve value");
     }
+}
+
+void testUserCreationUndoRoundTrip() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "USER_CREATION",
+                     "user_default_supplementary_groups"};
+    record.resource = "/etc/default/useradd";
+    record.undo = {MutationBackend::UserCreation,
+        UndoRemoveUserCreationManagedPolicy{
+            "user_default_supplementary_groups",
+            UserCreationConfigKind::UseraddDefaults,
+            "/etc/default/useradd", {{"GROUPS", "GROUPS="}},
+            {{"GROUPS", "GROUPS=audio,video"}}}};
+    MutationId id = 0;
+    require(journal.prepareMutation(record, id, error), error);
+    MutationJournal reloaded(file.path);
+    require(reloaded.load(error), error);
+    const auto* payload = std::get_if<UndoRemoveUserCreationManagedPolicy>(
+        &reloaded.records().front().undo.payload);
+    require(payload != nullptr && payload->appliedAssignments.size() == 1 &&
+                payload->appliedAssignments.front().appliedLine == "GROUPS=" &&
+                payload->previousAppliedAssignments.front().appliedLine ==
+                    "GROUPS=audio,video",
+            "USER_CREATION ownership payload did not round-trip");
 }
 
 void testDaemonJournalOverrideAndHelpers() {
@@ -2698,6 +2727,7 @@ int main() {
         {"unknown enum value fails closed", testUnknownEnumValueFailsClosed},
         {"duplicate id fails closed", testDuplicateIdFailsClosed},
         {"status and backend string round trip", testStatusAndBackendStringRoundTrip},
+        {"user creation undo round trip", testUserCreationUndoRoundTrip},
         {"ssh undo payload round trip", testSshUndoPayloadRoundTrip},
         {"ssh undo malformed payloads fail closed", testSshUndoMalformedPayloadsFailClosed},
         {"grub undo payload round trip", testGrubUndoPayloadRoundTrip},

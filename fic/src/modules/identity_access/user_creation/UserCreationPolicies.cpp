@@ -4,6 +4,8 @@
 #include "modules/identity_access/shared/configuration/LoginDefsFileHandler.h"
 #include "modules/identity_access/shared/configuration/LocalGroupDatabase.h"
 #include "modules/identity_access/user_creation/configuration/UseraddDefaultsFileHandler.h"
+#include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
+#include "rollback/DaemonMutationJournal.h"
 
 #include <cerrno>
 #include <set>
@@ -235,43 +237,21 @@ bool UserCreationOptionPolicy::validateNativeValue(
 }
 
 bool UserCreationOptionPolicy::applyUseraddDefault(const std::string& value) {
-    FileHandlerOptions options;
-    options.writeOptions = writeOptions_;
-    fic::identity::UseraddDefaultsFileHandler file(
-        platform_.useraddDefaultsPath.string(), options);
-    if (!file.loadConfig()) return false;
-    const auto current = file.lookup(key_);
-    if (current.state == fic::identity::UseraddDefaultsValueState::Duplicate ||
-        current.state == fic::identity::UseraddDefaultsValueState::Malformed) {
-        log("Ambiguous useradd defaults parameter: " + key_, logLevel::ERROR);
-        return false;
-    }
-    if (current.state == fic::identity::UseraddDefaultsValueState::Unique &&
-        current.value == value) return true;
-    if (!file.setValue(key_, value) || !file.saveAndReload()) return false;
-    const auto after = file.lookup(key_);
-    return after.state == fic::identity::UseraddDefaultsValueState::Unique &&
-        after.value == value;
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (journal == nullptr) { log(error, logLevel::ERROR); return false; }
+    return fic::identity::user_creation::applyManagedPolicy(
+        platform_, policyName, {{key_, key_ + "=" + value}}, *journal, error) ||
+        (log(error, logLevel::ERROR), false);
 }
 
 bool UserCreationOptionPolicy::applyLoginDefsDefault(const std::string& value) {
-    FileHandlerOptions options;
-    options.writeOptions = writeOptions_;
-    fic::identity::LoginDefsFileHandler file(
-        platform_.loginDefsPath.string(), options);
-    if (!file.loadConfig()) return false;
-    const auto current = file.lookup(key_);
-    if (current.state == fic::identity::LoginDefsValueState::Duplicate ||
-        current.state == fic::identity::LoginDefsValueState::Malformed) {
-        log("Ambiguous login.defs parameter: " + key_, logLevel::ERROR);
-        return false;
-    }
-    if (current.state == fic::identity::LoginDefsValueState::Unique &&
-        current.value == value) return true;
-    if (!file.setValue(key_, value) || !file.saveAndReload()) return false;
-    const auto after = file.lookup(key_);
-    return after.state == fic::identity::LoginDefsValueState::Unique &&
-        after.value == value;
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (journal == nullptr) { log(error, logLevel::ERROR); return false; }
+    return fic::identity::user_creation::applyManagedPolicy(
+        platform_, policyName, {{key_, key_ + " " + value}}, *journal, error) ||
+        (log(error, logLevel::ERROR), false);
 }
 
 bool UserCreationOptionPolicy::apply() {
@@ -369,96 +349,28 @@ UserDefaultSupplementaryGroupsPolicy::UserDefaultSupplementaryGroupsPolicy(
 
 bool UserDefaultSupplementaryGroupsPolicy::applyShadowUseraddDefaults(
     const std::vector<std::string>& groups) {
-    FileHandlerOptions options;
-    options.writeOptions = writeOptions_;
-    fic::identity::UseraddDefaultsFileHandler file(
-        platform_.useraddDefaultsPath.string(), options);
-    if (!file.loadConfig()) return false;
-    const auto current = file.lookup("GROUPS");
-    if (current.state == fic::identity::UseraddDefaultsValueState::Duplicate ||
-        current.state == fic::identity::UseraddDefaultsValueState::Malformed) {
-        log("Ambiguous useradd defaults parameter: GROUPS", logLevel::ERROR);
-        return false;
-    }
-    if (groups.empty()) {
-        if (current.state == fic::identity::UseraddDefaultsValueState::Missing) {
-            return true;
-        }
-        if (!file.removeValue("GROUPS") || !file.saveAndReload()) return false;
-        return file.lookup("GROUPS").state ==
-            fic::identity::UseraddDefaultsValueState::Missing;
-    }
-
-    if (current.state == fic::identity::UseraddDefaultsValueState::Unique) {
-        std::vector<std::string> actual;
-        if (!parseNativeGroupList(current.value, ',', actual)) {
-            log("Invalid native GROUPS value", logLevel::ERROR);
-            return false;
-        }
-        if (actual == groups) return true;
-    }
-    const std::string expected = joinGroups(groups, ',');
-    if (!file.setValue("GROUPS", expected) || !file.saveAndReload()) return false;
-    const auto after = file.lookup("GROUPS");
-    if (after.state != fic::identity::UseraddDefaultsValueState::Unique) {
-        return false;
-    }
-    std::vector<std::string> actual;
-    return parseNativeGroupList(after.value, ',', actual) && actual == groups;
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (journal == nullptr) { log(error, logLevel::ERROR); return false; }
+    const std::string native = joinGroups(groups, ',');
+    return fic::identity::user_creation::applyManagedPolicy(
+        platform_, policyName, {{"GROUPS", "GROUPS=" + native}},
+        *journal, error) || (log(error, logLevel::ERROR), false);
 }
 
 bool UserDefaultSupplementaryGroupsPolicy::applyDebianAdduser(
     const std::vector<std::string>& groups) {
-    FileHandlerOptions options;
-    options.writeOptions = writeOptions_;
-    fic::identity::AdduserConfigFileHandler file(
-        platform_.adduserConfigPath.string(), options);
-    if (!file.loadConfig()) return false;
-    const auto enabled = file.lookup("ADD_EXTRA_GROUPS");
-    const auto nativeGroups = file.lookup("EXTRA_GROUPS");
-    const auto ambiguous = [](fic::identity::AdduserConfigValueState state) {
-        return state == fic::identity::AdduserConfigValueState::Duplicate ||
-            state == fic::identity::AdduserConfigValueState::Malformed;
-    };
-    if (ambiguous(enabled.state) || ambiguous(nativeGroups.state)) {
-        log("Ambiguous adduser supplementary-groups configuration",
-            logLevel::ERROR);
-        return false;
-    }
-
-    bool currentEnabled = false;
-    if (enabled.state == fic::identity::AdduserConfigValueState::Unique) {
-        if (enabled.value.empty()) return false;
-        currentEnabled = enabled.value != "0";
-    }
-    std::vector<std::string> actual;
-    if (nativeGroups.state == fic::identity::AdduserConfigValueState::Unique &&
-        !nativeGroups.value.empty() &&
-        !parseNativeGroupList(nativeGroups.value, ' ', actual)) {
-        log("Invalid native EXTRA_GROUPS value", logLevel::ERROR);
-        return false;
-    }
-    if (groups.empty() &&
-        enabled.state == fic::identity::AdduserConfigValueState::Unique &&
-        !currentEnabled) {
-        return true;
-    }
-    if (!groups.empty() && currentEnabled && actual == groups) return true;
-
-    if (!file.setSupplementaryGroups(!groups.empty(), groups) ||
-        !file.saveAndReload()) {
-        return false;
-    }
-    const auto afterEnabled = file.lookup("ADD_EXTRA_GROUPS");
-    if (afterEnabled.state != fic::identity::AdduserConfigValueState::Unique ||
-        afterEnabled.value != (groups.empty() ? "0" : "1")) {
-        return false;
-    }
-    if (groups.empty()) return true;
-    const auto afterGroups = file.lookup("EXTRA_GROUPS");
-    actual.clear();
-    return afterGroups.state == fic::identity::AdduserConfigValueState::Unique &&
-        parseNativeGroupList(afterGroups.value, ' ', actual) && actual == groups;
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (journal == nullptr) { log(error, logLevel::ERROR); return false; }
+    std::vector<fic::identity::user_creation::Assignment> desired = {
+        {"ADD_EXTRA_GROUPS", std::string("ADD_EXTRA_GROUPS=") +
+            (groups.empty() ? "0" : "1")}};
+    if (!groups.empty()) desired.push_back(
+        {"EXTRA_GROUPS", "EXTRA_GROUPS=\"" + joinGroups(groups, ' ') + "\""});
+    return fic::identity::user_creation::applyManagedPolicy(
+        platform_, policyName, desired, *journal, error) ||
+        (log(error, logLevel::ERROR), false);
 }
 
 bool UserDefaultSupplementaryGroupsPolicy::apply() {

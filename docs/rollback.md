@@ -467,6 +467,28 @@ I/O), это ошибка загрузки — fail closed. Существующ
   установлено» и «rename уже произошёл» (`installed`, `installedTargetState`
   — точное состояние temp-inode/content/metadata, опубликованное rename; в
   т.ч. при ошибке durability после rename `installed == true`).
+* `UndoRemoveUserCreationManagedPolicy{policyName, configKind, configPath,
+  appliedAssignments, previousAppliedAssignments}` — ownership-release для
+  `IDENTITY_ACCESS/USER_CREATION`. Payload содержит только точные строки
+  FIC policy sub-block; foreign assignments, before-value и snapshot файла в
+  journal не попадают. `configPath` не является authority: apply/rollback
+  сверяют его с CURRENT `PlatformProfile` и ожидаемым route/key set.
+
+  Все FIC sub-blocks одного physical config находятся в одном строгом
+  `FIC_USER_CREATION_BLOCK` в logical EOF, потому что `/etc/login.defs`,
+  `/etc/default/useradd` и `/etc/adduser.conf` используют last-wins semantics.
+  Foreign bytes никогда не переписываются. Fresh compliant foreign state —
+  no-op без journal/adoption. Refresh одного owned sub-block A→B выполняется
+  одной snapshot-bound atomic replacement; `previousAppliedAssignments`
+  существует только для crash recovery этой Prepared-транзакции.
+
+  Rollback удаляет только exact journal-proven sub-block. Исчезновение блока
+  означает external ownership release (`NothingToDo`), manual edit/malformed
+  marker/orphan state — `Conflict`. Peer FIC sub-blocks остаются byte-for-byte,
+  пустой top-level container удаляется. После release становится effective
+  актуальное foreign значение, а не историческое. Supplementary groups — одна
+  relation-level mutation: `GROUPS=` нейтрализует ранний shadow GROUPS;
+  DebianAdduser empty state владеет только `ADD_EXTRA_GROUPS=0`.
 * `UndoDisableDeviceFeature{feature}` — отключение category-level desired
   state DC и пересборка `99-fic-devices.rules` через device daemon;
   per-device пользовательские правила не затрагиваются.

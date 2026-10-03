@@ -10,6 +10,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.hostCompatibility.versionIds = {"26.04"};
     profile.userCreation.supplementaryGroupsProvider =
         UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
+    profile.userCreation.useraddDefaultsLookup =
+        UseraddDefaultsLookupSemantics::ExactKey;
     profile.executables.entries = {
         {
             ExecutableId::Sshd,

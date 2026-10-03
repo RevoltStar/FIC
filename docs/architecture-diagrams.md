@@ -830,8 +830,8 @@ stack, Debian 12 изменяет argv существующего `pam_pwhistory
 Политики `IDENTITY_ACCESS/PASSWORD_AGING` управляют плоским
 `/etc/login.defs` через общий для identity configuration
 `LoginDefsFileHandler`.
-Неизвестные строки, комментарии и пустые строки сохраняются; duplicate или
-malformed occurrence целевого ключа отклоняется до записи. Пять config-policy
+Неизвестные строки, комментарии и пустые строки сохраняются; этот strict API
+не используется USER_CREATION managed-block transaction. Пять config-policy
 задают `PASS_MIN_DAYS`, `PASS_MAX_DAYS`, `PASS_WARN_AGE`, `UID_MIN` и
 `UID_MAX`. Две operational policy объявляют Required dependencies через общий
 policy dependency graph и после их применения повторно читают фактический
@@ -844,9 +844,9 @@ defaults выбранного platform profile, а не из состояния 
 будущих локальных пользователей backend `ShadowUseradd`: `HOME`, `SKEL`,
 `SHELL` и именованным `GROUP` в `/etc/default/useradd`, а также `CREATE_HOME`
 и `USERGROUPS_ENAB` в `/etc/login.defs`. Они не создают пользователей, группы
-или каталоги и не изменяют существующие accounts. `UseraddDefaultsFileHandler`
-сохраняет комментарии и неизвестные параметры; duplicate или malformed
-целевой key отклоняется fail-closed. Каталоги и shell должны существовать,
+или каталоги и не изменяют существующие accounts. USER_CREATION использует
+consumer-aware last-wins parser и собственный FIC managed block в logical EOF;
+foreign assignments, включая duplicates, остаются byte-for-byte. Каталоги и shell должны существовать,
 shell должен разрешаться в обычный executable file и при наличии `/etc/shells`
 входить в него под запрошенным именем, а
 `GROUP` должен однозначно существовать в локальном `/etc/group`. Поддержка
@@ -861,8 +861,20 @@ defaults не получает. На Debian 13 и Ubuntu 26.04 она управ
 платформах вызывает `useradd` без `-G`, но затем может добавить memberships из
 `USERGROUPS`/`USERS_GROUP` и `EXTRA_GROUPS`, поэтому policy не обещает полный
 итоговый exact set для каждого frontend. Логический список хранится как
-canonical JSON array; пустой список удаляет `GROUPS` для shadow provider либо
-устанавливает `ADD_EXTRA_GROUPS=0` для adduser provider.
+canonical JSON array; пустой список задаёт authoritative `GROUPS=` для shadow
+provider либо managed `ADD_EXTRA_GROUPS=0` без managed `EXTRA_GROUPS` для
+adduser provider. Foreign значения при этом не удаляются.
+
+USER_CREATION rollback использует ownership-release: journal хранит только
+точные FIC assignments текущего/предыдущего refresh, но не foreign значения и
+не snapshot файла. Apply добавляет один policy sub-block в общий EOF container;
+refresh A→B выполняется одной conditional atomic replacement без окна release.
+Rollback удаляет только доказанный sub-block, сохраняя peer sub-blocks и foreign
+bytes; после удаления естественно проявляется актуальное последнее foreign
+значение. На Debian 12/Ubuntu 24.04 модель `/etc/default/useradd` учитывает
+legacy prefix matching shadow 4.13; Debian 13/Ubuntu 26.04 используют exact-key
+семантику shadow 4.17. ALT p11 консервативно моделируется legacy-prefix и не
+enroll-ит unsupported supplementary-groups route.
 
 ALT p11 `alterator-users 10.25-alt1` читает непустой
 `/usr/share/install3/default-groups` как замену встроенного списка и объединяет

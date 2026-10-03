@@ -66,6 +66,24 @@ json serializeUndoAction(const UndoAction& action) {
             disabledIds.push_back(id);
         }
         value["disabled_mutation_ids"] = std::move(disabledIds);
+    } else if (const auto* userCreation = std::get_if<
+                   UndoRemoveUserCreationManagedPolicy>(&action.payload)) {
+        value["policy"] = userCreation->policyName;
+        value["config_kind"] = userCreation->configKind ==
+                UserCreationConfigKind::UseraddDefaults ? "useradd_defaults" :
+            userCreation->configKind == UserCreationConfigKind::LoginDefs
+                ? "login_defs" : "adduser";
+        value["config_path"] = userCreation->configPath;
+        const auto assignments = [](const auto& source) {
+            json result = json::array();
+            for (const auto& item : source)
+                result.push_back({{"key", item.key}, {"line", item.appliedLine}});
+            return result;
+        };
+        value["applied_assignments"] = assignments(
+            userCreation->appliedAssignments);
+        value["previous_applied_assignments"] = assignments(
+            userCreation->previousAppliedAssignments);
     } else if (const auto* firewallPolicy =
                    std::get_if<UndoRemoveFirewallPolicy>(&action.payload)) {
         value["policy"] = firewallPolicy->policyName;
@@ -540,6 +558,69 @@ bool lineFreeOfControlCharacters(const std::string& line) {
         line.find('\0') == std::string::npos;
 }
 
+bool validateUserCreationUndoPayload(
+    const UndoRemoveUserCreationManagedPolicy& payload, std::string& error) {
+    const std::map<std::string,
+        std::pair<UserCreationConfigKind, std::vector<std::string>>> known = {
+        {"user_home_base_directory", {UserCreationConfigKind::UseraddDefaults, {"HOME"}}},
+        {"user_skeleton_directory", {UserCreationConfigKind::UseraddDefaults, {"SKEL"}}},
+        {"user_default_shell", {UserCreationConfigKind::UseraddDefaults, {"SHELL"}}},
+        {"user_default_primary_group", {UserCreationConfigKind::UseraddDefaults, {"GROUP"}}},
+        {"user_create_home", {UserCreationConfigKind::LoginDefs, {"CREATE_HOME"}}},
+        {"user_create_private_group", {UserCreationConfigKind::LoginDefs, {"USERGROUPS_ENAB"}}}
+    };
+    if (payload.policyName.empty() || payload.configPath.empty() ||
+        !std::filesystem::path(payload.configPath).is_absolute()) {
+        error = "USER_CREATION undo requires known policy and absolute path";
+        return false;
+    }
+    std::vector<std::string> allowed;
+    const auto found = known.find(payload.policyName);
+    if (found != known.end()) {
+        if (found->second.first != payload.configKind) {
+            error = "USER_CREATION policy/config kind mismatch";
+            return false;
+        }
+        allowed = found->second.second;
+    } else if (payload.policyName == "user_default_supplementary_groups") {
+        allowed = payload.configKind == UserCreationConfigKind::Adduser
+            ? std::vector<std::string>{"ADD_EXTRA_GROUPS", "EXTRA_GROUPS"}
+            : payload.configKind == UserCreationConfigKind::UseraddDefaults
+                ? std::vector<std::string>{"GROUPS"} : std::vector<std::string>{};
+    } else {
+        error = "unknown USER_CREATION policy in undo";
+        return false;
+    }
+    const auto validate = [&](const auto& assignments, bool allowEmpty) {
+        if (!allowEmpty && assignments.empty()) return false;
+        if (assignments.empty()) return allowEmpty;
+        std::set<std::string> keys;
+        for (const auto& assignment : assignments) {
+            if (std::find(allowed.begin(), allowed.end(), assignment.key) ==
+                    allowed.end() ||
+                !keys.insert(assignment.key).second ||
+                assignment.appliedLine.empty() ||
+                !lineFreeOfControlCharacters(assignment.appliedLine)) return false;
+            const std::string prefix = payload.configKind ==
+                    UserCreationConfigKind::LoginDefs
+                ? assignment.key + " " : assignment.key + "=";
+            if (assignment.appliedLine.rfind(prefix, 0) != 0) return false;
+        }
+        if (payload.policyName != "user_default_supplementary_groups")
+            return keys == std::set<std::string>(allowed.begin(), allowed.end());
+        if (payload.configKind == UserCreationConfigKind::UseraddDefaults)
+            return keys == std::set<std::string>{"GROUPS"};
+        return keys == std::set<std::string>{"ADD_EXTRA_GROUPS"} ||
+            keys == std::set<std::string>{"ADD_EXTRA_GROUPS", "EXTRA_GROUPS"};
+    };
+    if (!validate(payload.appliedAssignments, false) ||
+        !validate(payload.previousAppliedAssignments, true)) {
+        error = "invalid USER_CREATION assignment/key/body payload";
+        return false;
+    }
+    return true;
+}
+
 // Shared Kerberos undo-payload validation (write + read parity). The exact
 // raw before line is required for Present and forbidden for Missing; the
 // sectionExistedBefore flag must agree with the before kind.
@@ -682,6 +763,58 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
                 payload.disabledMutationIds.push_back(item.get<std::string>());
             }
         }
+        action.payload = std::move(payload);
+        return true;
+    }
+    if (actionName == "remove_user_creation_managed_policy" &&
+        backend == MutationBackend::UserCreation) {
+        UndoRemoveUserCreationManagedPolicy payload;
+        payload.policyName = value.value("policy", "");
+        payload.configPath = value.value("config_path", "");
+        const std::string kind = value.value("config_kind", "");
+        if (kind == "useradd_defaults")
+            payload.configKind = UserCreationConfigKind::UseraddDefaults;
+        else if (kind == "login_defs")
+            payload.configKind = UserCreationConfigKind::LoginDefs;
+        else if (kind == "adduser")
+            payload.configKind = UserCreationConfigKind::Adduser;
+        else {
+            error = "unknown USER_CREATION config kind";
+            return false;
+        }
+        const auto readAssignments = [&](const char* field, auto& target) {
+            const auto found = value.find(field);
+            if (found == value.end() || !found->is_array()) return false;
+            std::set<std::string> keys;
+            for (const auto& item : *found) {
+                if (!item.is_object()) return false;
+                UserCreationManagedAssignment assignment{
+                    item.value("key", ""), item.value("line", "")};
+                if (assignment.key.empty() || assignment.appliedLine.empty() ||
+                    assignment.key.find_first_of("\r\n\0") != std::string::npos ||
+                    assignment.appliedLine.find_first_of("\r\n\0") != std::string::npos ||
+                    !keys.insert(assignment.key).second) return false;
+                target.push_back(std::move(assignment));
+            }
+            return !target.empty();
+        };
+        if (payload.policyName.empty() || payload.configPath.empty() ||
+            !readAssignments("applied_assignments", payload.appliedAssignments)) {
+            error = "malformed USER_CREATION ownership payload";
+            return false;
+        }
+        const auto previous = value.find("previous_applied_assignments");
+        if (previous == value.end() || !previous->is_array()) {
+            error = "missing USER_CREATION previous assignments";
+            return false;
+        }
+        if (!previous->empty() &&
+            !readAssignments("previous_applied_assignments",
+                             payload.previousAppliedAssignments)) {
+            error = "malformed USER_CREATION previous assignments";
+            return false;
+        }
+        if (!validateUserCreationUndoPayload(payload, error)) return false;
         action.payload = std::move(payload);
         return true;
     }
@@ -1157,6 +1290,17 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
             }
         }
     }
+    if (record.undo.backend == MutationBackend::UserCreation) {
+        const auto* payload = std::get_if<UndoRemoveUserCreationManagedPolicy>(
+            &record.undo.payload);
+        if (payload == nullptr || record.policy.moduleName != "IDENTITY_ACCESS" ||
+            record.policy.submoduleName != "USER_CREATION" ||
+            record.policy.policyName != payload->policyName ||
+            record.resource != payload->configPath) {
+            error = "USER_CREATION journal identity does not match payload";
+            return false;
+        }
+    }
 
     MutationStatus status;
     if (!mutationStatusFromString(value.value("status", ""), status)) {
@@ -1221,6 +1365,7 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::Sssd: return "sssd";
     case MutationBackend::Kerberos: return "kerberos";
     case MutationBackend::Pam: return "pam";
+    case MutationBackend::UserCreation: return "user_creation";
     }
     return "unknown";
 }
@@ -1235,6 +1380,7 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "sssd") { backend = MutationBackend::Sssd; return true; }
     if (value == "kerberos") { backend = MutationBackend::Kerberos; return true; }
     if (value == "pam") { backend = MutationBackend::Pam; return true; }
+    if (value == "user_creation") { backend = MutationBackend::UserCreation; return true; }
     return false;
 }
 
@@ -1244,6 +1390,10 @@ std::string undoActionTypeName(const UndoAction& action) {
     }
     if (std::holds_alternative<UndoRemoveSshManagedPolicy>(action.payload)) {
         return "remove_ssh_managed_policy";
+    }
+    if (std::holds_alternative<UndoRemoveUserCreationManagedPolicy>(
+            action.payload)) {
+        return "remove_user_creation_managed_policy";
     }
     if (std::holds_alternative<UndoRemoveFirewallPolicy>(action.payload)) {
         return "remove_firewall_policy";
@@ -2226,6 +2376,19 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             }
             if (!validatePamUndoPayload(*pam, error)) return false;
         }
+    }
+    if (record.undo.backend == MutationBackend::UserCreation) {
+        const auto* payload = std::get_if<UndoRemoveUserCreationManagedPolicy>(
+            &record.undo.payload);
+        if (payload == nullptr ||
+            record.policy.moduleName != "IDENTITY_ACCESS" ||
+            record.policy.submoduleName != "USER_CREATION" ||
+            record.policy.policyName != payload->policyName ||
+            record.resource != payload->configPath) {
+            error = "USER_CREATION mutation record identity/payload is invalid";
+            return false;
+        }
+        if (!validateUserCreationUndoPayload(*payload, error)) return false;
     }
 
     // PAM provider lifecycle guards: provenance must never be silently

@@ -384,6 +384,14 @@ enum class UserSupplementaryGroupsProviderKind {
     Unsupported
 };
 
+// Native /etc/default/useradd lookup behavior. Older shadow releases compare
+// only the requested-key prefix; newer releases parse the exact key before
+// '='. This is platform evidence, not a parser-side distro switch.
+enum class UseraddDefaultsLookupSemantics {
+    LegacyPrefixMatch,
+    ExactKey
+};
+
 struct UserCreationPolicyDefaults {
     std::string homeBaseDirectory = FIC_USER_CREATION_HOME_BASE_DEFAULT;
     std::string createHome = FIC_USER_CREATION_CREATE_HOME_DEFAULT;
@@ -397,6 +405,8 @@ struct UserCreationPlatformConfig {
     UserCreationProviderKind provider = UserCreationProviderKind::ShadowUseradd;
     UserSupplementaryGroupsProviderKind supplementaryGroupsProvider =
         UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
+    UseraddDefaultsLookupSemantics useraddDefaultsLookup =
+        UseraddDefaultsLookupSemantics::LegacyPrefixMatch;
     std::filesystem::path useraddDefaultsPath = "/etc/default/useradd";
     std::filesystem::path adduserConfigPath = "/etc/adduser.conf";
     std::filesystem::path loginDefsPath = "/etc/login.defs";

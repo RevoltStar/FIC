@@ -10,6 +10,9 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.hostCompatibility.versionIds = {"24.04"};
     profile.userCreation.supplementaryGroupsProvider =
         UserSupplementaryGroupsProviderKind::DebianAdduser;
+    // shadow 4.13 useradd defaults use the legacy requested-key prefix lookup.
+    profile.userCreation.useraddDefaultsLookup =
+        UseraddDefaultsLookupSemantics::LegacyPrefixMatch;
     profile.executables.entries = {
         {
             ExecutableId::Sshd,

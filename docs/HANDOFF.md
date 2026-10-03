@@ -3,67 +3,60 @@
 ## Current base
 
 * branch: `main`
-* base commit: `2abffc56beaf0ee3acc2f5cadfe4488be1338e4a`
+* base commit: `673b9ea75f4e4b16f301a4dce4aef30a2f6bc1a5`
 
 ## Current task
 
-Follow-up for `DAC/Mode_and_Owner/mode_and_owner_profiles`: positive
-allow-missing capability, Debian-specific `sudoers` presence contract and
-full production apply-to-disable regression.
+Crash-safe ownership-release apply/rollback for all production
+`IDENTITY_ACCESS/USER_CREATION` policies.
 
 ## Accepted architecture / invariants
 
-* One policy maps logical objects to exact metadata profiles. Omitted keys are
-  unmanaged; removing a key or disabling the policy never restores metadata.
-* `Profile` remains `System`, `Minimum`, `Optimal`, `Strict`.
-  `PresenceRequirement` is independent: `MustExist` or `AllowMissing`.
-* `_or_not_exists` reuses the base profile metadata and suppresses only absence
-  of the primary object. Access failures, broken/unknown symlinks, invalid
-  types, provider mismatch and remediation/postcondition failures fail closed.
-* Platform `Object.allowMissingVariant` controls public availability. TCB
-  credential-file `required` is a separate internal topology contract.
-* Source catalogs use the same positive `allowMissingVariant` capability and
-  factories propagate it without inversion. Debian 12/13 expose the optional
-  `sudoers` variant; Ubuntu 24.04/26.04 and ALT p11 retain mandatory `sudoers`.
-* Unconfigured policy uses the generated catalog default. Explicit `{}` is an
-  empty managed set, and saved mappings are never auto-filled.
+* `/etc/default/useradd`, `/etc/login.defs` and `/etc/adduser.conf` retain all
+  foreign bytes; FIC owns only strict per-policy sub-blocks in one logical-EOF
+  container.
+* Journal payload is typed provenance, never a foreign-value or file snapshot.
+  Refresh A to B is one conditional atomic replacement with durable previous
+  and target bodies in `Prepared`.
+* Rollback releases only an exact owned sub-block. Missing ownership is already
+  released; malformed, orphan or edited ownership fails closed.
+* `/etc/default/useradd` lookup semantics are profile metadata: legacy-prefix
+  on Debian 12/Ubuntu 24.04 and conservatively ALT p11; exact-key on Debian 13
+  and Ubuntu 26.04.
 
 ## Completed
 
-* Replaced the source-only negative capability and its inversion with
-  `allowMissingVariant = false`; all five production catalogs were converted
-  while preserving their prior classifications.
-* Debian 12/13 `sudoers` now expose `system_or_not_exists`, so their generated
-  defaults tolerate an absent optional sudo package. Explicit `system` still
-  requires the file and an existing file is enforced to exact metadata.
-* Tests cover positive capability propagation, platform-specific sudoers
-  defaults/runtime presence behavior and the real lifecycle
-  `apply(strict) -> disable -> strict remains` through `PolicyDisableFlow`.
+* Added strict managed-container parsing, consumer-effective last-wins parsing,
+  exact in-memory transformations and CAS/durability/compensation transaction.
+* Added `MutationBackend::UserCreation`, validated typed payload, explicit
+  enrollment/current-route validation and executor dispatch under the shared
+  identity configuration mutex.
+* Integrated all seven policies, including `GROUPS=` neutralization and atomic
+  Debian adduser relation updates.
+* Added lifecycle, crash recovery, durability, compensation-race,
+  multi-policy, journal, enrollment and executor regression coverage.
 
 ## Changed areas
 
-* `fic/src/platform/` and all five production profiles
-* DAC/platform/rollback tests and architecture documentation
+* `fic/src/modules/identity_access/user_creation/`
+* `fic/src/platform/`
+* `fic/src/rollback/`
+* related CMake/tests and rollback/architecture documentation
 
 ## Validation
 
-* Ubuntu 24.04 affected targets, including `fic`, built successfully in
-  `/tmp/fic-followup-build`.
-* Targeted required suite passed (8/8), including ModeAndOwner, rollback,
-  platform/static, descriptor/registry/CLI and schema tests.
-* Debian 12, Debian 13 and Ubuntu 26.04 `mode_and_owner_tests` and
-  `platform_profile_tests` built and passed. Ubuntu 24.04 is covered by the
-  main tree.
-* Full non-root CTest completed: every runnable test passed. Four tests were
-  skipped by their environment/root contracts. `session_event_server_tests`
-  initially hit sandbox-denied `bind()` and passed when rerun outside sandbox.
+* Ubuntu 24.04: `fic` and affected test targets built; targeted CTest suite
+  (platform static checks, `user_creation`, mutation journal, rollback executor,
+  platform profile, identity concrete policies, SSH apply/rollback) passed 7/7.
+* Debian 12, Debian 13 and Ubuntu 26.04: `user_creation_tests` and
+  `platform_profile_tests` passed 2/2 per profile.
+* ALT p11 profile source passed direct C++ syntax validation.
+* Full E2E/full project CTest intentionally not run per task scope.
 
 ## Remaining
 
-* ALT p11 full configure/build is unavailable on this Ubuntu host because its
-  PAM transaction module requires ALT PAM development headers. The profile is
-  covered by source/static contract checks and a direct syntax check; native
-  ALT runtime E2E is deferred.
-* Root-only ownership-change plus SUID restoration is conditional and was not
-  executed in the non-root CTest run. Ordinary special-bit tests did execute.
-* `UserHomes` remains non-production; TCB public allow-missing remains disabled.
+* ALT p11 exact-key behavior was not provable from available distro source, so
+  its profile deliberately uses the safer legacy-prefix model; supplementary
+  groups remain `Unsupported`/`NotEnrolled` there.
+* No native package/runtime test was run against real distro useradd/adduser
+  binaries; parser/provider behavior is covered by targeted contract tests.

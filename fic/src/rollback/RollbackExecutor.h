@@ -58,6 +58,7 @@ enum class RollbackEnrollment {
 RollbackEnrollment rollbackEnrollment(const PolicyRef& policy);
 
 struct RollbackExecutorDeps {
+    fic::platform::UserCreationPlatformConfig userCreationPlatform;
     fic::platform::PamPlatformConfig pamPlatform;
     std::function<std::unique_ptr<fic::identity::pam::PamTopologyManager>(
         const fic::platform::PamCapabilityConfig&,
