@@ -513,7 +513,11 @@ I/O), это ошибка загрузки — fail closed. Существующ
   payload доказывает FIC-владение одной canonical-строкой (key, exact
   applied line); foreign значение и snapshot файла никогда не хранятся;
   `previousAppliedLine` — только durable previous→target переход
-  unresolved Prepared refresh (empty = fresh create).
+  unresolved Prepared refresh (empty = fresh create). Валидация payload
+  (write и read parity) использует общую таблицу
+  `IdentityLoginDefsPolicySpec.h`: точное policy→key соответствие и точный
+  canonical value domain политики (неверный key, `-0`/`+1`/`01`, выход за
+  диапазон — reject и на записи, и на load).
 
 ## Shared login.defs rollback (IDENTITY_ACCESS: USER_CREATION + PASSWORD_AGING)
 
@@ -553,11 +557,28 @@ I/O), это ошибка загрузки — fail closed. Существующ
   (`expectedTargetState`, no truncate+write), refresh `A → B` — одна
   физическая атомарная замена, контейнер всегда переносится в логический
   EOF с сохранением appended foreign байтов. Relation-валидация
-  (`PASS_MIN_DAYS <= PASS_MAX_DAYS` кроме `MAX=-1`; `UID_MIN <= UID_MAX`
-  в полном диапазоне `uid_t`, без INT_MAX-ограничения) выполняется на
-  native-effective состоянии кандидата. `PASS_MAX_DAYS`/`PASS_WARN_AGE`
-  допускают `-1` (unlimited). Shared lock —
+  (`PASS_MIN_DAYS <= PASS_MAX_DAYS` кроме `MAX=-1`; `UID_MIN <= UID_MAX`)
+  выполняется на native-effective состоянии кандидата. PASS-пара
+  валидируется через signed long (`PASS_MIN_DAYS` 0..INT_MAX;
+  `PASS_MAX_DAYS`/`PASS_WARN_AGE` -1..INT_MAX) с native missing-key
+  семантикой (`PasswordAgingMissingKeySemantics`); UID-пара валидируется
+  typed unsigned reader'ом в ПОЛНОМ диапазоне `uid_t` (без INT_MAX-капа),
+  и missing/invalid UID peer в итоговом effective состоянии — fail closed
+  ДО мутации (синтетических missing-key значений для UID не существует).
+  `PASS_MAX_DAYS`/`PASS_WARN_AGE` допускают `-1` (unlimited). Shared lock —
   `IdentityAccessPolicy::configurationMutex()`.
+
+* **Prepared-target recovery с recanonicalization**: если после crash
+  после физической записи (Prepared, body = applied line) внешний append
+  после FIC-контейнера сломал canonical placement (контейнер больше не в
+  EOF) или native-effective авторитет, apply-путь реканонизирует ТОТ ЖЕ
+  когерентный контейнер в логический EOF (peer raw-тела и foreign байты —
+  byte-exact, одна CAS-замена, relation-пруф на реканонизированном
+  кандидате) и завершает ТУ ЖЕ Prepared(target) запись в Applied — это
+  канонизация одного durable-перехода, не новый semantic transition и не
+  refresh (никогда не создаётся `Prepared(previous=target, target=target)`).
+  Третье owned состояние (body изменён вручную, orphan peer) или invalid
+  relation кандидата — `Conflict`/fail closed без записи.
 
 * **Coherence proof**: каждый физический sub-block обязан быть доказан
   journal-записью (известная политика whitelist'а из 7 политик, identity
@@ -577,9 +598,12 @@ I/O), это ошибка загрузки — fail closed. Существующ
   PASSWORD_AGING политики (`password_aging_apply_to_existing_accounts`,
   `password_aging_enforce_for_root`) меняют живое состояние учётных записей
   через `chage` и в этой стадии остаются `NotEnrolled` (без journal-rollback);
-  неизвестная политика PASSWORD_AGING — `Unsupported`. Отсутствие записей
-  при присутствующем same-policy sub-block — fail closed (unrecorded
-  ownership).
+  неизвестная политика PASSWORD_AGING — `Unsupported`. No-record preflight
+  (`inspectUnrecordedState`) доказывает когерентность ВСЕГО shared домена
+  (тот же `proveCoherence`): malformed контейнер, orphan/unknown peer
+  sub-block или same-policy sub-block без provenance — `Conflict` fail
+  closed (unrecorded ownership); валидный peer без target-блока и чистый
+  foreign файл — `NothingToDo`.
 
 ## Release-only lifecycle (DAC / Mode_and_Owner)
 

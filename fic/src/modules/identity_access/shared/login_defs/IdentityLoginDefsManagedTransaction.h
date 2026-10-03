@@ -39,11 +39,13 @@ ReleaseStatus releaseManagedPolicy(
     fic::rollback::MutationJournal& journal,
     const IdentityLoginDefsSemantics& semantics, std::string& error);
 
-// No-record preflight for the rollback executor: an owned same-policy
-// sub-block without an active journal record is unattributable state and
-// fails closed; a malformed container fails closed.
+// No-record preflight for the rollback executor: proves the WHOLE shared
+// ownership domain before deciding — a malformed container, an orphan peer
+// sub-block or an owned same-policy sub-block without an active journal
+// record is unattributable state and fails closed.
 InspectStatus inspectUnrecordedState(const std::string& loginDefsPath,
                                      const PolicyRef& policy,
+                                     fic::rollback::MutationJournal& journal,
                                      std::string& error);
 
 // Deterministic unit-test seams. Production never installs these hooks.

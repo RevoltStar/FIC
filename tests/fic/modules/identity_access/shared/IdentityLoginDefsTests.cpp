@@ -9,11 +9,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <utility>
 #include <vector>
 
@@ -408,22 +410,22 @@ void testDriftAndOrphans(const fs::path& root) {
             "orphan ownership was adopted");
     std::string inspectError;
     require(inspectUnrecordedState(path.string(),
-                aging("password_min_age_days"), inspectError) ==
-                InspectStatus::Conflict,
+                aging("password_min_age_days"), orphanJournal,
+                inspectError) == InspectStatus::Conflict,
             "orphan sub-block was not reported as Conflict");
 
     // Clean file: no-record inspection is NothingToDo.
     writeFile(path, kForeign);
     inspectError.clear();
     require(inspectUnrecordedState(path.string(),
-                aging("password_min_age_days"), inspectError) ==
-                InspectStatus::NothingToDo,
+                aging("password_min_age_days"), orphanJournal,
+                inspectError) == InspectStatus::NothingToDo,
             inspectError);
     // Malformed container fails closed.
     writeFile(path, std::string(kBlockBegin) + "\nbroken\n");
     require(inspectUnrecordedState(path.string(),
-                aging("password_min_age_days"), inspectError) ==
-                InspectStatus::Conflict,
+                aging("password_min_age_days"), orphanJournal,
+                inspectError) == InspectStatus::Conflict,
             "malformed container was accepted");
 }
 
@@ -675,6 +677,510 @@ void testJournalGuards(const fs::path& root) {
             "corrupted canonical value was accepted on load");
 }
 
+void testUidRelationFullRange(const fs::path& root) {
+    const fs::path path = root / "etc/login.defs";
+    std::string error;
+    const unsigned long long uidMax =
+        static_cast<unsigned long long>(std::numeric_limits<uid_t>::max());
+
+    // Typed uid_t relation reader: the pair is compared in the FULL unsigned
+    // uid_t range, never through signed long / INT_MAX.
+    if (uidMax > 2147483647ULL) {
+        require(relationsValidInCandidate(
+                    "UID_MIN 2147483648\nUID_MAX " + std::to_string(uidMax) +
+                        "\n",
+                    aging("regular_user_uid_min"), {}, error),
+                "full uid_t relation was rejected");
+        error.clear();
+    }
+    require(!relationsValidInCandidate("UID_MIN 50000\nUID_MAX 1000\n",
+                aging("regular_user_uid_max"), {}, error),
+            "inverted UID ordering was accepted");
+    error.clear();
+    // Missing UID peers fail closed: there is NO synthetic missing-key
+    // default for the UID pair (PasswordAgingMissingKeySemantics never
+    // applies here).
+    require(!relationsValidInCandidate("UID_MAX 60000\n",
+                aging("regular_user_uid_min"), {}, error),
+            "missing UID_MIN was tolerated");
+    error.clear();
+    require(!relationsValidInCandidate("UID_MIN 1000\n",
+                aging("regular_user_uid_max"), {}, error),
+            "missing UID_MAX was tolerated");
+    error.clear();
+
+    // Apply path with a >INT_MAX foreign pair.
+    useJournal(root, "login-defs-uid-full");
+    const std::string foreign =
+        "UID_MIN 1000\nUID_MAX " + std::to_string(uidMax) + "\n";
+    writeFile(path, foreign);
+    auto& j = journal();
+    require(applyManagedPolicy(path.string(), aging("regular_user_uid_min"),
+                "2147483648", j, {}, error),
+            error);
+    require(containsSubBlock(readFile(path), aging("regular_user_uid_min"),
+                "UID_MIN 2147483648"),
+            "UID_MIN above INT_MAX was not applied");
+    // Refresh within the full uid_t range: one physical replacement.
+    int writes = 0;
+    setBeforeIdentityLoginDefsWriteHookForTests([&] { ++writes; });
+    require(applyManagedPolicy(path.string(), aging("regular_user_uid_min"),
+                "3000000000", j, {}, error),
+            error);
+    setBeforeIdentityLoginDefsWriteHookForTests({});
+    require(writes == 1, "UID refresh was not one atomic replacement");
+
+    // Rollback candidate relation is evaluated on the foreign effective pair
+    // in the full uid_t range.
+    const auto minRecords = j.activeRecords(aging("regular_user_uid_min"));
+    require(minRecords.size() == 1, "uid min provenance missing");
+    require(releaseManagedPolicy(path.string(), minRecords.front(), j, {},
+                error) == ReleaseStatus::Success,
+            error);
+    require(readFile(path) == foreign, "UID release damaged foreign bytes");
+    error.clear();
+
+    // Releasing a FIC override that hides an invalid foreign pair fails
+    // closed without a write and without reconstructing foreign state.
+    writeFile(path, "UID_MIN 4000000000\nUID_MAX 3000000000\n");
+    useJournal(root, "login-defs-uid-invalid-foreign");
+    auto& invalidJournal = journal();
+    require(applyManagedPolicy(path.string(), aging("regular_user_uid_min"),
+                "1000000000", invalidJournal, {}, error),
+            error);
+    const auto records =
+        invalidJournal.activeRecords(aging("regular_user_uid_min"));
+    require(records.size() == 1, "invalid-foreign provenance missing");
+    const std::string beforeFailedRelease = readFile(path);
+    require(releaseManagedPolicy(path.string(), records.front(),
+                invalidJournal, {}, error) == ReleaseStatus::Conflict,
+            "invalid foreign UID relation release was accepted");
+    require(readFile(path) == beforeFailedRelease,
+            "failed UID release changed the file");
+
+    // Missing UID peer in the RESULTING effective pair: apply fails before
+    // mutation; file and journal unchanged. There is NO synthetic
+    // missing-key default for the UID pair
+    // (PasswordAgingMissingKeySemantics never applies here).
+    writeFile(path, "PASS_MAX_DAYS 99999\n");
+    useJournal(root, "login-defs-uid-missing-min");
+    auto& missingMin = journal();
+    require(!applyManagedPolicy(path.string(), aging("regular_user_uid_min"),
+                "100", missingMin, {}, error),
+            "apply with missing UID_MAX peer was accepted");
+    require(readFile(path) == "PASS_MAX_DAYS 99999\n",
+            "failed missing-peer apply changed the file");
+    require(missingMin.activeRecords(aging("regular_user_uid_min")).empty(),
+            "failed missing-peer apply kept provenance");
+
+    writeFile(path, "PASS_MAX_DAYS 99999\n");
+    useJournal(root, "login-defs-uid-missing-max");
+    auto& missingMax = journal();
+    require(!applyManagedPolicy(path.string(), aging("regular_user_uid_max"),
+                "65000", missingMax, {}, error),
+            "apply with missing UID_MIN peer was accepted");
+    require(readFile(path) == "PASS_MAX_DAYS 99999\n",
+            "failed missing-peer apply changed the file");
+    require(missingMax.activeRecords(aging("regular_user_uid_max")).empty(),
+            "failed missing-peer apply kept provenance");
+
+    // A single foreign peer completes the pair: the FIC target plus the
+    // foreign peer form a coherent CANDIDATE pair, so the apply succeeds.
+    writeFile(path, "UID_MAX 60000\n");
+    useJournal(root, "login-defs-uid-one-peer");
+    auto& onePeer = journal();
+    require(applyManagedPolicy(path.string(), aging("regular_user_uid_min"),
+                "100", onePeer, {}, error),
+            error);
+    require(containsSubBlock(readFile(path), aging("regular_user_uid_min"),
+                "UID_MIN 100"),
+            "single-peer apply did not land");
+
+    // Inverted foreign ordering: the candidate relation fails before
+    // mutation.
+    writeFile(path, "UID_MIN 50000\nUID_MAX 1000\n");
+    useJournal(root, "login-defs-uid-ordering");
+    auto& ordering = journal();
+    require(!applyManagedPolicy(path.string(), aging("regular_user_uid_max"),
+                "100", ordering, {}, error),
+            "apply creating an inverted UID relation was accepted");
+    require(readFile(path) == "UID_MIN 50000\nUID_MAX 1000\n",
+            "failed ordering apply changed the file");
+    require(ordering.activeRecords(aging("regular_user_uid_max")).empty(),
+            "failed ordering apply kept provenance");
+}
+
+void testPreparedTargetRecanonicalization(const fs::path& root) {
+    const fs::path path = root / "etc/login.defs";
+    const std::string ref =
+        "IDENTITY_ACCESS/PASSWORD_AGING/password_min_age_days";
+    const std::string homeRef =
+        "IDENTITY_ACCESS/USER_CREATION/user_create_home";
+    const auto makePrepared =
+        [&](MutationJournal& target, const std::string& applied,
+            const std::string& previous) {
+            MutationRecord record;
+            record.policy = aging("password_min_age_days");
+            record.resource = path.string();
+            record.undo = {MutationBackend::IdentityLoginDefs,
+                fic::rollback::UndoRemoveIdentityLoginDefsManagedPolicy{
+                    "password_min_age_days", path.string(), "PASS_MIN_DAYS",
+                    applied, previous}};
+            fic::rollback::MutationId id = 0;
+            std::string prepareError;
+            require(target.prepareMutation(record, id, prepareError),
+                prepareError);
+        };
+
+    // Shadowing foreign append after the container: the proven Prepared
+    // target is recanonicalized to the logical EOF in ONE CAS replacement
+    // and the SAME record is completed — no release window, no new
+    // transition.
+    useJournal(root, "login-defs-recovery-shadow");
+    const std::string foreign1 = "PASS_MAX_DAYS 99999\nPASS_WARN_AGE 7\n";
+    const std::string container =
+        std::string(kBlockBegin) + "\n" +
+        canonicalPolicyBlock(ref, "PASS_MIN_DAYS", "1") + kBlockEnd + "\n";
+    writeFile(path, foreign1 + container + "PASS_MIN_DAYS 5\n");
+    auto& shadowJournal = journal();
+    makePrepared(shadowJournal, "PASS_MIN_DAYS 1", "");
+    std::string error;
+    int writes = 0;
+    setBeforeIdentityLoginDefsWriteHookForTests([&] { ++writes; });
+    require(applyManagedPolicy(path.string(), aging("password_min_age_days"),
+                "1", shadowJournal, {}, error),
+            error);
+    setBeforeIdentityLoginDefsWriteHookForTests({});
+    require(writes == 1, "recovery was not one atomic CAS replacement");
+    require(readFile(path) == foreign1 + "PASS_MIN_DAYS 5\n" + container,
+            "recovery did not move the container to the logical EOF with "
+            "byte-exact foreign preservation");
+    const auto shadowRecords =
+        shadowJournal.activeRecords(aging("password_min_age_days"));
+    require(shadowRecords.size() == 1 &&
+                shadowRecords.front().status == MutationStatus::Applied,
+            "recovery did not complete the SAME Prepared target record");
+    const auto* shadowPayload = std::get_if<
+        fic::rollback::UndoRemoveIdentityLoginDefsManagedPolicy>(
+        &shadowRecords.front().undo.payload);
+    require(shadowPayload != nullptr &&
+                shadowPayload->appliedLine == "PASS_MIN_DAYS 1" &&
+                shadowPayload->previousAppliedLine.empty(),
+            "recovery fabricated a wrong journal transition");
+
+    // Unrelated foreign append after the container: the EOF invariant is
+    // restored and the record completes even though the target value was
+    // already effective.
+    useJournal(root, "login-defs-recovery-append");
+    writeFile(path, kForeign + container + "SOME_FOREIGN_KEY value\n");
+    auto& appendJournal = journal();
+    makePrepared(appendJournal, "PASS_MIN_DAYS 1", "");
+    require(applyManagedPolicy(path.string(), aging("password_min_age_days"),
+                "1", appendJournal, {}, error),
+            error);
+    require(readFile(path) == kForeign + "SOME_FOREIGN_KEY value\n" +
+                container,
+            "unrelated append was not preserved during recovery");
+    const auto appendRecords =
+        appendJournal.activeRecords(aging("password_min_age_days"));
+    require(appendRecords.size() == 1 &&
+                appendRecords.front().status == MutationStatus::Applied,
+            "unrelated-append recovery did not complete the record");
+
+    // Manual edit of the own sub-block is a third owned state: recovery
+    // fails closed without recanonicalization or a write.
+    useJournal(root, "login-defs-recovery-tampered");
+    writeFile(path, kForeign + container);
+    auto& tamperedJournal = journal();
+    makePrepared(tamperedJournal, "PASS_MIN_DAYS 1", "");
+    std::string tampered = readFile(path);
+    tampered.replace(tampered.find("\nPASS_MIN_DAYS 1\n"),
+        std::string("\nPASS_MIN_DAYS 1\n").size(), "\nPASS_MIN_DAYS 9\n");
+    writeFile(path, tampered);
+    const std::string beforeTamperedApply = readFile(path);
+    require(!applyManagedPolicy(path.string(), aging("password_min_age_days"),
+                "1", tamperedJournal, {}, error),
+            "tampered own sub-block was recanonicalized");
+    require(readFile(path) == beforeTamperedApply,
+            "failed tampered recovery changed the file");
+    const auto tamperedRecords =
+        tamperedJournal.activeRecords(aging("password_min_age_days"));
+    require(tamperedRecords.size() == 1 &&
+                tamperedRecords.front().status == MutationStatus::Prepared,
+            "failed tampered recovery lost the Prepared record");
+
+    // Mixed peer ownership: recovery proves peer provenance, preserves the
+    // peer block byte-exact, moves the whole container and leaves the peer
+    // journal untouched.
+    useJournal(root, "login-defs-recovery-peer");
+    writeFile(path, kForeign);
+    auto& peerJournal = journal();
+    require(applyManagedPolicy(path.string(), creation("user_create_home"),
+                "no", peerJournal, {}, error),
+            error);
+    const std::string mixedContainer = std::string(kBlockBegin) + "\n" +
+        canonicalPolicyBlock(homeRef, "CREATE_HOME", "no") +
+        canonicalPolicyBlock(ref, "PASS_MIN_DAYS", "1") + kBlockEnd + "\n";
+    writeFile(path, kForeign + mixedContainer + "PASS_MAX_DAYS 99999\n");
+    makePrepared(peerJournal, "PASS_MIN_DAYS 1", "");
+    require(applyManagedPolicy(path.string(), aging("password_min_age_days"),
+                "1", peerJournal, {}, error),
+            error);
+    const std::string mixedRecovered = readFile(path);
+    require(mixedRecovered ==
+                kForeign + "PASS_MAX_DAYS 99999\n" + mixedContainer,
+            "mixed recovery did not preserve peer and foreign bytes");
+    const auto homeAfter = peerJournal.activeRecords(
+        creation("user_create_home"));
+    require(homeAfter.size() == 1 &&
+                homeAfter.front().status == MutationStatus::Applied,
+            "peer journal was damaged by the recovery");
+    // The recovered record is visible to the executor: the rollback releases
+    // only the min sub-block and keeps the peer ownership.
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.userCreationPlatform.loginDefsPath = path;
+    deps.passwordAgingPlatform.loginDefsPath = path;
+    deps.passwordAgingPlatform.missingKeySemantics.minDays = -1;
+    deps.passwordAgingPlatform.missingKeySemantics.maxDays = -1;
+    const auto executorReport = fic::rollback::rollbackPolicyBeforeDisable(
+        aging("password_min_age_days"), "PASS_MIN_DAYS", deps);
+    require(executorReport.rollbackCompleted() &&
+                executorReport.outcomes.size() == 1 &&
+                executorReport.outcomes.front().status ==
+                    fic::rollback::RollbackStatus::Success,
+            executorReport.message);
+    const std::string afterRollback = readFile(path);
+    require(afterRollback.find("PASS_MIN_DAYS") == std::string::npos &&
+                containsSubBlock(afterRollback, creation("user_create_home"),
+                    "CREATE_HOME no"),
+            "executor rollback after recovery damaged the shared container");
+
+    // Orphan peer sub-block without provenance: recovery must NOT
+    // canonicalize orphan ownership — fail closed, no write, Prepared kept.
+    useJournal(root, "login-defs-recovery-orphan");
+    writeFile(path, kForeign + mixedContainer + "PASS_MAX_DAYS 99999\n");
+    auto& orphanPeerJournal = journal();
+    makePrepared(orphanPeerJournal, "PASS_MIN_DAYS 1", "");
+    const std::string beforeOrphanRecovery = readFile(path);
+    require(!applyManagedPolicy(path.string(), aging("password_min_age_days"),
+                "1", orphanPeerJournal, {}, error),
+            "orphan peer was recanonicalized");
+    require(readFile(path) == beforeOrphanRecovery,
+            "failed orphan-peer recovery changed the file");
+    const auto orphanPeerRecords =
+        orphanPeerJournal.activeRecords(aging("password_min_age_days"));
+    require(orphanPeerRecords.size() == 1 &&
+                orphanPeerRecords.front().status == MutationStatus::Prepared,
+            "failed orphan-peer recovery lost the Prepared record");
+
+    // A foreign append that makes the CURRENT relation unacceptable blocks
+    // recovery: relation proof runs on the recanonicalized candidate too.
+    useJournal(root, "login-defs-recovery-relation");
+    const std::string uidContainer = std::string(kBlockBegin) + "\n" +
+        canonicalPolicyBlock(
+            "IDENTITY_ACCESS/PASSWORD_AGING/regular_user_uid_max", "UID_MAX",
+            "60000") + kBlockEnd + "\n";
+    writeFile(path, "UID_MIN 1000\n" + uidContainer + "UID_MIN 5000000000\n");
+    auto& relationJournal = journal();
+    MutationRecord uidRecord;
+    uidRecord.policy = aging("regular_user_uid_max");
+    uidRecord.resource = path.string();
+    uidRecord.undo = {MutationBackend::IdentityLoginDefs,
+        fic::rollback::UndoRemoveIdentityLoginDefsManagedPolicy{
+            "regular_user_uid_max", path.string(), "UID_MAX", "UID_MAX 60000",
+            ""}};
+    fic::rollback::MutationId uidId = 0;
+    require(relationJournal.prepareMutation(uidRecord, uidId, error), error);
+    const std::string beforeRelationRecovery = readFile(path);
+    require(!applyManagedPolicy(path.string(), aging("regular_user_uid_max"),
+                "60000", relationJournal, {}, error),
+            "recovery accepted an invalid recanonicalized relation");
+    require(readFile(path) == beforeRelationRecovery,
+            "failed relation recovery changed the file");
+    const auto relationRecords =
+        relationJournal.activeRecords(aging("regular_user_uid_max"));
+    require(relationRecords.size() == 1 &&
+                relationRecords.front().status == MutationStatus::Prepared,
+            "failed relation recovery lost the Prepared record");
+}
+
+void testNoRecordSharedDomainCoherence(const fs::path& root) {
+    const fs::path path = root / "etc/login.defs";
+
+    // A valid peer with active provenance and an absent target block does
+    // NOT block the no-record disable: NothingToDo.
+    useJournal(root, "login-defs-norecord-peer");
+    writeFile(path, kForeign);
+    std::string error;
+    auto& j = journal();
+    require(applyManagedPolicy(path.string(), creation("user_create_home"),
+                "no", j, {}, error),
+            error);
+    require(inspectUnrecordedState(path.string(),
+                aging("password_min_age_days"), j, error) ==
+                InspectStatus::NothingToDo,
+            error);
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.userCreationPlatform.loginDefsPath = path;
+    deps.passwordAgingPlatform.loginDefsPath = path;
+    const auto peerReport = fic::rollback::rollbackPolicyBeforeDisable(
+        aging("password_min_age_days"), "PASS_MIN_DAYS", deps);
+    require(peerReport.rollbackCompleted() &&
+                peerReport.status ==
+                    fic::rollback::RollbackStatus::NothingToDo,
+            peerReport.message);
+    require(j.activeRecords(aging("password_min_age_days")).empty(),
+            "no-record disable fabricated provenance");
+
+    // An orphan peer sub-block makes the WHOLE shared domain unprovable:
+    // the no-record disable fails closed and never touches the file.
+    useJournal(root, "login-defs-norecord-orphan");
+    writeFile(path, kForeign + std::string(kBlockBegin) + "\n" +
+            canonicalPolicyBlock(
+                "IDENTITY_ACCESS/USER_CREATION/user_create_home",
+                "CREATE_HOME", "no") + kBlockEnd + "\n");
+    auto& orphanJournal = journal();
+    require(inspectUnrecordedState(path.string(),
+                aging("password_min_age_days"), orphanJournal, error) ==
+                InspectStatus::Conflict,
+            error);
+    const std::string untouched = readFile(path);
+    const auto orphanReport = fic::rollback::rollbackPolicyBeforeDisable(
+        aging("password_min_age_days"), "PASS_MIN_DAYS", deps);
+    require(orphanReport.status == fic::rollback::RollbackStatus::Conflict,
+            orphanReport.message);
+    require(readFile(path) == untouched,
+            "orphan-peer guard modified the file");
+}
+
+void testJournalPolicyKeyParity(const fs::path& root) {
+    const fs::path path = root / "etc/login.defs";
+    useJournal(root, "login-defs-parity");
+    auto& j = journal();
+    fic::rollback::MutationId id = 0;
+    std::string error;
+    const auto tryPrepare = [&](const char* submodule,
+                                const std::string& policyName,
+                                const std::string& key,
+                                const std::string& applied,
+                                const std::string& previous) {
+        MutationRecord record;
+        record.policy = {"IDENTITY_ACCESS", submodule, policyName};
+        record.resource = path.string();
+        record.undo = {MutationBackend::IdentityLoginDefs,
+            fic::rollback::UndoRemoveIdentityLoginDefsManagedPolicy{
+                policyName, path.string(), key, applied, previous}};
+        return j.prepareMutation(record, id, error);
+    };
+    const unsigned long long uidMax =
+        static_cast<unsigned long long>(std::numeric_limits<uid_t>::max());
+    const std::string overUid = std::to_string(uidMax + 1);
+
+    // Writer-side policy→key parity: an arbitrary key is never accepted.
+    require(!tryPrepare("PASSWORD_AGING", "password_min_age_days", "UID_MIN",
+                "UID_MIN 1", ""),
+            "password policy with a UID key was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "regular_user_uid_min", "UID_MAX",
+                "UID_MAX 1000", ""),
+            "uid_min policy with the UID_MAX key was accepted");
+    require(!tryPrepare("USER_CREATION", "user_create_home",
+                "USERGROUPS_ENAB", "USERGROUPS_ENAB no", ""),
+            "user_create_home with the USERGROUPS_ENAB key was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_aging_unknown",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS 1", ""),
+            "unknown policy was accepted");
+
+    // Writer-side exact value domains and canonical formatting.
+    require(!tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS -1", ""),
+            "negative PASS_MIN_DAYS was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS 2147483648", ""),
+            "PASS_MIN_DAYS above INT_MAX was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_max_age_days",
+                "PASS_MAX_DAYS", "PASS_MAX_DAYS -2", ""),
+            "PASS_MAX_DAYS below -1 was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_expiration_warning_days",
+                "PASS_WARN_AGE", "PASS_WARN_AGE 2147483648", ""),
+            "PASS_WARN_AGE above INT_MAX was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "regular_user_uid_min", "UID_MIN",
+                "UID_MIN " + overUid, ""),
+            "UID above uid_t max was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS 007", ""),
+            "non-canonical '007' was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS +1", ""),
+            "'+1' was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS -0", ""),
+            "'-0' was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS 01", ""),
+            "'01' was accepted");
+    require(!tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS 3", "UID_MIN 1"),
+            "previous line with a foreign key was accepted");
+
+    // Valid full-range and refresh provenance are accepted (writer side).
+    error.clear();
+    require(tryPrepare("PASSWORD_AGING", "regular_user_uid_min", "UID_MIN",
+                "UID_MIN " + std::to_string(uidMax), ""),
+            "full uid_t value was rejected");
+    error.clear();
+    require(j.discard(id, error), error);
+    // A fresh create first: the refresh below must legally refresh it.
+    require(tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS 1", ""),
+            "valid fresh provenance was rejected");
+    error.clear();
+    require(j.setStatus(id, MutationStatus::Applied, error), error);
+    require(tryPrepare("PASSWORD_AGING", "password_min_age_days",
+                "PASS_MIN_DAYS", "PASS_MIN_DAYS 5", "PASS_MIN_DAYS 1"),
+            "valid refresh provenance was rejected");
+    error.clear();
+    require(j.setStatus(id, MutationStatus::Applied, error), error);
+
+    // Reload-side parity: a tampered persisted payload fails closed.
+    const fs::path journalPath = root / "data/login-defs-parity.json";
+    const std::string document = readFile(journalPath);
+    const std::size_t at = document.find("PASS_MIN_DAYS 5");
+    require(at != std::string::npos, "applied line missing from document");
+    std::string nonCanonical = document;
+    nonCanonical.replace(at, std::string("PASS_MIN_DAYS 5").size(),
+        "PASS_MIN_DAYS 0005");
+    writeFile(journalPath, nonCanonical, 0600);
+    MutationJournal reloader(journalPath);
+    std::string loadError;
+    require(!reloader.load(loadError) && !loadError.empty(),
+            "non-canonical persisted value was accepted on reload");
+    loadError.clear();
+
+    // Reload-side policy→key parity: a persisted assignment under a foreign
+    // key of the same policy is rejected on load.
+    std::string foreignKey = document;
+    foreignKey.replace(at, std::string("PASS_MIN_DAYS 5").size(), "UID_MIN 5");
+    writeFile(journalPath, foreignKey, 0600);
+    MutationJournal keyReloader(journalPath);
+    require(!keyReloader.load(loadError) && !loadError.empty(),
+            "policy/key mismatch was accepted on reload");
+    loadError.clear();
+
+    // The untouched document still reloads.
+    writeFile(journalPath, document, 0600);
+    MutationJournal validReloader(journalPath);
+    require(validReloader.load(loadError), loadError);
+    const auto records =
+        validReloader.activeRecords(aging("password_min_age_days"));
+    require(records.size() == 1 &&
+                records.front().status == MutationStatus::Applied &&
+                std::get_if<
+                    fic::rollback::UndoRemoveIdentityLoginDefsManagedPolicy>(
+                    &records.front().undo.payload)->appliedLine ==
+                    "PASS_MIN_DAYS 5",
+            loadError);
+}
+
 void testRollbackExecutorIntegration(const fs::path& root) {
     const fs::path path = root / "etc/login.defs";
 
@@ -771,8 +1277,12 @@ int main() {
         testValueValidation();
         testApplyLifecycle(root);
         testReleaseAndRelations(root);
+        testUidRelationFullRange(root);
         testDriftAndOrphans(root);
         testCrashRecovery(root);
+        testPreparedTargetRecanonicalization(root);
+        testNoRecordSharedDomainCoherence(root);
+        testJournalPolicyKeyParity(root);
         testCasAndCompensation(root);
         testJournalGuards(root);
         testRollbackExecutorIntegration(root);

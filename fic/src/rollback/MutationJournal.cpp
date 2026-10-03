@@ -2,6 +2,7 @@
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <modules/identity_access/pam/PamProviderManagedBlock.h>
+#include <modules/identity_access/shared/login_defs/IdentityLoginDefsPolicySpec.h>
 #include <modules/oss/grub/GrubManagedBlock.h>
 
 #include <nlohmann/json.hpp>
@@ -673,33 +674,19 @@ bool validateKerberosUndoPayload(const UndoRestoreKerberosScalar& payload,
 }
 
 // Shared /etc/login.defs undo-payload validation (write + read parity) for
-// the shared IdentityLoginDefs backend. The exact 7-policy whitelist mirrors
-// the shared managed-config module contract; the loader must reject any
-// payload identity it does not understand (fail closed, including unknown
-// future policies).
-// Returns the owning submodule of a shared login.defs policy: USER_CREATION
-// for the two creation defaults, PASSWORD_AGING for the five aging scalars;
-// nullopt for any unknown policy (fail closed).
-std::optional<std::string> identityLoginDefsPolicySubmodule(
-    const std::string& policyName) {
-    if (policyName == "user_create_home" ||
-        policyName == "user_create_private_group") {
-        return std::string("USER_CREATION");
-    }
-    if (policyName == "password_min_age_days" ||
-        policyName == "password_max_age_days" ||
-        policyName == "password_expiration_warning_days" ||
-        policyName == "regular_user_uid_min" ||
-        policyName == "regular_user_uid_max") {
-        return std::string("PASSWORD_AGING");
-    }
-    return std::nullopt;
-}
-
+// the shared IdentityLoginDefs backend. The exact policy→key→value-domain
+// mapping comes from the shared IdentityLoginDefsPolicySpec table (the SAME
+// single source of truth the managed-config validator and the transaction
+// backend use), so a payload whose key or value domain does not match its
+// policy is rejected both on write and on reload (fail closed, including
+// unknown future policies).
 bool validateIdentityLoginDefsUndoPayload(
     const UndoRemoveIdentityLoginDefsManagedPolicy& payload,
     std::string& error) {
-    if (!identityLoginDefsPolicySubmodule(payload.policyName).has_value()) {
+    const fic::identity::login_defs::SharedLoginDefsPolicySpec* spec =
+        fic::identity::login_defs::findSharedLoginDefsPolicySpec(
+            payload.policyName);
+    if (spec == nullptr) {
         error = "unknown policy in identity_login_defs undo";
         return false;
     }
@@ -714,68 +701,34 @@ bool validateIdentityLoginDefsUndoPayload(
                 "CR, LF or NUL";
         return false;
     }
+    // Exact policy→key parity: an arbitrary key is never accepted.
+    if (payload.key.empty() || payload.key != spec->key) {
+        error = "identity_login_defs undo key does not match the managed " +
+            std::string(spec->key) + " assignment of " + payload.policyName;
+        return false;
+    }
     const std::string prefix = payload.key + " ";
-    if (payload.key.empty() ||
-        payload.appliedLine.rfind(prefix, 0) != 0 ||
-        (!payload.previousAppliedLine.empty() &&
-         payload.previousAppliedLine.rfind(prefix, 0) != 0)) {
-        error = "identity_login_defs undo applied lines must be canonical "
-                "assignments of the managed key";
-        return false;
-    }
-    const auto appliedValue = payload.appliedLine.substr(prefix.size());
-    const auto previousValue = payload.previousAppliedLine.empty()
-        ? payload.previousAppliedLine
-        : payload.previousAppliedLine.substr(prefix.size());
-    if (appliedValue.find_first_of(" \t") != std::string::npos ||
-        previousValue.find_first_of(" \t") != std::string::npos ||
-        appliedValue.find('#') != std::string::npos ||
-        previousValue.find('#') != std::string::npos) {
-        error = "identity_login_defs undo applied value must be a single "
-                "canonical token";
-        return false;
-    }
-    const auto valueMatchesPolicy = [](const std::string& policyName,
-                                       const std::string& value) {
-        const auto decimal = [&value](bool allowNegative) {
-            if (value.empty()) return false;
-            std::size_t index = value[0] == '-' && allowNegative ? 1 : 0;
-            if (index >= value.size()) return false;
-            if (value[index] == '0' && value.size() - index > 1)
-                return false; // canonical form: no leading zeros
-            for (; index < value.size(); ++index) {
-                if (std::isdigit(static_cast<unsigned char>(value[index])) ==
-                    0) {
-                    return false;
-                }
-            }
-            return true;
-        };
-        if (policyName == "user_create_home" ||
-            policyName == "user_create_private_group") {
-            return value == "yes" || value == "no";
+    const auto validateLine = [&](const std::string& line,
+                                  const char* field) {
+        if (line.rfind(prefix, 0) != 0) {
+            error = "identity_login_defs undo " + std::string(field) +
+                " must be a canonical assignment of the managed key";
+            return false;
         }
-        if (policyName == "password_min_age_days") return decimal(false);
-        if (policyName == "password_max_age_days" ||
-            policyName == "password_expiration_warning_days") {
-            return decimal(true);
+        const std::string value = line.substr(prefix.size());
+        std::string valueError;
+        if (!fic::identity::login_defs::validateSharedLoginDefsPolicyValue(
+                payload.policyName, value, valueError)) {
+            error = "identity_login_defs undo " + std::string(field) +
+                " carries an invalid value for " + payload.policyName + ": " +
+                valueError;
+            return false;
         }
-        if (policyName == "regular_user_uid_min" ||
-            policyName == "regular_user_uid_max") {
-            if (!decimal(false)) return false;
-            errno = 0;
-            const unsigned long long parsed = std::strtoull(
-                value.c_str(), nullptr, 10);
-            return errno == 0 &&
-                parsed <= std::numeric_limits<uid_t>::max();
-        }
-        return false;
+        return true;
     };
-    if (!valueMatchesPolicy(payload.policyName, appliedValue) ||
-        (!previousValue.empty() &&
-         !valueMatchesPolicy(payload.policyName, previousValue))) {
-        error = "identity_login_defs undo carries an invalid value for " +
-            payload.policyName;
+    if (!validateLine(payload.appliedLine, "appliedLine")) return false;
+    if (!payload.previousAppliedLine.empty() &&
+        !validateLine(payload.previousAppliedLine, "previousAppliedLine")) {
         return false;
     }
     return true;
@@ -1440,11 +1393,13 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
     if (record.undo.backend == MutationBackend::IdentityLoginDefs) {
         const auto* payload = std::get_if<
             UndoRemoveIdentityLoginDefsManagedPolicy>(&record.undo.payload);
-        if (payload == nullptr ||
+        const auto* payloadSpec = payload == nullptr
+            ? nullptr
+            : fic::identity::login_defs::findSharedLoginDefsPolicySpec(
+                  payload->policyName);
+        if (payload == nullptr || payloadSpec == nullptr ||
             record.policy.moduleName != "IDENTITY_ACCESS" ||
-            record.policy.submoduleName !=
-                identityLoginDefsPolicySubmodule(payload->policyName)
-                    .value_or(std::string()) ||
+            record.policy.submoduleName != payloadSpec->submodule ||
             record.policy.policyName != payload->policyName ||
             record.resource != payload->configPath) {
             error = "identity_login_defs journal identity does not match "
@@ -2562,11 +2517,13 @@ bool MutationJournal::prepareMutation(MutationRecord record,
     if (record.undo.backend == MutationBackend::IdentityLoginDefs) {
         const auto* payload = std::get_if<
             UndoRemoveIdentityLoginDefsManagedPolicy>(&record.undo.payload);
-        if (payload == nullptr ||
+        const auto* payloadSpec = payload == nullptr
+            ? nullptr
+            : fic::identity::login_defs::findSharedLoginDefsPolicySpec(
+                  payload->policyName);
+        if (payload == nullptr || payloadSpec == nullptr ||
             record.policy.moduleName != "IDENTITY_ACCESS" ||
-            record.policy.submoduleName !=
-                identityLoginDefsPolicySubmodule(payload->policyName)
-                    .value_or(std::string()) ||
+            record.policy.submoduleName != payloadSpec->submodule ||
             record.policy.policyName != payload->policyName ||
             record.resource != payload->configPath) {
             error = "identity_login_defs mutation record identity/payload "

@@ -175,6 +175,62 @@ bool verify(const std::string& path, const PolicyRef& policy,
                                      semantics.missingKey, error);
 }
 
+// Recovery of a proven Prepared(target) whose canonical placement or
+// native-effective authority was lost to an external append after the FIC
+// container. The SAME coherent container (peer raw bodies and foreign bytes
+// preserved byte-for-byte) is moved to the logical EOF in ONE CAS
+// replacement and the SAME Prepared(target) record is completed. This is
+// canonicalization of one durable target transition — never a new semantic
+// transition and never an ordinary refresh.
+bool recanonicalizePreparedTarget(
+    const PolicyRoute& route, const PolicyRef& policy,
+    const AtomicTargetState& before, const std::string& targetLine,
+    const IdentityLoginDefsSemantics& semantics, MutationJournal& journal,
+    MutationId id, std::string& error) {
+    const std::string targetValue = targetLine.substr(route.key.size() + 1);
+    std::string candidate;
+    bool changed = false;
+    // Rebuilding from the captured content keeps the proven owned body exact
+    // and every peer sub-block byte-for-byte; the container lands at the
+    // logical EOF of the foreign bytes.
+    if (!upsertPolicyBlock(before.content, route.policyRef, route.key,
+                           targetValue, candidate, changed, error)) {
+        return false;
+    }
+    if (!changed) {
+        error = "shared login.defs Prepared target postcondition failed "
+                "without a recanonicalizable placement";
+        return false;
+    }
+    // The recanonicalized candidate must still prove the CURRENT native
+    // relation contract; a foreign append may have made it unacceptable.
+    if (!relationsValidInCandidate(candidate, policy, semantics.missingKey,
+                                   error)) {
+        return false;
+    }
+    AtomicWriteResult write;
+    if (beforeWriteHook()) beforeWriteHook()();
+    if (!install(route.path, before, candidate, write, error)) {
+        if (write.installed) {
+            std::string compensationError;
+            compensate(route.path, write, before, compensationError);
+        }
+        return false;
+    }
+    if (afterWriteHook()) afterWriteHook()();
+    if (!write.installedTargetState.has_value() ||
+        !verify(route.path, policy, route.key, targetLine, targetValue,
+                semantics, *write.installedTargetState, error)) {
+        std::string compensationError;
+        // Conditional compensation: only the exact installed target state is
+        // ever rolled back; an external replacement keeps its winner and the
+        // Prepared record stays recoverable.
+        compensate(route.path, write, before, compensationError);
+        return false;
+    }
+    return journal.setStatus(id, MutationStatus::Applied, error);
+}
+
 } // namespace
 
 bool applyManagedPolicy(const std::string& loginDefsPath,
@@ -216,17 +272,34 @@ bool applyManagedPolicy(const std::string& loginDefsPath,
             if (block != nullptr && block->key + " " + block->value == target) {
                 // Crash after the physical write: complete the durable
                 // transition exactly as install would have verified it.
-                if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
-                        route.path, before, &error) ||
-                    !verify(route.path, policy, route.key, target,
-                            target.substr(route.key.size() + 1), semantics,
-                            before, error) ||
-                    !journal.setStatus(active->id, MutationStatus::Applied,
-                                       error)) {
+                std::string directError;
+                const bool directComplete =
+                    AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                        route.path, before, &directError) &&
+                    verify(route.path, policy, route.key, target,
+                           target.substr(route.key.size() + 1), semantics,
+                           before, directError);
+                if (directComplete) {
+                    if (!journal.setStatus(active->id, MutationStatus::Applied,
+                                           error)) {
+                        return false;
+                    }
+                    active->status = MutationStatus::Applied;
+                    active->undo.payload = *undo;
+                } else if (!recanonicalizePreparedTarget(
+                               route, policy, before, target, semantics,
+                               journal, active->id, error)) {
+                    // Conflict (own body changed, orphan peer) and CAS
+                    // refusals fail closed; only a fully coherent container
+                    // with a lost placement is ever recanonicalized.
                     return false;
+                } else {
+                    // Recovery completed Applied(target) on a rewritten file.
+                    // Restart with a fresh capture so a further requested
+                    // transition is planned against the actual state.
+                    return applyManagedPolicy(loginDefsPath, policy, value,
+                                              journal, semantics, error);
                 }
-                active->status = MutationStatus::Applied;
-                active->undo.payload = *undo;
             } else if (!previousDurable.empty() && block != nullptr &&
                        block->key + " " + block->value == previousDurable) {
                 // Crash before the physical refresh: continue the prepared
@@ -429,6 +502,7 @@ ReleaseStatus releaseManagedPolicy(const std::string& loginDefsPath,
 
 InspectStatus inspectUnrecordedState(const std::string& loginDefsPath,
                                      const PolicyRef& policy,
+                                     MutationJournal& journal,
                                      std::string& error) {
     PolicyRoute route;
     if (!policyRoute(loginDefsPath, policy, route, error)) {
@@ -438,6 +512,13 @@ InspectStatus inspectUnrecordedState(const std::string& loginDefsPath,
     if (!capture(route.path, snapshot, error)) return InspectStatus::Failed;
     ManagedConfigModel model;
     if (!parseManagedConfig(snapshot.content, model, error)) {
+        return InspectStatus::Conflict;
+    }
+    // The no-record guard proves the WHOLE shared ownership domain with the
+    // same coherence logic the apply/release paths use: an orphan peer
+    // sub-block makes every unrecorded decision unsafe, so it fails closed
+    // even when the target policy itself has no physical block.
+    if (!proveCoherence(journal, route.path, model, error)) {
         return InspectStatus::Conflict;
     }
     if (findPolicyBlock(model, route.policyRef) != nullptr) {

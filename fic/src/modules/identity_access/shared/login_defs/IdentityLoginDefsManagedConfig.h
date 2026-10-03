@@ -1,6 +1,8 @@
 #ifndef FIC_IDENTITY_LOGIN_DEFS_MANAGED_CONFIG_H
 #define FIC_IDENTITY_LOGIN_DEFS_MANAGED_CONFIG_H
 
+#include "modules/identity_access/shared/login_defs/IdentityLoginDefsPolicySpec.h"
+
 #include <fic/policy/PolicyDependency.h>
 
 #include <optional>
@@ -43,14 +45,9 @@ struct PolicyRoute {
     std::string path;
 };
 
-// Native-consumer relation kind of an enrolled policy.
-enum class Relation {
-    None,
-    PasswordMinimum,
-    PasswordMaximum,
-    UidMinimum,
-    UidMaximum
-};
+// Native-consumer relation kind of an enrolled policy; the enum and the
+// exact policy table live in IdentityLoginDefsPolicySpec.h (single source of
+// truth shared with the journal validation).
 
 // Native missing-key semantics of the PASS_* relations (the native shadow
 // defaults when the peer key is absent); UID peers have no missing-key

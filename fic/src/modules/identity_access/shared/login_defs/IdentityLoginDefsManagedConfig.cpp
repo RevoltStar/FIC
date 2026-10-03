@@ -6,45 +6,22 @@
 #include <climits>
 #include <cstdlib>
 #include <limits>
-#include <map>
 #include <sys/types.h>
 
 namespace fic::identity::login_defs {
 namespace {
 
-struct PolicySpec {
-    std::string submodule;
-    std::string key;
-    Relation relation;
-};
-
-const std::map<std::string, PolicySpec>& policySpecs() {
-    static const std::map<std::string, PolicySpec> specs = {
-        {"user_create_home", {"USER_CREATION", "CREATE_HOME", Relation::None}},
-        {"user_create_private_group",
-         {"USER_CREATION", "USERGROUPS_ENAB", Relation::None}},
-        {"password_min_age_days",
-         {"PASSWORD_AGING", "PASS_MIN_DAYS", Relation::PasswordMinimum}},
-        {"password_max_age_days",
-         {"PASSWORD_AGING", "PASS_MAX_DAYS", Relation::PasswordMaximum}},
-        {"password_expiration_warning_days",
-         {"PASSWORD_AGING", "PASS_WARN_AGE", Relation::None}},
-        {"regular_user_uid_min",
-         {"PASSWORD_AGING", "UID_MIN", Relation::UidMinimum}},
-        {"regular_user_uid_max",
-         {"PASSWORD_AGING", "UID_MAX", Relation::UidMaximum}},
-    };
-    return specs;
-}
-
-const PolicySpec* policySpec(const PolicyRef& policy) {
+// The exact policy whitelist, managed keys, value domains and relations live
+// in IdentityLoginDefsPolicySpec.h (single source of truth also used by the
+// MutationJournal undo validation).
+const SharedLoginDefsPolicySpec* policySpec(const PolicyRef& policy) {
     if (policy.moduleName != "IDENTITY_ACCESS") return nullptr;
-    const auto found = policySpecs().find(policy.policyName);
-    if (found == policySpecs().end() ||
-        found->second.submodule != policy.submoduleName) {
+    const SharedLoginDefsPolicySpec* spec =
+        findSharedLoginDefsPolicySpec(policy.policyName);
+    if (spec == nullptr || policy.submoduleName != spec->submodule) {
         return nullptr;
     }
-    return &found->second;
+    return spec;
 }
 
 std::vector<std::pair<std::string, std::size_t>> linesWithOffsets(
@@ -119,12 +96,29 @@ bool parseLongStrict(const std::string& value, long minimum, long maximum,
     return true;
 }
 
+// Typed uid_t range reader for the UID relation: the FULL unsigned uid_t
+// range, never capped at INT_MAX and never routed through signed long.
+// Foreign (non-canonical) decimal formatting is accepted like the native
+// consumer accepts it; negative values are rejected fail-closed.
+bool parseUidRangeValue(const std::string& value, unsigned long long& out) {
+    if (value.empty() || value.front() == '-') return false;
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long long parsed = std::strtoull(value.c_str(), &end, 10);
+    if (errno != 0 || end != value.c_str() + value.size() ||
+        parsed > std::numeric_limits<uid_t>::max()) {
+        return false;
+    }
+    out = parsed;
+    return true;
+}
+
 } // namespace
 
 bool policyRoute(const std::string& loginDefsPath, const PolicyRef& policy,
                  PolicyRoute& route, std::string& error) {
     route = {};
-    const PolicySpec* spec = policySpec(policy);
+    const SharedLoginDefsPolicySpec* spec = policySpec(policy);
     if (spec == nullptr) {
         error = "unknown shared login.defs policy: " + policy.submoduleName +
             "/" + policy.policyName;
@@ -138,7 +132,7 @@ bool policyRoute(const std::string& loginDefsPath, const PolicyRef& policy,
 }
 
 Relation policyRelation(const PolicyRef& policy, std::string& error) {
-    const PolicySpec* spec = policySpec(policy);
+    const SharedLoginDefsPolicySpec* spec = policySpec(policy);
     if (spec == nullptr) {
         error = "unknown shared login.defs policy: " + policy.submoduleName +
             "/" + policy.policyName;
@@ -149,42 +143,15 @@ Relation policyRelation(const PolicyRef& policy, std::string& error) {
 
 bool validatePolicyValue(const PolicyRef& policy, const std::string& value,
                          std::string& error) {
-    const PolicySpec* spec = policySpec(policy);
+    const SharedLoginDefsPolicySpec* spec = policySpec(policy);
     if (spec == nullptr) {
         error = "unknown shared login.defs policy: " + policy.submoduleName +
             "/" + policy.policyName;
         return false;
     }
-    const auto decimal = [&](long minimum, long maximum) {
-        long parsed = 0;
-        if (!parseLongStrict(value, minimum, maximum, parsed)) return false;
-        // Canonical form: no leading zeros, no '+'.
-        return value == std::to_string(parsed);
-    };
-    const bool valid = [&] {
-        if (spec->relation == Relation::None && spec->key != "PASS_WARN_AGE") {
-            return value == "yes" || value == "no";
-        }
-        if (spec->key == "PASS_MIN_DAYS") return decimal(0, INT_MAX);
-        if (spec->key == "PASS_MAX_DAYS") return decimal(-1, INT_MAX);
-        if (spec->key == "PASS_WARN_AGE") return decimal(-1, INT_MAX);
-        // UID range is the full uid_t range, not capped at INT_MAX.
-        if (value.empty()) return false;
-        errno = 0;
-        char* end = nullptr;
-        const unsigned long long parsed = std::strtoull(value.c_str(), &end, 10);
-        if (errno != 0 || end != value.c_str() + value.size() ||
-            parsed > std::numeric_limits<uid_t>::max()) {
-            return false;
-        }
-        return value == std::to_string(parsed);
-    }();
-    if (!valid) {
-        error = "invalid canonical value for " + spec->key + ": '" + value +
-            "'";
-        return false;
-    }
-    return true;
+    // Exact canonical domain validation comes from the shared policy spec
+    // (same rules the journal writer/loader enforce).
+    return validateSharedLoginDefsPolicyValue(policy.policyName, value, error);
 }
 
 bool parseManagedConfig(const std::string& content, ManagedConfigModel& model,
@@ -404,28 +371,30 @@ bool relationsValidInCandidate(const std::string& candidateContent,
     const Relation relation = policyRelation(policy, error);
     if (!error.empty()) return false;
     if (relation == Relation::None) return true;
-    const auto effective = [&](const std::string& key, long minimum,
-                               long maximum, long& out) {
-        std::optional<std::string> value;
-        std::string readError;
-        if (!effectiveValue(candidateContent, key, value, readError)) {
-            error = "invalid candidate login.defs state for " + key + ": " +
-                readError;
-            return false;
-        }
-        if (!value.has_value()) {
-            out = key == "PASS_MIN_DAYS" ? semantics.minDays
-                                         : semantics.maxDays;
-            return true;
-        }
-        return parseLongStrict(*value, minimum, maximum, out);
-    };
-    long minDays = 0;
-    long maxDays = 0;
     if (relation == Relation::PasswordMinimum ||
         relation == Relation::PasswordMaximum) {
-        if (!effective("PASS_MIN_DAYS", 0, INT_MAX, minDays) ||
-            !effective("PASS_MAX_DAYS", -1, INT_MAX, maxDays)) {
+        const auto effectiveDays = [&](const std::string& key, long minimum,
+                                       long maximum, long& out) {
+            std::optional<std::string> value;
+            std::string readError;
+            if (!effectiveValue(candidateContent, key, value, readError)) {
+                error = "invalid candidate login.defs state for " + key +
+                    ": " + readError;
+                return false;
+            }
+            if (!value.has_value()) {
+                // Native shadow missing-key semantics apply ONLY to the
+                // PASS_* pair (PasswordAgingMissingKeySemantics).
+                out = key == "PASS_MIN_DAYS" ? semantics.minDays
+                                             : semantics.maxDays;
+                return true;
+            }
+            return parseLongStrict(*value, minimum, maximum, out);
+        };
+        long minDays = 0;
+        long maxDays = 0;
+        if (!effectiveDays("PASS_MIN_DAYS", 0, INT_MAX, minDays) ||
+            !effectiveDays("PASS_MAX_DAYS", -1, INT_MAX, maxDays)) {
             return false;
         }
         if (maxDays != -1 && minDays > maxDays) {
@@ -435,13 +404,33 @@ bool relationsValidInCandidate(const std::string& candidateContent,
         }
         return true;
     }
-    // UID relation: both peers must be effectively present and valid.
-    if (!effective("UID_MIN", 0, INT_MAX, minDays) ||
-        !effective("UID_MAX", 0, INT_MAX, maxDays)) {
-        error = "candidate login.defs UID relation is not provable: " + error;
+    // UID relation: BOTH peers must be effectively present and valid full
+    // uid_t values. There is no synthetic missing-key default for UID_*
+    // (PasswordAgingMissingKeySemantics never applies here) — a missing or
+    // invalid peer fails closed before any mutation.
+    const auto effectiveUid = [&](const std::string& key,
+                                  unsigned long long& out) {
+        std::optional<std::string> value;
+        std::string readError;
+        if (!effectiveValue(candidateContent, key, value, readError)) {
+            error = "invalid candidate login.defs state for " + key + ": " +
+                readError;
+            return false;
+        }
+        if (!value.has_value()) {
+            error = "candidate login.defs UID relation requires an "
+                    "effective " +
+                key + " assignment";
+            return false;
+        }
+        return parseUidRangeValue(*value, out);
+    };
+    unsigned long long minUid = 0;
+    unsigned long long maxUid = 0;
+    if (!effectiveUid("UID_MIN", minUid) || !effectiveUid("UID_MAX", maxUid)) {
         return false;
     }
-    if (minDays > maxDays) {
+    if (minUid > maxUid) {
         error = "candidate login.defs relation is invalid: UID_MIN > UID_MAX";
         return false;
     }

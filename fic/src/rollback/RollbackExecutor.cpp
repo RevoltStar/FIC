@@ -873,7 +873,7 @@ RollbackReport checkUnrecordedOwnership(
     const PolicyRef& policy,
     const std::string& resourceHint,
     const RollbackExecutorDeps& deps,
-    const MutationJournal* journal) {
+    MutationJournal* journal) {
     RollbackReport report;
     report.status = RollbackStatus::NothingToDo;
     report.message = "Active mutation records отсутствуют; FIC не владеет "
@@ -887,7 +887,7 @@ RollbackReport checkUnrecordedOwnership(
         // FIC container fails closed too.
         std::string error;
         const auto status = fic::identity::login_defs::inspectUnrecordedState(
-            sharedLoginDefsPathFor(policy, deps), policy, error);
+            sharedLoginDefsPathFor(policy, deps), policy, *journal, error);
         report.status = status ==
                 fic::identity::login_defs::InspectStatus::NothingToDo
             ? RollbackStatus::NothingToDo
