@@ -442,16 +442,7 @@ bool effectiveValue(const std::string& content, ConfigKind kind,
         }
         if (ignored) continue;
         const bool matches = assignment.key == key;
-        if (matches) {
-            const std::string parsed = valueFromLine(assignment, kind);
-            // shadow 4.17's useradd defaults parser ignores an empty GROUPS=
-            // after a previously parsed list; native container probes on
-            // Debian 13, Ubuntu 26.04 and ALT p11 confirm this behavior.
-            if (kind != ConfigKind::UseraddDefaults || key != "GROUPS" ||
-                !parsed.empty()) {
-                value = parsed;
-            }
-        }
+        if (matches) value = valueFromLine(assignment, kind);
     }
     return true;
 }
@@ -464,14 +455,19 @@ bool effectiveAssignmentsMatch(
         std::optional<std::string> actual;
         if (!effectiveValue(content, kind, semantics, assignment.key,
                             actual, error)) return false;
+        const std::string expectedValue = valueFromLine(assignment, kind);
+        if (!actual.has_value() && assignment.key == "GROUPS" &&
+            normalizedGroupList(expectedValue, ',').empty()) {
+            continue; // absent native GROUPS is the empty membership set
+        }
         if (!actual.has_value() ||
             (assignment.key == "GROUPS"
                  ? normalizedGroupList(*actual, ',') !=
-                       normalizedGroupList(valueFromLine(assignment, kind), ',')
+                       normalizedGroupList(expectedValue, ',')
                  : assignment.key == "EXTRA_GROUPS"
                        ? normalizedGroupList(*actual, ' ') !=
-                             normalizedGroupList(valueFromLine(assignment, kind), ' ')
-                       : *actual != valueFromLine(assignment, kind))) {
+                             normalizedGroupList(expectedValue, ' ')
+                       : *actual != expectedValue)) {
             error = "consumer-effective value mismatch for " + assignment.key;
             return false;
         }

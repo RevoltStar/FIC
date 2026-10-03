@@ -3,12 +3,12 @@
 ## Current base
 
 * branch: `main`
-* base commit: `b062092a4118eaf68b67c6a48fa6b4ee9e3b65d8`
+* base commit: `a1c13198c1dd4872c34c0095a35f98d94bc4ea7c`
 
 ## Current task
 
-Follow-up fixes for crash-safe ownership and native-consumer semantics of all
-production `IDENTITY_ACCESS/USER_CREATION` policies.
+Evidence-driven correction of `/etc/default/useradd` native semantics and
+`user_default_supplementary_groups` empty-list enforcement.
 
 ## Accepted architecture / invariants
 
@@ -22,8 +22,8 @@ production `IDENTITY_ACCESS/USER_CREATION` policies.
 * Ordinary apply cannot replace unresolved `Prepared` or `RollbackFailed`
   USER_CREATION provenance.
 * All supported `/etc/default/useradd` packages are modeled exact-key and
-  last-wins. Empty shadow `GROUPS=` is ignored after a non-empty assignment;
-  it is not a neutralizer.
+  last-wins. Shadow 4.17 `GROUPS=` clears the actual `user_groups` membership
+  state even when `useradd -D` displays stale `def_groups`.
 
 ## Completed
 
@@ -31,12 +31,15 @@ production `IDENTITY_ACCESS/USER_CREATION` policies.
   useradd defaults without weakening managed-block ownership parsing.
 * Corrected all five profiles to package-proven exact-key useradd semantics,
   including ALT p11 shadow-utils 4.17.4-alt2.
-* Empty shadow supplementary groups now release an owned block only when the
-  remaining foreign state is already empty; otherwise apply fails closed.
+* Empty shadow supplementary groups use a normal FIC-owned EOF `GROUPS=`
+  assignment; non-empty-to-empty and reverse transitions use the generic
+  atomic refresh state machine without a release window.
 * Added durable previous-side normalization, USER_CREATION journal transition
   guards and executor-level retry/crash/third-state regression tests.
-* Native disposable probes covered actual shadow/adduser behavior on Debian
-  12/13, Ubuntu 24.04/26.04 and ALT p11 without changing the host.
+* Exact-key semantics were reconciled with distro sources: shadow 4.13's
+  prefix macro compares complete tokens such as `HOME=`, not bare `HOME`.
+* Real-user probes on Debian 13 and Ubuntu 26.04 proved that `GROUPS=a,b`
+  followed by `GROUPS=` creates a user with no supplementary memberships.
 
 ## Changed areas
 
@@ -55,6 +58,8 @@ production `IDENTITY_ACCESS/USER_CREATION` policies.
   and their executables passed (the image has no `ctest` command).
 * Native package probes used real user creation in disposable containers to
   validate login.defs and adduser.conf, plus `useradd -D` for defaults.
+* Detailed current research evidence is in
+  `/tmp/user_creation_native_semantics.md` (not committed).
 
 ## Remaining
 

@@ -352,11 +352,6 @@ bool UserDefaultSupplementaryGroupsPolicy::applyShadowUseraddDefaults(
     std::string error;
     auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
     if (journal == nullptr) { log(error, logLevel::ERROR); return false; }
-    if (groups.empty()) {
-        return fic::identity::user_creation::applyManagedPolicy(
-            platform_, policyName, {}, *journal, error) ||
-            (log(error, logLevel::ERROR), false);
-    }
     const std::string native = joinGroups(groups, ',');
     return fic::identity::user_creation::applyManagedPolicy(
         platform_, policyName, {{"GROUPS", "GROUPS=" + native}},

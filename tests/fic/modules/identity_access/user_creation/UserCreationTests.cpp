@@ -294,15 +294,14 @@ void writeSupplementaryConfig(
               "user_default_supplementary_groups.value=" + serialized + "\n");
 }
 
-// Independent test model of the observed shadow 4.17 useradd GROUPS path.
-// Non-empty later assignments replace the list, while GROUPS= is ignored.
-// This deliberately does not call FIC's effectiveValue() implementation.
+// Independent test model of shadow 4.17's membership state. get_groups()
+// clears user_groups even though useradd -D can keep displaying stale
+// def_groups. This deliberately does not call FIC's effectiveValue().
 std::vector<std::string> shadow417Groups(const std::string& content) {
     std::string value;
     std::istringstream lines(content);
     for (std::string line; std::getline(lines, line);) {
-        if (line.rfind("GROUPS=", 0) == 0 && line.size() > 7)
-            value = line.substr(7);
+        if (line.rfind("GROUPS=", 0) == 0) value = line.substr(7);
     }
     std::vector<std::string> groups;
     std::size_t start = 0;
@@ -354,11 +353,25 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
 
     writeSupplementaryConfig(root, "[]");
     UserDefaultSupplementaryGroupsPolicy clear(platform);
-    const std::string nonEmptyForeign = readFile(platform.useraddDefaultsPath);
-    require(!clear.apply() &&
-                readFile(platform.useraddDefaultsPath) == nonEmptyForeign &&
-                !shadow417Groups(nonEmptyForeign).empty(),
-            "unsafe GROUPS= empty neutralizer was installed over foreign state");
+    require(clear.apply() &&
+                readFile(platform.useraddDefaultsPath).find("GROUPS=\n") !=
+                    std::string::npos &&
+                shadow417Groups(readFile(platform.useraddDefaultsPath)).empty(),
+            "empty shadow list did not install the authoritative GROUPS=");
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    const auto emptyRecords = journal == nullptr ?
+        std::vector<fic::rollback::MutationRecord>{} : journal->activeRecords(
+            {"IDENTITY_ACCESS", "USER_CREATION",
+             "user_default_supplementary_groups"});
+    require(emptyRecords.size() == 1, "empty GROUPS ownership was not journaled");
+    require(fic::identity::user_creation::releaseManagedPolicy(
+                platform, emptyRecords.front(), *journal, error) ==
+                fic::identity::user_creation::ReleaseStatus::Success,
+            error);
+    require(readFile(platform.useraddDefaultsPath) ==
+                "# keep\nGROUPS=video,audio\nHOME=/home\n",
+            "empty GROUPS rollback did not preserve foreign bytes");
 
     writeFile(platform.useraddDefaultsPath, "HOME=/home\n");
     useJournal(root, "shadow-empty-fresh");
@@ -367,14 +380,42 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
                 readFile(platform.useraddDefaultsPath) == "HOME=/home\n",
             "already-empty shadow state was not a foreign no-op");
 
+    useJournal(root, "shadow-empty-override-foreign");
+    writeFile(platform.useraddDefaultsPath,
+              "GROUPS=audio\nGROUPS=\nHOME=/home\n");
+    const std::string foreignEmpty = readFile(platform.useraddDefaultsPath);
+    UserDefaultSupplementaryGroupsPolicy foreignOverrideEmpty(platform);
+    require(foreignOverrideEmpty.apply() &&
+                readFile(platform.useraddDefaultsPath) == foreignEmpty,
+            "foreign GROUPS= empty override caused an unnecessary write");
+
     writeSupplementaryConfig(root, "[\"audio\"]");
     UserDefaultSupplementaryGroupsPolicy ownedNonEmpty(platform);
     require(ownedNonEmpty.apply(), "managed non-empty GROUPS apply failed");
     writeSupplementaryConfig(root, "[]");
     UserDefaultSupplementaryGroupsPolicy releaseToEmpty(platform);
+    int emptyRefreshWrites = 0;
+    fic::identity::user_creation::setBeforeUserCreationWriteHookForTests(
+        [&]() { ++emptyRefreshWrites; });
     require(releaseToEmpty.apply() &&
-                readFile(platform.useraddDefaultsPath) == "HOME=/home\n",
-            "managed GROUPS was not atomically released to empty foreign state");
+                emptyRefreshWrites == 1 &&
+                readFile(platform.useraddDefaultsPath).find("GROUPS=\n") !=
+                    std::string::npos &&
+                shadow417Groups(readFile(platform.useraddDefaultsPath)).empty(),
+            "managed GROUPS was not atomically refreshed to GROUPS=");
+    fic::identity::user_creation::setBeforeUserCreationWriteHookForTests({});
+
+    writeSupplementaryConfig(root, "[\"video\"]");
+    UserDefaultSupplementaryGroupsPolicy reverseRefresh(platform);
+    int nonEmptyRefreshWrites = 0;
+    fic::identity::user_creation::setBeforeUserCreationWriteHookForTests(
+        [&]() { ++nonEmptyRefreshWrites; });
+    require(reverseRefresh.apply() &&
+                nonEmptyRefreshWrites == 1 &&
+                readFile(platform.useraddDefaultsPath).find("GROUPS=video\n") !=
+                    std::string::npos,
+            "GROUPS= was not atomically refreshed to a non-empty list");
+    fic::identity::user_creation::setBeforeUserCreationWriteHookForTests({});
 
     writeFile(platform.useraddDefaultsPath,
               "GROUPS=audio\nGROUPS=video\nHOME=/home\n");
@@ -882,8 +923,8 @@ void testNativeConsumerSemantics() {
 
     require(effectiveValue("GROUPS=audio,video\nGROUPS=\n",
                 ConfigKind::UseraddDefaults, Semantics::ExactKey,
-                "GROUPS", value, error) && value == "audio,video",
-            "shadow GROUPS= was incorrectly modeled as clearing the list");
+                "GROUPS", value, error) && value == "",
+            "shadow GROUPS= did not clear the effective membership list");
 }
 
 void testManagedPreparedRecovery(const fs::path& root) {

@@ -861,11 +861,11 @@ defaults не получает. На Debian 13 и Ubuntu 26.04 она управ
 платформах вызывает `useradd` без `-G`, но затем может добавить memberships из
 `USERGROUPS`/`USERS_GROUP` и `EXTRA_GROUPS`, поэтому policy не обещает полный
 итоговый exact set для каждого frontend. Логический список хранится как
-canonical JSON array. Для shadow provider пустой список не может быть
-нейтрализован `GROUPS=`: реальные shadow 4.17 игнорируют такую пустую запись
-после непустой. Поэтому FIC освобождает свой block только если оставшийся
-foreign state уже empty, иначе apply завершается fail closed без мутации. Для
-adduser provider empty задаётся managed `ADD_EXTRA_GROUPS=0` без managed
+canonical JSON array. Для shadow provider пустой список задаётся FIC-owned EOF
+assignment `GROUPS=`. Shadow 4.17 очищает внутренний `user_groups`, хотя
+`useradd -D` после предшествующего непустого assignment может показывать старый
+`def_groups`; real-user probes подтверждают отсутствие memberships. Для adduser
+provider empty задаётся managed `ADD_EXTRA_GROUPS=0` без managed
 `EXTRA_GROUPS`. Foreign значения при этом не удаляются.
 
 USER_CREATION rollback использует ownership-release: journal хранит только

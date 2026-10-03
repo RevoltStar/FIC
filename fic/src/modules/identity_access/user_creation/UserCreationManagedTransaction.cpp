@@ -181,12 +181,8 @@ bool applyManagedPolicy(
     MutationJournal& journal, std::string& error) {
     PolicyRoute route;
     if (!policyRoute(platform, policyName, route, error)) return false;
-    const bool releaseToEmptyShadowGroups = desired.empty() &&
-        policyName == "user_default_supplementary_groups" &&
-        route.kind == ConfigKind::UseraddDefaults;
-    if (desired.empty() && !releaseToEmptyShadowGroups) {
-        error = "empty USER_CREATION managed body is only valid as the "
-                "shadow supplementary-groups release operation";
+    if (desired.empty()) {
+        error = "empty USER_CREATION managed body is invalid";
         return false;
     }
     AtomicTargetState before;
@@ -220,13 +216,7 @@ bool applyManagedPolicy(
             } else if (!old.empty() && same(block, old)) {
                 previous = old;
             } else if (block == nullptr) {
-                if (releaseToEmptyShadowGroups) {
-                    if (!journal.setStatus(active->id,
-                                           MutationStatus::RolledBack,
-                                           error)) return false;
-                } else if (!journal.discard(active->id, error)) {
-                    return false;
-                }
+                if (!journal.discard(active->id, error)) return false;
                 active.reset();
             } else {
                 error = "unresolved USER_CREATION Prepared state conflicts";
@@ -258,41 +248,6 @@ bool applyManagedPolicy(
     if (!active.has_value() && findPolicyBlock(model, policyName) != nullptr) {
         error = "unrecorded USER_CREATION ownership (fail closed)";
         return false;
-    }
-    if (releaseToEmptyShadowGroups) {
-        if (!active.has_value()) {
-            std::optional<std::string> actual;
-            if (!effectiveValue(before.content, route.kind,
-                    platform.useraddDefaultsLookup, "GROUPS", actual,
-                    error)) return false;
-            if (!actual.has_value()) return true;
-            error = "native shadow GROUPS cannot be cleared by an empty EOF "
-                    "assignment while a non-empty foreign value is active";
-            return false;
-        }
-        const PolicyBlock* current = findPolicyBlock(model, policyName);
-        if (current == nullptr) {
-            error = "USER_CREATION empty release lost its owned block";
-            return false;
-        }
-        std::string candidate;
-        bool removed = false;
-        if (!removePolicyBlock(before.content, route.kind, policyName,
-                current->assignments, candidate, removed, error)) return false;
-        std::optional<std::string> afterRelease;
-        if (!effectiveValue(candidate, route.kind,
-                platform.useraddDefaultsLookup, "GROUPS", afterRelease,
-                error)) return false;
-        if (afterRelease.has_value()) {
-            error = "releasing FIC GROUPS would expose non-empty foreign "
-                    "supplementary groups (fail closed)";
-            return false;
-        }
-        const ReleaseStatus released = releaseManagedPolicy(
-            platform, *active, journal, error);
-        if (released != ReleaseStatus::Success &&
-            released != ReleaseStatus::NothingToDo) return false;
-        return journal.setStatus(active->id, MutationStatus::RolledBack, error);
     }
     if (!active.has_value()) {
         std::string semanticError;
