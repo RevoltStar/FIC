@@ -24,13 +24,11 @@ PolicyRef ref(const std::string& policy) {
 }
 
 UserCreationConfigKind journalKind(ConfigKind kind) {
-    if (kind == ConfigKind::LoginDefs) return UserCreationConfigKind::LoginDefs;
     if (kind == ConfigKind::Adduser) return UserCreationConfigKind::Adduser;
     return UserCreationConfigKind::UseraddDefaults;
 }
 
 ConfigKind configKind(UserCreationConfigKind kind) {
-    if (kind == UserCreationConfigKind::LoginDefs) return ConfigKind::LoginDefs;
     if (kind == UserCreationConfigKind::Adduser) return ConfigKind::Adduser;
     return ConfigKind::UseraddDefaults;
 }

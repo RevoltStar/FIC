@@ -827,25 +827,34 @@ Ubuntu изменяют `pwhistory.conf` только после доказат�
 stack, Debian 12 изменяет argv существующего `pam_pwhistory.so`, а ALT использует
 отдельный serialized TCB topology manager.
 
-Политики `IDENTITY_ACCESS/PASSWORD_AGING` управляют плоским
-`/etc/login.defs` через общий для identity configuration
-`LoginDefsFileHandler`.
-Неизвестные строки, комментарии и пустые строки сохраняются; этот strict API
-не используется USER_CREATION managed-block transaction. Пять config-policy
+Политики `IDENTITY_ACCESS/PASSWORD_AGING` управляют `/etc/login.defs` через
+shared managed-block backend `IdentityLoginDefs`
+(`fic/src/modules/identity_access/shared/login_defs/`): пять config-policy
 задают `PASS_MIN_DAYS`, `PASS_MAX_DAYS`, `PASS_WARN_AGE`, `UID_MIN` и
-`UID_MAX`. Две operational policy объявляют Required dependencies через общий
-policy dependency graph и после их применения повторно читают фактический
-`login.defs`. Начальный `IDENTITY_ACCESS.conf` генерируется при сборке из
-defaults выбранного platform profile, а не из состояния build host. Одни и те
-же CMake platform constants генерируют этот config и C++ header, из которого
+`UID_MAX` в типизированных sub-block'ах общего FIC-контейнера в логическом
+EOF. Плоский `LoginDefsFileHandler` остаётся только утилитой чтения/правки и
+не участвует в ownership. Rollback-решения и operational `loadExpected()`
+используют отдельный native consumer-effective reader (last-wins, ведущие
+пробелы/комментарии, no-value assignment не заменяет ранее полученное
+значение); relation-валидация (`PASS_MIN_DAYS <= PASS_MAX_DAYS` при
+`MAX != -1`, `UID_MIN <= UID_MAX` в полном диапазоне `uid_t`) выполняется на
+native-effective состоянии кандидата. Две operational policy объявляют
+Required dependencies через общий policy dependency graph и после их
+применения повторно читают фактический `login.defs`. Начальный
+`IDENTITY_ACCESS.conf` генерируется при сборке из defaults выбранного
+platform profile, а не из состояния build host. Одни и те же CMake platform
+constants генерируют этот config и C++ header, из которого
 `PasswordAgingPolicyDefaults` инициализирует runtime policy metadata.
 
 Базовые политики `IDENTITY_ACCESS/USER_CREATION` управляют только defaults для
 будущих локальных пользователей backend `ShadowUseradd`: `HOME`, `SKEL`,
 `SHELL` и именованным `GROUP` в `/etc/default/useradd`, а также `CREATE_HOME`
-и `USERGROUPS_ENAB` в `/etc/login.defs`. Они не создают пользователей, группы
+и `USERGROUPS_ENAB` в shared managed-block контейнере `/etc/login.defs`.
+Они не создают пользователей, группы
 или каталоги и не изменяют существующие accounts. USER_CREATION использует
-consumer-aware last-wins parser и собственный FIC managed block в logical EOF;
+consumer-aware last-wins parser; `/etc/default/useradd` хранит собственный
+FIC managed block в logical EOF, а login.defs политики используют общий
+с PASSWORD_AGING контейнер `IdentityLoginDefs`;
 foreign assignments, включая duplicates, остаются byte-for-byte. Каталоги и shell должны существовать,
 shell должен разрешаться в обычный executable file и при наличии `/etc/shells`
 входить в него под запрошенным именем, а

@@ -507,6 +507,79 @@ I/O), это ошибка загрузки — fail closed. Существующ
   edit (см. раздел «Kerberos rollback (IDENTITY_ACCESS/KERBEROS)»);
   payload хранит ТОЧНЫЙ before-state целевой relation (raw line или факт
   отсутствия), snapshot всего krb5.conf не используется.
+* `UndoRemoveIdentityLoginDefsManagedPolicy{policyName, configPath, key,
+  appliedLine, previousAppliedLine}` — shared `/etc/login.defs`
+  ownership-release backend (см. раздел «Shared login.defs rollback»);
+  payload доказывает FIC-владение одной canonical-строкой (key, exact
+  applied line); foreign значение и snapshot файла никогда не хранятся;
+  `previousAppliedLine` — только durable previous→target переход
+  unresolved Prepared refresh (empty = fresh create).
+
+## Shared login.defs rollback (IDENTITY_ACCESS: USER_CREATION + PASSWORD_AGING)
+
+Все скалярные политики `/etc/login.defs` — семь штук: USER_CREATION
+(`user_create_home` → `CREATE_HOME`, `user_create_private_group` →
+`USERGROUPS_ENAB`) и PASSWORD_AGING (`password_min_age_days`,
+`password_max_age_days`, `password_expiration_warning_days`,
+`regular_user_uid_min`, `regular_user_uid_max`) — владеют своим состоянием
+через единый shared backend `IdentityLoginDefs`
+(`fic/src/modules/identity_access/shared/login_defs/`):
+
+* **Ровно один FIC-контейнер на файл**, всегда в логическом EOF:
+
+  ```
+  #@FIC_IDENTITY_LOGIN_DEFS_BLOCK_BEGIN version=1@
+  #@FIC_POLICY_BEGIN ref=IDENTITY_ACCESS/PASSWORD_AGING/password_min_age_days@
+  PASS_MIN_DAYS 1
+  #@FIC_POLICY_END ref=IDENTITY_ACCESS/PASSWORD_AGING/password_min_age_days@
+  #@FIC_IDENTITY_LOGIN_DEFS_BLOCK_END@
+  ```
+
+  Каждый sub-block содержит ровно одну canonical-строку `KEY value`.
+  Peer sub-block'и сохраняются byte-for-byte; foreign байты вне контейнера
+  никогда не изменяются. Строгая FIC-грамматика не совпадает с native
+  consumer-семантикой.
+
+* **Native-effective reader**: отдельный reader
+  (`effectiveValue`) реализует фактическую семантику shadow-потребителей:
+  last-wins, ведущие пробелы/табуляции и комментарии игнорируются,
+  assignment без значения не заменяет ранее полученное значение;
+  target-like строка, которую нельзя доказуемо разобрать, — fail closed.
+  Этим же reader'ом обязана пользоваться `loadExpected()` operational
+  PASSWORD_AGING политик (bulk `chage`), а apply/rollback-решения
+  принимаются на native effective состоянии кандидата.
+
+* **Apply**: durable-target-first Prepared/Applied модель. CAS-write
+  (`expectedTargetState`, no truncate+write), refresh `A → B` — одна
+  физическая атомарная замена, контейнер всегда переносится в логический
+  EOF с сохранением appended foreign байтов. Relation-валидация
+  (`PASS_MIN_DAYS <= PASS_MAX_DAYS` кроме `MAX=-1`; `UID_MIN <= UID_MAX`
+  в полном диапазоне `uid_t`, без INT_MAX-ограничения) выполняется на
+  native-effective состоянии кандидата. `PASS_MAX_DAYS`/`PASS_WARN_AGE`
+  допускают `-1` (unlimited). Shared lock —
+  `IdentityAccessPolicy::configurationMutex()`.
+
+* **Coherence proof**: каждый физический sub-block обязан быть доказан
+  journal-записью (известная политика whitelist'а из 7 политик, identity
+  payload/record/resource, body = applied line или durable previous-сторона
+  Prepared refresh). Orphan/unknown sub-block, ручная правка owned строки,
+  malformed/unknown FIC-маркер — `Conflict` без записи.
+
+* **Rollback = ownership release, никогда историческая реставрация**:
+  удаляется точный FIC sub-block, foreign значение (если есть) становится
+  effective естественно. Последний released sub-block удаляет весь
+  контейнер. Перед физическим release вычисляется candidate без sub-block'а
+  и на нём валидируются relation'ы: если release создаёт invalid relation —
+  `Conflict` fail closed (без скрытых workaround'ов; известное ограничение).
+
+* **Enrollment**: пять скалярных PASSWORD_AGING политик и обе
+  USER_CREATION login.defs политики — `Supported`; две operational
+  PASSWORD_AGING политики (`password_aging_apply_to_existing_accounts`,
+  `password_aging_enforce_for_root`) меняют живое состояние учётных записей
+  через `chage` и в этой стадии остаются `NotEnrolled` (без journal-rollback);
+  неизвестная политика PASSWORD_AGING — `Unsupported`. Отсутствие записей
+  при присутствующем same-policy sub-block — fail closed (unrecorded
+  ownership).
 
 ## Release-only lifecycle (DAC / Mode_and_Owner)
 
@@ -1249,6 +1322,12 @@ PamPackagingChecks.py`.
     «GRUB rollback (OSS/Grub)»);
   * `IDENTITY_ACCESS/PAM` — только три capability activation policies,
     перечисленные выше;
+  * `IDENTITY_ACCESS/PASSWORD_AGING` — пять скалярных login.defs политик
+    (`password_min_age_days`, `password_max_age_days`,
+    `password_expiration_warning_days`, `regular_user_uid_min`,
+    `regular_user_uid_max`) через shared backend
+    (см. раздел «Shared login.defs rollback»); две operational политики
+    подмодуля — `NotEnrolled`, неизвестные — `Unsupported`;
 * `Unsupported` — модуль в системе rollback, но автоматический откат не
   реализован: `sudo_require_authentication` (чужие NOPASSWD/PASSWD specs),
   `exclusive_firewall_control` (уничтожает внешнее состояние), DC

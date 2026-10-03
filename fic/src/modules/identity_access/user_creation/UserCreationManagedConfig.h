@@ -9,7 +9,7 @@
 
 namespace fic::identity::user_creation {
 
-enum class ConfigKind { UseraddDefaults, LoginDefs, Adduser };
+enum class ConfigKind { UseraddDefaults, Adduser };
 
 struct Assignment {
     std::string key;

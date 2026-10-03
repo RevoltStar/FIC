@@ -881,16 +881,8 @@ void testNativeConsumerSemantics() {
     using Semantics = fic::platform::UseraddDefaultsLookupSemantics;
     std::string error;
     std::optional<std::string> value;
-    require(effectiveValue(
-                "CREATE_HOME yes\n    CREATE_HOME no\n",
-                ConfigKind::LoginDefs, Semantics::ExactKey,
-                "CREATE_HOME", value, error) && value == "no",
-            "login.defs leading-space assignment was not authoritative");
-    require(effectiveValue(
-                "USERGROUPS_ENAB no\n\tUSERGROUPS_ENAB yes\n",
-                ConfigKind::LoginDefs, Semantics::ExactKey,
-                "USERGROUPS_ENAB", value, error) && value == "yes",
-            "login.defs leading-tab assignment was not authoritative");
+    // Shared login.defs native consumer semantics moved to the dedicated
+    // IdentityLoginDefs backend test suite (identity_login_defs_tests).
 
     const std::string adduser =
         "ADD_EXTRA_GROUPS=0\n"
@@ -915,11 +907,6 @@ void testNativeConsumerSemantics() {
                 {{"ADD_EXTRA_GROUPS", "ADD_EXTRA_GROUPS=1"},
                  {"EXTRA_GROUPS", "EXTRA_GROUPS=\"audio\""}}, error),
             "adduser value with significant trailing spaces was adopted");
-
-    require(effectiveValue("CREATE_HOME no\nCREATE_HOME   \n",
-                ConfigKind::LoginDefs, Semantics::ExactKey,
-                "CREATE_HOME", value, error) && value == "no",
-            "empty login.defs assignment was not ignored like native shadow");
 
     require(effectiveValue("GROUPS=audio,video\nGROUPS=\n",
                 ConfigKind::UseraddDefaults, Semantics::ExactKey,

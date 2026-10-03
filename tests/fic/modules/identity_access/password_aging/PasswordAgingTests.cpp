@@ -2,6 +2,8 @@
 #include "policy/registry/PolicyRegistryInitialization.h"
 #include "modules/identity_access/shared/configuration/LoginDefsFileHandler.h"
 #include "modules/identity_access/password_aging/PasswordAgingPolicies.h"
+#include "rollback/DaemonMutationJournal.h"
+#include "modules/identity_access/shared/login_defs/IdentityLoginDefsManagedConfig.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 
@@ -74,6 +76,8 @@ void initializePaths(const fs::path& root) {
               "_schema_version=1\nlog_level.status=ENABLE\nlog_level.value=DEBUG\n");
     std::string error;
     require(fic::core::FicRuntimePaths::initialize(paths, error), error);
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(
+        root / "data/password-aging-mutations.json");
 }
 
 void writePolicyConfig(const fs::path& root, bool maxEnabled = true,
@@ -192,8 +196,22 @@ void testOptionPolicies(const fs::path& root) {
         "PASS_WARN_AGE 7\nUID_MIN 1000\nUID_MAX 60000\n");
     PasswordMaxAgeDaysPolicy max(platform);
     const std::string duplicate = readFile(platform.loginDefsPath);
-    require(!max.apply() && readFile(platform.loginDefsPath) == duplicate,
-            "duplicate option was not fail-closed");
+    std::optional<std::string> value;
+    std::string error;
+    // Native last-wins semantics: the effective value is 99999, so the FIC
+    // owned assignment is placed at the logical EOF instead of failing.
+    require(max.apply(), "duplicate native entries were not resolved by "
+                         "the effective reader");
+    const std::string afterDuplicate = readFile(platform.loginDefsPath);
+    require(afterDuplicate.rfind(duplicate) == 0 &&
+                afterDuplicate.find("#@FIC_IDENTITY_LOGIN_DEFS_BLOCK_BEGIN "
+                                    "version=1@") != std::string::npos &&
+                afterDuplicate.find("\nPASS_MAX_DAYS 90\n") != std::string::npos,
+            "duplicate option apply did not append the FIC-owned value");
+    require(fic::identity::login_defs::effectiveValue(afterDuplicate,
+                "PASS_MAX_DAYS", value, error) &&
+                value.has_value() && *value == "90",
+            "FIC-owned value is not the native-effective PASS_MAX_DAYS");
 
     writeFile(platform.loginDefsPath,
         "PASS_MIN_DAYS 100\nPASS_MAX_DAYS 90\nPASS_WARN_AGE 7\n"

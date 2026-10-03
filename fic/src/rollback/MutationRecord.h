@@ -35,7 +35,8 @@ enum class MutationBackend {
     Sssd,
     Kerberos,
     Pam,
-    UserCreation
+    UserCreation,
+    IdentityLoginDefs
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -94,6 +95,21 @@ struct UndoRemoveUserCreationManagedPolicy {
     std::vector<UserCreationManagedAssignment> appliedAssignments;
     // Non-empty only while a Prepared in-place refresh A -> B is unresolved.
     std::vector<UserCreationManagedAssignment> previousAppliedAssignments;
+};
+
+// Shared /etc/login.defs ownership-release provenance (one FIC container
+// shared by USER_CREATION and PASSWORD_AGING scalar policies). The record
+// proves ONLY that FIC owns ONE managed assignment (key, exact applied
+// line); rollback releases the FIC sub-block — it never restores a foreign
+// value or any pre-FIC state. previousAppliedLine carries the durable
+// previous→target transition of an in-place refresh (crash-safe ownership
+// recovery): empty = fresh create.
+struct UndoRemoveIdentityLoginDefsManagedPolicy {
+    std::string policyName; // FIC policy identity (physical sub-block marker)
+    std::string configPath; // managed login.defs resource
+    std::string key;        // managed login.defs key (PASS_MIN_DAYS, ...)
+    std::string appliedLine;         // exact canonical owned line "KEY value"
+    std::string previousAppliedLine; // empty = fresh create
 };
 
 struct UndoRemoveFirewallPolicy {
@@ -251,7 +267,8 @@ using UndoPayload = std::variant<
     UndoDisablePamCapability,
     UndoRemovePamProviderManagedEntry,
     UndoRemovePamProviderManagedFlag,
-    UndoOwnPamProviderContainer>;
+    UndoOwnPamProviderContainer,
+    UndoRemoveIdentityLoginDefsManagedPolicy>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

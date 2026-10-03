@@ -109,6 +109,36 @@ bool isSupportedUserCreationPolicy(const std::string& policyName) {
            policyName == "user_default_supplementary_groups";
 }
 
+bool isSharedLoginDefsPolicy(const PolicyRef& policy) {
+    return policy.moduleName == "IDENTITY_ACCESS" &&
+        (policy.submoduleName == "PASSWORD_AGING"
+             ? policy.policyName == "password_min_age_days" ||
+                   policy.policyName == "password_max_age_days" ||
+                   policy.policyName == "password_expiration_warning_days" ||
+                   policy.policyName == "regular_user_uid_min" ||
+                   policy.policyName == "regular_user_uid_max"
+             : policy.submoduleName == "USER_CREATION" &&
+                   (policy.policyName == "user_create_home" ||
+                       policy.policyName == "user_create_private_group"));
+}
+
+std::string sharedLoginDefsPathFor(const PolicyRef& policy,
+                                   const RollbackExecutorDeps& deps) {
+    return policy.submoduleName == "USER_CREATION"
+        ? deps.userCreationPlatform.loginDefsPath.string()
+        : deps.passwordAgingPlatform.loginDefsPath.string();
+}
+
+fic::identity::login_defs::IdentityLoginDefsSemantics
+sharedLoginDefsSemantics(const RollbackExecutorDeps& deps) {
+    fic::identity::login_defs::IdentityLoginDefsSemantics semantics;
+    semantics.missingKey.minDays =
+        deps.passwordAgingPlatform.missingKeySemantics.minDays;
+    semantics.missingKey.maxDays =
+        deps.passwordAgingPlatform.missingKeySemantics.maxDays;
+    return semantics;
+}
+
 PamRollbackOptions pamOptions(const RollbackExecutorDeps& deps) {
     PamRollbackOptions options{deps.pamPlatform, deps.pamManagerFactory};
     options.jointTransition = deps.pamPasswordTopologyTransition;
@@ -555,6 +585,42 @@ MutationRollbackOutcome undoMutation(
             return outcome;
         }
     }
+    if (const auto* loginDefs = std::get_if<
+            UndoRemoveIdentityLoginDefsManagedPolicy>(
+            &record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::IdentityLoginDefs) {
+            MutationRollbackOutcome outcome;
+            outcome.id = record.id;
+            outcome.resource = record.resource;
+            std::string journalError;
+            MutationJournal* journal =
+                DaemonMutationJournal::instance().tryGet(journalError);
+            if (journal == nullptr) {
+                outcome.status = RollbackStatus::Failed;
+                outcome.message = journalError;
+                return outcome;
+            }
+            const std::lock_guard<std::mutex> lock(
+                IdentityAccessPolicy::configurationMutex());
+            std::string error;
+            const auto result = fic::identity::login_defs::releaseManagedPolicy(
+                sharedLoginDefsPathFor(record.policy, deps), record, *journal,
+                sharedLoginDefsSemantics(deps), error);
+            outcome.status =
+                result == fic::identity::login_defs::ReleaseStatus::Success
+                ? RollbackStatus::Success
+                : result == fic::identity::login_defs::ReleaseStatus::
+                        NothingToDo
+                    ? RollbackStatus::NothingToDo
+                    : result == fic::identity::login_defs::ReleaseStatus::
+                            Conflict
+                        ? RollbackStatus::Conflict : RollbackStatus::Failed;
+            outcome.message = error.empty()
+                ? "shared login.defs ownership released"
+                : error;
+            return outcome;
+        }
+    }
     if (const auto* grubSetting =
             std::get_if<UndoRemoveGrubManagedSetting>(&record.undo.payload)) {
         if (record.undo.backend == MutationBackend::Grub) {
@@ -727,6 +793,27 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
     }
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        policy.submoduleName == "PASSWORD_AGING") {
+        // Static enrollment: the five scalar login.defs policies own their
+        // managed state through the shared IdentityLoginDefs backend; the
+        // two operational policies mutate live account state (chage) and
+        // stay outside the journal-backed rollback this stage. Unknown
+        // future PASSWORD_AGING policies never get a default-positive
+        // enrollment.
+        const bool scalar =
+            policy.policyName == "password_min_age_days" ||
+            policy.policyName == "password_max_age_days" ||
+            policy.policyName == "password_expiration_warning_days" ||
+            policy.policyName == "regular_user_uid_min" ||
+            policy.policyName == "regular_user_uid_max";
+        const bool operational =
+            policy.policyName == "password_aging_apply_to_existing_accounts" ||
+            policy.policyName == "password_aging_enforce_for_root";
+        return scalar ? RollbackEnrollment::Supported
+            : operational ? RollbackEnrollment::NotEnrolled
+                          : RollbackEnrollment::Unsupported;
+    }
     if (policy.moduleName == "DC" && policy.submoduleName == "DeviceControl") {
         return isDcCategoryFeature(policy.policyName)
             ? RollbackEnrollment::Supported
@@ -791,6 +878,27 @@ RollbackReport checkUnrecordedOwnership(
     report.status = RollbackStatus::NothingToDo;
     report.message = "Active mutation records отсутствуют; FIC не владеет "
                      "изменениями этой политики";
+
+    if (policy.moduleName == "IDENTITY_ACCESS" &&
+        isSharedLoginDefsPolicy(policy)) {
+        // Shared /etc/login.defs backend no-record guard: an owned
+        // same-policy sub-block without an active journal record is
+        // unattributable owned state and must fail closed; a malformed
+        // FIC container fails closed too.
+        std::string error;
+        const auto status = fic::identity::login_defs::inspectUnrecordedState(
+            sharedLoginDefsPathFor(policy, deps), policy, error);
+        report.status = status ==
+                fic::identity::login_defs::InspectStatus::NothingToDo
+            ? RollbackStatus::NothingToDo
+            : status == fic::identity::login_defs::InspectStatus::Conflict
+                ? RollbackStatus::Conflict : RollbackStatus::Failed;
+        report.message = error.empty()
+            ? "Active mutation records отсутствуют; FIC-owned sub-block в "
+              "login.defs отсутствует"
+            : error;
+        return report;
+    }
 
     if (policy.moduleName == "IDENTITY_ACCESS" &&
         policy.submoduleName == "USER_CREATION") {
@@ -1166,6 +1274,7 @@ RollbackExecutorDeps productionRollbackDeps(
         disableDeviceFeature) {
     RollbackExecutorDeps deps;
     deps.userCreationPlatform = platform.userCreation;
+    deps.passwordAgingPlatform = platform.passwordAging;
     deps.pamPlatform = platform.pam;
     const fic::platform::SysctlPlatformConfig sysctlConfig = platform.sysctl;
     deps.sysctlOptions = [sysctlConfig]() {

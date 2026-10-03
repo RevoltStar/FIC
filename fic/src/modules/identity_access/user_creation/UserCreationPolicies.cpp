@@ -1,8 +1,8 @@
 #include "modules/identity_access/user_creation/UserCreationPolicies.h"
 
 #include "modules/identity_access/user_creation/configuration/AdduserConfigFileHandler.h"
-#include "modules/identity_access/shared/configuration/LoginDefsFileHandler.h"
 #include "modules/identity_access/shared/configuration/LocalGroupDatabase.h"
+#include "modules/identity_access/shared/login_defs/IdentityLoginDefsManagedTransaction.h"
 #include "modules/identity_access/user_creation/configuration/UseraddDefaultsFileHandler.h"
 #include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
 #include "rollback/DaemonMutationJournal.h"
@@ -249,8 +249,11 @@ bool UserCreationOptionPolicy::applyLoginDefsDefault(const std::string& value) {
     std::string error;
     auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
     if (journal == nullptr) { log(error, logLevel::ERROR); return false; }
-    return fic::identity::user_creation::applyManagedPolicy(
-        platform_, policyName, {{key_, key_ + " " + value}}, *journal, error) ||
+    fic::identity::login_defs::IdentityLoginDefsSemantics semantics;
+    const PolicyRef policyRef{"IDENTITY_ACCESS", kSubmodule, policyName};
+    return fic::identity::login_defs::applyManagedPolicy(
+               platform_.loginDefsPath.string(), policyRef, value,
+               *journal, semantics, error) ||
         (log(error, logLevel::ERROR), false);
 }
 

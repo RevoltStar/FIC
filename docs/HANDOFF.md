@@ -3,65 +3,77 @@
 ## Current base
 
 * branch: `main`
-* base commit: `a1c13198c1dd4872c34c0095a35f98d94bc4ea7c`
+* base commit: `3f0e4b7d` + один коммит задачи (persistent crash-safe
+  rollback shared `/etc/login.defs` backend)
 
 ## Current task
 
-Evidence-driven correction of `/etc/default/useradd` native semantics and
-`user_default_supplementary_groups` empty-list enforcement.
+Persistent crash-safe rollback для пяти скалярных PASSWORD_AGING политик
+`/etc/login.defs` и миграция двух USER_CREATION login.defs политик на новый
+shared backend `IdentityLoginDefs`. Выполнено.
 
 ## Accepted architecture / invariants
 
-* Strict FIC managed-block grammar and native consumer-effective parsing are
-  separate; only exact journal-bound managed bodies prove ownership.
-* Foreign configuration remains byte-for-byte outside per-policy blocks; the
-  journal contains typed FIC provenance, never foreign snapshots.
-* Refresh `A -> B` remains one physical CAS replacement. If rollback proves
-  physical `A` while the journal is `Prepared(A -> B)`, the same record is
-  durably normalized to `Prepared(target=A)` before any physical release.
-* Ordinary apply cannot replace unresolved `Prepared` or `RollbackFailed`
-  USER_CREATION provenance.
-* All supported `/etc/default/useradd` packages are modeled exact-key and
-  last-wins. Shadow 4.17 `GROUPS=` clears the actual `user_groups` membership
-  state even when `useradd -D` displays stale `def_groups`.
+* Ровно один FIC-контейнер `#@FIC_IDENTITY_LOGIN_DEFS_BLOCK_BEGIN version=1@`
+  на `/etc/login.defs`, всегда в логическом EOF; sub-block
+  `#@FIC_POLICY_BEGIN ref=MODULE/SUBMODULE/policy@` с одной canonical
+  строкой `KEY value`. Whitelist ровно 7 политик (2 USER_CREATION +
+  5 PASSWORD_AGING); journal payload `UndoRemoveIdentityLoginDefsManagedPolicy`
+  — provenance only (без foreign значений/snapshot'ов);
+  `previousAppliedLine` — только durable previous→target переход Prepared
+  refresh.
+* Строгая FIC-грамматика ≠ native consumer-семантика: shared
+  `effectiveValue()` (last-wins, ведущие пробелы, комментарии, no-value
+  игнорируется, target-like malformed — fail closed). `loadExpected()`
+  operational политик обязан использовать его.
+* Relation-валидация (`PASS_MIN_DAYS <= PASS_MAX_DAYS` при `MAX != -1`;
+  `UID_MIN <= UID_MAX` в полном `uid_t`) — на native-effective состоянии
+  кандидата, включая rollback-кандидат; invalid rollback relation —
+  `Conflict` fail closed (без workaround'ов).
+* Rollback = ownership release; последний released sub-block удаляет весь
+  контейнер. Orphan sub-block / ручная правка owned строки / unknown FIC
+  маркер — fail closed. Operational PASSWORD_AGING политики — NotEnrolled;
+  неизвестные PASSWORD_AGING — Unsupported.
+* USER_CREATION: `ConfigKind::LoginDefs` удалён; login.defs политики идут
+  через shared backend, `/etc/default/useradd` и `/etc/adduser.conf` не
+  изменены. MutationJournal schema_version не менялся (v2, как в Step 7E).
 
 ## Completed
 
-* Added consumer-effective parsing for shadow `login.defs`, adduser.conf and
-  useradd defaults without weakening managed-block ownership parsing.
-* Corrected all five profiles to package-proven exact-key useradd semantics,
-  including ALT p11 shadow-utils 4.17.4-alt2.
-* Empty shadow supplementary groups use a normal FIC-owned EOF `GROUPS=`
-  assignment; non-empty-to-empty and reverse transitions use the generic
-  atomic refresh state machine without a release window.
-* Added durable previous-side normalization, USER_CREATION journal transition
-  guards and executor-level retry/crash/third-state regression tests.
-* Exact-key semantics were reconciled with distro sources: shadow 4.13's
-  prefix macro compares complete tokens such as `HOME=`, not bare `HOME`.
-* Real-user probes on Debian 13 and Ubuntu 26.04 proved that `GROUPS=a,b`
-  followed by `GROUPS=` creates a user with no supplementary memberships.
+* `MutationBackend::IdentityLoginDefs`, typed payload, serialize/deserialize,
+  write/read parity validation, refresh guards (Prepared exact-match,
+  RollbackFailed refuse, Applied previous-carry), fresh-with-previous reject,
+  `normalizeIdentityLoginDefsPreparedToProvenState`.
+* Shared backend `shared/login_defs/`: ManagedConfig (grammar, whitelist,
+  effective reader, value/relation validation) + ManagedTransaction
+  (apply/release/inspect, CAS, compensation, crash recovery).
+* Rewired `LoginDefsOptionPolicy::apply()`, `loadExpected()`,
+  `applyLoginDefsDefault()`; RollbackExecutor dispatch + enrollment +
+  no-record guard (deps.passwordAgingPlatform).
+* Tests: new `identity_login_defs_tests` (grammar/effective/apply/release/
+  drift/crash/CAS/compensation/journal-guards/executor), обновлённые
+  password_aging и user_creation suites.
 
 ## Changed areas
 
-* `fic/src/modules/identity_access/user_creation/`
-* `fic/src/platform/`
-* `fic/src/rollback/`
-* related USER_CREATION/platform/journal/executor tests and rollback docs
+* `fic/src/rollback/`, `fic/src/modules/identity_access/shared/login_defs/`
+  (новое), `password_aging/`, `user_creation/`, tests/CMakeLists.txt,
+  `docs/rollback.md`, `docs/architecture-diagrams.md`.
 
 ## Validation
 
-* Ubuntu 24.04: affected targets including `fic` built; targeted suite passed
-  7/7 (`user_creation`, journal, executor, platform/static, identity and SSH).
-* Debian 12, Debian 13 and Ubuntu 26.04: `user_creation_tests` and
-  `platform_profile_tests` built and passed 2/2 per profile.
-* ALT p11: native builder configured successfully; both affected targets built
-  and their executables passed (the image has no `ctest` command).
-* Native package probes used real user creation in disposable containers to
-  validate login.defs and adduser.conf, plus `useradd -D` for defaults.
-* Detailed current research evidence is in
-  `/tmp/user_creation_native_semantics.md` (not committed).
+* Ubuntu 24.04 (host, build-check): полная сборка проекта, 0 errors/0
+  warnings; 17/17 затронутых ctest зелёные.
+* Debian 12, Debian 13, Ubuntu 26.04, ALT p11 (docker-контейнеры): сборка
+  и запуск password_aging/user_creation/rollback_executor/
+  identity_login_defs — PASS; `identity_login_defs_tests` PASS на всех.
+* mutation_journal_tests: 4 fault-injection теста (persist failure через
+  chmod) падают во ВСЕХ root-контейнерах — environmental (root игнорирует
+  permissions), pre-existing, не связано с этим изменением.
 
 ## Remaining
 
-* Full project CTest and E2E were intentionally not run per task scope.
-* No host policy/configuration files were modified by runtime probes.
+* Полный CTest/E2E не запускался по scope задачи; runtime policy apply на
+  хосте не выполнялся.
+* Свежесозданный build-ubuntu2604/build-alt-p11 каталоги созданы для
+  платформенной валидации (untracked build artifacts).

@@ -4,6 +4,7 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/identity_access/kerberos/KerberosRollback.h"
 #include "modules/identity_access/pam/PamTopologyManager.h"
+#include "modules/identity_access/shared/login_defs/IdentityLoginDefsManagedTransaction.h"
 #include "rollback/PamRollback.h"
 #include "modules/identity_access/sssd/SssdRollback.h"
 #include "modules/net/ssh/SshRollback.h"
@@ -59,6 +60,9 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy);
 
 struct RollbackExecutorDeps {
     fic::platform::UserCreationPlatformConfig userCreationPlatform;
+    // Shared /etc/login.defs backend (PASSWORD_AGING scalars): the missing
+    // PASS_* key semantics come from the current platform profile.
+    fic::platform::PasswordAgingPlatformConfig passwordAgingPlatform;
     fic::platform::PamPlatformConfig pamPlatform;
     std::function<std::unique_ptr<fic::identity::pam::PamTopologyManager>(
         const fic::platform::PamCapabilityConfig&,

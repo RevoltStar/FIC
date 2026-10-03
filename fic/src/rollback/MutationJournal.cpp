@@ -8,11 +8,16 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <ctime>
 #include <functional>
+#include <limits>
 #include <set>
 #include <system_error>
 #include <utility>
+
+#include <sys/types.h>
 
 namespace fic::rollback {
 namespace {
@@ -70,9 +75,8 @@ json serializeUndoAction(const UndoAction& action) {
                    UndoRemoveUserCreationManagedPolicy>(&action.payload)) {
         value["policy"] = userCreation->policyName;
         value["config_kind"] = userCreation->configKind ==
-                UserCreationConfigKind::UseraddDefaults ? "useradd_defaults" :
-            userCreation->configKind == UserCreationConfigKind::LoginDefs
-                ? "login_defs" : "adduser";
+                UserCreationConfigKind::UseraddDefaults ? "useradd_defaults"
+            : "adduser";
         value["config_path"] = userCreation->configPath;
         const auto assignments = [](const auto& source) {
             json result = json::array();
@@ -162,6 +166,16 @@ json serializeUndoAction(const UndoAction& action) {
                    UndoOwnPamProviderContainer>(&action.payload)) {
         value["provider"] = pamContainer->providerName;
         value["config_path"] = pamContainer->configPath;
+    } else if (const auto* loginDefs = std::get_if<
+                   UndoRemoveIdentityLoginDefsManagedPolicy>(
+                   &action.payload)) {
+        value["policy"] = loginDefs->policyName;
+        value["config_path"] = loginDefs->configPath;
+        value["key"] = loginDefs->key;
+        value["applied_line"] = loginDefs->appliedLine;
+        // Always written (write/read parity): the loader requires the field
+        // and fails closed when it is missing. Empty string = fresh create.
+        value["previous_applied_line"] = loginDefs->previousAppliedLine;
     }
     return value;
 }
@@ -565,9 +579,7 @@ bool validateUserCreationUndoPayload(
         {"user_home_base_directory", {UserCreationConfigKind::UseraddDefaults, {"HOME"}}},
         {"user_skeleton_directory", {UserCreationConfigKind::UseraddDefaults, {"SKEL"}}},
         {"user_default_shell", {UserCreationConfigKind::UseraddDefaults, {"SHELL"}}},
-        {"user_default_primary_group", {UserCreationConfigKind::UseraddDefaults, {"GROUP"}}},
-        {"user_create_home", {UserCreationConfigKind::LoginDefs, {"CREATE_HOME"}}},
-        {"user_create_private_group", {UserCreationConfigKind::LoginDefs, {"USERGROUPS_ENAB"}}}
+        {"user_default_primary_group", {UserCreationConfigKind::UseraddDefaults, {"GROUP"}}}
     };
     if (payload.policyName.empty() || payload.configPath.empty() ||
         !std::filesystem::path(payload.configPath).is_absolute()) {
@@ -601,9 +613,7 @@ bool validateUserCreationUndoPayload(
                 !keys.insert(assignment.key).second ||
                 assignment.appliedLine.empty() ||
                 !lineFreeOfControlCharacters(assignment.appliedLine)) return false;
-            const std::string prefix = payload.configKind ==
-                    UserCreationConfigKind::LoginDefs
-                ? assignment.key + " " : assignment.key + "=";
+            const std::string prefix = assignment.key + "=";
             if (assignment.appliedLine.rfind(prefix, 0) != 0) return false;
         }
         if (payload.policyName != "user_default_supplementary_groups")
@@ -657,6 +667,115 @@ bool validateKerberosUndoPayload(const UndoRestoreKerberosScalar& payload,
     } else if (!payload.beforeRawLine.empty()) {
         error = "restore_kerberos_scalar undo with a missing relation must "
                 "not carry a raw before line";
+        return false;
+    }
+    return true;
+}
+
+// Shared /etc/login.defs undo-payload validation (write + read parity) for
+// the shared IdentityLoginDefs backend. The exact 7-policy whitelist mirrors
+// the shared managed-config module contract; the loader must reject any
+// payload identity it does not understand (fail closed, including unknown
+// future policies).
+// Returns the owning submodule of a shared login.defs policy: USER_CREATION
+// for the two creation defaults, PASSWORD_AGING for the five aging scalars;
+// nullopt for any unknown policy (fail closed).
+std::optional<std::string> identityLoginDefsPolicySubmodule(
+    const std::string& policyName) {
+    if (policyName == "user_create_home" ||
+        policyName == "user_create_private_group") {
+        return std::string("USER_CREATION");
+    }
+    if (policyName == "password_min_age_days" ||
+        policyName == "password_max_age_days" ||
+        policyName == "password_expiration_warning_days" ||
+        policyName == "regular_user_uid_min" ||
+        policyName == "regular_user_uid_max") {
+        return std::string("PASSWORD_AGING");
+    }
+    return std::nullopt;
+}
+
+bool validateIdentityLoginDefsUndoPayload(
+    const UndoRemoveIdentityLoginDefsManagedPolicy& payload,
+    std::string& error) {
+    if (!identityLoginDefsPolicySubmodule(payload.policyName).has_value()) {
+        error = "unknown policy in identity_login_defs undo";
+        return false;
+    }
+    if (!std::filesystem::path(payload.configPath).is_absolute()) {
+        error = "identity_login_defs undo requires an absolute config path";
+        return false;
+    }
+    if (payload.appliedLine.empty() ||
+        !lineFreeOfControlCharacters(payload.appliedLine) ||
+        !lineFreeOfControlCharacters(payload.previousAppliedLine)) {
+        error = "identity_login_defs undo requires applied lines without "
+                "CR, LF or NUL";
+        return false;
+    }
+    const std::string prefix = payload.key + " ";
+    if (payload.key.empty() ||
+        payload.appliedLine.rfind(prefix, 0) != 0 ||
+        (!payload.previousAppliedLine.empty() &&
+         payload.previousAppliedLine.rfind(prefix, 0) != 0)) {
+        error = "identity_login_defs undo applied lines must be canonical "
+                "assignments of the managed key";
+        return false;
+    }
+    const auto appliedValue = payload.appliedLine.substr(prefix.size());
+    const auto previousValue = payload.previousAppliedLine.empty()
+        ? payload.previousAppliedLine
+        : payload.previousAppliedLine.substr(prefix.size());
+    if (appliedValue.find_first_of(" \t") != std::string::npos ||
+        previousValue.find_first_of(" \t") != std::string::npos ||
+        appliedValue.find('#') != std::string::npos ||
+        previousValue.find('#') != std::string::npos) {
+        error = "identity_login_defs undo applied value must be a single "
+                "canonical token";
+        return false;
+    }
+    const auto valueMatchesPolicy = [](const std::string& policyName,
+                                       const std::string& value) {
+        const auto decimal = [&value](bool allowNegative) {
+            if (value.empty()) return false;
+            std::size_t index = value[0] == '-' && allowNegative ? 1 : 0;
+            if (index >= value.size()) return false;
+            if (value[index] == '0' && value.size() - index > 1)
+                return false; // canonical form: no leading zeros
+            for (; index < value.size(); ++index) {
+                if (std::isdigit(static_cast<unsigned char>(value[index])) ==
+                    0) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        if (policyName == "user_create_home" ||
+            policyName == "user_create_private_group") {
+            return value == "yes" || value == "no";
+        }
+        if (policyName == "password_min_age_days") return decimal(false);
+        if (policyName == "password_max_age_days" ||
+            policyName == "password_expiration_warning_days") {
+            return decimal(true);
+        }
+        if (policyName == "regular_user_uid_min" ||
+            policyName == "regular_user_uid_max") {
+            if (!decimal(false)) return false;
+            errno = 0;
+            const unsigned long long parsed = std::strtoull(
+                value.c_str(), nullptr, 10);
+            return errno == 0 &&
+                parsed <= std::numeric_limits<uid_t>::max();
+        }
+        return false;
+    };
+    if (!valueMatchesPolicy(payload.policyName, appliedValue) ||
+        (!previousValue.empty() &&
+         !valueMatchesPolicy(payload.policyName, previousValue))) {
+        error = "identity_login_defs undo carries an invalid value for " +
+            payload.policyName;
         return false;
     }
     return true;
@@ -774,8 +893,6 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         const std::string kind = value.value("config_kind", "");
         if (kind == "useradd_defaults")
             payload.configKind = UserCreationConfigKind::UseraddDefaults;
-        else if (kind == "login_defs")
-            payload.configKind = UserCreationConfigKind::LoginDefs;
         else if (kind == "adduser")
             payload.configKind = UserCreationConfigKind::Adduser;
         else {
@@ -815,6 +932,25 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
             return false;
         }
         if (!validateUserCreationUndoPayload(payload, error)) return false;
+        action.payload = std::move(payload);
+        return true;
+    }
+    if (actionName == "remove_identity_login_defs_managed_policy" &&
+        backend == MutationBackend::IdentityLoginDefs) {
+        UndoRemoveIdentityLoginDefsManagedPolicy payload;
+        payload.policyName = value.value("policy", "");
+        payload.configPath = value.value("config_path", "");
+        payload.key = value.value("key", "");
+        payload.appliedLine = value.value("applied_line", "");
+        const auto previous = value.find("previous_applied_line");
+        if (previous == value.end() || !previous->is_string()) {
+            error = "missing identity_login_defs previous applied line";
+            return false;
+        }
+        payload.previousAppliedLine = previous->get<std::string>();
+        if (!validateIdentityLoginDefsUndoPayload(payload, error)) {
+            return false;
+        }
         action.payload = std::move(payload);
         return true;
     }
@@ -1301,6 +1437,21 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
             return false;
         }
     }
+    if (record.undo.backend == MutationBackend::IdentityLoginDefs) {
+        const auto* payload = std::get_if<
+            UndoRemoveIdentityLoginDefsManagedPolicy>(&record.undo.payload);
+        if (payload == nullptr ||
+            record.policy.moduleName != "IDENTITY_ACCESS" ||
+            record.policy.submoduleName !=
+                identityLoginDefsPolicySubmodule(payload->policyName)
+                    .value_or(std::string()) ||
+            record.policy.policyName != payload->policyName ||
+            record.resource != payload->configPath) {
+            error = "identity_login_defs journal identity does not match "
+                    "payload";
+            return false;
+        }
+    }
 
     MutationStatus status;
     if (!mutationStatusFromString(value.value("status", ""), status)) {
@@ -1366,6 +1517,7 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::Kerberos: return "kerberos";
     case MutationBackend::Pam: return "pam";
     case MutationBackend::UserCreation: return "user_creation";
+    case MutationBackend::IdentityLoginDefs: return "identity_login_defs";
     }
     return "unknown";
 }
@@ -1381,6 +1533,7 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "kerberos") { backend = MutationBackend::Kerberos; return true; }
     if (value == "pam") { backend = MutationBackend::Pam; return true; }
     if (value == "user_creation") { backend = MutationBackend::UserCreation; return true; }
+    if (value == "identity_login_defs") { backend = MutationBackend::IdentityLoginDefs; return true; }
     return false;
 }
 
@@ -1394,6 +1547,10 @@ std::string undoActionTypeName(const UndoAction& action) {
     if (std::holds_alternative<UndoRemoveUserCreationManagedPolicy>(
             action.payload)) {
         return "remove_user_creation_managed_policy";
+    }
+    if (std::holds_alternative<UndoRemoveIdentityLoginDefsManagedPolicy>(
+            action.payload)) {
+        return "remove_identity_login_defs_managed_policy";
     }
     if (std::holds_alternative<UndoRemoveFirewallPolicy>(action.payload)) {
         return "remove_firewall_policy";
@@ -2402,6 +2559,35 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             return false;
         }
     }
+    if (record.undo.backend == MutationBackend::IdentityLoginDefs) {
+        const auto* payload = std::get_if<
+            UndoRemoveIdentityLoginDefsManagedPolicy>(&record.undo.payload);
+        if (payload == nullptr ||
+            record.policy.moduleName != "IDENTITY_ACCESS" ||
+            record.policy.submoduleName !=
+                identityLoginDefsPolicySubmodule(payload->policyName)
+                    .value_or(std::string()) ||
+            record.policy.policyName != payload->policyName ||
+            record.resource != payload->configPath) {
+            error = "identity_login_defs mutation record identity/payload "
+                    "is invalid";
+            return false;
+        }
+        if (!validateIdentityLoginDefsUndoPayload(*payload, error)) {
+            return false;
+        }
+        const bool refreshesActiveRecord = std::any_of(
+            records_.begin(), records_.end(), [&](const MutationRecord& current) {
+                return current.isActive() && current.policy == record.policy &&
+                    current.undo.backend == record.undo.backend &&
+                    current.resource == record.resource;
+            });
+        if (!refreshesActiveRecord && !payload->previousAppliedLine.empty()) {
+            error = "fresh identity_login_defs mutation must not claim a "
+                    "previous applied line (fail closed)";
+            return false;
+        }
+    }
 
     // PAM provider lifecycle guards: provenance must never be silently
     // created, lost or duplicated by a prepare/refresh.
@@ -2540,6 +2726,48 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                                oldUserCreation->appliedAssignments) {
                     error = "USER_CREATION refresh does not carry the "
                             "currently owned assignments as previous state "
+                            "(fail closed)";
+                    return false;
+                }
+            }
+            if (record.undo.backend ==
+                MutationBackend::IdentityLoginDefs) {
+                const auto* oldLoginDefs = std::get_if<
+                    UndoRemoveIdentityLoginDefsManagedPolicy>(
+                    &existing.undo.payload);
+                const auto* newLoginDefs = std::get_if<
+                    UndoRemoveIdentityLoginDefsManagedPolicy>(
+                    &record.undo.payload);
+                if (oldLoginDefs == nullptr || newLoginDefs == nullptr ||
+                    oldLoginDefs->policyName != newLoginDefs->policyName ||
+                    oldLoginDefs->configPath != newLoginDefs->configPath ||
+                    oldLoginDefs->key != newLoginDefs->key) {
+                    error = "identity_login_defs refresh changed ownership "
+                            "identity (fail closed)";
+                    return false;
+                }
+                if (existing.status == MutationStatus::Prepared) {
+                    if (oldLoginDefs->appliedLine !=
+                            newLoginDefs->appliedLine ||
+                        oldLoginDefs->previousAppliedLine !=
+                            newLoginDefs->previousAppliedLine) {
+                        error = "identity_login_defs refresh conflicts with "
+                                "an unresolved Prepared transition (fail "
+                                "closed): recover or complete the existing "
+                                "transaction first";
+                        return false;
+                    }
+                } else if (existing.status ==
+                           MutationStatus::RollbackFailed) {
+                    error = "identity_login_defs RollbackFailed provenance "
+                            "cannot be refreshed by ordinary apply (fail "
+                            "closed)";
+                    return false;
+                } else if (existing.status == MutationStatus::Applied &&
+                           newLoginDefs->previousAppliedLine !=
+                               oldLoginDefs->appliedLine) {
+                    error = "identity_login_defs refresh does not carry the "
+                            "currently owned applied line as previous state "
                             "(fail closed)";
                     return false;
                 }
@@ -2726,6 +2954,53 @@ bool MutationJournal::normalizeUserCreationPreparedToProvenState(
     record->error.clear();
     record->updatedAtEpoch = currentEpochSeconds();
     if (!validateUserCreationUndoPayload(*payload, error)) {
+        *record = previous;
+        return false;
+    }
+    const PersistOutcome outcome = persist(error);
+    if (outcome == PersistOutcome::Persisted) return true;
+    if (outcome == PersistOutcome::NotInstalled) {
+        *record = previous;
+        return false;
+    }
+    health_ = JournalHealth::Indeterminate;
+    return false;
+}
+
+bool MutationJournal::normalizeIdentityLoginDefsPreparedToProvenState(
+    MutationId id,
+    const std::string& provenAppliedLine,
+    std::string& error) {
+    if (!loaded_) {
+        error = "Mutation journal не загружен";
+        return false;
+    }
+    if (health_ == JournalHealth::Indeterminate) {
+        error = "Mutation journal в состоянии Indeterminate: normalization "
+                "запрещена до успешного reload";
+        return false;
+    }
+    MutationRecord* record = find(id);
+    if (record == nullptr || record->status != MutationStatus::Prepared ||
+        record->undo.backend != MutationBackend::IdentityLoginDefs) {
+        error = "identity_login_defs rollback normalization requires its "
+                "existing Prepared record";
+        return false;
+    }
+    auto* payload = std::get_if<UndoRemoveIdentityLoginDefsManagedPolicy>(
+        &record->undo.payload);
+    if (payload == nullptr || payload->previousAppliedLine.empty() ||
+        payload->previousAppliedLine != provenAppliedLine) {
+        error = "identity_login_defs rollback normalization does not match "
+                "the durable previous-side provenance";
+        return false;
+    }
+    const MutationRecord previous = *record;
+    payload->appliedLine = provenAppliedLine;
+    payload->previousAppliedLine.clear();
+    record->error.clear();
+    record->updatedAtEpoch = currentEpochSeconds();
+    if (!validateIdentityLoginDefsUndoPayload(*payload, error)) {
         *record = previous;
         return false;
     }

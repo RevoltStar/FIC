@@ -1,20 +1,21 @@
 #include "modules/identity_access/password_aging/PasswordAgingPolicies.h"
 
-#include "modules/identity_access/shared/configuration/LoginDefsFileHandler.h"
+#include "modules/identity_access/shared/login_defs/IdentityLoginDefsManagedTransaction.h"
+#include "rollback/DaemonMutationJournal.h"
 
 #include <charconv>
 #include <climits>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <limits>
+#include <optional>
 #include <sstream>
+#include <system_error>
 #include <utility>
 
 using namespace fic::identity::password_aging;
-using fic::identity::LoginDefsFileHandler;
-using fic::identity::LoginDefsValue;
-using fic::identity::LoginDefsValueState;
 
 namespace {
 
@@ -63,7 +64,7 @@ std::string processFailure(const ProcessResult& result) {
     return "exit_code=" + std::to_string(result.exitCode);
 }
 
-PolicyRef passwordAgingRef(const char* policy) {
+PolicyRef passwordAgingRef(const std::string& policy) {
     return {"IDENTITY_ACCESS", kSubmodule, policy};
 }
 
@@ -92,107 +93,23 @@ bool LoginDefsOptionPolicy::apply() {
     if (!expected.has_value()) return false;
 
     const std::lock_guard<std::mutex> lock(configurationMutex());
-    FileHandlerOptions options;
-    options.writeOptions = writeOptions_;
-    LoginDefsFileHandler file(platform_.loginDefsPath.string(), options);
-    if (!file.loadConfig()) {
-        log("Could not load " + platform_.loginDefsPath.string(), logLevel::ERROR);
+    std::string error;
+    auto* journal =
+        fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (journal == nullptr) {
+        log("Mutation journal недоступен: " + error, logLevel::ERROR);
         return false;
     }
-    const LoginDefsValue current = file.lookup(key_);
-    if (current.state == LoginDefsValueState::Duplicate ||
-        current.state == LoginDefsValueState::Malformed) {
-        log("Ambiguous login.defs parameter: " + key_, logLevel::ERROR);
-        return false;
+    fic::identity::login_defs::IdentityLoginDefsSemantics semantics;
+    semantics.missingKey.minDays = platform_.missingKeySemantics.minDays;
+    semantics.missingKey.maxDays = platform_.missingKeySemantics.maxDays;
+    const bool applied = fic::identity::login_defs::applyManagedPolicy(
+        platform_.loginDefsPath.string(), passwordAgingRef(policyName),
+        *expected, *journal, semantics, error);
+    if (!applied) {
+        log(error, logLevel::ERROR);
     }
-
-    auto readPasswordPeer = [&](const char* key, long missingValue,
-                                long min, long max, long& value) {
-        const LoginDefsValue peer = file.lookup(key);
-        if (peer.state == LoginDefsValueState::Duplicate ||
-            peer.state == LoginDefsValueState::Malformed) {
-            return false;
-        }
-        return peer.state == LoginDefsValueState::Missing
-            ? (value = missingValue, true)
-            : parseLong(peer.value, min, max, value);
-    };
-
-    const auto relationIsValid = [&]() {
-        switch (relation_) {
-        case Relation::PasswordMinimum: {
-            long requested = 0;
-            long peer = 0;
-            return parseLong(*expected, 0, INT_MAX, requested) &&
-                readPasswordPeer(
-                    "PASS_MAX_DAYS",
-                    platform_.missingKeySemantics.maxDays,
-                    -1,
-                    INT_MAX,
-                    peer) &&
-                passwordRelationValid(requested, peer);
-        }
-        case Relation::PasswordMaximum: {
-            long requested = 0;
-            long peer = 0;
-            return parseLong(*expected, -1, INT_MAX, requested) &&
-                readPasswordPeer(
-                    "PASS_MIN_DAYS",
-                    platform_.missingKeySemantics.minDays,
-                    -1,
-                    INT_MAX,
-                    peer) &&
-                passwordRelationValid(peer, requested);
-        }
-        case Relation::UidMinimum:
-        case Relation::UidMaximum: {
-            uid_t requested = 0;
-            if (!parseUid(*expected, requested)) {
-                return false;
-            }
-            const char* peerKey = relation_ == Relation::UidMinimum
-                ? "UID_MAX"
-                : "UID_MIN";
-            const LoginDefsValue peerValue = file.lookup(peerKey);
-            uid_t peer = 0;
-            if (peerValue.state != LoginDefsValueState::Unique ||
-                !parseUid(peerValue.value, peer)) {
-                return false;
-            }
-            return relation_ == Relation::UidMinimum
-                ? requested <= peer
-                : peer <= requested;
-        }
-        case Relation::None:
-            if (key_ == "PASS_WARN_AGE") {
-                long requested = 0;
-                return parseLong(*expected, -1, INT_MAX, requested);
-            }
-            return false;
-        }
-        return false;
-    };
-    if (!relationIsValid()) {
-        log("Resulting login.defs relation is invalid for " + key_,
-            logLevel::ERROR);
-        return false;
-    }
-
-    if (current.state == LoginDefsValueState::Unique &&
-        current.value == *expected) {
-        return true;
-    }
-    if (!file.setValue(key_, *expected) || !file.saveAndReload()) {
-        log("Could not update login.defs parameter " + key_, logLevel::ERROR);
-        return false;
-    }
-    const LoginDefsValue verified = file.lookup(key_);
-    if (verified.state != LoginDefsValueState::Unique ||
-        verified.value != *expected || !relationIsValid()) {
-        log("login.defs postcondition failed for " + key_, logLevel::ERROR);
-        return false;
-    }
-    return true;
+    return applied;
 }
 
 PasswordMinAgeDaysPolicy::PasswordMinAgeDaysPolicy(
@@ -264,20 +181,33 @@ PasswordAgingOperationalPolicy::PasswordAgingOperationalPolicy(
 bool PasswordAgingOperationalPolicy::loadExpected(
     long& minDays, long& maxDays, long& warningDays,
     uid_t& uidMin, uid_t& uidMax, bool requireUidRange) {
-    FileHandlerOptions options;
-    options.writeOptions.rejectSymlink = true;
-    LoginDefsFileHandler file(platform_.loginDefsPath.string(), options);
-    if (!file.loadConfig()) return false;
+    // The operational reader uses the native consumer-effective semantics
+    // (last-wins, leading whitespace/comment aware), never the strict FIC
+    // managed-block grammar: FIC-owned lines inside the shared container are
+    // ordinary effective assignments for the native shadow consumers.
+    const std::filesystem::path path = platform_.loginDefsPath;
+    std::error_code ec;
+    const auto status = std::filesystem::symlink_status(path, ec);
+    if (ec || status.type() != std::filesystem::file_type::regular) {
+        log("Could not access " + path.string(), logLevel::ERROR);
+        return false;
+    }
+    std::ifstream input(path, std::ios::binary);
+    if (!input.is_open()) {
+        log("Could not open " + path.string(), logLevel::ERROR);
+        return false;
+    }
+    const std::string content((std::istreambuf_iterator<char>(input)),
+                              std::istreambuf_iterator<char>());
     auto read = [&](const char* key, long minimum, long maximum, long& out) {
-        const LoginDefsValue value = file.lookup(key);
-        if (value.state != LoginDefsValueState::Unique) {
-            log("Missing or ambiguous login.defs parameter: " +
-                std::string(key), logLevel::ERROR);
-            return false;
-        }
-        if (!parseLong(value.value, minimum, maximum, out)) {
-            log("Invalid numeric login.defs parameter: " +
-                std::string(key), logLevel::ERROR);
+        std::optional<std::string> value;
+        std::string error;
+        if (!fic::identity::login_defs::effectiveValue(content, key, value,
+                                                       error) ||
+            !value.has_value() || !parseLong(*value, minimum, maximum, out)) {
+            log("Missing, ambiguous or invalid login.defs parameter: " +
+                    std::string(key),
+                logLevel::ERROR);
             return false;
         }
         return true;
@@ -289,9 +219,11 @@ bool PasswordAgingOperationalPolicy::loadExpected(
     }
     if (requireUidRange) {
         auto readUid = [&](const char* key, uid_t& out) {
-            const LoginDefsValue value = file.lookup(key);
-            if (value.state != LoginDefsValueState::Unique ||
-                !parseUid(value.value, out)) {
+            std::optional<std::string> value;
+            std::string error;
+            if (!fic::identity::login_defs::effectiveValue(content, key, value,
+                                                           error) ||
+                !value.has_value() || !parseUid(*value, out)) {
                 log("Missing, ambiguous or invalid UID login.defs parameter: " +
                         std::string(key),
                     logLevel::ERROR);

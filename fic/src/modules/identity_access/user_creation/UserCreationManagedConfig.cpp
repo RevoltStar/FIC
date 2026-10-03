@@ -44,15 +44,7 @@ bool parseManagedAssignment(const std::string& line, ConfigKind kind,
     assignment = {};
     if (line.empty() || line[0] == '#' ||
         std::isspace(static_cast<unsigned char>(line[0]))) return false;
-    if (kind == ConfigKind::LoginDefs) {
-        const std::size_t split = line.find_first_of(" \t");
-        if (split == std::string::npos) return false;
-        const std::size_t valueStart = line.find_first_not_of(" \t", split);
-        if (valueStart == std::string::npos) return false;
-        assignment.key = line.substr(0, split);
-        const std::string value = line.substr(valueStart);
-        if (value.find_first_of("\r\n") != std::string::npos) return false;
-    } else {
+    {
         const std::size_t equal = line.find('=');
         if (equal == std::string::npos || equal == 0) return false;
         assignment.key = line.substr(0, equal);
@@ -109,7 +101,7 @@ bool parseNativeAssignment(const std::string& raw, ConfigKind kind,
     assignment = {};
     ignored = false;
     std::string line = raw;
-    if (kind == ConfigKind::LoginDefs || kind == ConfigKind::Adduser) {
+    if (kind == ConfigKind::Adduser) {
         const std::size_t first = line.find_first_not_of(" \t");
         if (first == std::string::npos) {
             ignored = true;
@@ -119,18 +111,6 @@ bool parseNativeAssignment(const std::string& raw, ConfigKind kind,
     }
     if (line.empty() || line[0] == '#') {
         ignored = true;
-        return true;
-    }
-    if (kind == ConfigKind::LoginDefs) {
-        const std::size_t split = line.find_first_of(" \t");
-        if (split == std::string::npos) return false;
-        const std::size_t valueStart = line.find_first_not_of(" \t", split);
-        if (valueStart == std::string::npos) {
-            ignored = true;
-            return true;
-        }
-        assignment.key = line.substr(0, split);
-        assignment.line = assignment.key + " " + line.substr(valueStart);
         return true;
     }
     if (kind == ConfigKind::UseraddDefaults &&
@@ -169,11 +149,6 @@ bool parseNativeAssignment(const std::string& raw, ConfigKind kind,
 }
 
 std::string valueFromLine(const Assignment& assignment, ConfigKind kind) {
-    if (kind == ConfigKind::LoginDefs) {
-        const std::size_t split = assignment.line.find_first_of(" \t");
-        const std::size_t start = assignment.line.find_first_not_of(" \t", split);
-        return assignment.line.substr(start);
-    }
     std::string value = assignment.line.substr(assignment.line.find('=') + 1);
     if (kind == ConfigKind::Adduser) value = trimLeadingSpaces(value);
     if (kind == ConfigKind::Adduser && value.size() >= 2 &&
@@ -230,9 +205,7 @@ bool policyRoute(const fic::platform::UserCreationPlatformConfig& platform,
         {"user_home_base_directory", {ConfigKind::UseraddDefaults, "HOME"}},
         {"user_skeleton_directory", {ConfigKind::UseraddDefaults, "SKEL"}},
         {"user_default_shell", {ConfigKind::UseraddDefaults, "SHELL"}},
-        {"user_default_primary_group", {ConfigKind::UseraddDefaults, "GROUP"}},
-        {"user_create_home", {ConfigKind::LoginDefs, "CREATE_HOME"}},
-        {"user_create_private_group", {ConfigKind::LoginDefs, "USERGROUPS_ENAB"}}
+        {"user_default_primary_group", {ConfigKind::UseraddDefaults, "GROUP"}}
     };
     const auto found = scalar.find(policyName);
     if (found != scalar.end()) {

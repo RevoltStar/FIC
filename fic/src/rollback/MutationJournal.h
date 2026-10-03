@@ -163,6 +163,14 @@ public:
         MutationId id,
         const std::vector<UserCreationManagedAssignment>& provenAssignments,
         std::string& error);
+    // Durable recovery transition used only after the physical managed line
+    // was proven to equal the previous side of an unresolved shared
+    // login.defs Prepared refresh. Rewrites
+    // Prepared(previous=A,target=B) to Prepared(target=A) on the same id
+    // before rollback or compensation can resolve it.
+    bool normalizeIdentityLoginDefsPreparedToProvenState(
+        MutationId id, const std::string& provenAppliedLine,
+        std::string& error);
     bool setStatus(MutationId id, MutationStatus status, std::string& error);
     bool setStatusWithMessage(MutationId id, MutationStatus status,
                               const std::string& message, std::string& error);
