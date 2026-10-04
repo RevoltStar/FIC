@@ -40,6 +40,19 @@ struct ScopedDefaultsJournalAccess {
         prepare;
     std::function<bool(MutationId, std::string&)> commit;
     std::function<bool(MutationId, std::string&)> discard;
+    // Normalizes an unresolved refresh Prepared(previous=P,target=P+F) back to
+    // Applied(target=P) on the SAME id. Required whenever the filesystem is
+    // proven to hold exactly P: a plain discard would orphan the physical
+    // wrappers of P.
+    std::function<bool(MutationId,
+                       const std::vector<SudoScopedDefaultsWrapperProof>&,
+                       std::string&)>
+        normalizePreparedToPrevious;
+    // Durability barrier over the exact current state of the given files.
+    // A visible state is not a durable state.
+    std::function<bool(const std::vector<std::filesystem::path>&,
+                       std::string&)>
+        proveDurable;
 };
 
 struct ScopedDefaultsLifecycleDeps {
@@ -61,9 +74,10 @@ struct ScopedDefaultsLifecycleOutcome {
 // Outcome of resolving an unresolved Prepared record found at startup.
 enum class PreparedRecoveryResult {
     NotPresent,
-    CommittedExisting,   // filesystem == target: the existing record is Applied
-    DiscardedExisting,   // filesystem == previous: proven never applied
-    CompensatedExisting, // partial target unwound back to previous
+    CommittedExisting,    // filesystem == target (durable): existing -> Applied
+    DiscardedExisting,    // FRESH: filesystem == previous, previous empty
+    NormalizedExisting,   // REFRESH: filesystem == previous -> Applied(previous)
+    CompensatedExisting,  // partial target selectively rewound to previous
     FailClosed
 };
 
@@ -84,6 +98,16 @@ public:
     // Full production reconcile: recovery, ownership validation, planning,
     // prepare -> apply -> commit/discard.
     ScopedDefaultsLifecycleOutcome reconcile(const std::string& policyName);
+
+    // Shared resolution of a Prepared record after a failed mutation. Used by
+    // every error path so a failed REFRESH always normalizes back to the proven
+    // previous ownership instead of deleting it.
+    bool resolveAfterFailedMutation(
+        MutationId mutationId,
+        const std::vector<SudoScopedDefaultsWrapperProof>& previous,
+        const std::vector<SudoScopedDefaultsWrapperProof>& target,
+        SudoScopedDefaultsFilesystemState state,
+        ScopedDefaultsLifecycleOutcome& outcome);
 
     // Active ownership proven by the journal for the canonical resource.
     // Fails closed when more than one active record exists, because several

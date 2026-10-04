@@ -3,10 +3,12 @@
 #include <fic/core/integrity/ContentDigest.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <atomic>
 #include <cctype>
 #include <ctime>
 #include <map>
+#include <set>
 #include <utility>
 
 #include <unistd.h>
@@ -41,6 +43,29 @@ bool isCanonicalSudoWrapperId(const std::string& wrapperId) {
         ++index;
     }
     return groups == 5;
+}
+
+std::string canonicalizeSudoProofPath(const std::filesystem::path& path) {
+    // weakly_canonical resolves symlinks of existing prefixes and normalizes
+    // the rest; the proof spelling must be stable and comparable across runs.
+    std::error_code ignored;
+    std::filesystem::path resolved = std::filesystem::weakly_canonical(path, ignored);
+    if (resolved.empty()) {
+        resolved = path.lexically_normal();
+    }
+    return resolved.lexically_normal().string();
+}
+
+bool isCanonicalSudoProofPath(const std::string& value) {
+    if (value.empty() || value.find('\0') != std::string::npos) {
+        return false;
+    }
+    const std::filesystem::path path(value);
+    if (!path.is_absolute()) {
+        return false;
+    }
+    // Must already be in canonical spelling: a round trip must be a no-op.
+    return path.lexically_normal().string() == value;
 }
 
 std::vector<SudoPhysicalLine> splitPhysicalLines(const std::string& content) {
@@ -351,6 +376,7 @@ void disableSudoEntry(std::vector<SudoPhysicalLine>& lines,
 
 bool restoreSudoDisabledEntries(
     std::vector<SudoPhysicalLine>& lines,
+    const std::filesystem::path& filePath,
     const std::string& policyName,
     const std::vector<SudoScopedDefaultsWrapperProof>& allowedProofs,
     bool& changed,
@@ -365,7 +391,7 @@ bool restoreSudoDisabledEntries(
     // Ownership is proven BEFORE anything is rewritten: an unproven or
     // drifted wrapper must leave the file completely untouched.
     const SudoWrapperProvenanceCheck check =
-        checkSudoWrapperProvenance(wrappers, policyName, allowedProofs);
+        checkSudoWrapperProvenance(wrappers, filePath, policyName, allowedProofs);
     if (!check.safeToRelease()) {
         error = describeSudoWrapperProvenance(check, policyName);
         return false;
@@ -385,14 +411,60 @@ bool restoreSudoDisabledEntries(
     return true;
 }
 
+bool restoreSelectedSudoDisabledEntries(
+    std::vector<SudoPhysicalLine>& lines,
+    const std::filesystem::path& filePath,
+    const std::string& policyName,
+    const std::vector<SudoScopedDefaultsWrapperProof>& allExpectedProofs,
+    const std::vector<std::string>& selectedIdsToRestore,
+    bool& changed,
+    std::string& error) {
+    changed = false;
+    std::vector<SudoDisabledWrapper> wrappers;
+    if (parseSudoDisabledWrappers(lines, wrappers, error) !=
+        SudoWrapperParseStatus::Ok) {
+        error = "Не удалось разобрать FIC-маркеры sudoers: " + error;
+        return false;
+    }
+    // The ENTIRE current state is proven against the full target proof set
+    // first: an unknown, orphan or drifted wrapper anywhere in this file makes
+    // the selective rewind fail closed.
+    const SudoWrapperProvenanceCheck check = checkSudoWrapperProvenance(
+        wrappers, filePath, policyName, allExpectedProofs);
+    if (!check.safeToRelease()) {
+        error = describeSudoWrapperProvenance(check, policyName);
+        return false;
+    }
+    std::set<std::string> selected(selectedIdsToRestore.begin(),
+                                   selectedIdsToRestore.end());
+    for (std::size_t position = wrappers.size(); position-- > 0;) {
+        const SudoDisabledWrapper& wrapper = wrappers[position];
+        if (wrapper.policy != policyName ||
+            selected.find(wrapper.mutationId) == selected.end()) {
+            continue;
+        }
+        lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(wrapper.beginLine),
+                    lines.begin() +
+                        static_cast<std::ptrdiff_t>(wrapper.endLine + 1));
+        lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(wrapper.beginLine),
+                     wrapper.originalLines.begin(), wrapper.originalLines.end());
+        changed = true;
+    }
+    return true;
+}
+
 SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
     const std::vector<SudoDisabledWrapper>& wrappers,
+    const std::filesystem::path& filePath,
     const std::string& policyName,
     const std::vector<SudoScopedDefaultsWrapperProof>& expectedProofs) {
     SudoWrapperProvenanceCheck check;
-    std::map<std::string, std::string> payloadById;
+    // Keyed by wrapper id; the value is (canonical path, payload digest).
+    std::map<std::string, std::pair<std::string, std::string>> payloadById;
     for (const SudoScopedDefaultsWrapperProof& proof : expectedProofs) {
-        if (!payloadById.emplace(proof.wrapperId, proof.payloadDigest).second) {
+        if (!payloadById.emplace(proof.wrapperId,
+                                  std::make_pair(proof.canonicalPath,
+                                                 proof.payloadDigest)).second) {
             check.payloadMalformed = true;
         }
     }
@@ -414,12 +486,18 @@ SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
             check.unknownIds.push_back(id);
             continue;
         }
+        // The proof authorizes one EXACT file: an id proven for another
+        // sudoers file proves nothing here.
+        if (proven->second.first != canonicalizeSudoProofPath(filePath)) {
+            check.unknownIds.push_back(id);
+            continue;
+        }
         // A proven id whose CURRENT payload differs from the recorded digest
         // is drift, not ownership: FIC must never activate content it did not
         // suppress.
         for (const SudoDisabledWrapper& wrapper : wrappers) {
             if (wrapper.policy == policyName && wrapper.mutationId == id &&
-                wrapper.payloadDigest() != proven->second) {
+                wrapper.payloadDigest() != proven->second.second) {
                 check.driftedIds.push_back(id);
                 break;
             }

@@ -171,6 +171,21 @@ public:
     bool normalizeIdentityLoginDefsPreparedToProvenState(
         MutationId id, const std::string& provenAppliedLine,
         std::string& error);
+
+    // SUDO scoped-Defaults: a failed REFRESH must never delete the provenance
+    // of wrappers FIC already owned.
+    //
+    // Rewrites Prepared(previous=P, target=P+F) into Applied(target=P) on the
+    // SAME mutation id once the filesystem has been proven to hold exactly P
+    // (durable state, exact proofs). No new record and no new wrapper id is
+    // created; the pre-existing ownership stays authorized.
+    //
+    // A plain discard() would leave the physical wrappers of P on disk with no
+    // active journal record, i.e. orphans FIC itself created.
+    bool normalizeSudoScopedDefaultsPreparedToPrevious(
+        MutationId id,
+        const std::vector<SudoScopedDefaultsWrapperProof>& provenPrevious,
+        std::string& error);
     bool setStatus(MutationId id, MutationStatus status, std::string& error);
     bool setStatusWithMessage(MutationId id, MutationStatus status,
                               const std::string& message, std::string& error);

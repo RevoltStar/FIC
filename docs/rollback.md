@@ -1448,6 +1448,42 @@ FIC-обёртка доказана **активной** записью журн
 no-op. Для канонического ресурса допустима не более чем одна активная запись
 журнала; несколько записей — fail closed, а не конкатенация proof-множеств.
 
+### Durability и нормализация refresh
+
+**Видимое состояние не равно durable-состоянию.** Обёртка, наблюдаемая на
+диске, могла быть опубликована `rename(2)`, после которого `fsync` родительского
+каталога не завершился до сбоя. Поэтому любой переход журнала сначала
+подтверждается state-bound барьером `ensureTargetDurableIfCurrentState()` по
+файлам, которые авторизуют proofs (`canonicalPath` каждой proof'ы).
+
+Правило для `Prepared` после классификации:
+
+| состояние ФС | `previous` пуст | `previous` непуст |
+|---|---|---|
+| доказанно durable == target | commit существующей записи | commit существующей записи |
+| доказанно durable == previous | **discard** (владения не было) | **normalize** в `Applied(previous)` |
+| partial / target-only | компенсация → previous | селективная компенсация → normalize в `Applied(previous)` |
+| неоднозначно | Prepared остаётся активной | Prepared остаётся активной |
+
+`normalize` (`normalizeSudoScopedDefaultsPreparedToPrevious()`) переписывает
+`Prepared(previous=P, target=P+F)` в `Applied(target=P)` на **том же** id.
+Обычный `discard()` здесь недопустим: он удалил бы запись, пока физические
+обёртки `P` остались на диске, то есть превратил бы их в осиротевшие.
+
+Перед `commit`/`discard`/`normalize` **финальное доказательство владения**
+перепроверяет весь `targetProofs`/`previousProofs` против живого глобального
+инвентаря: id, `canonicalPath`, digest, отсутствие orphan/unknown/duplicate.
+Проверка выполняется ПОСЛЕ мутации и reload, непосредственно перед переходом
+журнала.
+
+Rollback также не может стать `Success`/`NothingToDo`, пока released-состояние
+(включая **отсутствие** обёртки) не подтверждено durable.
+
+Доказательство (proof) однозначно привязано к тройке
+`wrapperId + canonicalPath + payloadDigest`; `previous ⊆ target` сравнивается по
+полной идентичности. Каталог-пример: wrapper пропал внешне — отсутствие само по
+себе не durable, и только fsync родительского каталога делает его доказанным.
+
 Восстановление после сбоя выполняется в начале следующего production-вызова
 (`ScopedDefaultsLifecycle::recoverPrepared`) ДО любого планирования: существующая
 `Prepared`-запись классифицируется по живой ФС — `CompleteTarget` (доказанно

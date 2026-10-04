@@ -4,6 +4,7 @@
 // so crash recovery, partial writes and compensation are exercised through the
 // production code path rather than a hand-copied imitation of it.
 
+#include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/integrity/ContentDigest.h>
 #include <fic/policy/PolicyDependency.h>
 #include "modules/dac/sudo/SudoersConfiguration.h"
@@ -136,6 +137,25 @@ ScopedDefaultsLifecycleDeps productionDeps(
     const SudoScopedDefaultsHooks& hooks) {
     ScopedDefaultsLifecycleDeps deps;
     deps.configuration = &configuration;
+    deps.journal.normalizePreparedToPrevious =
+        [](fic::rollback::MutationId id,
+           const std::vector<fic::sudoers::SudoScopedDefaultsWrapperProof>& proven,
+           std::string& error) {
+            std::string journalError;
+            fic::rollback::MutationJournal* instance =
+                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                    journalError);
+            if (instance == nullptr) {
+                error = journalError;
+                return false;
+            }
+            return instance->normalizeSudoScopedDefaultsPreparedToPrevious(
+                id, proven, error);
+        };
+    deps.journal.proveDurable = [](const std::vector<std::filesystem::path>& paths,
+                                   std::string& error) {
+        return fic::sudoers::proveObservedStateDurable(paths, error);
+    };
     deps.hooks = hooks;
     const PolicyRef policy = scopedPolicy();
     deps.journal.activeRecords = [policy](const PolicyRef&) {
@@ -949,18 +969,455 @@ void testPartialRollbackCompensated() {
             "a compensated partial rollback leaves no unproven ownership");
 }
 
+
+// Prepares a refresh transition previous={owned}, target={owned,fresh} WITHOUT
+// running it, simulating a crash right after the journal write.
+void stageRefresh(const std::vector<SudoScopedDefaultsWrapperProof>& owned,
+                  const PolicyRef& policy,
+                  const std::vector<SudoScopedDefaultsWrapperProof>& fresh) {
+    std::vector<SudoScopedDefaultsWrapperProof> targetProofs = owned;
+    for (const SudoScopedDefaultsWrapperProof& proof : fresh) {
+        targetProofs.push_back(proof);
+    }
+    MutationId id = 0;
+    std::string error;
+    UndoAction undo{MutationBackend::Sudo,
+                    UndoReleaseSudoScopedDefaults{policy.policyName, owned,
+                                                  targetProofs}};
+    require(recordPreparedMut(policy, undo, id, error), error);
+}
+
+// --- S: refresh crash BEFORE the write must NOT lose A's provenance ---------
+
+void testRefreshCrashBeforeWriteKeepsOwnership() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply A");
+    const auto ownedA = activeOwned();
+    require(ownedA.size() == 1, "A must be owned");
+
+    // New violation B, refresh prepared, then crash before any filesystem write.
+    writeFile(tree.root / "sudoers",
+              wrapperBlock(ownedA[0].wrapperId, "Defaults:alice exempt_group=wheel") +
+              "Defaults:bob passwd_tries=9\n");
+    SudoersConfiguration staged(options);
+    std::string stagedError;
+    require(staged.load(stagedError), stagedError);
+    ScopedDefaultsTransaction planner(staged, kPolicyName);
+    const auto plan = planner.plan(ownedA);
+    std::vector<SudoScopedDefaultsWrapperProof> fresh;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        fresh.push_back(mutation.proof);
+    }
+    stageRefresh(ownedA, policy, fresh);
+    require(activePreparedCount() == 1, "a refresh Prepared record must exist");
+
+    // Restart: the production reconcile normalizes the refresh back to
+    // Applied{A} and then re-plans B. A's id must be preserved.
+    SudoersConfiguration afterRestart(options);
+    std::string loadError;
+    require(afterRestart.load(loadError), loadError);
+    const auto outcome = reconcile(afterRestart, productionHooks(afterRestart));
+    require(outcome.ok, "recovery must succeed: " + outcome.message);
+    const auto ownedAfter = activeOwned();
+    require(ownedAfter.size() == 2, "A and B must end up owned");
+    bool aStillOwned = false;
+    for (const auto& proof : ownedAfter) {
+        if (proof.wrapperId == ownedA[0].wrapperId) {
+            aStillOwned = true;
+        }
+    }
+    require(aStillOwned, "wrapper A's id must be preserved through recovery");
+    bool bobActive = false;
+    for (const auto& line : fic::sudoers::splitPhysicalLines(
+             readFile(tree.root / "sudoers"))) {
+        if (line.text.rfind("Defaults:bob passwd_tries=9", 0) == 0) {
+            bobActive = true;
+        }
+    }
+    require(!bobActive, "B must be suppressed after the successful reconciliation");
+}
+
+// --- T: refresh CAS conflict before the first write keeps A ------------------
+
+void testRefreshCasConflictKeepsOwnership() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply A");
+    const auto ownedA = activeOwned();
+
+    writeFile(tree.root / "sudoers",
+              wrapperBlock(ownedA[0].wrapperId, "Defaults:alice exempt_group=wheel") +
+              "Defaults:bob passwd_tries=9\n");
+    SudoScopedDefaultsHooks hooks = productionHooks(configuration);
+    hooks.beforeWrite = [](const std::filesystem::path& path) {
+        if (path.filename() == "sudoers") {
+            std::string current = readFile(path);
+            current += "# concurrent external change\n";
+            writeFile(path, current);
+        }
+    };
+    const auto outcome = reconcile(configuration, hooks);
+    require(!outcome.ok, "a CAS conflict must fail the refresh");
+    const auto ownedAfter = activeOwned();
+    require(ownedAfter.size() == 1, "ownership must still be exactly {A}");
+    require(ownedAfter[0].wrapperId == ownedA[0].wrapperId,
+            "A's provenance must survive the failed refresh");
+    require(readFile(tree.root / "sudoers").find("Defaults:bob passwd_tries=9") !=
+                std::string::npos,
+            "B must NOT be wrapped");
+    require(activePreparedCount() == 0,
+            "a normalized refresh must not remain Prepared");
+
+    SudoersConfiguration retry(options);
+    std::string retryError;
+    require(retry.load(retryError), retryError);
+    const auto second = reconcile(retry, productionHooks(retry));
+    require(second.ok, "a subsequent apply must succeed: " + second.message);
+    require(activeOwned().size() == 2, "A and B must now be owned");
+}
+
+
+// --- U: refresh partial mutation + successful compensation -> Applied{A} ----
+
+void testRefreshPartialMutationCompensated() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "a.conf", "Defaults:alice exempt_group=wheel\n");
+    writeFile(tree.root / "b.conf", "Defaults passwd_tries=3\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "a.conf").string() + "\n"
+              "@include " + (tree.root / "b.conf").string() + "\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply A");
+    const auto ownedA = activeOwned();
+    require(ownedA.size() == 1, "only A must be owned after the first apply");
+    const std::string aWrapped = readFile(tree.root / "a.conf");
+
+    // B and C live in DIFFERENT files, so the refresh is a genuine multi-file
+    // transaction: the first write installs B, the second fails, and the
+    // compensation returns the filesystem exactly to {A}.
+    writeFile(tree.root / "b.conf",
+              "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
+    writeFile(tree.root / "c.conf", "Defaults:carol passwd_tries=3\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "a.conf").string() + "\n"
+              "@include " + (tree.root / "b.conf").string() + "\n"
+              "@include " + (tree.root / "c.conf").string() + "\n");
+    SudoScopedDefaultsHooks hooks = productionHooks(configuration);
+    int writes = 0;
+    hooks.beforeWrite = [&writes](const std::filesystem::path&) {
+        if (++writes == 2) {
+            throw std::runtime_error("injected write failure before install");
+        }
+    };
+    const auto outcome = reconcile(configuration, hooks);
+    require(!outcome.ok, "the failing refresh must report failure");
+    // The surviving ownership must be exactly A, NOT absent and NOT Prepared.
+    require(activePreparedCount() == 0,
+            "a compensated refresh must not remain Prepared");
+    const auto ownedAfter = activeOwned();
+    require(ownedAfter.size() == 1,
+            "ownership must be normalized back to exactly {A}");
+    require(ownedAfter[0].wrapperId == ownedA[0].wrapperId,
+            "A's proof identity must be unchanged");
+    require(readFile(tree.root / "a.conf") == aWrapped,
+            "A's wrapper must be intact");
+    require(readFile(tree.root / "b.conf").find("#@FIC_SUDO_DISABLED") ==
+                std::string::npos,
+            "the partially installed wrapper must be compensated away");
+}
+
+// --- V: CompleteTarget with a failing durability barrier must NOT commit ----
+
+void testCompleteTargetDurabilityBlocksCommit() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+
+    ScopedDefaultsTransaction planner(configuration, kPolicyName);
+    const auto plan = planner.plan({});
+    std::vector<SudoScopedDefaultsWrapperProof> targets;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        targets.push_back(mutation.proof);
+    }
+    MutationId id = 0;
+    UndoAction undo{MutationBackend::Sudo,
+                    UndoReleaseSudoScopedDefaults{kPolicyName, {}, targets}};
+    require(recordPreparedMut(scopedPolicy(), undo, id, error), error);
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    const auto applied = transaction.apply(plan.fresh, productionHooks(configuration));
+    require(applied.ok(), applied.operation.message);
+    require(activePreparedCount() == 1, "still Prepared: commit never ran");
+
+    // A visible wrapper is NOT a durable wrapper while the barrier fails.
+    {
+        class FsyncGuard {
+        public:
+            FsyncGuard() {
+                AtomicFileWriter::setDirectoryFsyncHookForTests(
+                    [](const std::string&) { return false; });
+            }
+            ~FsyncGuard() {
+                AtomicFileWriter::setDirectoryFsyncHookForTests({});
+            }
+        } guard;
+
+        SudoersConfiguration blocked(options);
+        std::string loadError;
+        require(blocked.load(loadError), loadError);
+        const auto outcome = reconcile(blocked, productionHooks(blocked));
+        require(!outcome.ok, "a durability failure must block the commit");
+        require(activePreparedCount() == 1,
+                "the Prepared record must survive a failed durability barrier");
+    }
+
+    // Once the barrier can succeed again, the SAME record is committed; no new
+    // wrapper id may be minted.
+    SudoersConfiguration afterBarrier(options);
+    std::string barrierError;
+    require(afterBarrier.load(barrierError), barrierError);
+    const auto recovered = reconcile(afterBarrier, productionHooks(afterBarrier));
+    require(recovered.ok, "recovery after the barrier must succeed: " +
+                             recovered.message);
+    require(activePreparedCount() == 0, "the Prepared must be resolved");
+    const auto ownedAfter = activeOwned();
+    require(ownedAfter.size() == 1, "exactly the original wrapper is owned");
+    require(ownedAfter[0].wrapperId == targets[0].wrapperId,
+            "the existing wrapper id must be reused, never re-minted");
+}
+
+
+// --- W: rollback interrupted after the unwrap -> not RolledBack --------------
+
+void testRollbackDurabilityBlocksResolution() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply");
+    const auto owned = activeOwned();
+    require(owned.size() == 1, "one wrapper must exist");
+
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.sudoersOptions = [options]() { return options; };
+
+    // The unwrap is published but the directory fsync never completes, so the
+    // released state is NOT durable and the rollback must not be reported as
+    // successful.
+    bool failed = false;
+    {
+        class FsyncGuard {
+        public:
+            FsyncGuard() {
+                AtomicFileWriter::setDirectoryFsyncHookForTests(
+                    [](const std::string&) { return false; });
+            }
+            ~FsyncGuard() {
+                AtomicFileWriter::setDirectoryFsyncHookForTests({});
+            }
+        } guard;
+        const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+            policy, kScopedDefaultsResource, deps);
+        failed = report.status == fic::rollback::RollbackStatus::Failed ||
+                 report.status == fic::rollback::RollbackStatus::Conflict;
+        require(failed,
+                "a non-durable release must not be reported as Success");
+    }
+    require(!activeOwned().empty(),
+            "the provenance must remain active after a failed rollback");
+
+    // Retry with a working barrier: the released state is now provable and the
+    // journal resolves.
+    const auto retry = fic::rollback::rollbackPolicyBeforeDisable(
+        policy, kScopedDefaultsResource, deps);
+    require(retry.status == fic::rollback::RollbackStatus::Success,
+            "a durable retry must succeed: " + retry.message);
+    require(activeOwned().empty(),
+            "the ownership must be resolved after the durable retry");
+}
+
+// --- X: existing wrapper drifts BETWEEN the preflight and the commit --------
+
+void testDriftBetweenPreflightAndCommitRefusesCommit() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply A");
+    const auto ownedA = activeOwned();
+
+    writeFile(tree.root / "sudoers",
+              wrapperBlock(ownedA[0].wrapperId, "Defaults:alice exempt_group=wheel") +
+              "Defaults:bob passwd_tries=9\n");
+
+    // The external editor acts AFTER FIC installed B but BEFORE the final
+    // ownership proof, so the reload in the hook sees a tampered A.
+    SudoScopedDefaultsHooks hooks = productionHooks(configuration);
+    hooks.reloadAndVerify = [&configuration](std::string& e) {
+        if (!configuration.load(e)) {
+            return false;
+        }
+        // Simulate the concurrent root process rewriting an ALREADY owned
+        // wrapper body while FIC is between mutation and commit.
+        std::string content = readFile(configuration.graphDocuments()[0].path);
+        const std::string needle =
+            "#@FIC_SUDO_DISABLED_LINE@eol=lf@Defaults:alice exempt_group=wheel";
+        const std::size_t at = content.find(needle);
+        if (at != std::string::npos) {
+            content.replace(at, needle.size(),
+                            "#@FIC_SUDO_DISABLED_LINE@eol=lf@Defaults:root ALL=(ALL) ALL");
+            writeFile(configuration.graphDocuments()[0].path, content);
+        }
+        return true;
+    };
+    const auto outcome = reconcile(configuration, hooks);
+    require(!outcome.ok,
+            "a drifted existing wrapper must block the target commit");
+    require(activePreparedCount() == 1,
+            "the Prepared record must survive a refused commit");
+}
+
+// --- Y: valid partial refresh is selectively rewound to {A} -----------------
+
+void testPartialRefreshSelectiveCompensation() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply A");
+    const auto ownedA = activeOwned();
+    const std::string aWrapped = readFile(tree.root / "sudoers");
+
+    // Prepare a refresh that plans TWO new wrappers, then install only the
+    // first on disk: the state is {A,B}, the target is {A,B,C}.
+    writeFile(tree.root / "sudoers",
+              wrapperBlock(ownedA[0].wrapperId, "Defaults:alice exempt_group=wheel") +
+              "Defaults:bob passwd_tries=9\nDefaults:carol passwd_tries=3\n");
+    SudoersConfiguration staged(options);
+    std::string stagedError;
+    require(staged.load(stagedError), stagedError);
+    ScopedDefaultsTransaction planner(staged, kPolicyName);
+    const auto plan = planner.plan(ownedA);
+    require(plan.fresh.size() == 2, "two new wrappers must be planned");
+    std::vector<SudoScopedDefaultsWrapperProof> fresh;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        fresh.push_back(mutation.proof);
+    }
+    stageRefresh(ownedA, policy, fresh);
+
+    // Install ONLY the first new wrapper, leaving the second untouched: this is
+    // a genuine PARTIAL target, not drift.
+    ScopedDefaultsTransaction installer(staged, kPolicyName);
+    SudoScopedDefaultsHooks partialHooks = productionHooks(staged);
+    // Install ONLY the mechanical step for B: the semantic postcondition is
+    // relaxed on purpose, because the scenario constructs a CRASH state where
+    // C was never written.
+    partialHooks.reloadAndVerify = [&staged](std::string& e) {
+        return staged.load(e);
+    };
+    const auto partial = installer.apply({plan.fresh[0]}, partialHooks);
+    require(partial.ok(), partial.operation.message);
+
+    SudoersConfiguration afterRestart(options);
+    std::string loadError;
+    require(afterRestart.load(loadError), loadError);
+    const auto outcome = reconcile(afterRestart, productionHooks(afterRestart));
+    require(outcome.ok,
+            "a valid partial refresh must be recovered: " + outcome.message);
+    // After the selective rewind to {A} the ordinary reconciliation re-plans
+    // both remaining violations, so the end state is the full {A,B,C}.
+    const auto ownedAfter = activeOwned();
+    require(ownedAfter.size() == 3,
+            "recovery must re-plan and own A, B and C");
+    bool aPreserved = false;
+    for (const auto& proof : ownedAfter) {
+        if (proof.wrapperId == ownedA[0].wrapperId) {
+            aPreserved = true;
+        }
+    }
+    require(aPreserved, "wrapper A must survive the selective compensation");
+}
+
+// --- Z: a duplicate id introduced before the release capture is refused -----
+
+void testDuplicateIdBeforeReleaseCaptureRefused() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "site.conf", "Defaults:alice exempt_group=wheel\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "site.conf").string() + "\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply");
+    const auto owned = activeOwned();
+    require(owned.size() == 1, "one wrapper must exist");
+
+    // An external process copies the wrapper into the main file, creating the
+    // same id in TWO files.
+    // Copy the wrapper (which lives in site.conf) into the main file, so the
+    // SAME id now exists in two different sudoers files.
+    const std::string wrappedSite = readFile(tree.root / "site.conf");
+    std::string main = readFile(tree.root / "sudoers");
+    writeFile(tree.root / "sudoers", main + wrappedSite);
+
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.sudoersOptions = [options]() { return options; };
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        policy, kScopedDefaultsResource, deps);
+    require(report.status == fic::rollback::RollbackStatus::Conflict,
+            "a global duplicate id must make the rollback a Conflict");
+    require(!activeOwned().empty(),
+            "the provenance must stay active when the rollback is refused");
+    require(readFile(tree.root / "sudoers").find("Defaults:alice exempt_group=wheel") !=
+                std::string::npos,
+            "the foreign duplicate must be preserved byte-exactly");
+}
+
 } // namespace
 
 int main() {
     try {
-        testNormalLifecycle();                            // A
-        testReconciliationGrowsOwnership();               // B
-        testPayloadDriftRefusesUnwrap();                 // C
-        testPartialApplyCompensated();                    // D1
-        testPartialApplyCompensationFails();              // D2
-        testOrphanNoOpFailsClosed();                      // E
-        testSamePhysicalIncludeTwice();                   // F
-        testGlobalDuplicateIdRefused();                   // G
+testNormalLifecycle();
+testReconciliationGrowsOwnership();
+testPayloadDriftRefusesUnwrap();
+testPartialApplyCompensated();
+testPartialApplyCompensationFails();
+testOrphanNoOpFailsClosed();
+testSamePhysicalIncludeTwice();
+testGlobalDuplicateIdRefused();
         testCrlfRoundTrip();                              // H
         testMultipleFreshViolationsMapping();             // I
         testGraphSnapshotToCaptureToctou();               // J
@@ -972,6 +1429,14 @@ int main() {
         testOrphanWrapperPlusNewViolation();              // P
         testNoFinalNewlineRoundTrip();                    // Q
         testPartialRollbackCompensated();                 // R
+        testRefreshCrashBeforeWriteKeepsOwnership();        // S
+        testRefreshCasConflictKeepsOwnership();            // T
+testRefreshPartialMutationCompensated();          // U
+testCompleteTargetDurabilityBlocksCommit();      // V
+testRollbackDurabilityBlocksResolution();         // W
+testDriftBetweenPreflightAndCommitRefusesCommit();// X
+testPartialRefreshSelectiveCompensation();       // Y
+testDuplicateIdBeforeReleaseCaptureRefused();    // Z
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

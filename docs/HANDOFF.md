@@ -88,6 +88,22 @@ Follow-up поверх `c325e92`:
   orphan/drift блокирует reconciliation.
 * **Одна активная запись**: `collectActiveOwnership()` fail closed при >1.
 * **Rollback compensation** + сохранение provenance при частичном rollback.
+* **Refresh provenance (P0)**: неудачный REFRESH больше не может удалить
+  provenance уже существующих обёрток. `Prepared(previous=P,target=P+F)` при
+  доказанно-durable previous нормализуется в `Applied(target=P)` на том же id
+  (`MutationJournal::normalizeSudoScopedDefaultsPreparedToPrevious()`), а
+  `discard()` остаётся только для fresh-переходов с пустым `previous`.
+* **Durability barriers**: commit / discard / normalize / rollback Success
+  требуют `ensureTargetDurableIfCurrentState()` по `canonicalPath` каждой proof'ы.
+  Видимое состояние ≠ durable.
+* **Proof identity**: `wrapperId + canonicalPath + payloadDigest`;
+  `previous ⊆ target` сравнивается по полной идентичности.
+* **Финальное доказательство владения** по `targetProofs` выполняется после
+  мутации и reload, непосредственно перед commit.
+* **Release**: глобальный инвентарь строится по тем же captured-снимкам,
+  против которых выполняются CAS-записи.
+* **Селективная компенсация** `restoreSelectedSudoDisabledEntries()` позволяет
+  откатить частичный target, не снимая previous-обёртки.
 * **Include lexer**: escape-семантика upstream `copy_string()` для кавыченных и
   некавыченных путей (`\xHH`→hex, `\c`→c). Подтверждено по исходникам sudo
   1.9.13 (debian-12) и текущим — поведение идентично.
@@ -98,7 +114,8 @@ Follow-up поверх `c325e92`:
 * `fic/src/modules/dac/sudo/policies/DAC_sudo_disable_scoped_defaults.cpp`
 * `fic/src/rollback/RollbackExecutor.cpp`
 * `tests/fic/rollback/SudoScopedDefaultsLifecycleTests.cpp`,
-  `tests/fic/modules/dac/SudoersConfigurationTests.cpp`, `tests/CMakeLists.txt`
+  `tests/fic/modules/dac/SudoersConfigurationTests.cpp`, `tests/CMakeLists.txt`,
+  `fic/src/rollback/MutationJournal.{h,cpp}`
 * `docs/{rollback.md,HANDOFF.md}`
 
 ## Validation

@@ -78,6 +78,19 @@ struct SudoScopedDefaultsTransactionResult {
     bool ok() const { return kind == SudoScopedDefaultsResultKind::Success; }
 };
 
+// Durability barrier for an ALREADY OBSERVED state: re-proves the exact current
+// state of every path and only then confirms the directory entry. A visible
+// file is not a durable file, so no journal transition may be justified by
+// merely observing a wrapper.
+bool proveObservedStateDurable(
+    const std::vector<std::filesystem::path>& paths,
+    std::string& error);
+
+// The deduplicated physical files a proof set authorizes, in deterministic
+// order. Used to run the durability barrier over exactly the proven scope.
+std::vector<std::filesystem::path> proofPaths(
+    const std::vector<SudoScopedDefaultsWrapperProof>& proofs);
+
 // One physical scoped Defaults occurrence to suppress. A sudoers file may be
 // included several times, so the same logical entry appears many times in the
 // semantic view; remediation acts on PHYSICAL lines and must not wrap the

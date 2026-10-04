@@ -89,7 +89,26 @@ bool DAC_sudo_disable_scoped_defaults::apply() {
     deps.journal.discard = [](fic::rollback::MutationId id, std::string& error) {
         return fic::rollback::discardMutation(id, error);
     };
-    deps.hooks.validate = [&configuration](std::string& error) {
+        deps.journal.normalizePreparedToPrevious =
+        [](fic::rollback::MutationId id,
+           const std::vector<fic::sudoers::SudoScopedDefaultsWrapperProof>& proven,
+           std::string& error) {
+            std::string journalError;
+            fic::rollback::MutationJournal* instance =
+                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                    journalError);
+            if (instance == nullptr) {
+                error = journalError;
+                return false;
+            }
+            return instance->normalizeSudoScopedDefaultsPreparedToPrevious(
+                id, proven, error);
+        };
+    deps.journal.proveDurable = [](const std::vector<std::filesystem::path>& paths,
+                                   std::string& error) {
+        return fic::sudoers::proveObservedStateDurable(paths, error);
+    };
+deps.hooks.validate = [&configuration](std::string& error) {
         return configuration.validateConfiguration(error);
     };
     deps.hooks.reloadAndVerify = [&configuration](std::string& error) {

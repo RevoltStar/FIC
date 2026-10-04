@@ -81,6 +81,7 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
         payload->previousProofs;
     const std::vector<SudoScopedDefaultsWrapperProof> target =
         payload->targetProofs;
+    const MutationId preparedId = prepared->id;
 
     // The graph is reloaded first: the live filesystem is the only evidence.
     if (deps_.configuration != nullptr) {
@@ -98,10 +99,29 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     const PreparedRecovery classification =
         transaction.classifyPrepared(previous, target, classifyError);
     if (classification == PreparedRecovery::CompleteTarget) {
-        // The filesystem mutation provably completed and only the commit is
-        // missing: the EXISTING record becomes Applied. No new ids are minted.
+        // Durability BEFORE commit: the wrapper being VISIBLE proves nothing if
+        // the rename that published it was never followed by a directory fsync.
+        std::string durabilityError;
+        if (!deps_.journal.proveDurable(proofPaths(target), durabilityError)) {
+            outcome.result = PreparedRecoveryResult::FailClosed;
+            outcome.message =
+                "target-состояние не подтверждено durable; Prepared-запись "
+                "оставлена активной";
+            outcome.diagnostics.push_back(durabilityError);
+            return outcome;
+        }
+        // Ownership is re-proved against the exact target set immediately
+        // before the journal may claim it.
+        const std::string refusal =
+            transaction.validateCurrentOwnership(target);
+        if (!refusal.empty()) {
+            outcome.result = PreparedRecoveryResult::FailClosed;
+            outcome.message =
+                "target-состояние не доказано перед commit: " + refusal;
+            return outcome;
+        }
         std::string commitError;
-        if (!deps_.journal.commit(prepared->id, commitError)) {
+        if (!deps_.journal.commit(preparedId, commitError)) {
             outcome.result = PreparedRecoveryResult::FailClosed;
             outcome.message =
                 "не удалось зафиксировать существующую Prepared-запись: " +
@@ -110,44 +130,108 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
         }
         outcome.result = PreparedRecoveryResult::CommittedExisting;
         outcome.message =
-            "Prepared-запись доказанно завершена и переведена в Applied";
-        return outcome;
-    }
-    if (classification == PreparedRecovery::CompletePrevious) {
-        std::string discardError;
-        if (!deps_.journal.discard(prepared->id, discardError)) {
-            outcome.result = PreparedRecoveryResult::FailClosed;
-            outcome.message =
-                "не удалось закрыть доказанно неприменённую Prepared-запись: " +
-                discardError;
-            return outcome;
-        }
-        outcome.result = PreparedRecoveryResult::DiscardedExisting;
-        outcome.message = "Prepared-запись доказанно не была применена и закрыта";
+            "Prepared-запись доказанно завершена, durable и переведена в "
+            "Applied";
         return outcome;
     }
 
-    // Indeterminate: prefer an EXACT compensation of the target-only wrappers
-    // back to the previous side. Anything unprovable fails closed and keeps the
-    // Prepared record active.
+    if (classification == PreparedRecovery::CompletePrevious) {
+        // Durability BEFORE discarding/normalizing: the previous side may
+        // itself have been produced by a compensation rename whose directory
+        // fsync never completed.
+        std::string durabilityError;
+        const std::vector<SudoScopedDefaultsWrapperProof>& provenSide =
+            previous.empty() ? target : previous;
+        if (!deps_.journal.proveDurable(proofPaths(provenSide),
+                                        durabilityError)) {
+            outcome.result = PreparedRecoveryResult::FailClosed;
+            outcome.message =
+                "previous-состояние не подтверждено durable; Prepared-запись "
+                "оставлена активной";
+            outcome.diagnostics.push_back(durabilityError);
+            return outcome;
+        }
+        if (previous.empty()) {
+            // FRESH transition that provably never landed: nothing is owned, so
+            // removing the record loses no provenance.
+            std::string discardError;
+            if (!deps_.journal.discard(preparedId, discardError)) {
+                outcome.result = PreparedRecoveryResult::FailClosed;
+                outcome.message =
+                    "не удалось закрыть доказанно неприменённую "
+                    "Prepared-запись: " + discardError;
+                return outcome;
+            }
+            outcome.result = PreparedRecoveryResult::DiscardedExisting;
+            outcome.message =
+                "Prepared-запись доказанно не была применена и закрыта";
+            return outcome;
+        }
+        // REFRESH: the physical wrappers of `previous` are on disk and were
+        // proven by FIC BEFORE this transition. Discarding here would orphan
+        // them, so the record is normalized back to Applied(previous) instead.
+        const std::string refusal =
+            transaction.validateCurrentOwnership(previous);
+        if (!refusal.empty()) {
+            outcome.result = PreparedRecoveryResult::FailClosed;
+            outcome.message =
+                "previous-состояние не доказано перед normalization: " + refusal;
+            return outcome;
+        }
+        std::string normalizeError;
+        if (!deps_.journal.normalizePreparedToPrevious(preparedId, previous,
+                                                       normalizeError)) {
+            outcome.result = PreparedRecoveryResult::FailClosed;
+            outcome.message =
+                "не удалось вернуть refresh-запись к previous-владению: " +
+                normalizeError;
+            return outcome;
+        }
+        outcome.result = PreparedRecoveryResult::NormalizedExisting;
+        outcome.message =
+            "неудачный refresh откатан к прежнему доказанному владению";
+        return outcome;
+    }
+
+    // Indeterminate: prefer an EXACT selective compensation of the target-only
+    // wrappers back to the previous side. Anything unprovable fails closed and
+    // keeps the Prepared record active.
     SudoScopedDefaultsFilesystemState state =
         SudoScopedDefaultsFilesystemState::Unchanged;
     std::string compensationError;
     if (transaction.compensateToPrevious(previous, target, deps_.hooks, state,
                                          compensationError)) {
-        std::string discardError;
-        if (!deps_.journal.discard(prepared->id, discardError)) {
+        if (previous.empty()) {
+            std::string discardError;
+            if (!deps_.journal.discard(preparedId, discardError)) {
+                outcome.result = PreparedRecoveryResult::FailClosed;
+                outcome.message =
+                    "компенсация выполнена, но Prepared-запись не закрыта: " +
+                    discardError;
+                return outcome;
+            }
+            outcome.result = PreparedRecoveryResult::CompensatedExisting;
+            outcome.message =
+                "частичная Prepared-запись компенсирована до previous-состояния";
+            return outcome;
+        }
+        // REFRESH compensation: the surviving previous wrappers must stay
+        // authorized, so the record is normalized instead of discarded.
+        std::string normalizeError;
+        if (!deps_.journal.normalizePreparedToPrevious(preparedId, previous,
+                                                       normalizeError)) {
             outcome.result = PreparedRecoveryResult::FailClosed;
             outcome.message =
-                "компенсация выполнена, но Prepared-запись не закрыта: " +
-                discardError;
+                "компенсация выполнена, но refresh-запись не нормализована: " +
+                normalizeError;
             return outcome;
         }
         outcome.result = PreparedRecoveryResult::CompensatedExisting;
         outcome.message =
-            "частичная Prepared-запись компенсирована до previous-состояния";
+            "частичный refresh компенсирован; владение возвращено к previous";
         return outcome;
     }
+
     outcome.result = PreparedRecoveryResult::FailClosed;
     outcome.message =
         "неоднозначное состояние Prepared; владение не доказано, запись "
@@ -155,6 +239,54 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     outcome.diagnostics.push_back(compensationError);
     outcome.diagnostics.push_back(classifyError);
     return outcome;
+}
+
+// Shared resolution of a Prepared record after a FAILED mutation, so the
+// fresh-transition and refresh-transition behaviour is identical on every error
+// path (pre-write conflict, CAS conflict, failed write, compensated write).
+bool ScopedDefaultsLifecycle::resolveAfterFailedMutation(
+    MutationId mutationId,
+    const std::vector<SudoScopedDefaultsWrapperProof>& previous,
+    const std::vector<SudoScopedDefaultsWrapperProof>& target,
+    SudoScopedDefaultsFilesystemState state,
+    ScopedDefaultsLifecycleOutcome& outcome) {
+    if (!allowsDiscardPrepared(state)) {
+        outcome.message =
+            "состояние ФС не доказано как previous/unchanged; Prepared-запись "
+            "остаётся активной";
+        return false;
+    }
+    if (previous.empty()) {
+        // FRESH: FIC owned nothing before this transition, so removing the
+        // record loses no provenance.
+        std::string discardError;
+        if (!deps_.journal.discard(mutationId, discardError)) {
+            outcome.message =
+                "не удалось удалить подготовленную запись: " + discardError;
+            return false;
+        }
+        return true;
+    }
+    // REFRESH: the previous wrappers are physically present and were proven by
+    // FIC before this transition. Deleting the record would orphan them, so it
+    // is normalized back to Applied(previous) on the SAME id.
+    std::string durabilityError;
+    if (!deps_.journal.proveDurable(proofPaths(previous), durabilityError)) {
+        outcome.message =
+            "previous-состояние не подтверждено durable; normalization "
+            "запрещена, Prepared-запись остаётся активной";
+        outcome.diagnostics.push_back(durabilityError);
+        return false;
+    }
+    std::string normalizeError;
+    if (!deps_.journal.normalizePreparedToPrevious(mutationId, previous,
+                                                   normalizeError)) {
+        outcome.message =
+            "не удалось вернуть refresh-запись к previous-владению: " +
+            normalizeError;
+        return false;
+    }
+    return true;
 }
 
 ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
@@ -235,13 +367,13 @@ ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
                                applied.operation.diagnostics.begin(),
                                applied.operation.diagnostics.end());
     if (!applied.ok()) {
-        // The ONLY thing that decides the fate of the Prepared record is the
-        // proven filesystem state, never the reason of the failure.
+        // The proven filesystem state decides the fate of the Prepared record,
+        // and for a REFRESH the surviving previous ownership must be
+        // normalized back, never discarded.
         if (allowsDiscardPrepared(applied.filesystemState)) {
-            std::string discardError;
-            if (!deps_.journal.discard(mutationId, discardError)) {
-                outcome.message = "не удалось удалить подготовленную запись: " +
-                                  discardError;
+            if (!resolveAfterFailedMutation(mutationId, owned, targetProofs,
+                                            applied.filesystemState,
+                                            outcome)) {
                 return outcome;
             }
         } else {
@@ -252,6 +384,39 @@ ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
             return outcome;
         }
         outcome.message = applied.operation.message;
+        return outcome;
+    }
+
+    // FINAL ownership re-proof against the exact TARGET set. The initial
+    // preflight ran before the mutation; between then and here an external
+    // process may have edited an already-owned wrapper, and committing
+    // targetProofs in that case would authorize content FIC never proved.
+    std::string reloadError;
+    if (deps_.configuration != nullptr &&
+        !deps_.configuration->load(reloadError)) {
+        outcome.message = "не удалось перечитать sudoers перед commit: " +
+                          reloadError;
+        return outcome;
+    }
+    ScopedDefaultsTransaction finalTransaction(*deps_.configuration, policyName);
+    const std::string finalRefusal =
+        finalTransaction.validateCurrentOwnership(targetProofs);
+    if (!finalRefusal.empty()) {
+        // The filesystem holds installed FIC state, so the Prepared record MUST
+        // stay active: recovery will resolve it from the real physical state.
+        outcome.message =
+            "финальное доказательство владения не пройдено, commit запрещён: " +
+            finalRefusal;
+        return outcome;
+    }
+    // Durability barrier before the journal may claim the target ownership.
+    std::string durabilityError;
+    if (!deps_.journal.proveDurable(proofPaths(targetProofs),
+                                    durabilityError)) {
+        outcome.message =
+            "target-состояние не подтверждено durable; Prepared-запись "
+            "оставлена активной";
+        outcome.diagnostics.push_back(durabilityError);
         return outcome;
     }
 

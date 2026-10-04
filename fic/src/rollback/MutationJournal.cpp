@@ -39,6 +39,11 @@ bool validateSudoScopedDefaultsProof(
             proof.wrapperId + "'";
         return false;
     }
+    if (!fic::sudoers::isCanonicalSudoProofPath(proof.canonicalPath)) {
+        error = "SUDO scoped wrapper proof requires a canonical absolute path, "
+                "got: '" + proof.canonicalPath + "'";
+        return false;
+    }
     if (!fic::core::ContentDigest::isCanonicalSha256Hex(proof.payloadDigest)) {
         error = "SUDO scoped wrapper proof requires a canonical sha256 payload "
                 "digest, got: '" + proof.payloadDigest + "'";
@@ -82,9 +87,11 @@ bool validateSudoScopedDefaultsUndoPayload(
     // transition (previous) must still be owned AFTER it (target). A previous
     // proof missing from the target set would silently orphan a live wrapper,
     // so it is refused rather than guessed.
-    std::map<std::string, std::string> targetById;
+    std::map<std::string, std::pair<std::string, std::string>> targetById;
     for (const SudoScopedDefaultsWrapperProof& proof : payload.targetProofs) {
-        targetById.emplace(proof.wrapperId, proof.payloadDigest);
+        targetById.emplace(
+            proof.wrapperId,
+            std::make_pair(proof.canonicalPath, proof.payloadDigest));
     }
     for (const SudoScopedDefaultsWrapperProof& proof : payload.previousProofs) {
         const auto found = targetById.find(proof.wrapperId);
@@ -94,10 +101,11 @@ bool validateSudoScopedDefaultsUndoPayload(
                 "target proofs; FIC would orphan a live wrapper (fail closed)";
             return false;
         }
-        if (found->second != proof.payloadDigest) {
+        if (found->second !=
+            std::make_pair(proof.canonicalPath, proof.payloadDigest)) {
             error = "wrapper id '" + proof.wrapperId +
-                "' carries a different digest in previous and target proofs "
-                "(fail closed)";
+                "' carries a different path or digest in previous and target "
+                "proofs (fail closed)";
             return false;
         }
     }
@@ -168,6 +176,7 @@ json serializeUndoAction(const UndoAction& action) {
             json result = json::array();
             for (const SudoScopedDefaultsWrapperProof& proof : source) {
                 result.push_back({{"wrapper_id", proof.wrapperId},
+                                  {"canonical_path", proof.canonicalPath},
                                   {"payload_digest", proof.payloadDigest}});
             }
             return result;
@@ -940,6 +949,7 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
                 }
                 SudoScopedDefaultsWrapperProof proof;
                 proof.wrapperId = item.value("wrapper_id", "");
+                proof.canonicalPath = item.value("canonical_path", "");
                 proof.payloadDigest = item.value("payload_digest", "");
                 if (!validateSudoScopedDefaultsProof(proof, error)) {
                     return false;
@@ -3213,6 +3223,70 @@ bool MutationJournal::normalizeIdentityLoginDefsPreparedToProvenState(
         *record = previous;
         return false;
     }
+    health_ = JournalHealth::Indeterminate;
+    return false;
+}
+
+bool MutationJournal::normalizeSudoScopedDefaultsPreparedToPrevious(
+    MutationId id,
+    const std::vector<SudoScopedDefaultsWrapperProof>& provenPrevious,
+    std::string& error) {
+    if (!loaded_) {
+        error = "Mutation journal не загружен";
+        return false;
+    }
+    if (health_ == JournalHealth::Indeterminate) {
+        error = "Mutation journal в состоянии Indeterminate: normalization "
+                "запрещена до успешного reload";
+        return false;
+    }
+    MutationRecord* record = find(id);
+    if (record == nullptr || record->status != MutationStatus::Prepared ||
+        record->undo.backend != MutationBackend::Sudo ||
+        record->resource != fic::sudoers::kScopedDefaultsResource) {
+        error = "SUDO refresh normalization требует существующую Prepared-запись "
+                "для канонического scoped-defaults ресурса";
+        return false;
+    }
+    auto* payload = std::get_if<UndoReleaseSudoScopedDefaults>(
+        &record->undo.payload);
+    // This API exists ONLY for a refresh: with an empty previous side there is
+    // no pre-existing ownership to preserve and a plain discard is correct.
+    if (payload == nullptr || payload->previousProofs.empty() ||
+        payload->previousProofs != provenPrevious) {
+        error = "SUDO refresh normalization does not match the proven "
+                "previous-side provenance";
+        return false;
+    }
+    if (record->policy.moduleName != fic::sudoers::kSudoModuleName ||
+        record->policy.submoduleName != fic::sudoers::kSudoSubmoduleName ||
+        record->policy.policyName != payload->policyName ||
+        payload->policyName != fic::sudoers::kScopedDefaultsPolicyName) {
+        error = "SUDO refresh normalization: несовпадение policy identity "
+                "(fail closed)";
+        return false;
+    }
+    const MutationRecord previous = *record;
+    // Canonical post-state: the surviving ownership IS the target again.
+    payload->targetProofs = provenPrevious;
+    payload->previousProofs.clear();
+    record->status = MutationStatus::Applied;
+    record->error.clear();
+    record->updatedAtEpoch = currentEpochSeconds();
+    if (!validateSudoScopedDefaultsUndoPayload(*payload, error)) {
+        *record = previous;
+        return false;
+    }
+    const PersistOutcome outcome = persist(error);
+    if (outcome == PersistOutcome::Persisted) {
+        return true;
+    }
+    if (outcome == PersistOutcome::NotInstalled) {
+        *record = previous;
+        return false;
+    }
+    // Indeterminate: keep the installed logical state and poison the journal,
+    // exactly like the other normalization APIs.
     health_ = JournalHealth::Indeterminate;
     return false;
 }

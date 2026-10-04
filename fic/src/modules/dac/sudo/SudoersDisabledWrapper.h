@@ -2,6 +2,8 @@
 #define FIC_SUDOERSDISABLEDWRAPPER_H
 
 #include <cstddef>
+#include <filesystem>
+#include <tuple>
 #include <string>
 #include <vector>
 
@@ -82,13 +84,34 @@ enum class SudoWrapperParseStatus {
 // suppressed bytes themselves stay inside the wrapper; this is NOT a backup.
 struct SudoScopedDefaultsWrapperProof {
     std::string wrapperId;
+    // EXACT physical sudoers file this proof authorizes. Part of the identity:
+    // a proof without it would authorize "a wrapper with this id somewhere in
+    // the graph", which cannot detect the same id reused across files and
+    // cannot run the state-bound durability barrier on the right parent
+    // directory while recovering an interrupted unwrap.
+    std::string canonicalPath;
     std::string payloadDigest;
 
     bool operator==(const SudoScopedDefaultsWrapperProof& other) const {
         return wrapperId == other.wrapperId &&
+            canonicalPath == other.canonicalPath &&
             payloadDigest == other.payloadDigest;
     }
+    bool operator<(const SudoScopedDefaultsWrapperProof& other) const {
+        return std::tie(wrapperId, canonicalPath, payloadDigest) <
+            std::tie(other.wrapperId, other.canonicalPath,
+                     other.payloadDigest);
+    }
 };
+
+// Canonical spelling of a sudoers path inside a proof: absolute and lexically
+// normalized. The file itself need NOT exist (it may have disappeared
+// externally); only the spelling must be unambiguous and deterministic.
+std::string canonicalizeSudoProofPath(const std::filesystem::path& path);
+
+// True when `value` is a canonical absolute path spelling usable as proof
+// provenance: non-empty, absolute, lexically normal, and free of NUL.
+bool isCanonicalSudoProofPath(const std::string& value);
 
 // Canonical wrapper id syntax produced by generateSudoWrapperMutationId():
 // "FIC-SUDO-<digits>-<digits>-<digits>-<digits>-<digits>". Persisted proofs are
@@ -133,8 +156,11 @@ struct SudoWrapperProvenanceCheck {
     }
 };
 
+// `filePath` is the physical file the wrappers were parsed from: a proof is
+// valid only for the exact file it names.
 SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
     const std::vector<SudoDisabledWrapper>& wrappers,
+    const std::filesystem::path& filePath,
     const std::string& policyName,
     const std::vector<SudoScopedDefaultsWrapperProof>& expectedProofs);
 
@@ -149,8 +175,25 @@ std::string describeSudoWrapperProvenance(
 // so drift is refused with zero writes.
 bool restoreSudoDisabledEntries(
     std::vector<SudoPhysicalLine>& lines,
+    const std::filesystem::path& filePath,
     const std::string& policyName,
     const std::vector<SudoScopedDefaultsWrapperProof>& allowedProofs,
+    bool& changed,
+    std::string& error);
+
+// SELECTIVE restore used by Prepared recovery.
+//
+// The ENTIRE current state is proven against `allExpectedProofs` first (grammar,
+// per-file path, digest, no unknown/orphan/drift), and only the wrappers named
+// in `selectedIdsToRestore` are unwrapped. Wrappers that belong to the previous
+// ownership set are left untouched, so a partial target can be rewound without
+// unwrapping already-proven ownership.
+bool restoreSelectedSudoDisabledEntries(
+    std::vector<SudoPhysicalLine>& lines,
+    const std::filesystem::path& filePath,
+    const std::string& policyName,
+    const std::vector<SudoScopedDefaultsWrapperProof>& allExpectedProofs,
+    const std::vector<std::string>& selectedIdsToRestore,
     bool& changed,
     std::string& error);
 
