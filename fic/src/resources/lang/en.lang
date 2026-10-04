@@ -161,12 +161,16 @@
 [module:DAC][policy:sudo_securepath]=List of directories searched for commands executed through sudo
 [module:DAC][policy:sudo_timeout]=Time between sudo launches in minutes before the password is requested again
 [module:DAC][policy:sudo_require_authentication]=Require authentication when executing commands through sudo
+[module:DAC][policy:sudo_disable_scoped_defaults]=Forbid contextual Defaults overrides
+[module:DAC][policy:sudo_exempt_group_disable]=Forbid exempt_group
 
 [module:DAC][policy:mode_and_owner_profiles][description]=Manages only explicitly selected logical objects and enforces their selected owner/group/mode profile. Use one object=profile entry per line. Removing an object or disabling the policy releases management without changing current filesystem metadata.
 [module:DAC][policy:sudo_passwd_tries][description]=Number of authentication attempts
 [module:DAC][policy:sudo_securepath][description]=Completely replaces the effective sudo secure_path with the specified directory list. The default matches the target distribution profile.
 [module:DAC][policy:sudo_timeout][description]=Time between sudo launches in minutes before the password is requested again
-[module:DAC][policy:sudo_require_authentication][description]=Replaces local NOPASSWD rules with PASSWD and prevents authentication from being disabled in active sudoers files. Existing sudo timestamps, PAM, and external LDAP/SSSD sources are out of scope.
+[module:DAC][policy:sudo_require_authentication][description]=Replaces local NOPASSWD rules with PASSWD and prevents authentication from being disabled in active sudoers files. It does not rewrite exempt_group: sudo_exempt_group_disable is its single owner. Existing sudo timestamps, PAM, and external LDAP/SSSD sources are out of scope.
+[module:DAC][policy:sudo_disable_scoped_defaults][description]=Forbids all four contextual sudoers Defaults forms (Defaults:user, Defaults@host, Defaults>runas, Defaults!command) across the whole active include graph. Detection is purely syntactic: FIC deliberately does not evaluate User_Alias/Host_Alias/Runas_Alias/Cmnd_Alias, %group, netgroups or negation. Active violations are temporarily deactivated through journalled FIC_SUDO_DISABLED wrappers with exact rollback.
+[module:DAC][policy:sudo_exempt_group_disable][description]=Maintains the global `Defaults !exempt_group` state in the FIC-owned /etc/sudoers.d/zzzz-fic file. It is the single owner of exempt_group and never edits foreign global Defaults. It requires sudo_disable_scoped_defaults, otherwise a contextual override could restore the bypass.
 [module:DAC][message:platform_access_rules]=Rules for the selected target distribution profile (modes are maximum allowed values):
 
 

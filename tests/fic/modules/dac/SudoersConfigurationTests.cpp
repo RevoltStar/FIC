@@ -1,6 +1,11 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/dac/sudo/SudoersIncludeDirective.h"
+#include "modules/dac/sudo/SudoersScopedDefaults.h"
+#include "modules/dac/sudo/SudoersDisabledWrapper.h"
 
 #include <filesystem>
+#include <utility>
+#include <vector>
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
@@ -172,7 +177,10 @@ void testAuthenticationRewrite() {
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    require(configuration.authenticationViolations().size() == 7,
+    // 6 violations: exempt_group is NOT one of them any more. Its single
+    // owner is sudo_exempt_group_disable; see
+    // sudo_require_authenticationDoesNotOwnExemptGroup.
+    require(configuration.authenticationViolations().size() == 6,
             "all violating lines must be reported");
     const auto operation = configuration.enforceAuthentication();
     require(operation.ok && operation.changed, operation.message);
@@ -190,8 +198,10 @@ void testAuthenticationRewrite() {
             "rule with a Runas group and command option was not rewritten");
     require(changed.find("Defaults authenticate") != std::string::npos,
             "authenticate was not enabled");
-    require(changed.find("Defaults env_reset, !exempt_group") != std::string::npos,
-            "exempt_group was not disabled");
+    // Ownership regression (Part G): require_authentication must leave
+    // exempt_group byte-exact; it is managed by sudo_exempt_group_disable.
+    require(changed.find("Defaults env_reset, exempt_group=sudo") != std::string::npos,
+            "exempt_group must not be rewritten by require_authentication");
     require(changed.find("# NOPASSWD: in a comment must stay intact") != std::string::npos,
             "comment was unexpectedly modified");
     require(changed.find("/bin/echo \"NOPASSWD:\"") != std::string::npos,
@@ -263,7 +273,9 @@ void testUnsupportedMultilineRuleFailsClosed() {
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    require(configuration.authenticationViolations().size() == 4,
+    // The multiline exempt_group block is deliberately NOT a violation: that
+    // security state belongs to sudo_exempt_group_disable.
+    require(configuration.authenticationViolations().size() == 3,
             "all authentication-bypassing multiline rules must be reported");
     const auto operation = configuration.enforceAuthentication();
     require(!operation.ok && !operation.changed,
@@ -410,6 +422,581 @@ void testRealVisudoWhenAvailable() {
             "real visudo rejected the temporary fixture: " + operation.message);
 }
 
+
+// ---------------------------------------------------------------------------
+// Part A: include directive lexer regressions.
+// ---------------------------------------------------------------------------
+
+void testIncludeArgumentLexing() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+
+    // The include directive must be recognized BEFORE comment handling, and
+    // the ARGUMENT must honour quotes/escapes/trailing comments.
+    struct Case {
+        const char* line;
+        bool isDirective;
+        bool expectSupported;
+        const char* expectedPath;
+    };
+    const std::vector<Case> cases = {
+        {"@include /etc/sudoers.local # site settings", true, true, "/etc/sudoers.local"},
+        {"#include /etc/sudoers.local # site settings", true, true, "/etc/sudoers.local"},
+        {"@include /etc/sudoers\\ local", true, true, "/etc/sudoers local"},
+        {"#include /etc/sudoers\\ local", true, true, "/etc/sudoers local"},
+        {"@include \"/etc/sudoers local\"", true, true, "/etc/sudoers local"},
+        {"@include \"/etc/sudoers local\" # site", true, true, "/etc/sudoers local"},
+        {"@includedir /etc/sudoers.d # drop-in", true, true, "/etc/sudoers.d"},
+        {"#includedir /etc/sudoers.d # drop-in", true, true, "/etc/sudoers.d"},
+        {"@include /etc/a\\\\b", true, true, "/etc/a\\b"},
+        {"  @include /etc/spaces  ", true, true, "/etc/spaces"},
+        {"# a plain comment mentioning @include /etc/x", false, false, nullptr},
+        {"#includenotadirective /etc/x", false, false, nullptr},
+        {"@includee /etc/x", false, false, nullptr},
+        {"Defaults:x env_reset", false, false, nullptr},
+        // Unsupported (must fail closed, never silently ignored).
+        {"@include", true, false, nullptr},
+        {"@include \"unterminated", true, false, nullptr},
+        {"@include /etc/x /etc/extra", true, false, nullptr},
+        {"@include is a comment-like tail", true, false, nullptr},
+        {"@includedir", true, false, nullptr},
+    };
+
+    for (const Case& item : cases) {
+        const auto directive = fic::sudoers::parseIncludeDirective(item.line);
+        if (!item.isDirective) {
+            require(directive.kind == fic::sudoers::IncludeKind::None,
+                    std::string("line must not be an include directive: ") + item.line);
+            continue;
+        }
+        if (!item.expectSupported) {
+            // An include FIC does not model safely must be reported as
+            // Unsupported so the caller fails closed.
+            require(directive.kind == fic::sudoers::IncludeKind::Unsupported,
+                    std::string("line must fail closed as unsupported: ") + item.line);
+            require(!directive.error.empty(),
+                    std::string("unsupported include must carry a reason: ") +
+                    item.line);
+            continue;
+        }
+        require(directive.kind != fic::sudoers::IncludeKind::Unsupported,
+                std::string("line must parse as a supported include: ") + item.line);
+        require(directive.path == item.expectedPath,
+                std::string("wrong include path for '") + item.line + "': got '" +
+                directive.path + "'");
+    }
+    (void)tree;
+    (void)options;
+}
+
+void testIncludeInlineCommentReachesRealFile() {
+    // The false-positive fixture: a scoped/foreign Defaults reachable ONLY
+    // through `@include <file> # comment` must be part of the active graph.
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    const auto local = tree.root / "sudoers.local";
+    writeFile(local, "Defaults:alice timestamp_timeout=10\n"
+                     "Defaults passwd_tries=7\n");
+    writeFile(options.mainPath,
+              "@include " + local.string() + " # site settings\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.inspectGlobalDefault("passwd_tries").found,
+            "included Defaults behind a trailing comment must be visible");
+    require(configuration.scopedDefaultsViolations().size() == 1,
+            "scoped Defaults behind a trailing comment must be detected");
+}
+
+void testLegacyIncludeDirectivesAreNotComments() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    const auto local = tree.root / "legacy.local";
+    writeFile(local, "Defaults passwd_tries=9\n");
+    writeFile(options.mainPath,
+              "#include " + local.string() + "\n"
+              "# #include " + local.string() + "\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto observed = configuration.inspectGlobalDefault("passwd_tries");
+    require(observed.found && observed.value == "9",
+            "#include directive must be honoured, unlike a '#' comment line");
+}
+
+void testEscapedAndQuotedIncludePaths() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    const auto escapedName = std::string("escaped with space");
+    const auto quotedName = std::string("quoted with space");
+    writeFile(tree.root / escapedName, "Defaults passwd_tries=4\n");
+    writeFile(tree.root / quotedName, "Defaults passwd_tries=5\n");
+    // sudoers escapes the whitespace INSIDE the pathname with a backslash, so
+    // every space of the real path must be escaped on the include line.
+    std::string escapedLine;
+    for (const char c : (tree.root / escapedName).string()) {
+        if (c == ' ') {
+            escapedLine += "\\ ";
+        } else {
+            escapedLine += c;
+        }
+    }
+    writeFile(options.mainPath, "@include " + escapedLine + "\n");
+
+    SudoersConfiguration escaped(options);
+    std::string error;
+    require(escaped.load(error), error);
+    const auto escapedValue = escaped.inspectGlobalDefault("passwd_tries");
+    require(escapedValue.found && escapedValue.value == "4",
+            "backslash-escaped include pathname must resolve to the real file");
+
+    writeFile(options.mainPath,
+              "@include \"" + (tree.root / quotedName).string() + "\" # site\n");
+    SudoersConfiguration quoted(options);
+    error.clear();
+    require(quoted.load(error), error);
+    const auto quotedValue = quoted.inspectGlobalDefault("passwd_tries");
+    require(quotedValue.found && quotedValue.value == "5",
+            "double-quoted include pathname must resolve to the real file");
+}
+
+void testRelativeNestedAndOrderedIncludes() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    const auto nested = tree.root / "nested.conf";
+    const auto spaced = tree.root / "spaced.conf";
+    writeFile(nested, "Defaults passwd_tries=6\n");
+    writeFile(spaced, "Defaults secure_path=/bin\n");
+    // Relative include: resolved against the INCLUDING file's directory.
+    writeFile(options.mainPath,
+              "@include nested.conf\n"
+              "@include ./spaced.conf # relative with comment\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.inspectGlobalDefault("passwd_tries").found,
+            "relative nested include must be followed");
+    require(configuration.inspectGlobalDefault("secure_path").found,
+            "relative include with trailing comment must be followed");
+}
+
+void testUnsupportedIncludeSyntaxFailsClosed() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath, "@include \"unterminated\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(!configuration.load(error),
+            "an unsupported include must fail closed, never be ignored");
+}
+
+void testPercentIncludeExpansionStaysFailClosed() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "@include " + (tree.root / "sudoers.%h").string() + "\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(!configuration.load(error),
+            "%h include expansion must stay fail-closed");
+    require(error.find('%') != std::string::npos,
+            "fail-closed message must mention the unsupported expansion");
+}
+
+void testMissingIncludeKeepsExistingSemantics() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "@include " + (tree.root / "absent").string() + " # missing\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(!std::filesystem::exists(tree.root / "absent"),
+            "a missing include must never be created");
+}
+
+// ---------------------------------------------------------------------------
+// Part B: scoped Defaults detection.
+// ---------------------------------------------------------------------------
+
+void testScopedDefaultsDetection() {
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"Defaults:alice env_reset", ":"},
+        {"Defaults:%admins env_reset", ":"},
+        {"Defaults:ADMINS env_reset", ":"},
+        {"Defaults:ALL,!root env_reset", ":"},
+        {"Defaults@localhost env_reset", "@"},
+        {"Defaults@BUILDERS env_reset", "@"},
+        {"Defaults>postgres env_reset", ">"},
+        {"Defaults>RUNAS_ALIAS env_reset", ">"},
+        {"Defaults!/usr/bin/vi env_reset", "!"},
+        {"Defaults!EDITOR_CMDS env_reset", "!"},
+        {"Defaults:%admins,!alice log_year", ":"},
+        {"  Defaults:alice log_year", ":"},
+        {"Defaults:alice log_year, logfile=/var/log/sudo.log", ":"},
+    };
+    for (const auto& [line, scope] : cases) {
+        require(fic::sudoers::scopedDefaultsScope(line) == scope,
+                "wrong scope for '" + line + "'");
+    }
+
+    // Must NOT be treated as scoped.
+    const std::vector<std::string> globals = {
+        "Defaults env_reset",
+        "Defaults !env_reset",
+        "Defaults passwd_tries=3, timestamp_timeout=1",
+        "# Defaults:alice in a comment",
+        "   # Defaults:alice in an indented comment",
+        "alice ALL=(ALL:ALL) NOPASSWD: ALL",
+        "Defaults",
+        "Defaultsthings:alice",
+    };
+    for (const std::string& line : globals) {
+        require(fic::sudoers::scopedDefaultsScope(line).empty(),
+                "must not be treated as a scoped Defaults: '" + line + "'");
+    }
+}
+
+void testScopedDefaultsAcrossTheRealIncludeGraph() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "Defaults env_reset\n"
+              "@includedir " + (tree.root / "sudoers.d").string() + "\n");
+    writeFile(tree.root / "sudoers.d" / "10-first",
+              "Defaults:bob timestamp_timeout=5\n"
+              "Defaults@buildhost log_year\n");
+    writeFile(tree.root / "sudoers.d" / "20-second",
+              "Defaults:carol !authenticate\n");
+    writeFile(options.managedPath, "Defaults secure_path=/bin\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto violations = configuration.scopedDefaultsViolations();
+    require(violations.size() == 3,
+            "scoped Defaults in included files must all be detected");
+}
+
+
+// ---------------------------------------------------------------------------
+// Parts C/D: scoped Defaults wrappers, provenance and rollback.
+// ---------------------------------------------------------------------------
+
+void testDisableScopedDefaultsWrapsAndRestores() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "Defaults env_reset\n"
+              "@includedir " + (tree.root / "sudoers.d").string() + "\n");
+    const auto first = tree.root / "sudoers.d" / "10-first";
+    const auto second = tree.root / "sudoers.d" / "20-second";
+    const std::string firstOriginal =
+        "# untouched comment\n"
+        "Defaults:bob timestamp_timeout=5\n"
+        "Defaults env_reset\n";
+    const std::string secondOriginal =
+        "Defaults@buildhost \\\n"
+        "    log_year\n";
+    writeFile(first, firstOriginal);
+    writeFile(second, secondOriginal);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.scopedDefaultsViolations().size() == 2,
+            "both foreign scoped Defaults must be detected");
+    const std::string firstBefore = readFile(first);
+    const std::string secondBefore = readFile(second);
+
+    const std::vector<std::string> ids =
+        SudoersConfiguration::planScopedDefaultsWrapperIds(2);
+    require(ids.size() == 2, "one wrapper id per planned logical entry");
+    const auto applied = configuration.disableScopedDefaults(
+        "sudo_disable_scoped_defaults", ids);
+    require(applied.ok, applied.message);
+    require(applied.changed, "wrapping scoped Defaults must report a change");
+
+    const std::string firstAfter = readFile(first);
+    const std::string secondAfter = readFile(second);
+    require(firstAfter.find(fic::sudoers::kSudoDisabledBeginPrefix) != std::string::npos,
+            "the offending entry must be wrapped in FIC markers");
+    // The original bytes stay inside the LINE marker; what matters is that no
+    // line of the file is an ACTIVE entry any more.
+    require(firstAfter.find("\nDefaults:bob timestamp_timeout=5") == std::string::npos,
+            "the disabled entry must not remain active");
+    require(firstAfter.find(std::string(fic::sudoers::kSudoDisabledLinePrefix) +
+                            "Defaults:bob timestamp_timeout=5") != std::string::npos,
+            "the disabled entry bytes must be preserved inside the wrapper");
+    require(firstAfter.find("# untouched comment") != std::string::npos,
+            "unrelated content must be preserved");
+    require(secondAfter.find(fic::sudoers::kSudoDisabledLinePrefix) != std::string::npos,
+            "a multiline entry must keep every physical line byte-exact");
+
+    // Postcondition: nothing scoped is active any more.
+    require(configuration.scopedDefaultsViolations().empty(),
+            "no active scoped Defaults may remain after apply");
+
+    // Idempotent second apply: nothing left to wrap.
+    const auto again = configuration.disableScopedDefaults(
+        "sudo_disable_scoped_defaults",
+        SudoersConfiguration::planScopedDefaultsWrapperIds(0));
+    require(again.ok && !again.changed,
+            "a repeated apply must be idempotent");
+    require(readFile(first) == firstAfter,
+            "a repeated apply must not rewrite the file again");
+
+    // Exact rollback.
+    const auto restored = configuration.restoreScopedDefaults(
+        "sudo_disable_scoped_defaults", ids);
+    require(restored.ok && restored.changed, restored.message);
+    require(readFile(first) == firstBefore,
+            "rollback must restore the exact original bytes of the first file");
+    require(readFile(second) == secondBefore,
+            "rollback must restore the exact original bytes of the second file");
+    require(configuration.scopedDefaultsViolations().size() == 2,
+            "restored scoped Defaults must be detected again");
+}
+
+void testScopedDefaultsWrapperProvenance() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath, "Defaults:alice timestamp_timeout=5\n");
+    const std::string original = readFile(options.mainPath);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    // A stale id set (graph changed between planning and applying) must fail
+    // closed before any write.
+    const std::string beforeStale = readFile(options.mainPath);
+    const auto stale = configuration.disableScopedDefaults(
+        "sudo_disable_scoped_defaults",
+        SudoersConfiguration::planScopedDefaultsWrapperIds(3));
+    require(!stale.ok, "a stale wrapper id set must fail closed");
+    require(readFile(options.mainPath) == beforeStale,
+            "a stale id set must fail before any write");
+
+    const std::vector<std::string> ids =
+        SudoersConfiguration::planScopedDefaultsWrapperIds(1);
+    const auto applied = configuration.disableScopedDefaults(
+        "sudo_disable_scoped_defaults", ids);
+    require(applied.ok, applied.message);
+
+    // Unknown wrapper id -> fail closed, nothing is unwrapped.
+    const auto unknown = configuration.restoreScopedDefaults(
+        "sudo_disable_scoped_defaults", {"FIC-SUDO-unknown"});
+    require(!unknown.ok && unknown.conflict,
+            "an unknown wrapper id must fail closed as a conflict");
+
+    // Rolling back ANOTHER policy must not touch our wrappers.
+    const std::string beforeForeign = readFile(options.mainPath);
+    const auto foreign = configuration.restoreScopedDefaults(
+        "some_other_policy", ids);
+    require(foreign.ok && foreign.targetMissing,
+            "another policy owns no wrapper here");
+    require(readFile(options.mainPath) == beforeForeign,
+            "rollback of one policy must never unwrap another policy's wrappers");
+
+    // Correct id restores exactly.
+    const auto correct = configuration.restoreScopedDefaults(
+        "sudo_disable_scoped_defaults", ids);
+    require(correct.ok && correct.changed, correct.message);
+    require(readFile(options.mainPath) == original,
+            "exact original bytes must be restored");
+
+    // Repeated rollback: ownership already released -> NothingToDo.
+    const auto repeated = configuration.restoreScopedDefaults(
+        "sudo_disable_scoped_defaults", ids);
+    require(repeated.ok && repeated.targetMissing && !repeated.changed,
+            "a repeated rollback must be idempotent (NothingToDo)");
+}
+
+void testOrphanAndDriftedWrappersFailClosed() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    // An orphan FIC-looking wrapper with no journal provenance.
+    writeFile(options.mainPath,
+              "root ALL=(ALL:ALL) ALL\n"
+              "#@FIC_SUDO_DISABLED_BEGIN policy=sudo_disable_scoped_defaults "
+              "mutation=FIC-SUDO-orphan@\n"
+              "#@FIC_SUDO_DISABLED_LINE@Defaults:alice timestamp_timeout=5\n"
+              "#@FIC_SUDO_DISABLED_END policy=sudo_disable_scoped_defaults "
+              "mutation=FIC-SUDO-orphan@\n");
+    const std::string orphanOriginal = readFile(options.mainPath);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto orphan = configuration.restoreScopedDefaults(
+        "sudo_disable_scoped_defaults", {"FIC-SUDO-different"});
+    require(!orphan.ok && orphan.conflict,
+            "an orphan wrapper without matching provenance must fail closed");
+    require(readFile(options.mainPath) == orphanOriginal,
+            "a failing rollback must never modify the file");
+
+    // Drifted markers are malformed and must fail closed.
+    writeFile(options.mainPath,
+              "#@FIC_SUDO_DISABLED_BEGIN policy=sudo_disable_scoped_defaults\n"
+              "Defaults:alice timestamp_timeout=5\n"
+              "#@FIC_SUDO_DISABLED_END policy=sudo_disable_scoped_defaults\n");
+    SudoersConfiguration drifted(options);
+    error.clear();
+    require(drifted.load(error), error);
+    const std::string driftedOriginal = readFile(options.mainPath);
+    const auto driftedResult = drifted.restoreScopedDefaults(
+        "sudo_disable_scoped_defaults", {});
+    require(!driftedResult.ok && driftedResult.conflict,
+            "drifted FIC markers must fail closed");
+    require(readFile(options.mainPath) == driftedOriginal,
+            "a malformed marker file must never be rewritten");
+
+    // An arbitrary similar comment is NOT FIC-owned content.
+    writeFile(options.mainPath,
+              "root ALL=(ALL:ALL) ALL\n"
+              "#@FIC_SUDO_DISABLED_BEGIN policy=sudo_disable_scoped_defaults\n");
+    SudoersConfiguration similar(options);
+    error.clear();
+    require(similar.load(error), error);
+    const auto similarResult = similar.restoreScopedDefaults(
+        "sudo_disable_scoped_defaults", {});
+    require(!similarResult.ok && similarResult.conflict,
+            "a FIC-looking comment without a proven marker must fail closed");
+}
+
+void testScopedDefaultsWrapperModel() {
+    std::vector<std::string> lines = {
+        "root ALL=(ALL:ALL) ALL",
+        "Defaults:alice timestamp_timeout=5",
+        "Defaults env_reset",
+    };
+    fic::sudoers::disableSudoEntry(lines, 1, 1, "p", "m1");
+    require(lines.size() == 5, "wrapping must add BEGIN/LINE/END markers");
+
+    std::vector<fic::sudoers::SudoDisabledWrapper> wrappers;
+    std::string error;
+    require(fic::sudoers::parseSudoDisabledWrappers(lines, wrappers, error) ==
+                fic::sudoers::SudoWrapperParseStatus::Ok,
+            "a freshly created wrapper must parse");
+    require(wrappers.size() == 1 && wrappers[0].mutationId == "m1",
+            "the wrapper must carry its provenance id");
+    require(wrappers[0].originalLines.size() == 1 &&
+            wrappers[0].originalLines[0] == "Defaults:alice timestamp_timeout=5",
+            "the original line must be preserved byte-exact");
+
+    bool changed = false;
+    require(fic::sudoers::restoreSudoDisabledEntries(lines, "p", {"m1"},
+                                                      changed, error) && changed,
+            "the wrapper must be unwrappable with a proven id");
+    require(lines.size() == 3 &&
+            lines[1] == "Defaults:alice timestamp_timeout=5",
+            "unwrapping must restore the original position");
+
+    // Unknown id is refused.
+    fic::sudoers::disableSudoEntry(lines, 1, 1, "p", "m2");
+    require(!fic::sudoers::restoreSudoDisabledEntries(lines, "p", {"other"},
+                                                      changed, error),
+            "an unknown id must fail closed");
+}
+
+
+// ---------------------------------------------------------------------------
+// Part F/G: exempt_group single ownership and the managed override.
+// ---------------------------------------------------------------------------
+
+void testExemptGroupSingleOwnership() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "Defaults env_reset\n"
+              "@includedir " + (tree.root / "sudoers.d").string() + "\n");
+    const auto foreign = tree.root / "sudoers.d" / "10-foreign";
+    writeFile(foreign, "Defaults exempt_group=wheel\n");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+
+    // sudo_require_authentication must NOT rewrite exempt_group any more.
+    const auto operation = configuration.enforceAuthentication();
+    require(operation.ok, operation.message);
+    require(readFile(foreign) == "Defaults exempt_group=wheel\n",
+            "require_authentication must not own exempt_group");
+
+    // sudo_exempt_group_disable owns it through the managed global Defaults.
+    const auto managed = configuration.ensureManagedGlobalDefault(
+        "exempt_group", "Defaults !exempt_group", "DISABLE");
+    require(managed.ok, managed.message);
+    require(configuration.inspectGlobalDefault("exempt_group").value == "DISABLE",
+            "the managed override must be effective");
+    require(readFile(foreign) == "Defaults exempt_group=wheel\n",
+            "the foreign global Defaults entry must not be edited");
+
+    // Contextual exempt_group is a scoped violation the blocker must catch:
+    // until sudo_disable_scoped_defaults runs, the bypass is still possible.
+    writeFile(foreign,
+              "Defaults exempt_group=wheel\n"
+              "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration contextual(options);
+    error.clear();
+    require(contextual.load(error), error);
+    require(contextual.scopedDefaultsViolations().size() == 1,
+            "a contextual exempt_group must be a scoped Defaults violation");
+    std::vector<std::string> ids;
+    const std::vector<std::string> planned =
+        SudoersConfiguration::planScopedDefaultsWrapperIds(1);
+    const auto blocked = contextual.disableScopedDefaults(
+        "sudo_disable_scoped_defaults", planned);
+    require(blocked.ok, blocked.message);
+    require(contextual.scopedDefaultsViolations().empty(),
+            "after the blocker no contextual exempt_group may remain active");
+    (void)ids;
+}
+
+void testManagedExemptGroupFailsWhenShadowed() {
+    TempTree tree;
+    const auto options = optionsFor(tree);
+    writeFile(options.mainPath,
+              "@includedir " + (tree.root / "sudoers.d").string() + "\n");
+    std::filesystem::create_directories(tree.root / "sudoers.d");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto firstWrite = configuration.ensureManagedGlobalDefault(
+        "exempt_group", "Defaults !exempt_group", "DISABLE");
+    require(firstWrite.ok, "the first managed write must succeed: " + firstWrite.message);
+    const std::string managedContent = readFile(options.managedPath);
+
+    // A later external source shadows the FIC entry.
+    // Sorts AFTER zzzz-fic, so it overrides the managed entry.
+    writeFile(tree.root / "sudoers.d" / "zzzzzz-later-external",
+              "Defaults exempt_group=wheel\n");
+    SudoersConfiguration shadowed(options);
+    error.clear();
+    require(shadowed.load(error), error);
+    // exempt_group=wheel is a string-valued key, so the effective observation
+    // is the raw value, not the ENABLE/DISABLE flag form.
+    const auto shadowing = shadowed.inspectGlobalDefault("exempt_group");
+    require(shadowing.value == "wheel",
+            "the later external override must win, got: " + shadowing.value);
+    require(shadowing.source.path.filename() == "zzzzzz-later-external",
+            "the winning source must be the later external file");
+
+    const auto second = shadowed.ensureManagedGlobalDefault(
+        "exempt_group", "Defaults !exempt_group", "DISABLE");
+    require(!second.ok,
+            "an apply must fail when the desired value is not effective");
+    require(readFile(options.managedPath) == managedContent,
+            "the managed mutation must be compensated on failure");
+}
+
 void testMissingMainAndSymlinkAreRejected() {
     TempTree tree;
     auto options = optionsFor(tree);
@@ -440,6 +1027,22 @@ int main() {
         testInvalidRulesFailBeforeChanges();
         testUnsupportedRulePreventsChangesInOtherFiles();
         testValidationFailureRollsBackAllChangedFiles();
+        testScopedDefaultsAcrossTheRealIncludeGraph();
+        testIncludeArgumentLexing();
+        testIncludeInlineCommentReachesRealFile();
+        testLegacyIncludeDirectivesAreNotComments();
+        testEscapedAndQuotedIncludePaths();
+        testRelativeNestedAndOrderedIncludes();
+        testUnsupportedIncludeSyntaxFailsClosed();
+        testPercentIncludeExpansionStaysFailClosed();
+        testMissingIncludeKeepsExistingSemantics();
+        testScopedDefaultsDetection();
+        testDisableScopedDefaultsWrapsAndRestores();
+        testScopedDefaultsWrapperProvenance();
+        testOrphanAndDriftedWrappersFailClosed();
+        testScopedDefaultsWrapperModel();
+        testExemptGroupSingleOwnership();
+        testManagedExemptGroupFailsWhenShadowed();
         testMissingMainAndSymlinkAreRejected();
         testRealVisudoWhenAvailable();
     } catch (const std::exception& error) {

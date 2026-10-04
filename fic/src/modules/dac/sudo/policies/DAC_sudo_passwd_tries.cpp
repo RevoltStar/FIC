@@ -10,6 +10,11 @@ DAC_sudo_passwd_tries::DAC_sudo_passwd_tries(
         "Defaults", "", "", "passwd_tries", "=", "0", 0);
     this->policyName = "sudo_passwd_tries";
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1,5,2);
+    // scoped Defaults must not contextualise a global password guarantee.
+    addRequiredDependency({"DAC", "SudoEdit", "sudo_disable_scoped_defaults"});
+    // Upstream sudoers: users in the exempt_group are "exempt from password
+    // and PATH requirements", which makes passwd_tries meaningless for them.
+    addRequiredDependency({"DAC", "SudoEdit", "sudo_exempt_group_disable"});
 }
 
 DAC_sudo_passwd_tries::~DAC_sudo_passwd_tries() {

@@ -8,6 +8,10 @@ DAC_sudo_env_reset::DAC_sudo_env_reset(
         "Defaults", "", "", "env_reset", 0);
     this->policyName = "sudo_env_reset";
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
+    // Global Defaults stay global: without the scoped-Defaults blocker a
+    // `Defaults:alice env_reset` override would silently defeat this policy,
+    // and FIC deliberately does not evaluate scoped Defaults.
+    addRequiredDependency({"DAC", "SudoEdit", "sudo_disable_scoped_defaults"});
 }
 
 DAC_sudo_env_reset::~DAC_sudo_env_reset() {

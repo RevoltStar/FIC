@@ -313,6 +313,14 @@ void testEnrollmentMatrix() {
     require(rollbackEnrollment({"DAC", "SudoEdit", "sudo_future_policy"}) ==
                 RollbackEnrollment::Unsupported,
             "unknown future sudo policy must not be auto-enrolled");
+    require(rollbackEnrollment({"DAC", "SudoEdit",
+                                "sudo_exempt_group_disable"}) ==
+                RollbackEnrollment::Supported,
+            "sudo_exempt_group_disable must be explicitly enrolled");
+    require(rollbackEnrollment({"DAC", "SudoEdit",
+                                "sudo_disable_scoped_defaults"}) ==
+                RollbackEnrollment::Supported,
+            "sudo_disable_scoped_defaults must be explicitly enrolled");
     require(rollbackEnrollment({"FIREWALL", "HostFiltering", "block_rdp"}) ==
                 RollbackEnrollment::Supported,
             "HostFiltering policies must be enrolled");

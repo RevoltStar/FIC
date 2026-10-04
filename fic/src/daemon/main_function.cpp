@@ -1,8 +1,11 @@
 #include "main_function.h"
 
 #include "daemon/PolicyDisableFlow.h"
+#include "policy/execution/PolicyDependencyGraph.h"
 
 #include "modules/dac/sudo/Sudo.h"
+#include "modules/dac/sudo/policies/DAC_sudo_disable_scoped_defaults.h"
+#include "modules/dac/sudo/policies/DAC_sudo_exempt_group_disable.h"
 #include "modules/identity_access/kerberos/policies/KerberosTicketLifetimePolicy.h"
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
@@ -384,6 +387,30 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
                     platform.pam, capability, services, executables, error);
             };
 
+        // Reverse-dependency guard: a required dependency of an ENABLED
+        // policy must not be disabled first. Disabling it would let the
+        // dependent keep claiming an invariant its dependency no longer
+        // guarantees (e.g. re-enabling scoped Defaults while sudo_securepath
+        // stays enabled). The caller must disable the dependents first; FIC
+        // never cascade-disables them silently.
+        const std::vector<PolicyRef> dependents =
+            enabledRequiredDependents(policyRegistry, policyRef);
+        if (!dependents.empty()) {
+            std::string list;
+            for (const PolicyRef& dependent : dependents) {
+                if (!list.empty()) {
+                    list += ", ";
+                }
+                list += formatPolicyRef(dependent);
+            }
+            std::cout << "Отключение отменено: политика " <<
+                formatPolicyRef(policyRef) << " является обязательной "
+                "зависимостью включённых политик: " << list << '\n';
+            std::cout << "Сначала отключите зависимые политики." << '\n';
+            return fic::daemon::PolicyMutationResult::failure(
+                "required dependency of enabled policies: " + list);
+        }
+
         return fic::daemon::disablePolicyAfterLookup(
             policyRef, resourceHint, rollbackDeps);
     }
@@ -457,6 +484,14 @@ bool initPolicyRegistry(
     cafArr.push_back(std::make_unique<DAC_sudo_timeout>(
         platform.sudo, executables));
     cafArr.push_back(std::make_unique<DAC_sudo_require_authentication>(
+        platform.sudo, executables));
+    // Contextual/scoped Defaults blocker. Registered BEFORE the scalar sudo
+    // policies declare it as a required dependency; registration order itself
+    // is irrelevant because the dependency graph is validated after all
+    // policies are added.
+    cafArr.push_back(std::make_unique<DAC_sudo_disable_scoped_defaults>(
+        platform.sudo, executables));
+    cafArr.push_back(std::make_unique<DAC_sudo_exempt_group_disable>(
         platform.sudo, executables));
 
     // Identity and access: PAM

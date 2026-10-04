@@ -161,12 +161,16 @@
 [module:DAC][policy:sudo_securepath]=Список каталогов, в которых будет выполняться поиск запускаемых через sudo утилит
 [module:DAC][policy:sudo_timeout]=Время между запусками sudo в минутах перед повторным запросом пароля
 [module:DAC][policy:sudo_require_authentication]=Требовать аутентификацию при выполнении команд через sudo
+[module:DAC][policy:sudo_disable_scoped_defaults]=Запретить контекстные перегрузки Defaults
+[module:DAC][policy:sudo_exempt_group_disable]=Запретить exempt_group
 
 [module:DAC][policy:mode_and_owner_profiles][description]=Управляет только явно выбранными логическими объектами и применяет выбранный профиль владельца, группы и прав. Укажите по одной записи объект=профиль на строку. Удаление объекта из значения или отключение политики прекращает управление без изменения текущих метаданных файловой системы.
 [module:DAC][policy:sudo_passwd_tries][description]=Количество попыток аутентификации
 [module:DAC][policy:sudo_securepath][description]=Полностью заменяет effective sudo secure_path указанным списком каталогов. Значение по умолчанию соответствует профилю целевого дистрибутива.
 [module:DAC][policy:sudo_timeout][description]=Время между запусками sudo в минутах перед повторным запросом пароля
-[module:DAC][policy:sudo_require_authentication][description]=Заменяет локальные правила NOPASSWD на PASSWD и запрещает отключение аутентификации в активных sudoers-файлах. Не учитывает действующий кэш sudo, PAM и внешние LDAP/SSSD-источники.
+[module:DAC][policy:sudo_require_authentication][description]=Заменяет локальные правила NOPASSWD на PASSWD и запрещает отключение аутентификации в активных sudoers-файлах. Параметр exempt_group не изменяется этой политикой: его единственным владельцем является sudo_exempt_group_disable. Не учитывает действующий кэш sudo, PAM и внешние LDAP/SSSD-источники.
+[module:DAC][policy:sudo_disable_scoped_defaults][description]=Запрещает все четыре формы контекстных Defaults sudoers (Defaults:user, Defaults@host, Defaults>runas, Defaults!command) во всём активно подключённом графе include. Нарушение определяется синтаксически: FIC намеренно не вычисляет User_Alias/Host_Alias/Runas_Alias/Cmnd_Alias, %group, netgroups и отрицания. Активные нарушения временно отключаются через обёртки FIC_SUDO_DISABLED с журналированием и точным откатом.
+[module:DAC][policy:sudo_exempt_group_disable][description]=Обеспечивает глобальное состояние Defaults !exempt_group в управляемом файле /etc/sudoers.d/zzzz-fic. Единственный владелец параметра exempt_group; внешние глобальные Defaults не редактируются. Требует sudo_disable_scoped_defaults, иначе контекстная перегрузка может вернуть обход.
 [module:DAC][message:platform_access_rules]=Правила для выбранного профиля целевого дистрибутива (режимы являются максимально допустимыми):
 
 

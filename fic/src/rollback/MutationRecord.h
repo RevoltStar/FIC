@@ -76,6 +76,20 @@ struct UndoRemoveSshManagedPolicy {
     std::vector<std::string> disabledMutationIds;
 };
 
+// Explicit FIC ownership payload for the SUDO scoped-Defaults blocker
+// (sudo_disable_scoped_defaults). The persistent ownership state lives in the
+// FIC_SUDO_DISABLED wrappers inside the FOREIGN sudoers files themselves; this
+// record carries only the policy identity and the provenance ids FIC created,
+// which is a proof of PERMISSION to unwrap those wrappers — NOT a backup and
+// NOT a file snapshot. The original entry bytes are stored byte-exact inside
+// the wrappers, never in the journal, so rollback never reconstructs
+// historical configuration and never re-creates a wrapper that disappeared
+// externally.
+struct UndoReleaseSudoScopedDefaults {
+    std::string policyName; // FIC policy identity (marker policy= field)
+    std::vector<std::string> wrapperIds; // FIC-owned wrapper mutation ids
+};
+
 enum class UserCreationConfigKind { UseraddDefaults, LoginDefs, Adduser };
 
 struct UserCreationManagedAssignment {
@@ -257,6 +271,7 @@ struct UndoRemovePamProviderManagedFlag {
 
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
+    UndoReleaseSudoScopedDefaults,
     UndoRemoveSshManagedPolicy,
     UndoRemoveUserCreationManagedPolicy,
     UndoRemoveFirewallPolicy,

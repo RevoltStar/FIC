@@ -812,6 +812,141 @@ void testGraphValidation(const std::filesystem::path& root) {
 
 } // namespace
 
+
+// ---------------------------------------------------------------------------
+// Reverse-dependency guard: a required dependency of an ENABLED policy must
+// not be disabled before its dependents (Part E).
+// ---------------------------------------------------------------------------
+
+void testEnabledRequiredDependentsGuard(const std::filesystem::path& root) {
+    const PolicyRef blocker = ref("blocker");
+    const PolicyRef dependent = ref("dependent");
+    const PolicyRef advisory = ref("advisory");
+    const PolicyRef unrelated = ref("unrelated");
+
+    // blocker enabled, dependent enabled, advisory disabled.
+    writeModuleConfig(root, "AUDIT", {{"blocker", true},
+                                      {"dependent", true},
+                                      {"advisory", false},
+                                      {"unrelated", true}});
+
+    PolicyBehavior blockerBehavior;
+    PolicyBehavior dependentBehavior;
+    PolicyBehavior advisoryBehavior;
+    PolicyBehavior unrelatedBehavior;
+    std::vector<std::string> order;
+
+    PolicyList policies;
+    policies.push_back(std::make_unique<TestPolicy>(blocker, blockerBehavior, order));
+    policies.push_back(std::make_unique<TestPolicy>(
+        dependent, dependentBehavior, order,
+        std::vector<PolicyDependency>{required(blocker)}));
+    policies.push_back(std::make_unique<TestPolicy>(
+        advisory, advisoryBehavior, order,
+        std::vector<PolicyDependency>{recommended(blocker)}));
+    policies.push_back(std::make_unique<TestPolicy>(unrelated, unrelatedBehavior, order));
+    PolicyRegistry registry = buildRegistry(std::move(policies));
+
+    const auto dependents = enabledRequiredDependents(registry, blocker);
+    require(dependents.size() == 1,
+            "only the ENABLED required dependent must block the disable");
+    require(dependents.front() == dependent,
+            "the reported dependent must be the required one");
+
+    require(enabledRequiredDependents(registry, unrelated).empty(),
+            "a policy nobody requires is never blocked");
+    require(enabledRequiredDependents(registry, dependent).empty(),
+            "a leaf dependency is never blocked");
+    // Recommended dependencies never block a disable.
+    require(enabledRequiredDependents(registry, advisory).empty(),
+            "advisory dependency is never blocked");
+
+    // Forward direction: a dependent is not Applied while its required
+    // dependency fails.
+    blockerBehavior.result = false;
+    PolicyExecutionRequest request;
+    request.requestedRoots.push_back(dependent);
+    const PolicyApplySummary summary = PolicyExecutionPlanner(registry).execute(request);
+    require(result(summary, dependent).status == PolicyApplyStatus::Failed,
+            "a dependent must not report Applied when its required blocker fails");
+    require(dependentBehavior.calls == 0,
+            "a blocked dependent must not be applied at all");
+
+}
+
+
+// Locks the intended production SUDO dependency graph shape (Part E/G).
+// The concrete classes live in the daemon binary, so this pins the EDGES by
+// name: every global Defaults policy requires the scoped-Defaults blocker,
+// and every policy whose guarantee exempt_group can void requires the
+// exempt_group policy. sudo_env_reset is deliberately absent from the
+// exempt_group set.
+void testSudoDependencyGraphShape(const std::filesystem::path& root) {
+    const PolicyRef scoped = {"DAC", "SudoEdit", "sudo_disable_scoped_defaults"};
+    const PolicyRef exempt = {"DAC", "SudoEdit", "sudo_exempt_group_disable"};
+    const PolicyRef envReset = {"DAC", "SudoEdit", "sudo_env_reset"};
+    const PolicyRef passwdTries = {"DAC", "SudoEdit", "sudo_passwd_tries"};
+    const PolicyRef securepath = {"DAC", "SudoEdit", "sudo_securepath"};
+    const PolicyRef timeout = {"DAC", "SudoEdit", "sudo_timeout"};
+    const PolicyRef requireAuth =
+        {"DAC", "SudoEdit", "sudo_require_authentication"};
+
+    writeModuleConfig(root, "DAC", {
+        {"sudo_disable_scoped_defaults", false},
+        {"sudo_exempt_group_disable", false},
+        {"sudo_env_reset", false},
+        {"sudo_passwd_tries", false},
+        {"sudo_securepath", false},
+        {"sudo_timeout", false},
+        {"sudo_require_authentication", false},
+    });
+
+    PolicyBehavior behavior;
+    std::vector<std::string> order;
+    PolicyList policies;
+    policies.push_back(std::make_unique<TestPolicy>(scoped, behavior, order));
+    policies.push_back(std::make_unique<TestPolicy>(exempt, behavior, order,
+        std::vector<PolicyDependency>{required(scoped)}));
+    for (const PolicyRef& globalDefaults :
+         {envReset, passwdTries, securepath, timeout}) {
+        policies.push_back(std::make_unique<TestPolicy>(
+            globalDefaults, behavior, order,
+            std::vector<PolicyDependency>{required(scoped)}));
+    }
+    policies.push_back(std::make_unique<TestPolicy>(
+        requireAuth, behavior, order,
+        std::vector<PolicyDependency>{required(exempt)}));
+
+    // The graph must be valid (no cycle, no unknown/duplicate dependency).
+    PolicyRegistry registry = buildRegistry(std::move(policies));
+
+    const auto hasRequired = [&registry](const PolicyRef& owner,
+                                         const PolicyRef& dependency) {
+        for (const PolicyDependency& declared :
+             registry.findPolicy(owner)->dependencies()) {
+            if (declared.policy == dependency &&
+                declared.strength == PolicyDependencyStrength::Required) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (const PolicyRef& globalDefaults :
+         {envReset, passwdTries, securepath, timeout}) {
+        require(hasRequired(globalDefaults, scoped),
+                "every global Defaults policy must require the scoped blocker");
+    }
+    require(hasRequired(exempt, scoped),
+            "exempt_group policy must require the scoped blocker");
+    require(hasRequired(requireAuth, exempt),
+            "require_authentication must require the exempt_group owner");
+    require(!hasRequired(envReset, exempt),
+            "env_reset must not depend on exempt_group: upstream sudoers shows "
+            "no such relation");
+
+}
+
 int main() {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() /
@@ -837,6 +972,8 @@ int main() {
         testDeterministicRootsAndFrozenMetadata(root);
         testExcludedModule(root);
         testGraphValidation(root);
+        testEnabledRequiredDependentsGuard(root);
+        testSudoDependencyGraphShape(root);
     } catch (...) {
         fs::remove_all(root);
         throw;

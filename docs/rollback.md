@@ -418,6 +418,17 @@ I/O), это ошибка загрузки — fail closed. Существующ
   из оставшихся источников precedence и runtime sysctl приводится к нему
   (default не угадывается). Для SUDO результат обязательно валидируется
   `visudo`; FIC-owned файл, ставший пустым, удаляется.
+* `UndoReleaseSudoScopedDefaults{policyName, wrapperIds}` — SUDO
+  `sudo_disable_scoped_defaults`: снятие обёрток `FIC_SUDO_DISABLED`,
+  которые FIC создал для контекстных `Defaults`. Исходные байты записи
+  хранятся **внутри самой обёртки** (byte-exact, включая continuation-строки),
+  поэтому payload — это только **доказательство разрешения** развернуть
+  перечисленные wrapper id, а не бэкап и не snapshot. Обёртка, исчезнувшая
+  внешне, считается уже освобождённым владением и никогда не
+  пересоздаётся. Неизвестный wrapper id, drifted-маркеры или
+  неатрибутируемая FIC-подобная обёртка без активной записи журнала —
+  fail closed (`Conflict`/`Unsupported`). После восстановления выполняется
+  `visudo` и повторная загрузка графа.
 * `UndoRemoveFirewallPolicy{policyName}` — удаление FIC-managed правила и
   обычная firewall reconciliation. Snapshot всего nftables ruleset не
   выполняется.
@@ -1336,6 +1347,95 @@ wiring — `fic/src/main.cpp` (`pam-password-prerm-prepare`); генерация
 `PamPasswordPackageReleaseTests.cpp` и `tests/integration/packaging/
 PamPackagingChecks.py`.
 
+## SUDO rollback (DAC / SudoEdit)
+
+Две независимые модели владения; их нельзя смешивать.
+
+**Managed scalar Defaults.** `sudo_env_reset`, `sudo_passwd_tries`,
+`sudo_securepath`, `sudo_timeout`, `sudo_exempt_group_disable` пишут одну
+глобальную запись `Defaults` в FIC-owned `/etc/sudoers.d/zzzz-fic`
+(`UndoRemoveManagedSetting`). Чужие глобальные `Defaults` никогда не
+редактируются. Если более поздний внешний источник перекрывает значение, apply
+возвращает failure и компенсирует собственную запись.
+
+**Source-edit wrapper.** `sudo_disable_scoped_defaults` запрещает все четыре
+формы контекстных `Defaults`:
+
+```
+Defaults:user ...      Defaults@host ...
+Defaults>runas ...     Defaults!command ...
+```
+
+FIC намеренно **не вычисляет** семантику scoped Defaults: не разрешает
+`User_Alias` / `Host_Alias` / `Runas_Alias` / `Cmnd_Alias`, `%group`, netgroups,
+отрицание и `ALL,!foo`. Само наличие активной scoped-записи является
+нарушением — именно поэтому P0/P1 контекстные перегрузки и сложные P2
+alias/negation случаи закрываются без построения evaluator'а sudoers.
+
+Глобальная запись не может универсально отменить контекстную, поэтому нарушающие
+записи временно деактивируются обёртками в том же файле:
+
+```
+#@FIC_SUDO_DISABLED_BEGIN policy=<policy> mutation=<id>@
+#@FIC_SUDO_DISABLED_LINE@<исходная физическая строка, byte-exact>
+#@FIC_SUDO_DISABLED_END policy=<policy> mutation=<id>@
+```
+
+Несколько нарушений, несколько файлов и многострочные записи поддерживаются;
+unrelated содержимое не меняется. Транзакция apply: загрузка графа → `visudo` →
+детекция → CAS-проверка неизменности файлов → подготовка journal-записи с
+wrapper id → атомарная запись обёрток → `visudo` → перезагрузка графа →
+семантическая postcondition (активных scoped `Defaults` нет) → commit. При любой
+ошибке после записи точный предыдущий content уже записанных файлов
+восстанавливается и повторно валидируется; при неуспешной postcondition
+политика **не** считается применённой. Атомарность всей транзакции в части
+crash-consistency не заявляется: восстановление — это `Prepared`-запись журнала,
+подготовленная до обращения к файловой системе.
+
+Rollback — ownership release: снимаются только те обёртки, которые ещё
+существуют и чьи id доказаны payload'ом. Обёртка, исчезнувшая внешне, —
+уже освобождённое владение (`NothingToDo`), а не ошибка; повторный rollback
+идемпотентен; откат одной политики не разворачивает обёртки другой; неизвестный
+wrapper id, drifted-маркеры и orphan-обёртка без активной journal-записи —
+fail closed. После отката выполняются `visudo` и повторная загрузка графа.
+Snapshot всего `/etc/sudoers` не используется.
+
+**Единственный владелец `exempt_group`** — `sudo_exempt_group_disable`
+(глобальная `Defaults !exempt_group`). `sudo_require_authentication` больше не
+переписывает `exempt_group=...`; он владеет только `NOPASSWD -> PASSWD` и
+`!authenticate -> authenticate`. Два независимых владельца одного security
+state означали бы две разные rollback provenance.
+
+**Граф зависимостей.** Глобальные `Defaults`-политики остаются глобальными и не
+становятся evaluator'ом scoped `Defaults`; зависимость от
+`sudo_disable_scoped_defaults` гарантирует отсутствие контекстных override'ов:
+
+```
+sudo_env_reset          ┐
+sudo_passwd_tries       ├─> sudo_disable_scoped_defaults
+sudo_securepath         │
+sudo_timeout            ┘
+sudo_exempt_group_disable ─> sudo_disable_scoped_defaults
+
+sudo_require_authentication ─> sudo_exempt_group_disable
+sudo_securepath              ─> sudo_exempt_group_disable
+sudo_passwd_tries            ─> sudo_exempt_group_disable
+sudo_timeout                 ─> sudo_exempt_group_disable
+```
+
+`sudo_env_reset` намеренно **не** зависит от `exempt_group`: upstream
+sudoers не показывает такой связи (`exempt_group` освобождает от требований к
+паролю и `PATH`, но не от `env_reset`). Для `secure_path` и `passwd_tries`
+зависимость подтверждена документацией upstream: «Users in this group are
+exempt from password and PATH requirements», «Users in the group specified by
+the exempt_group option are not affected by secure_path» и «the PASSWD tag has
+no effect on users who are in the group specified by exempt_group».
+`timestamp_timeout` — парольная гарантия с тем же основанием.
+
+Обратная защита: обязательная зависимость включённой политики не может быть
+отключена раньше неё (сначала отключаются зависимые). Скрытого cascade-disable
+нет — отказ возвращает список зависимых политик.
+
 ## Enrollment и результаты
 
 `rollbackEnrollment(PolicyRef)` возвращает:
@@ -1343,7 +1443,9 @@ PamPackagingChecks.py`.
 * `Supported` (явный whitelist, без default-positive enrollment):
   * все `SYSCTL` policies;
   * `DAC/SudoEdit` managed Defaults (`sudo_env_reset`, `sudo_passwd_tries`,
-    `sudo_securepath`, `sudo_timeout`);
+    `sudo_securepath`, `sudo_timeout`, `sudo_exempt_group_disable`) и
+    `sudo_disable_scoped_defaults` (ownership-release через
+    `FIC_SUDO_DISABLED` обёртки, см. раздел «Undo actions»);
   * `NET/SshEdit` (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
     `ssh_pubkey_auth`);
   * `FIREWALL/HostFiltering` (`block_ftp`, `block_rdp`, `custom_rules`);

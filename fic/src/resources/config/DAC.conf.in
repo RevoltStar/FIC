@@ -10,3 +10,7 @@ sudo_timeout.status=DISABLE
 sudo_timeout.value=1
 sudo_require_authentication.status=DISABLE
 sudo_require_authentication.value=ENABLE
+sudo_disable_scoped_defaults.status=DISABLE
+sudo_disable_scoped_defaults.value=ENABLE
+sudo_exempt_group_disable.status=DISABLE
+sudo_exempt_group_disable.value=DISABLE

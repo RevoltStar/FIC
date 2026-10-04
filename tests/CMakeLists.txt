@@ -519,6 +519,9 @@ set_tests_properties(admin_socket_tests PROPERTIES SKIP_RETURN_CODE 77)
 add_executable(sudoers_configuration_tests
     fic/modules/dac/SudoersConfigurationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
 )
 target_include_directories(sudoers_configuration_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -839,6 +842,9 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
@@ -1280,7 +1286,10 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
@@ -1836,7 +1845,10 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
@@ -1938,7 +1950,10 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
@@ -2034,7 +2049,10 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp

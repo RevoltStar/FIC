@@ -73,6 +73,36 @@ bool visitPolicy(
 
 } // namespace
 
+std::vector<PolicyRef> enabledRequiredDependents(
+    PolicyRegistry& registry,
+    const PolicyRef& dependency) {
+    std::vector<PolicyRef> dependents;
+    for (const PolicyRef& candidate : registry.policyRefs()) {
+        if (candidate == dependency) {
+            continue;
+        }
+        Policy* policy = registry.findPolicy(candidate);
+        if (policy == nullptr || !policy->isEnabled()) {
+            continue;
+        }
+        bool requires = false;
+        for (const PolicyDependency& declared : policy->dependencies()) {
+            if (declared.policy == dependency &&
+                declared.strength == PolicyDependencyStrength::Required) {
+                requires = true;
+                break;
+            }
+        }
+        if (requires) {
+            dependents.push_back(candidate);
+        }
+    }
+    // registry.policyRefs() is already deterministic (map order), but keep the
+    // contract explicit.
+    std::sort(dependents.begin(), dependents.end());
+    return dependents;
+}
+
 bool validatePolicyDependencyGraph(
     PolicyRegistry& registry,
     std::string& error) {

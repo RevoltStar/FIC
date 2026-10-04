@@ -56,11 +56,24 @@ bool isSupportedFirewallPolicy(const std::string& policyName) {
 
 // Explicit whitelist: a future SUDO policy must never become automatically
 // rollback-supported without its own journal integration and undo action.
+// Explicit whitelist of rollback-supported SUDO policies. A NEW future SUDO
+// policy never inherits rollback support: it needs its own journal
+// integration and undo payload first.
 bool isSupportedSudoPolicy(const std::string& policyName) {
     return policyName == "sudo_env_reset" ||
            policyName == "sudo_passwd_tries" ||
            policyName == "sudo_securepath" ||
-           policyName == "sudo_timeout";
+           policyName == "sudo_timeout" ||
+           policyName == "sudo_exempt_group_disable" ||
+           policyName == "sudo_disable_scoped_defaults";
+}
+
+// The scoped-Defaults blocker is owned through FIC_SUDO_DISABLED wrappers,
+// not through a managed Defaults key, so it has its own undo path.
+bool isScopedDefaultsSudoPolicy(const PolicyRef& policy) {
+    return policy.moduleName == "DAC" &&
+           policy.submoduleName == "SudoEdit" &&
+           policy.policyName == "sudo_disable_scoped_defaults";
 }
 
 // Explicit whitelist: a future NET/SshEdit policy must never become
@@ -288,6 +301,56 @@ MutationRollbackOutcome undoSudoSetting(
         outcome.status = RollbackStatus::Success;
     } else if (removal.conflict) {
         outcome.status = RollbackStatus::Conflict;
+    } else {
+        outcome.status = RollbackStatus::Failed;
+    }
+    return outcome;
+}
+
+// True when the current sudoers graph still carries at least one
+// FIC_SUDO_DISABLED wrapper of the policy. Used as the unrecorded-ownership
+// proof: without an active journal record such a wrapper cannot be attributed
+// and rollback must fail closed.
+bool sudoScopedDefaultsOwnsWrappers(
+    const SudoersConfiguration& configuration,
+    const std::string& policyName) {
+    return configuration.scopedDefaultsWrapperCount(policyName) > 0;
+}
+
+// SUDO scoped-Defaults ownership-release undo: unwraps only the FIC-owned
+// wrappers of the policy that the journal payload proves. Wrappers that
+// disappeared externally are an already released subset and are never
+// reconstructed; an unknown id or drifted markers are a Conflict.
+MutationRollbackOutcome undoSudoScopedDefaults(
+    const RollbackExecutorDeps& deps,
+    const MutationRecord& record,
+    const fic::rollback::UndoReleaseSudoScopedDefaults& undo) {
+    const std::lock_guard<std::mutex> lock(rollbackBackendMutex());
+
+    MutationRollbackOutcome outcome;
+    outcome.id = record.id;
+    outcome.resource = record.resource;
+
+    SudoersConfigurationOptions options = deps.sudoersOptions
+        ? deps.sudoersOptions()
+        : SudoersConfigurationOptions{};
+    SudoersConfiguration configuration(options);
+    std::string error;
+    if (!configuration.load(error)) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = "Не удалось проанализировать sudoers: " + error;
+        return outcome;
+    }
+
+    const SudoersOperationResult restoration =
+        configuration.restoreScopedDefaults(undo.policyName, undo.wrapperIds);
+    outcome.message = restoration.message;
+    if (restoration.conflict) {
+        outcome.status = RollbackStatus::Conflict;
+    } else if (restoration.ok && restoration.targetMissing) {
+        outcome.status = RollbackStatus::NothingToDo;
+    } else if (restoration.ok) {
+        outcome.status = RollbackStatus::Success;
     } else {
         outcome.status = RollbackStatus::Failed;
     }
@@ -545,6 +608,12 @@ MutationRollbackOutcome undoMutation(
         }
         if (record.undo.backend == MutationBackend::Sudo) {
             return undoSudoSetting(deps, record, *setting);
+        }
+    }
+    if (const auto* scopedDefaults =
+            std::get_if<UndoReleaseSudoScopedDefaults>(&record.undo.payload)) {
+        if (record.undo.backend == MutationBackend::Sudo) {
+            return undoSudoScopedDefaults(deps, record, *scopedDefaults);
         }
     }
     if (const auto* sshPolicy =
@@ -988,6 +1057,32 @@ RollbackReport checkUnrecordedOwnership(
         if (managed.found) {
             return provenanceUnavailable(policy);
         }
+        return report;
+    }
+    if (isScopedDefaultsSudoPolicy(policy)) {
+        // Provenance for the scoped-Defaults blocker lives in the
+        // FIC_SUDO_DISABLED wrappers inside the foreign sudoers files: a
+        // wrapper of this policy without an active journal record is
+        // unattributable owned state and must fail closed. Absent wrappers
+        // prove that FIC owns nothing there.
+        SudoersConfigurationOptions options = deps.sudoersOptions
+            ? deps.sudoersOptions()
+            : SudoersConfigurationOptions{};
+        SudoersConfiguration configuration(options);
+        std::string error;
+        if (!configuration.load(error)) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "Не удалось проанализировать sudoers: " + error;
+            return report;
+        }
+        if (sudoScopedDefaultsOwnsWrappers(configuration, policy.policyName)) {
+            return provenanceUnavailable(policy);
+        }
+        RollbackReport report;
+        report.status = RollbackStatus::NothingToDo;
+        report.message = "Active mutation records отсутствуют; обёртки "
+                         "FIC_SUDO_DISABLED политики отсутствуют";
         return report;
     }
     if (policy.moduleName == "DAC" && policy.submoduleName == "SudoEdit") {

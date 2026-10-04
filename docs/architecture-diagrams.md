@@ -575,8 +575,10 @@ flowchart LR
     preflight --> strategy{remediation strategy}
     strategy -->|scalar Defaults| managed[/etc/sudoers.d/zzzz-fic]
     strategy -->|authentication bypass| origin[atomic source token replacement]
+    strategy -->|scoped Defaults| wrappers[FIC_SUDO_DISABLED wrappers]
     managed --> visudo[verified visudo validation]
     origin --> visudo
+    wrappers --> visudo
     visudo --> reload[reload graph and verify postcondition]
     visudo -->|failure| rollback[rollback all written sources]
 ```
@@ -584,8 +586,36 @@ flowchart LR
 Клиенты не передают пути sudoers-файлов через IPC. Пути появляются только из
 фиксированного `/etc/sudoers` и доверенного include-графа. Для `Defaults`
 изменяется только managed-файл; политика `sudo_require_authentication` изменяет
-в источнике только `NOPASSWD`, `authenticate` и `exempt_group`, не расширяя
-список разрешенных команд.
+в источнике только `NOPASSWD` и `authenticate`, не расширяя список разрешенных
+команд.
+
+#### Модели владения политик SUDO
+
+Существуют две разные модели владения, и их нельзя смешивать:
+
+* **Managed scalar Defaults.** `sudo_env_reset`, `sudo_passwd_tries`,
+  `sudo_securepath`, `sudo_timeout`, `sudo_exempt_group_disable` управляют
+  значением через глобальную запись `Defaults` в FIC-owned
+  `/etc/sudoers.d/zzzz-fic`. Чужие глобальные `Defaults` FIC не редактирует
+  никогда: если более поздний внешний источник перекрывает значение, apply
+  перечитывает граф, видит, что желаемое значение не эффективно, откатывает своё
+  изменение и возвращает failure.
+* **Source-edit wrapper.** `sudo_disable_scoped_defaults` вынуждена временно
+  деактивировать чужие записи, потому что глобальная запись не может отменить
+  контекстную. Она оборачивает исходные физические строки в явные маркеры
+  `#@FIC_SUDO_DISABLED_*` внутри того же файла и ничего не переписывает.
+
+Диапазон include-подграммы, который понимает FIC, и fail-closed: директива
+`@include` / `@includedir` / `#include` / `#includedir` распознаётся **до**
+обработки комментариев (символ `#` одновременно является началом комментария и
+частью legacy-директив); поддерживаются кавычки `"..."`, экранирование
+пробельных символов обратным слэшем, экранирование обратного слэша, относительный
+pathname (относительно каталога включающего файла), trailing inline-комментарий
+и continuation через `\`. Всё, что FIC не умеет моделировать безопасно —
+незакрытая кавычка, символы после pathname, подстановки `%` — приводит к
+явному fail-closed, а не к тихому пропуску строки. Тихий пропуск недопустим:
+он незаметно сузил бы активно подключённый граф и скрыл `Defaults`, которые
+sudo всё равно применяет.
 
 `sudo_securepath` сохраняет exact replacement semantics: заданный список
 полностью заменяет effective `Defaults secure_path`, а не дополняет site-specific

@@ -8,6 +8,10 @@ DAC_sudo_timeout::DAC_sudo_timeout(
         "Defaults", "", "", "timestamp_timeout", "=", "0", 0);
     this->policyName = "sudo_timeout";
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(0,10,1);
+    addRequiredDependency({"DAC", "SudoEdit", "sudo_disable_scoped_defaults"});
+    // Upstream sudoers: users in the exempt_group are exempt from password
+    // requirements, so timestamp_timeout cannot be enforced for them.
+    addRequiredDependency({"DAC", "SudoEdit", "sudo_exempt_group_disable"});
 }
 
 DAC_sudo_timeout::~DAC_sudo_timeout() {

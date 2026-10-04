@@ -3,78 +3,75 @@
 ## Current base
 
 * branch: `main`
-* base commit: `eefc282` + два follow-up коммита (P1/P2 fixes shared
-  login.defs rollback backend; operational PASSWORD_AGING lasting
-  NotEnrolled lifecycle)
+* base commit: `8f53a32` + SUDO hardening (include lexer, scoped Defaults
+  blocker, `sudo_exempt_group_disable`, reverse-dependency guard)
 
 ## Current task
 
-Закрепление lasting lifecycle-контракта двух operational PASSWORD_AGING
-политик (`password_aging_apply_to_existing_accounts`,
-`password_aging_enforce_for_root`): намеренный и постоянный
-`RollbackEnrollment::NotEnrolled` (non-reverting lifecycle), disable =
-прекращение будущего enforcement с сохранением текущего `sp_min/sp_max/
-sp_warn` аккаунтов; без per-user provenance, baseline, `chage` rollback,
-нового backend или enum. Выполнено (код уже соответствовал контракту;
-закреплён regression-тестами и документацией).
+Hardening подсистемы SUDO: корректный разбор include-директив, запрет
+контекстных (scoped) `Defaults` отдельной политикой с ownership/rollback
+моделью, выделение `exempt_group` в отдельного владельца. Выполнено.
 
 ## Accepted architecture / invariants
 
-* Ровно один FIC-контейнер `#@FIC_IDENTITY_LOGIN_DEFS_BLOCK_BEGIN version=1@`
-  на `/etc/login.defs`, всегда в логическом EOF; sub-block
-  `#@FIC_POLICY_BEGIN ref=MODULE/SUBMODULE/policy@` с одной canonical
-  строкой `KEY value`. Whitelist ровно 7 политик; journal payload
-  `UndoRemoveIdentityLoginDefsManagedPolicy` — provenance only.
-* Единая таблица политик — header-only `IdentityLoginDefsPolicySpec.h`
-  (policyName → submodule → key → value domain → relation); используют
-  ManagedConfig, transaction и MutationJournal (writer/loader parity).
-* UID relation — typed unsigned reader полного диапазона `uid_t`;
-  missing/invalid UID peer — fail closed до мутации. PASS-пара — signed
-  long + `PasswordAgingMissingKeySemantics` (только PASS_*).
-* Prepared(target) recovery: recanonicalization ТОГО ЖЕ контейнера в EOF,
-  завершение ТОЙ ЖЕ записи; никогда `Prepared(previous=target,
-  target=target)`; third state / invalid relation — fail closed.
-* No-record preflight (`inspectUnrecordedState`) доказывает когерентность
-  всего shared домена через `proveCoherence`.
-* Rollback = ownership release; invalid rollback relation — `Conflict`.
-* Operational PASSWORD_AGING: намеренный non-reverting `NotEnrolled`
-  lifecycle (disable останавливает будущий enforcement, сохраняет
-  существующий account aging state; повторный apply disabled политики —
-  `PolicyApplyStatus::Disabled`, `apply()`/`chage` не вызываются).
-  Неизвестная PASSWORD_AGING политика — `Unsupported` (disable refused,
-  никогда silent `NotEnrolled`). Пять scalar политик — `Supported`.
+* Include-подграмма разбирается специализированным лексером
+  `SudoersIncludeDirective`: директива распознаётся ДО обработки комментариев
+  (`#` — одновременно начало комментария и часть legacy `#include`).
+  Поддержаны `"..."`, экранирование пробелов и обратного слэша, trailing
+  inline-комментарий, относительный pathname, continuation. Неподдерживаемое и
+  неоднозначное — явный fail-closed, НЕ silent ignore (тихий пропуск сузил бы
+  активно подключённый граф). `%`-подстановки остаются fail-closed.
+* Две НЕСМЕШИВАЕМЫЕ модели владения SUDO: managed scalar Defaults
+  (`zzzz-fic`, значение ключа) и source-edit wrapper (`sudo_disable_scoped_defaults`).
+* `sudo_disable_scoped_defaults`: запрещены все четыре scope (`:`, `@`, `>`, `!`).
+  Детекция строго синтаксическая — алиасы/`%group`/netgroups/отрицание НЕ
+  вычисляются, само наличие scoped-записи является нарушением.
+* Обёртки `#@FIC_SUDO_DISABLED_*` — собственный namespace SUDO (SSH-маркеры не
+  переиспользуются). Исходные байты живут внутри обёртки; journal payload —
+  только policy identity + wrapper ids (доказательство разрешения, не бэкап).
+  Snapshot всего `/etc/sudoers` не используется.
+* Crash-consistency apply-транзакции НЕ заявляется: восстановление — это
+  `Prepared`-запись журнала, подготовленная ДО файловой мутации; wrapper ids
+  генерируются до journaling, поэтому payload сразу полный.
+* `exempt_group` имеет ровно одного владельца — `sudo_exempt_group_disable`.
+  `sudo_require_authentication` больше не переписывает `exempt_group`.
+* Обратная защита: обязательная зависимость включённой политики не отключается
+  раньше неё (`enabledRequiredDependents` в `PolicyDependencyGraph`). Без
+  скрытого cascade-disable.
 
 ## Completed
 
-* `tests/fic/rollback/RollbackExecutorTests.cpp`: enrollment matrix
-  дополнена PASSWORD_AGING (5 scalar Supported, 2 operational NotEnrolled
-  static+effective, future Unsupported); новый
-  `testPasswordAgingOperationalNotEnrolledLifecycle` —
-  `rollbackPolicyBeforeDisable` Success без journal/outcomes для обеих,
-  production `disablePolicyAfterLookup` разрешён и не создаёт journal
-  записей, unknown future политика refuses disable (Unsupported).
-* `tests/fic/.../password_aging/PasswordAgingTests.cpp`: новый
-  `testOperationalDisablePreservesAccounts` — disabled operational
-  политики при periodic/manual apply возвращают Disabled, `chage` не
-  вызывается (runner/reader счётчики == 0), значения shadow-аккаунтов не
-  изменяются.
-* `docs/rollback.md`: «в этой стадии остаются NotEnrolled» заменено на
-  lasting contract (intentional non-reverting NotEnrolled lifecycle).
+* Новые компоненты: `SudoersIncludeDirective`, `SudoersScopedDefaults`,
+  `SudoersDisabledWrapper` + новые политики `sudo_disable_scoped_defaults`,
+  `sudo_exempt_group_disable`.
+* `MutationRecord`/`MutationJournal`/`RollbackExecutor`: payload
+  `UndoReleaseSudoScopedDefaults`, whitelist enrollment без default-positive,
+  orphan-обёртка без активной записи журнала → fail closed.
+* Зависимости и обратный guard; регрессии в
+  `SudoersConfigurationTests`, `PolicyExecutionPlannerTests`,
+  `RollbackExecutorTests`.
 
 ## Changed areas
 
-* `tests/fic/rollback/RollbackExecutorTests.cpp`,
-  `tests/fic/modules/identity_access/password_aging/PasswordAgingTests.cpp`,
-  `docs/rollback.md`.
+* `fic/src/modules/dac/sudo/*` (backend, две новые политики)
+* `fic/src/rollback/{MutationRecord.h,MutationJournal.cpp,RollbackExecutor.cpp}`
+* `fic/src/policy/execution/PolicyDependencyGraph.*`,
+  `fic/src/daemon/main_function.cpp`
+* `docs/{rollback.md,architecture-diagrams.md}`, `resources/{config,lang}`
 
 ## Validation
 
-* Ubuntu 24.04 (host, build-check): password_aging_tests,
-  rollback_executor_tests (полный suite), identity_login_defs_tests,
-  user_creation_tests — PASS.
-* `git diff --check` — чисто.
+* `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04`
+* `cmake --build build-check -j4` — RC=0
+* `ctest --test-dir build-check --output-on-failure` — 117/117 PASS
+  (`command_hash_batch_tests` — Skipped, не связан с задачей)
+* `visudo-rs 0.2.13` использован как oracle для синтаксиса обёрток и
+  подтверждения, что FIC-комментарии остаются валидным sudoers.
 
 ## Remaining
 
-* Полный CTest/E2E не запускался по scope задачи.
-* Build-каталоги `build-*` — untracked artifacts.
+* Полный E2E с реальным применением политик на хосте не запускался (unsafe
+  runtime validation по AGENTS.md).
+* `+=`/`-=` для существующих четырёх scalar-политик сознательно не реализованы:
+  подтверждённого false-positive под задачу нет.
+* `%h`-подстановка в include остаётся fail-closed намеренно.

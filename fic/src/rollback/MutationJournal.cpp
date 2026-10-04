@@ -62,6 +62,14 @@ json serializeUndoAction(const UndoAction& action) {
             std::get_if<UndoRemoveManagedSetting>(&action.payload)) {
         value["key"] = setting->key;
         value["applied_value"] = setting->appliedValue;
+    } else if (const auto* scopedDefaults =
+                   std::get_if<UndoReleaseSudoScopedDefaults>(&action.payload)) {
+        value["policy"] = scopedDefaults->policyName;
+        json wrapperIds = json::array();
+        for (const std::string& id : scopedDefaults->wrapperIds) {
+            wrapperIds.push_back(id);
+        }
+        value["wrapper_ids"] = std::move(wrapperIds);
     } else if (const auto* sshPolicy =
                    std::get_if<UndoRemoveSshManagedPolicy>(&action.payload)) {
         value["policy"] = sshPolicy->policyName;
@@ -806,6 +814,31 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
+    if (actionName == "release_sudo_scoped_defaults" &&
+        backend == MutationBackend::Sudo) {
+        UndoReleaseSudoScopedDefaults payload;
+        payload.policyName = value.value("policy", "");
+        if (payload.policyName.empty()) {
+            error = "release_sudo_scoped_defaults undo requires a policy";
+            return false;
+        }
+        const auto wrapperIt = value.find("wrapper_ids");
+        if (wrapperIt != value.end()) {
+            if (!wrapperIt->is_array()) {
+                error = "wrapper_ids must be an array";
+                return false;
+            }
+            for (const json& item : *wrapperIt) {
+                if (!item.is_string() || item.get<std::string>().empty()) {
+                    error = "wrapper ids must be non-empty strings";
+                    return false;
+                }
+                payload.wrapperIds.push_back(item.get<std::string>());
+            }
+        }
+        action.payload = std::move(payload);
+        return true;
+    }
     if (actionName == "remove_ssh_managed_policy" &&
         backend == MutationBackend::Ssh) {
         // The legacy reverse-mutation SSH payload (restore_ssh_directive) is
@@ -1495,6 +1528,9 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
 std::string undoActionTypeName(const UndoAction& action) {
     if (std::holds_alternative<UndoRemoveManagedSetting>(action.payload)) {
         return "remove_managed_setting";
+    }
+    if (std::holds_alternative<UndoReleaseSudoScopedDefaults>(action.payload)) {
+        return "release_sudo_scoped_defaults";
     }
     if (std::holds_alternative<UndoRemoveSshManagedPolicy>(action.payload)) {
         return "remove_ssh_managed_policy";
