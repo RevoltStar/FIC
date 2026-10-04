@@ -41,6 +41,7 @@ using fic::sudoers::PreparedRecovery;
 using fic::sudoers::ScopedDefaultsLifecycle;
 using fic::sudoers::ScopedDefaultsLifecycleDeps;
 using fic::sudoers::ScopedDefaultsLifecycleOutcome;
+using fic::sudoers::ScopedDefaultsCapturedState;
 using fic::sudoers::ScopedDefaultsProofMode;
 using fic::sudoers::ScopedDefaultsTransaction;
 using fic::sudoers::SudoScopedDefaultsHooks;
@@ -1702,7 +1703,10 @@ void testChangeBetweenProofAndDurability() {
     std::string loadError;
     require(after.load(loadError), loadError);
     ScopedDefaultsTransaction prover(after, kPolicyName);
-    const auto captured = prover.captureProofAndGraphState(targets);
+    ScopedDefaultsCapturedState captured;
+    std::string captureError;
+    require(prover.captureProofAndGraphState(targets, captured, captureError),
+            captureError);
     const auto proof = prover.proveCapturedState(
         targets, captured, ScopedDefaultsProofMode::Exact);
     require(proof.ok, "the exact proof itself must succeed: " + proof.message);

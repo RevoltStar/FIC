@@ -126,6 +126,19 @@ Follow-up поверх `c325e92`:
   доказательства отсутствия target-владения.
 * Новые регрессии AJ (target-обёртка скрыта изменением include topology) и
   AK (fresh crash-before-write по-прежнему восстанавливается).
+* **Typed Present/Absent capture (§1–§3)**: `CapturedPathKind`; capture failure
+  больше не превращается в absence и больше не теряет путь.
+* **FullyReleased (§4–§5)**: третий режим; `release()` доказывает его на том же
+  снимке для `Success`/`NothingToDo` (byPath.empty больше не достаточен).
+* **Единый fresh-resolver (§6–§9)**: `resolveFreshPreparedToNoOwnership()` —
+  единственный путь к `discard` свежего Prepared (CompletePrevious, failed
+  mutation, compensation-to-empty).
+* **ОТКРЫТО**: ExactPrevious после selective compensation (§7/§10/§11) —
+  при добавлении вскрылся реальный баг: `compensateToPrevious()` возвращает
+  true, оставляя target-only обёртку на диске. Фикс откачен, чтобы не
+  оставлять красный suite; требуется отдельная доработка.
+* **ОТКРЫТО**: @includedir topology identity (§18–§27) и multiline semantic
+  parity (§28–§31). AL–AU регрессии не добавлены.
 * **Include lexer**: escape-семантика upstream `copy_string()` для кавыченных и
   некавыченных путей (`\xHH`→hex, `\c`→c). Подтверждено по исходникам sudo
   1.9.13 (debian-12) и текущим — поведение идентично.

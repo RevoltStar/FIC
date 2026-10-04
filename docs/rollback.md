@@ -1537,6 +1537,26 @@ Fresh `CompletePrevious` (previous пуст) обязан доказать **dur
 target-владения перед `discard`: видимое «обёрток нет» не переживает
 power-loss после незавершённого fsync каталога.
 
+### Captured path = Present | Absent
+
+Каждый запрошенный путь представлен явно: `Present` (доказанное точное
+содержимое) либо `Absent` (доказанное отсутствие). Путь не может молча
+исчезнуть из снимка. Ошибка capture (symlink, каталог, права, I/O) **никогда**
+не переклассифицируется в `Absent`: capture возвращает ошибку, и вызывающий
+код обязан fail closed. Barrier подтверждает `Present` через
+`ensureTargetDurableIfCurrentState()`, а `Absent` — через
+`ensureTargetAbsentDurableIfCurrentState()` (появившийся объект проваливает).
+
+### FullyReleased
+
+Третий режим доказательства: **ни одна** ожидаемая обёртка не существует
+физически ни в одной точке захваченного графа, и не осталось
+unknown/duplicate/владеющей обёртки. Требуется перед:
+
+* `discard` свежего `Prepared` (единственный путь — `resolveFreshPreparedToNoOwnership()`);
+* `RollbackStatus::Success` и `NothingToDo` — на том же снимке, чей
+  durability затем подтверждается.
+
 Доказательство (proof) однозначно привязано к тройке
 `wrapperId + canonicalPath + payloadDigest`; `previous ⊆ target` сравнивается по
 полной идентичности. Каталог-пример: wrapper пропал внешне — отсутствие само по

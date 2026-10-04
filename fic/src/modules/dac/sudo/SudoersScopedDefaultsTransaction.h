@@ -159,20 +159,30 @@ enum class ScopedDefaultsProofMode {
     // RESOLVES a record (commit, normalization).
     Exact,
     // A proven wrapper that already disappeared is an already released subset.
-    // Used only for rollback/release semantics.
-    ReleaseSubset
+    // Used only for intermediate rollback reasoning.
+    ReleaseSubset,
+    // NONE of the expected wrappers physically exists anywhere in the captured
+    // graph, and no unknown/duplicate/drifted owned wrapper survives. Required
+    // before a fresh Prepared discard, and before rollback Success/NothingToDo.
+    FullyReleased
 };
 
-// ONE captured file: identity, metadata and exact content read through the same
-// descriptor.
+// Explicit state of ONE requested path.
+//
+// A requested path NEVER disappears from the captured state: it is either
+// Present with a proven exact content, Absent with a proven durable absence, or
+// the whole capture FAILED. A symlink, a directory, a permission or I/O error
+// is never reclassified as absence.
+enum class CapturedPathKind { Present, Absent };
+
 struct CapturedSudoersDocument {
     std::filesystem::path path;
+    CapturedPathKind kind = CapturedPathKind::Present;
+    // Present only when kind == Present.
     AtomicTargetState state;
 };
 
-// A single snapshot generation. Every piece of reasoning about wrapper state,
-// identity, duplicates and semantics is performed on THESE captures, and the
-// durability barrier later confirms exactly THESE states -- never a re-read.
+// ONE snapshot generation: every requested path with an explicit state.
 struct ScopedDefaultsCapturedState {
     std::vector<CapturedSudoersDocument> documents;
 };
@@ -242,8 +252,13 @@ public:
     // current graph document, into ONE snapshot generation. A proof path outside
     // the include graph is still captured: ownership lives in a physical file,
     // and the include topology may have changed externally.
-    ScopedDefaultsCapturedState captureProofAndGraphState(
-        const std::vector<SudoScopedDefaultsWrapperProof>& proofs) const;
+    // Returns false when a requested path could not be classified as Present or
+    // Absent (symlink, directory, permission, I/O). Callers MUST fail closed:
+    // a path is never silently dropped.
+    bool captureProofAndGraphState(
+        const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
+        ScopedDefaultsCapturedState& out,
+        std::string& error) const;
 
     // Proves ownership over a CAPTURED snapshot: wrapper grammar, global
     // uniqueness of ids, exact path binding, exact payload digest, and (in Exact

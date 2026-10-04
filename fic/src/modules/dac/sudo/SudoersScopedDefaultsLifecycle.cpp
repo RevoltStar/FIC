@@ -1,6 +1,7 @@
 #include "modules/dac/sudo/SudoersScopedDefaultsLifecycle.h"
 
 #include <map>
+#include <set>
 #include <utility>
 
 namespace fic::sudoers {
@@ -62,7 +63,9 @@ bool ScopedDefaultsLifecycle::proveStrictState(
     std::string& error,
     bool requireNoActiveScopedDefaults) {
     ScopedDefaultsTransaction transaction(*deps_.configuration, policyName);
-    captured = transaction.captureProofAndGraphState(proofs);
+    if (!transaction.captureProofAndGraphState(proofs, captured, error)) {
+        return false;
+    }
     const ScopedDefaultsStateProof proof = transaction.proveCapturedState(
         proofs, captured, ScopedDefaultsProofMode::Exact,
         requireNoActiveScopedDefaults);
@@ -75,6 +78,88 @@ bool ScopedDefaultsLifecycle::proveStrictState(
         return false;
     }
     captured = proof.captured;
+    return true;
+}
+
+
+bool ScopedDefaultsLifecycle::provePreviousResolution(
+    const std::string& policyName,
+    const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
+    const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+    ScopedDefaultsCapturedState& captured,
+    std::string& error) {
+    // target-only = target \ previous. Proving it FullyReleased proves that no
+    // wrapper of the failed transition survived anywhere in the captured graph,
+    // including files the transaction never touched.
+    std::set<std::string> previousIds;
+    for (const SudoScopedDefaultsWrapperProof& proof : previousProofs) {
+        previousIds.insert(proof.wrapperId);
+    }
+    std::vector<SudoScopedDefaultsWrapperProof> targetOnly;
+    for (const SudoScopedDefaultsWrapperProof& proof : targetProofs) {
+        if (previousIds.count(proof.wrapperId) == 0) {
+            targetOnly.push_back(proof);
+        }
+    }
+    ScopedDefaultsTransaction transaction(*deps_.configuration, policyName);
+    std::vector<SudoScopedDefaultsWrapperProof> allProofs = previousProofs;
+    allProofs.insert(allProofs.end(), targetProofs.begin(), targetProofs.end());
+    if (!transaction.captureProofAndGraphState(allProofs, captured, error)) {
+        return false;
+    }
+    const ScopedDefaultsStateProof exact = transaction.proveCapturedState(
+        previousProofs, captured, ScopedDefaultsProofMode::Exact, false);
+    if (!exact.ok) {
+        error = "previous-состояние не доказано: " + exact.message;
+        return false;
+    }
+    if (!targetOnly.empty()) {
+        const ScopedDefaultsStateProof gone = transaction.proveCapturedState(
+            targetOnly, captured, ScopedDefaultsProofMode::FullyReleased, false);
+        if (!gone.ok) {
+            error = "target-only обёртки не доказано отсутствующими: " +
+                    gone.message;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ScopedDefaultsLifecycle::resolveFreshPreparedToNoOwnership(
+    MutationId mutationId,
+    const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+    ScopedDefaultsLifecycleOutcome& outcome) {
+    if (deps_.configuration == nullptr) {
+        outcome.message = "нет конфигурации sudoers";
+        return false;
+    }
+    ScopedDefaultsTransaction transaction(*deps_.configuration, kScopedDefaultsPolicyName);
+    ScopedDefaultsCapturedState captured;
+    std::string error;
+    if (!transaction.captureProofAndGraphState(targetProofs, captured, error)) {
+        outcome.message = "не удалось захватить sudoers-пути: " + error;
+        return false;
+    }
+    // FullyReleased on THAT capture, then durability of THAT capture. The
+    // filesystem merely LOOKING like the previous side is not enough.
+    const ScopedDefaultsStateProof proof = transaction.proveCapturedState(
+        targetProofs, captured, ScopedDefaultsProofMode::FullyReleased, false);
+    if (!proof.ok) {
+        outcome.message = "target-владение не доказано отсутствующим: " +
+                          proof.message;
+        return false;
+    }
+    if (!ScopedDefaultsTransaction::proveCapturedStateDurable(proof.captured,
+                                                               error)) {
+        outcome.message = "отсутствие target-владения не durable: " + error;
+        return false;
+    }
+    std::string discardError;
+    if (!deps_.journal.discard(mutationId, discardError)) {
+        outcome.message = "не удалось удалить подготовленную запись: " +
+                          discardError;
+        return false;
+    }
     return true;
 }
 
@@ -131,8 +216,14 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     // discard a record that still owns a physical wrapper.
     std::vector<fic::sudoers::SudoScopedDefaultsWrapperProof> allProofs = previous;
     allProofs.insert(allProofs.end(), target.begin(), target.end());
-    const ScopedDefaultsCapturedState captured =
-        transaction.captureProofAndGraphState(allProofs);
+    ScopedDefaultsCapturedState captured;
+    std::string captureError;
+    if (!transaction.captureProofAndGraphState(allProofs, captured,
+                                               captureError)) {
+        outcome.result = PreparedRecoveryResult::FailClosed;
+        outcome.message = "не удалось захватить sudoers-пути: " + captureError;
+        return outcome;
+    }
     std::string classifyError;
     const PreparedRecovery classification = transaction.classifyCaptured(
         previous, target, captured, classifyError);
@@ -169,54 +260,12 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
             // FRESH transition: the filesystem provably holds no FIC-owned
             // wrapper, so there is nothing to prove and nothing to orphan. Only
             // the removal of the record is required.
-            // Even a fresh transition needs a DURABLE proof that no target
-            // ownership survives. The filesystem merely LOOKING like the previous
-            // side is not enough: a compensation rename whose parent-directory
-            // fsync never completed can bring a wrapper back after a power loss,
-            // long after the journal record is gone.
-            ScopedDefaultsStateProof released;
-            for (const CapturedSudoersDocument& document : captured.documents) {
-                const std::vector<SudoPhysicalLine> lines =
-                    splitPhysicalLines(document.state.content);
-                std::vector<SudoDisabledWrapper> wrappers;
-                if (parseSudoDisabledWrappers(lines, wrappers,
-                                              classifyError) !=
-                    SudoWrapperParseStatus::Ok) {
-                    break;
-                }
-                for (const SudoDisabledWrapper& wrapper : wrappers) {
-                    if (wrapper.policy == policyName) {
-                        released.message =
-                            "target-обёртка всё ещё присутствует; discard "
-                            "запрещён";
-                        break;
-                    }
-                }
-                if (!released.message.empty()) {
-                    break;
-                }
-            }
-            if (released.message.empty()) {
-                std::string absenceError;
-                if (!ScopedDefaultsTransaction::proveCapturedStateDurable(
-                        captured, absenceError)) {
-                    released.message =
-                        "отсутствие target-владения не подтверждено durable: " +
-                        absenceError;
-                }
-            }
-            if (!released.message.empty()) {
+            ScopedDefaultsLifecycleOutcome discardOutcome;
+            if (!resolveFreshPreparedToNoOwnership(preparedId, target,
+                                                    discardOutcome)) {
                 outcome.result = PreparedRecoveryResult::FailClosed;
-                outcome.message = released.message +
+                outcome.message = discardOutcome.message +
                                   "; Prepared-запись оставлена активной";
-                return outcome;
-            }
-            std::string discardError;
-            if (!deps_.journal.discard(preparedId, discardError)) {
-                outcome.result = PreparedRecoveryResult::FailClosed;
-                outcome.message =
-                    "не удалось закрыть доказанно неприменённую "
-                    "Prepared-запись: " + discardError;
                 return outcome;
             }
             outcome.result = PreparedRecoveryResult::DiscardedExisting;
@@ -265,54 +314,13 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     if (transaction.compensateToPrevious(previous, target, deps_.hooks, state,
                                          compensationError)) {
         if (previous.empty()) {
-            // Even a fresh transition needs a DURABLE proof that no target
-            // ownership survives. The filesystem merely LOOKING like the previous
-            // side is not enough: a compensation rename whose parent-directory
-            // fsync never completed can bring a wrapper back after a power loss,
-            // long after the journal record is gone.
-            ScopedDefaultsStateProof released;
-            for (const CapturedSudoersDocument& document : captured.documents) {
-                const std::vector<SudoPhysicalLine> lines =
-                    splitPhysicalLines(document.state.content);
-                std::vector<SudoDisabledWrapper> wrappers;
-                if (parseSudoDisabledWrappers(lines, wrappers,
-                                              classifyError) !=
-                    SudoWrapperParseStatus::Ok) {
-                    break;
-                }
-                for (const SudoDisabledWrapper& wrapper : wrappers) {
-                    if (wrapper.policy == policyName) {
-                        released.message =
-                            "target-обёртка всё ещё присутствует; discard "
-                            "запрещён";
-                        break;
-                    }
-                }
-                if (!released.message.empty()) {
-                    break;
-                }
-            }
-            if (released.message.empty()) {
-                std::string absenceError;
-                if (!ScopedDefaultsTransaction::proveCapturedStateDurable(
-                        captured, absenceError)) {
-                    released.message =
-                        "отсутствие target-владения не подтверждено durable: " +
-                        absenceError;
-                }
-            }
-            if (!released.message.empty()) {
+            // NEW post-compensation capture: the PRE-compensation snapshot may
+            // not be reused for the release decision.
+            ScopedDefaultsLifecycleOutcome discardOutcome;
+            if (!resolveFreshPreparedToNoOwnership(preparedId, target,
+                                                    discardOutcome)) {
                 outcome.result = PreparedRecoveryResult::FailClosed;
-                outcome.message = released.message +
-                                  "; Prepared-запись оставлена активной";
-                return outcome;
-            }
-            std::string discardError;
-            if (!deps_.journal.discard(preparedId, discardError)) {
-                outcome.result = PreparedRecoveryResult::FailClosed;
-                outcome.message =
-                    "компенсация выполнена, но Prepared-запись не закрыта: " +
-                    discardError;
+                outcome.message = discardOutcome.message;
                 return outcome;
             }
             outcome.result = PreparedRecoveryResult::CompensatedExisting;
@@ -362,15 +370,9 @@ bool ScopedDefaultsLifecycle::resolveAfterFailedMutation(
         return false;
     }
     if (previous.empty()) {
-        // FRESH: FIC owned nothing before this transition, so removing the
-        // record loses no provenance.
-        std::string discardError;
-        if (!deps_.journal.discard(mutationId, discardError)) {
-            outcome.message =
-                "не удалось удалить подготовленную запись: " + discardError;
-            return false;
-        }
-        return true;
+        // FRESH: still no discard without a final FullyReleased proof on a
+        // fresh capture -- this holds for Unchanged AND for Compensated.
+        return resolveFreshPreparedToNoOwnership(mutationId, target, outcome);
     }
     // REFRESH: the previous wrappers must still exist EXACTLY and durably. A
     // drifted or vanished A forbids the normalization, because normalizing would

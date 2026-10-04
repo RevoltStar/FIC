@@ -94,6 +94,27 @@ public:
     // prepare -> apply -> commit/discard.
     ScopedDefaultsLifecycleOutcome reconcile(const std::string& policyName);
 
+    // THE ONLY helper allowed to discard a fresh SUDO Prepared record.
+    //
+    // capture (graph U target paths) -> FullyReleased(target) -> durability of
+    // EXACTLY that capture -> discard. Used by every fresh-transition path:
+    // CompletePrevious recovery, a failed mutation and a compensation back to
+    // the empty previous side.
+    bool resolveFreshPreparedToNoOwnership(
+        MutationId mutationId,
+        const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+        ScopedDefaultsLifecycleOutcome& outcome);
+
+    // Previous-side resolution proof for a refresh: on ONE capture it proves
+    // ExactOwnership(previous) AND FullyReleased(target - previous), i.e. every
+    // surviving previous wrapper is exact and no target-only wrapper is left.
+    bool provePreviousResolution(
+        const std::string& policyName,
+        const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
+        const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+        ScopedDefaultsCapturedState& captured,
+        std::string& error);
+
     // STRICT snapshot-bound resolution proof: capture -> exact ownership +
     // semantics on the SAME captures -> durability of EXACTLY those captures.
     // A journal transition may only follow this sequence.
