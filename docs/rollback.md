@@ -1520,6 +1520,23 @@ Capture set = **все** документы графа **∪** все `canonical
 трактуется как отсутствие: symlink, каталог, отказ прав или I/O-ошибка ведут к
 fail closed.
 
+### Prepared classification — snapshot, не текущий граф
+
+Классификация unresolved `Prepared` **не** опирается на текущий include-граф:
+обёртка может физически существовать, но перестать быть достижимой через
+`@include`/`@includedir`. Capture set поэтому равен
+`graph ∪ previousProof.canonicalPath ∪ targetProof.canonicalPath`, а
+сравнение идёт по полной identity `(wrapperId, canonicalPath, payloadDigest)`.
+Совпадение id+digest при другом файле не является ни CompleteTarget, ни
+CompletePrevious.
+
+Классификация лишь выбирает ветку — она не является доказательством для
+перехода журнала. Разрешение всегда требует отдельного strict proof.
+
+Fresh `CompletePrevious` (previous пуст) обязан доказать **durable** отсутствие
+target-владения перед `discard`: видимое «обёрток нет» не переживает
+power-loss после незавершённого fsync каталога.
+
 Доказательство (proof) однозначно привязано к тройке
 `wrapperId + canonicalPath + payloadDigest`; `previous ⊆ target` сравнивается по
 полной идентичности. Каталог-пример: wrapper пропал внешне — отсутствие само по

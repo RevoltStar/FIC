@@ -265,6 +265,19 @@ public:
     static bool proveCapturedStateDurable(
         const ScopedDefaultsCapturedState& captured, std::string& error);
 
+    // SNAPSHOT-BOUND classification of an unresolved Prepared transition.
+    //
+    // It deliberately does NOT read the current include graph as authority: a
+    // wrapper proven for a physical path can survive a topology change and no
+    // longer be reachable through @include/@includedir. The capture set is the
+    // union of the current graph and EVERY previous/target proof path, and the
+    // comparison uses the FULL proof identity (id + path + digest).
+    PreparedRecovery classifyCaptured(
+        const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
+        const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+        const ScopedDefaultsCapturedState& captured,
+        std::string& error) const;
+
     // Classifies an unresolved Prepared transition against the live graph.
     PreparedRecovery classifyPrepared(
         const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,

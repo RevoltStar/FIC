@@ -1436,26 +1436,44 @@ void testTargetWrapperDisappearsBeforeCommit() {
         }
         unwrapped = true;
         const auto path = configuration.graphDocuments()[0].path;
-        std::string content = readFile(path);
-        // Real unwrap of the newly installed wrapper, not a comment deletion.
-        const std::size_t begin = content.find("#@FIC_SUDO_DISABLED_BEGIN");
-        const std::size_t end = content.find("#@FIC_SUDO_DISABLED_END");
-        if (begin == std::string::npos || end == std::string::npos) {
+        // Real unwrap of the newly installed wrapper: locate the LINE marker
+        // holding the new violation and rebuild the file from its exact body.
+        const std::vector<fic::sudoers::SudoPhysicalLine> lines =
+            fic::sudoers::splitPhysicalLines(readFile(path));
+        std::string body;
+        std::size_t beginIndex = 0;
+        std::size_t endIndex = 0;
+        bool found = false;
+        for (std::size_t index = 0; index + 1 < lines.size(); ++index) {
+            static const std::string kPrefix =
+                "#@FIC_SUDO_DISABLED_LINE@eol=";
+            if (lines[index].text.rfind(kPrefix, 0) != 0) {
+                continue;
+            }
+            // Skip the eol VALUE and its separator '@'.
+            const std::size_t at =
+                lines[index].text.find('@', kPrefix.size());
+            if (at == std::string::npos ||
+                lines[index].text.find("Defaults:bob") == std::string::npos) {
+                continue;
+            }
+            body = lines[index].text.substr(at + 1);
+            beginIndex = index - 1; // BEGIN marker
+            endIndex = index + 1;   // END marker
+            found = true;
+            break;
+        }
+        if (!found) {
             return true;
         }
-        const std::size_t lineEnd = content.find('\n', end);
-        const std::string body =
-            content.substr(begin, content.find('\n', begin) - begin);
-        (void)body;
-        const std::size_t markerEnd = content.find('@', content.find("LINE", begin));
-        const std::string restored =
-            content.substr(markerEnd + 1,
-                           (lineEnd == std::string::npos ? content.size() : lineEnd)
-                               - markerEnd - 1);
-        content = content.substr(0, begin) + restored +
-                  (lineEnd == std::string::npos ? "" : "\n") +
-                  content.substr(lineEnd == std::string::npos ? content.size()
-                                                             : lineEnd + 1);
+        std::string content;
+        for (std::size_t index = 0; index < beginIndex; ++index) {
+            content += lines[index].text + "\n";
+        }
+        content += body + "\n";
+        for (std::size_t index = endIndex + 1; index < lines.size(); ++index) {
+            content += lines[index].text + "\n";
+        }
         writeFile(path, content);
         return true;
     };
@@ -1700,38 +1718,175 @@ void testChangeBetweenProofAndDurability() {
 
 } // namespace
 
-int main() {
-    try {
-testNormalLifecycle();
-testReconciliationGrowsOwnership();
-testPayloadDriftRefusesUnwrap();
-testPartialApplyCompensated();
-testPartialApplyCompensationFails();
-testOrphanNoOpFailsClosed();
-testSamePhysicalIncludeTwice();
-testGlobalDuplicateIdRefused();
-        testCrlfRoundTrip();                              // H
-        testMultipleFreshViolationsMapping();             // I
-        testGraphSnapshotToCaptureToctou();               // J
-        testFirstWriteCasConflictNotWedged();             // K
-        testCrashBeforeWriteRecovery();                   // L
-        testCrashAfterWriteRecovery();                    // M
-        testPartialPreparedRecovery();                    // N
-        testDriftedWrapperPlusNewViolation();             // O
-        testOrphanWrapperPlusNewViolation();              // P
-        testNoFinalNewlineRoundTrip();                    // Q
-        testPartialRollbackCompensated();                 // R
-        testRefreshCrashBeforeWriteKeepsOwnership();        // S
-        testRefreshCasConflictKeepsOwnership();            // T
-testRefreshPartialMutationCompensated();          // U
-testCompleteTargetDurabilityBlocksCommit();      // V
-testRollbackDurabilityBlocksResolution();         // W
-testDriftBetweenPreflightAndCommitRefusesCommit();// X
-testPartialRefreshSelectiveCompensation();       // Y
-testDuplicateIdBeforeReleaseCaptureRefused();    // Z
-    } catch (const std::exception& error) {
-        std::cerr << error.what() << '\n';
-        return 1;
+
+// --- AJ: fresh Prepared target hidden by an include topology change ---------
+
+void testTargetHiddenByTopologyChange() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "site.conf", "Defaults:alice exempt_group=wheel\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "site.conf").string() + "\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+
+    ScopedDefaultsTransaction planner(configuration, kPolicyName);
+    const auto plan = planner.plan({});
+    std::vector<SudoScopedDefaultsWrapperProof> targets;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        targets.push_back(mutation.proof);
     }
+    MutationId id = 0;
+    UndoAction undo{MutationBackend::Sudo,
+                    UndoReleaseSudoScopedDefaults{kPolicyName, {}, targets}};
+    require(recordPreparedMut(policy, undo, id, error), error);
+    // Install the wrapper, then "crash".
+    ScopedDefaultsTransaction installer(configuration, kPolicyName);
+    const auto applied = installer.apply(plan.fresh, SudoScopedDefaultsHooks{});
+    require(applied.ok(), applied.operation.message);
+    require(activePreparedCount() == 1, "still Prepared");
+
+    // The include disappears while site.conf (with wrapper A) stays on disk.
+    writeFile(tree.root / "sudoers", "root ALL=(ALL:ALL) ALL\n");
+
+    SudoersConfiguration afterRestart(options);
+    std::string loadError;
+    require(afterRestart.load(loadError), loadError);
+    const auto outcome = reconcile(afterRestart, productionHooks(afterRestart));
+    // The wrapper is still physically present even though it is no longer
+    // reachable through the include graph. Recovery must therefore never treat
+    // it as "nothing is owned": the record is either resolved to Applied while
+    // still proving A, or it stays Prepared. What is FORBIDDEN is a discard.
+    const auto ownedAfter = activeOwned();
+    const std::size_t prepared = activePreparedCount();
+    require(prepared + ownedAfter.size() >= 1,
+            "a hidden target wrapper must never become unproven");
+    if (prepared == 0) {
+        require(ownedAfter.size() == 1 && outcome.ok,
+                "resolution to Applied must still prove the hidden wrapper");
+    }
+    require(readFile(tree.root / "site.conf").find("#@FIC_SUDO_DISABLED_BEGIN") !=
+                std::string::npos,
+            "wrapper A must still be physically present");
+}
+
+// --- AK: fresh crash-before-write recovery still succeeds -------------------
+
+void testFreshCrashBeforeWriteStillRecovers() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "site.conf", "Defaults:alice exempt_group=wheel\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "site.conf").string() + "\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+
+    ScopedDefaultsTransaction planner(configuration, kPolicyName);
+    const auto plan = planner.plan({});
+    std::vector<SudoScopedDefaultsWrapperProof> targets;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        targets.push_back(mutation.proof);
+    }
+    MutationId id = 0;
+    UndoAction undo{MutationBackend::Sudo,
+                    UndoReleaseSudoScopedDefaults{kPolicyName, {}, targets}};
+    require(recordPreparedMut(policy, undo, id, error), error);
+    require(activePreparedCount() == 1, "Prepared must exist");
+
+    // Restart: nothing was written, so the durable absence proof succeeds and a
+    // FRESH planning re-applies the entry.
+    SudoersConfiguration afterRestart(options);
+    std::string loadError;
+    require(afterRestart.load(loadError), loadError);
+    const auto outcome = reconcile(afterRestart, productionHooks(afterRestart));
+    require(outcome.ok, "a genuine crash-before-write must recover: " +
+                            outcome.message);
+    require(activeOwned().size() == 1, "the entry must be re-suppressed");
+    require(readFile(tree.root / "site.conf").find("#@FIC_SUDO_DISABLED_BEGIN") !=
+                std::string::npos,
+            "the wrapper must be installed after the fresh plan");
+}
+
+// ---------------------------------------------------------------------------
+// Test registry.
+//
+// Every lifecycle scenario is registered HERE and executed from this table, so
+// a test function can never be defined and silently skipped. The table is also
+// the single source of truth for the reported counts.
+// ---------------------------------------------------------------------------
+
+struct LifecycleCase {
+    const char* label;
+    void (*run)();
+};
+
+const std::vector<LifecycleCase>& lifecycleCases() {
+    static const std::vector<LifecycleCase> cases = {
+        {"A  normal lifecycle + journal reload + rollback", testNormalLifecycle},
+        {"B  reconciliation grows ownership", testReconciliationGrowsOwnership},
+        {"C  payload drift refuses unwrap", testPayloadDriftRefusesUnwrap},
+        {"D1 partial apply, compensation succeeds", testPartialApplyCompensated},
+        {"D2 partial apply, compensation fails", testPartialApplyCompensationFails},
+        {"E  orphan wrapper, no violations", testOrphanNoOpFailsClosed},
+        {"F  same physical include twice", testSamePhysicalIncludeTwice},
+        {"G  duplicate id across two files", testGlobalDuplicateIdRefused},
+        {"H  CRLF round trip", testCrlfRoundTrip},
+        {"I  multiple fresh violations mapping", testMultipleFreshViolationsMapping},
+        {"J  graph load -> capture TOCTOU", testGraphSnapshotToCaptureToctou},
+        {"K  first-write CAS conflict", testFirstWriteCasConflictNotWedged},
+        {"L  crash before write recovery", testCrashBeforeWriteRecovery},
+        {"M  crash after complete write", testCrashAfterWriteRecovery},
+        {"N  ambiguous Prepared fails closed", testPartialPreparedRecovery},
+        {"O  drift + new violation", testDriftedWrapperPlusNewViolation},
+        {"P  orphan + new violation", testOrphanWrapperPlusNewViolation},
+        {"Q  no-final-newline round trip", testNoFinalNewlineRoundTrip},
+        {"R  partial rollback compensated", testPartialRollbackCompensated},
+        {"S  refresh crash before write", testRefreshCrashBeforeWriteKeepsOwnership},
+        {"T  refresh CAS conflict", testRefreshCasConflictKeepsOwnership},
+        {"U  refresh partial + compensation", testRefreshPartialMutationCompensated},
+        {"V  durability blocks commit", testCompleteTargetDurabilityBlocksCommit},
+        {"W  rollback durability blocks resolution", testRollbackDurabilityBlocksResolution},
+        {"X  drift between preflight and commit", testDriftBetweenPreflightAndCommitRefusesCommit},
+        {"Y  partial refresh selective compensation", testPartialRefreshSelectiveCompensation},
+        {"Z  duplicate id before release capture", testDuplicateIdBeforeReleaseCaptureRefused},
+        {"AA target wrapper disappears before commit", testTargetWrapperDisappearsBeforeCommit},
+        {"AB previous drifts before normalization", testPreviousDriftsBeforeNormalization},
+        {"AC previous disappears before normalization", testPreviousDisappearsBeforeNormalization},
+        {"AD duplicate after graph load, before capture", testDuplicateInsertedAfterGraphLoadBeforeCapture},
+        {"AE symlink proof target is not absence", testSymlinkProofTargetNotAbsent},
+        {"AF directory proof target is not absence", testDirectoryProofTargetNotAbsent},
+        {"AG genuinely absent proof file", testGenuinelyAbsentProofFile},
+        {"AH change between proof and durability", testChangeBetweenProofAndDurability},
+        {"AJ target hidden by topology change", testTargetHiddenByTopologyChange},
+        {"AK fresh crash-before-write recovers", testFreshCrashBeforeWriteStillRecovers},
+    };
+    return cases;
+}
+
+int main() {
+    std::size_t executed = 0;
+    for (const LifecycleCase& item : lifecycleCases()) {
+        try {
+            item.run();
+            ++executed;
+        } catch (const std::exception& error) {
+            std::cerr << "FAILED [" << item.label << "]: " << error.what()
+                      << '\n';
+            std::cout << "Executed " << executed << " of "
+                      << lifecycleCases().size()
+                      << " lifecycle test functions before failure\n";
+            return 1;
+        }
+    }
+    std::cout << "Executed " << executed << " of " << lifecycleCases().size()
+              << " lifecycle test functions\n";
+    std::cout << "Covered " << lifecycleCases().size()
+              << " acceptance scenarios\n";
     return 0;
 }

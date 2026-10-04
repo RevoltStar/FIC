@@ -116,6 +116,16 @@ Follow-up поверх `c325e92`:
 * **Typed absence**: `ensureTargetAbsentDurableIfCurrentState()`; ошибка
   capture (symlink/каталог/прав/I-O) больше не считается отсутствием.
 * **Rollback capture set**: весь include-graph ∪ все proof canonicalPath.
+* **Test registry (§37/§38)**: AA–AH были определены, но НЕ вызывались
+  (фактически выполнялось 27 из 35). Введён registry + runtime-счётчик, который
+  печатает `Executed N of N lifecycle test functions`. Это устранило ложное
+  сообщение «35 сценариев» в предыдущем отчёте.
+* **classifyCaptured() (§1–§3)**: Prepared-классификация работает по capture
+  `graph ∪ previous ∪ target` и по полной identity (id+path+digest).
+* **Fresh CompletePrevious durability (§4/§5)**: discard только после durable
+  доказательства отсутствия target-владения.
+* Новые регрессии AJ (target-обёртка скрыта изменением include topology) и
+  AK (fresh crash-before-write по-прежнему восстанавливается).
 * **Include lexer**: escape-семантика upstream `copy_string()` для кавыченных и
   некавыченных путей (`\xHH`→hex, `\c`→c). Подтверждено по исходникам sudo
   1.9.13 (debian-12) и текущим — поведение идентично.

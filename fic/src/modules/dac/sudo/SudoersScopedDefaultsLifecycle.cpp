@@ -124,9 +124,18 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
         }
     }
     ScopedDefaultsTransaction transaction(*deps_.configuration, policyName);
+    // Capture set = current graph UNION every previous/target proof path. The
+    // current include graph is NOT the recovery authority: a wrapper may still
+    // exist physically while the @include/@includedir topology changed, and
+    // classifying from the graph alone would conclude CompletePrevious and
+    // discard a record that still owns a physical wrapper.
+    std::vector<fic::sudoers::SudoScopedDefaultsWrapperProof> allProofs = previous;
+    allProofs.insert(allProofs.end(), target.begin(), target.end());
+    const ScopedDefaultsCapturedState captured =
+        transaction.captureProofAndGraphState(allProofs);
     std::string classifyError;
-    const PreparedRecovery classification =
-        transaction.classifyPrepared(previous, target, classifyError);
+    const PreparedRecovery classification = transaction.classifyCaptured(
+        previous, target, captured, classifyError);
     if (classification == PreparedRecovery::CompleteTarget) {
         // STRICT: capture, prove the EXACT target set (including that every
         // target wrapper physically exists) and the semantic invariant on those
@@ -160,6 +169,48 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
             // FRESH transition: the filesystem provably holds no FIC-owned
             // wrapper, so there is nothing to prove and nothing to orphan. Only
             // the removal of the record is required.
+            // Even a fresh transition needs a DURABLE proof that no target
+            // ownership survives. The filesystem merely LOOKING like the previous
+            // side is not enough: a compensation rename whose parent-directory
+            // fsync never completed can bring a wrapper back after a power loss,
+            // long after the journal record is gone.
+            ScopedDefaultsStateProof released;
+            for (const CapturedSudoersDocument& document : captured.documents) {
+                const std::vector<SudoPhysicalLine> lines =
+                    splitPhysicalLines(document.state.content);
+                std::vector<SudoDisabledWrapper> wrappers;
+                if (parseSudoDisabledWrappers(lines, wrappers,
+                                              classifyError) !=
+                    SudoWrapperParseStatus::Ok) {
+                    break;
+                }
+                for (const SudoDisabledWrapper& wrapper : wrappers) {
+                    if (wrapper.policy == policyName) {
+                        released.message =
+                            "target-обёртка всё ещё присутствует; discard "
+                            "запрещён";
+                        break;
+                    }
+                }
+                if (!released.message.empty()) {
+                    break;
+                }
+            }
+            if (released.message.empty()) {
+                std::string absenceError;
+                if (!ScopedDefaultsTransaction::proveCapturedStateDurable(
+                        captured, absenceError)) {
+                    released.message =
+                        "отсутствие target-владения не подтверждено durable: " +
+                        absenceError;
+                }
+            }
+            if (!released.message.empty()) {
+                outcome.result = PreparedRecoveryResult::FailClosed;
+                outcome.message = released.message +
+                                  "; Prepared-запись оставлена активной";
+                return outcome;
+            }
             std::string discardError;
             if (!deps_.journal.discard(preparedId, discardError)) {
                 outcome.result = PreparedRecoveryResult::FailClosed;
@@ -214,6 +265,48 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     if (transaction.compensateToPrevious(previous, target, deps_.hooks, state,
                                          compensationError)) {
         if (previous.empty()) {
+            // Even a fresh transition needs a DURABLE proof that no target
+            // ownership survives. The filesystem merely LOOKING like the previous
+            // side is not enough: a compensation rename whose parent-directory
+            // fsync never completed can bring a wrapper back after a power loss,
+            // long after the journal record is gone.
+            ScopedDefaultsStateProof released;
+            for (const CapturedSudoersDocument& document : captured.documents) {
+                const std::vector<SudoPhysicalLine> lines =
+                    splitPhysicalLines(document.state.content);
+                std::vector<SudoDisabledWrapper> wrappers;
+                if (parseSudoDisabledWrappers(lines, wrappers,
+                                              classifyError) !=
+                    SudoWrapperParseStatus::Ok) {
+                    break;
+                }
+                for (const SudoDisabledWrapper& wrapper : wrappers) {
+                    if (wrapper.policy == policyName) {
+                        released.message =
+                            "target-обёртка всё ещё присутствует; discard "
+                            "запрещён";
+                        break;
+                    }
+                }
+                if (!released.message.empty()) {
+                    break;
+                }
+            }
+            if (released.message.empty()) {
+                std::string absenceError;
+                if (!ScopedDefaultsTransaction::proveCapturedStateDurable(
+                        captured, absenceError)) {
+                    released.message =
+                        "отсутствие target-владения не подтверждено durable: " +
+                        absenceError;
+                }
+            }
+            if (!released.message.empty()) {
+                outcome.result = PreparedRecoveryResult::FailClosed;
+                outcome.message = released.message +
+                                  "; Prepared-запись оставлена активной";
+                return outcome;
+            }
             std::string discardError;
             if (!deps_.journal.discard(preparedId, discardError)) {
                 outcome.result = PreparedRecoveryResult::FailClosed;

@@ -99,6 +99,56 @@ bool ScopedDefaultsTransaction::proveCapturedStateDurable(
     return true;
 }
 
+
+PreparedRecovery ScopedDefaultsTransaction::classifyCaptured(
+    const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
+    const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+    const ScopedDefaultsCapturedState& captured,
+    std::string& error) const {
+    // Identity of what is physically present, from the CAPTURES only.
+    std::map<std::string, std::pair<std::string, std::string>> actual;
+    std::map<std::string, std::string> idOwner;
+    for (const CapturedSudoersDocument& document : captured.documents) {
+        const std::vector<SudoPhysicalLine> lines = linesOf(document.state.content);
+        std::vector<SudoDisabledWrapper> wrappers;
+        if (parseSudoDisabledWrappers(lines, wrappers, error) !=
+            SudoWrapperParseStatus::Ok) {
+            return PreparedRecovery::Indeterminate;
+        }
+        const std::string canonical =
+            canonicalizeSudoProofPath(document.path);
+        for (const SudoDisabledWrapper& wrapper : wrappers) {
+            if (wrapper.policy != policyName_) {
+                continue;
+            }
+            // A duplicate id across files makes the state unclassifiable.
+            const auto seen = idOwner.find(wrapper.mutationId);
+            if (seen != idOwner.end() && seen->second != canonical) {
+                return PreparedRecovery::Indeterminate;
+            }
+            idOwner.emplace(wrapper.mutationId, canonical);
+            actual[wrapper.mutationId] =
+                std::make_pair(canonical, wrapper.payloadDigest());
+        }
+    }
+    const auto matchesExactly = [&actual](
+            const std::vector<SudoScopedDefaultsWrapperProof>& expected) {
+        std::map<std::string, std::pair<std::string, std::string>> wanted;
+        for (const SudoScopedDefaultsWrapperProof& proof : expected) {
+            wanted[proof.wrapperId] =
+                std::make_pair(proof.canonicalPath, proof.payloadDigest);
+        }
+        return wanted == actual;
+    };
+    if (matchesExactly(targetProofs)) {
+        return PreparedRecovery::CompleteTarget;
+    }
+    if (matchesExactly(previousProofs)) {
+        return PreparedRecovery::CompletePrevious;
+    }
+    return PreparedRecovery::Indeterminate;
+}
+
 ScopedDefaultsStateProof ScopedDefaultsTransaction::proveCapturedState(
     const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
     const ScopedDefaultsCapturedState& captured,
