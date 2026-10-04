@@ -108,9 +108,26 @@ public:
         const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
         ScopedDefaultsLifecycleOutcome& outcome);
 
-    // Previous-side resolution proof for a refresh: on ONE capture it proves
-    // ExactOwnership(previous) AND FullyReleased(target - previous), i.e. every
-    // surviving previous wrapper is exact and no target-only wrapper is left.
+    // Previous-side resolution proof for a refresh, on ONE snapshot generation:
+    //
+    //   capture( current graph U previous proof paths U target proof paths )
+    //     -> Exact(previous), without the semantic invariant
+    //     -> proveCapturedStateDurable( EXACTLY that capture )
+    //
+    // A SURVIVING target-only wrapper automatically fails Exact(previous): for
+    // that expected set it is an UNKNOWN wrapper, so duplicates, drift, a missing
+    // or moved previous wrapper, and any leftover target-only wrapper all fail
+    // closed.
+    //
+    // The TARGET paths must be part of the capture because a target-only wrapper
+    // may have fallen out of the current include graph (topology change) and
+    // would otherwise stay invisible.
+    //
+    // FullyReleased is deliberately NOT used here: it is the whole-policy
+    // TERMINAL contract (no FIC wrapper of this policy may survive) used by fresh
+    // Prepared discard and rollback Success/NothingToDo. Applying it to the
+    // target-only subset would wrongly demand the absence of the previous wrapper
+    // that must survive a refresh rewind.
     bool provePreviousResolution(
         const std::string& policyName,
         const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,

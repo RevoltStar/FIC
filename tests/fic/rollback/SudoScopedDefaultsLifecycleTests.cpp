@@ -193,17 +193,6 @@ ScopedDefaultsLifecycleOutcome reconcile(
     return lifecycle.reconcile(kPolicyName);
 }
 
-ScopedDefaultsLifecycleDeps productionDepsForOptions(
-    const SudoersConfigurationOptions& options,
-    const SudoScopedDefaultsHooks& hooks,
-    const std::function<void()>& compensationHook = nullptr) {
-    SudoersConfiguration configuration(options);
-    ScopedDefaultsLifecycleDeps deps = productionDeps(configuration, hooks,
-                                                      compensationHook);
-    deps.configuration = &configuration;
-    return deps;
-}
-
 std::vector<SudoScopedDefaultsWrapperProof> activeOwned() {
     std::string error;
     fic::rollback::MutationJournal* journal =
@@ -2024,28 +2013,129 @@ void testTargetOnlySurvivesOutsideGraph() {
     PartialRefreshFixture fixture(tree);
     fixture.applyA();
     fixture.prepareRefreshAndInstallB();
-    // B's file is no longer reachable through the graph, yet B is still on disk
-    // and must still block the normalization.
-    writeFile(tree.root / "sudoers",
-              "@include " + (tree.root / "a.conf").string() + "\n");
 
-    SudoersConfiguration configuration(fixture.options);
-    std::string error;
-    require(configuration.load(error), error);
+    const std::string bId = fixture.fresh[0].wrapperId;
+    const std::string bPath = fixture.fresh[0].canonicalPath;
+
+    // Disk becomes {A,B,C}: C is installed and stays INSIDE the include graph,
+    // so compensateToPrevious() has REAL target-only work to do.
+    {
+        SudoersConfiguration staged(fixture.options);
+        std::string stagedError;
+        require(staged.load(stagedError), stagedError);
+        SudoScopedDefaultsHooks partialHooks = productionHooks(staged);
+        partialHooks.reloadAndVerify = [&staged](std::string& e) {
+            return staged.load(e);
+        };
+        ScopedDefaultsTransaction installer(staged, kPolicyName);
+        // B is already installed by the fixture; install ONLY C so the disk
+        // becomes exactly {A,B,C}.
+        const auto rest = installer.apply({fixture.planned[1]}, partialHooks);
+        require(rest.ok(), rest.operation.message);
+    }
+    const std::set<std::string> installed =
+        onDiskWrapperIds(tree.root);
+    require(installed.count(bId) == 1, "B must be installed");
+    require(installed.size() == 3, "disk must be exactly {A,B,C}");
+
+    // B's file leaves the include graph while staying physically present, and B
+    // drifts from its target proof. The drift is required: capture includes the
+    // TARGET paths, so a pristine {A,B,C} would classify as CompleteTarget and
+    // never reach the selective compensation.
+    writeFile(bPath, wrapperBlock(bId, "Defaults:bob passwd_tries=10"));
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "a.conf").string() + "\n"
+              "@include " + (tree.root / "c.conf").string() + "\n");
+
+    // Deterministic assertion that the run really went through a SUCCESSFUL
+    // compensateToPrevious(): the hook only runs after it returns Compensated.
+    bool compensationRan = false;
+    const std::function<void()> hook = [&compensationRan]() {
+        compensationRan = true;
+    };
+    SudoersConfiguration holder(fixture.options);
+    std::string holderError;
+    require(holder.load(holderError), holderError);
     fic::sudoers::ScopedDefaultsLifecycleDeps deps =
-        productionDeps(configuration, SudoScopedDefaultsHooks{});
+        productionDeps(holder, SudoScopedDefaultsHooks{}, hook);
     fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
     const auto outcome = lifecycle.reconcile(kPolicyName);
-    (void)outcome;
-    // Either it is normalized and re-planned (B still proven), or it stays
-    // Prepared. What is FORBIDDEN is silently normalizing while B survives.
-    if (activePreparedCount() == 0) {
-        require(activeOwned().size() == 3,
-                "resolution must still prove and own B through its proof path");
-    }
-    const std::set<std::string> ids = onDiskWrapperIds(tree.root);
-    require(ids.count(fixture.fresh[0].wrapperId) == 1,
+
+    require(compensationRan,
+            "the test must pass through a successful compensateToPrevious()");
+    require(!outcome.ok,
+            "a surviving target-only wrapper must forbid normalization");
+    require(activePreparedCount() == 1,
+            "the Prepared record must stay active: no normalize to "
+            "Applied(previous)");
+    // B was captured through targetProof.canonicalPath and is still physical.
+    require(onDiskWrapperIds(tree.root).count(bId) == 1,
             "B must still be physically present");
+}
+
+
+// --- AY-durability: Exact(previous) succeeds, durability barrier fails ---------
+
+void testPreviousExactButDurabilityFails() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    PartialRefreshFixture fixture(tree);
+    fixture.applyA();
+    // Stage the refresh but install NOTHING: disk stays exactly {A}, so the
+    // classification is CompletePrevious and provePreviousResolution() runs.
+    writeFile(tree.root / "b.conf",
+              "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
+    writeFile(tree.root / "c.conf",
+              "Defaults passwd_tries=4\nDefaults:carol passwd_tries=3\n");
+    {
+        SudoersConfiguration staged(fixture.options);
+        std::string stagedError;
+        require(staged.load(stagedError), stagedError);
+        ScopedDefaultsTransaction planner(staged, kPolicyName);
+        const auto plan = planner.plan(fixture.ownedA);
+        require(plan.fresh.size() == 2, "B and C must be planned");
+        std::vector<SudoScopedDefaultsWrapperProof> fresh;
+        for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+            fresh.push_back(mutation.proof);
+        }
+        stageRefresh(fixture.ownedA, scopedPolicy(), fresh);
+    }
+    const std::set<std::string> beforeCompensation = onDiskWrapperIds(tree.root);
+    require(beforeCompensation.size() == 1,
+            "only A may be on disk before the proof");
+
+    {
+        class FsyncGuard {
+        public:
+            FsyncGuard() {
+                AtomicFileWriter::setDirectoryFsyncHookForTests(
+                    [](const std::string&) { return false; });
+            }
+            ~FsyncGuard() {
+                AtomicFileWriter::setDirectoryFsyncHookForTests({});
+            }
+        } guard;
+
+        SudoersConfiguration blocked(fixture.options);
+        std::string loadError;
+        require(blocked.load(loadError), loadError);
+        const auto outcome = reconcile(blocked, productionHooks(blocked));
+        require(!outcome.ok,
+                "an unproven-durable previous state must forbid normalization");
+        require(activePreparedCount() == 1,
+                "the Prepared record must stay active when the barrier fails");
+    }
+
+    // Once the barrier works again the SAME record normalizes: the failure was
+    // durability-only, not a lost proof.
+    SudoersConfiguration afterBarrier(fixture.options);
+    std::string afterError;
+    require(afterBarrier.load(afterError), afterError);
+    const auto recovered = reconcile(afterBarrier, productionHooks(afterBarrier));
+    require(recovered.ok, "recovery after the barrier must succeed: " +
+                               recovered.message);
+    require(activePreparedCount() == 0,
+            "the record must be normalized to Applied(previous) afterwards");
 }
 
 // ---------------------------------------------------------------------------
@@ -2104,6 +2194,7 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"AQ previous drifts after compensation", testPreviousDriftsAfterCompensation},
         {"AV target-only restored after compensation", testTargetOnlyRestoredAfterCompensation},
         {"AW target-only survives outside graph", testTargetOnlySurvivesOutsideGraph},
+        {"AY durability failure blocks previous normalization", testPreviousExactButDurabilityFails},
     };
     return cases;
 }
