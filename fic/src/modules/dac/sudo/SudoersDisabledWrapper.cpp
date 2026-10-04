@@ -457,7 +457,8 @@ SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
     const std::vector<SudoDisabledWrapper>& wrappers,
     const std::filesystem::path& filePath,
     const std::string& policyName,
-    const std::vector<SudoScopedDefaultsWrapperProof>& expectedProofs) {
+    const std::vector<SudoScopedDefaultsWrapperProof>& expectedProofs,
+    SudoWrapperProofMode mode) {
     SudoWrapperProvenanceCheck check;
     // Keyed by wrapper id; the value is (canonical path, payload digest).
     std::map<std::string, std::pair<std::string, std::string>> payloadById;
@@ -504,10 +505,19 @@ SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
         }
     }
     for (const SudoScopedDefaultsWrapperProof& proof : expectedProofs) {
+        // A proof whose wrapper is gone here may live in ANOTHER document of the
+        // graph, so absence from THIS file is not absence at all. The exact
+        // contract is decided by the caller over the whole captured inventory.
         if (fileCounts.find(proof.wrapperId) == fileCounts.end()) {
             check.releasedIds.push_back(proof.wrapperId);
         }
     }
+    // NOTE: `releasedIds` is deliberately NOT turned into a failure here. This
+    // check is PER FILE, while a proof set legitimately spans several sudoers
+    // files: a proof proven for a.conf legitimately has no wrapper here. Global
+    // completeness is decided by the caller over the WHOLE captured inventory,
+    // where a proof is "missing" only when no document carries its id.
+    (void)mode;
     return check;
 }
 

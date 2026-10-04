@@ -49,6 +49,169 @@ std::string suppressedDigest(
 
 } // namespace
 
+
+ScopedDefaultsCapturedState
+ScopedDefaultsTransaction::captureProofAndGraphState(
+    const std::vector<SudoScopedDefaultsWrapperProof>& proofs) const {
+    // Capture set = every current graph document UNION every proof path, in one
+    // canonical spelling. Deriving the set from the OLD wrapper inventory would
+    // miss a file that only now acquired a wrapper, which is exactly how a
+    // duplicate id could survive a rollback unnoticed.
+    std::set<std::string> paths;
+    for (const SudoersConfiguration::GraphDocument& document :
+         configuration_.graphDocuments()) {
+        paths.insert(canonicalizeSudoProofPath(document.path));
+    }
+    for (const SudoScopedDefaultsWrapperProof& proof : proofs) {
+        paths.insert(proof.canonicalPath);
+    }
+    ScopedDefaultsCapturedState captured;
+    captured.documents.reserve(paths.size());
+    for (const std::string& path : paths) {
+        CapturedSudoersDocument document;
+        document.path = std::filesystem::path(path);
+        std::string error;
+        if (!AtomicFileWriter::captureTargetState(path, document.state,
+                                                  &error)) {
+            // A file that vanished is NOT silently skipped: absence is proven
+            // separately and deliberately by the caller.
+            continue;
+        }
+        captured.documents.push_back(std::move(document));
+    }
+    return captured;
+}
+
+bool ScopedDefaultsTransaction::proveCapturedStateDurable(
+    const ScopedDefaultsCapturedState& captured, std::string& error) {
+    // Confirms EXACTLY the captures that were parsed and proven. A filesystem
+    // that changed since the capture fails closed, so the barrier can never
+    // legitimize a different state than the one ownership was proven against.
+    for (const CapturedSudoersDocument& document : captured.documents) {
+        std::string durabilityError;
+        if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                document.path.string(), document.state, &durabilityError)) {
+            error += "durability barrier не пройден для " +
+                     document.path.string() + ": " + durabilityError + "; ";
+            return false;
+        }
+    }
+    return true;
+}
+
+ScopedDefaultsStateProof ScopedDefaultsTransaction::proveCapturedState(
+    const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
+    const ScopedDefaultsCapturedState& captured,
+    ScopedDefaultsProofMode mode,
+    bool requireNoActiveScopedDefaults) const {
+    ScopedDefaultsStateProof proof;
+    proof.captured = captured;
+
+    std::map<std::string, std::vector<SudoDisabledWrapper>> byPath;
+    std::map<std::string, std::filesystem::path> idOwner;
+    for (const CapturedSudoersDocument& document : captured.documents) {
+        const std::vector<SudoPhysicalLine> lines =
+            linesOf(document.state.content);
+        std::vector<SudoDisabledWrapper> wrappers;
+        std::string parseError;
+        if (parseSudoDisabledWrappers(lines, wrappers, parseError) !=
+            SudoWrapperParseStatus::Ok) {
+            proof.message = "Не удалось разобрать FIC-маркеры " +
+                            document.path.string() + ": " + parseError;
+            return proof;
+        }
+        for (const SudoDisabledWrapper& wrapper : wrappers) {
+            if (wrapper.policy != policyName_) {
+                continue;
+            }
+            // GLOBAL uniqueness over the captured snapshot: one id is
+            // permission for exactly one physical wrapper.
+            const std::string canonical =
+                canonicalizeSudoProofPath(document.path);
+            const auto seen = idOwner.find(wrapper.mutationId);
+            if (seen != idOwner.end() && seen->second != canonical) {
+                proof.message = "wrapper id '" + wrapper.mutationId +
+                                "' встречается в двух sudoers-файлах (" +
+                                seen->second.string() + " и " + canonical +
+                                "); владение не может быть доказано";
+                return proof;
+            }
+            idOwner.emplace(wrapper.mutationId, canonical);
+            byPath[canonical].push_back(wrapper);
+        }
+    }
+
+    const SudoWrapperProofMode wrapperMode =
+        mode == ScopedDefaultsProofMode::Exact
+            ? SudoWrapperProofMode::Exact
+            : SudoWrapperProofMode::ReleaseSubset;
+    for (const auto& [path, wrappers] : byPath) {
+        const SudoWrapperProvenanceCheck check = checkSudoWrapperProvenance(
+            wrappers, std::filesystem::path(path), policyName_, proofs,
+            wrapperMode);
+        if (!check.safeToRelease()) {
+            proof.message = describeSudoWrapperProvenance(check, policyName_);
+            return proof;
+        }
+    }
+
+    // Missing expected proofs, decided over the WHOLE captured snapshot (not
+    // per file). In Exact mode any missing proof is a failure; in
+    // ReleaseSubset mode it is an already released subset.
+    std::vector<std::string> missing;
+    for (const SudoScopedDefaultsWrapperProof& expected : proofs) {
+        if (idOwner.find(expected.wrapperId) == idOwner.end()) {
+            missing.push_back(expected.wrapperId);
+        }
+    }
+    if (mode == ScopedDefaultsProofMode::Exact && !missing.empty()) {
+        proof.message =
+            "ожидаемая обёртка отсутствует на диске, target/previous-state не "
+            "доказан: ";
+        for (const std::string& id : missing) {
+            proof.message += id + " ";
+        }
+        return proof;
+    }
+
+    // SEMANTIC verification on the SAME captures: an active scoped Defaults is a
+    // start line that is NOT inside a FIC wrapper.
+    for (const CapturedSudoersDocument& document :
+         requireNoActiveScopedDefaults ? captured.documents
+                                       : ScopedDefaultsCapturedState{}.documents) {
+        const std::vector<SudoPhysicalLine> lines =
+            linesOf(document.state.content);
+        std::vector<SudoDisabledWrapper> wrappers;
+        std::string parseError;
+        if (parseSudoDisabledWrappers(lines, wrappers, parseError) !=
+            SudoWrapperParseStatus::Ok) {
+            proof.message = parseError;
+            return proof;
+        }
+        std::vector<bool> suppressed(lines.size(), false);
+        for (const SudoDisabledWrapper& wrapper : wrappers) {
+            for (std::size_t n = wrapper.beginLine; n <= wrapper.endLine &&
+                                                n < suppressed.size(); ++n) {
+                suppressed[n] = true;
+            }
+        }
+        for (std::size_t index = 0; index < lines.size(); ++index) {
+            if (suppressed[index]) {
+                continue;
+            }
+            if (scopedDefaultsScope(lines[index].text).empty()) {
+                continue;
+            }
+            proof.message = "активный контекстный Defaults остаётся вне "
+                            "FIC-обёртки в " + document.path.string();
+            return proof;
+        }
+    }
+
+    proof.ok = true;
+    return proof;
+}
+
 ScopedDefaultsTransaction::ScopedDefaultsTransaction(
     SudoersConfiguration& configuration,
     std::string policyName)
@@ -265,24 +428,25 @@ bool compensateFiles(std::vector<FileTransaction>& transactions,
 } // namespace
 
 bool proveObservedStateDurable(
-    const std::vector<std::filesystem::path>& paths,
+    const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
     std::string& error) {
-    for (const std::filesystem::path& path : paths) {
+    for (const std::filesystem::path& path : proofPaths(proofs)) {
         AtomicTargetState current;
         std::string captureError;
         if (!AtomicFileWriter::captureTargetState(path.string(), current,
                                                   &captureError)) {
-            // The file may have disappeared externally; that absence is only
-            // provable by confirming the directory entry itself.
-            std::string durabilityError;
-            if (!AtomicFileWriter::fsyncParentDirectoryForPath(path.string(),
-                                                                &durabilityError)) {
-                error += "не удалось подтвердить durable-состояние " +
-                         path.string() + ": " + captureError + "; " +
-                         durabilityError + "; ";
-                return false;
+            // A capture failure is NOT an absence: a symlink, a directory, a
+            // permission or I/O error would be silently accepted here. Only the
+            // typed absence barrier proves "the target is gone" durably; any
+            // other condition stays a hard failure.
+            std::string absenceError;
+            if (AtomicFileWriter::ensureTargetAbsentDurableIfCurrentState(
+                    path.string(), &absenceError)) {
+                continue;
             }
-            continue;
+            error += "не удалось доказать durable-состояние " + path.string() +
+                     ": " + captureError + "; " + absenceError + "; ";
+            return false;
         }
         std::string durabilityError;
         if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
@@ -590,57 +754,49 @@ SudoScopedDefaultsTransactionResult ScopedDefaultsTransaction::release(
         return refuse(error);
     }
 
-    // CAPTURE FIRST: the global inventory is rebuilt from the very same
-    // captured states the writes are later CAS-bound to. Reasoning about
-    // "one proof authorizes exactly one wrapper globally" on an older graph
-    // snapshot while writing against a newer capture would prove nothing.
+    // FULL capture-first: EVERY current graph document AND every journal proof
+    // path is captured, and the global inventory is rebuilt from exactly those
+    // captures. Deriving the capture set from an OLD wrapper inventory would miss
+    // a file that only now acquired a wrapper -- precisely how a duplicate id
+    // could survive a rollback unnoticed.
+    if (hooks.beforeCapture) {
+        hooks.beforeCapture();
+    }
+    const ScopedDefaultsCapturedState captured =
+        captureProofAndGraphState(proofs);
     std::map<std::filesystem::path, std::vector<SudoDisabledWrapper>> byPath;
     std::map<std::filesystem::path, AtomicTargetState> capturedByPath;
     {
         std::map<std::string, std::filesystem::path> idOwner;
-        for (const OwnedWrapper& owned : inventory) {
-            if (owned.wrapper.policy != policyName_) {
-                continue;
-            }
-            const auto seen = idOwner.find(owned.wrapper.mutationId);
-            if (seen != idOwner.end() &&
-                seen->second != owned.path) {
-                return refuse(
-                    "wrapper id '" + owned.wrapper.mutationId +
-                    "' встречается в двух sudoers-файлах; глобальная "
-                    "уникальность не доказана");
-            }
-            idOwner.emplace(owned.wrapper.mutationId, owned.path);
-            if (capturedByPath.count(owned.path) != 0) {
-                continue;
-            }
-            AtomicTargetState captured;
-            if (!AtomicFileWriter::captureTargetState(
-                    owned.path.string(), captured, &error)) {
-                return refuse("Не удалось зафиксировать состояние " +
-                              owned.path.string() + ": " + error);
-            }
-            capturedByPath.emplace(owned.path, std::move(captured));
-        }
-        // One capture per distinct file; the inventory is then rebuilt from
-        // exactly those captured contents (never mixed with the graph snapshot).
-        for (const auto& entry : capturedByPath) {
-            const std::filesystem::path& path = entry.first;
-            const AtomicTargetState& captured = entry.second;
-            std::vector<fic::sudoers::SudoPhysicalLine> lines =
-                linesOf(captured.content);
+        for (const CapturedSudoersDocument& document : captured.documents) {
+            const std::string canonical =
+                canonicalizeSudoProofPath(document.path);
+            const std::vector<SudoPhysicalLine> lines =
+                linesOf(document.state.content);
             std::vector<SudoDisabledWrapper> parsed;
             std::string parseError;
             if (parseSudoDisabledWrappers(lines, parsed, parseError) !=
                 SudoWrapperParseStatus::Ok) {
                 return refuse("Не удалось разобрать FIC-маркеры " +
-                              path.string() + ": " + parseError);
+                              canonical + ": " + parseError);
             }
             for (const SudoDisabledWrapper& wrapper : parsed) {
-                if (wrapper.policy == policyName_) {
-                    byPath[path].push_back(wrapper);
+                if (wrapper.policy != policyName_) {
+                    continue;
                 }
+                // One id authorizes exactly ONE physical wrapper, globally.
+                const auto seen = idOwner.find(wrapper.mutationId);
+                if (seen != idOwner.end() && seen->second != canonical) {
+                    return refuse(
+                        "wrapper id '" + wrapper.mutationId +
+                        "' встречается в двух sudoers-файлах (" +
+                        seen->second.string() + " и " + canonical +
+                        "); глобальная уникальность не доказана");
+                }
+                idOwner.emplace(wrapper.mutationId, canonical);
+                byPath[document.path].push_back(wrapper);
             }
+            capturedByPath.emplace(document.path, document.state);
         }
     }
     if (byPath.empty()) {
@@ -648,7 +804,7 @@ SudoScopedDefaultsTransactionResult ScopedDefaultsTransaction::release(
         // interrupted unwrap may have published the disappearance without a
         // completed directory fsync.
         std::string durabilityError;
-        if (!proveObservedStateDurable(proofPaths(proofs), durabilityError)) {
+        if (!proveObservedStateDurable(proofs, durabilityError)) {
             return refuse("отсутствие обёрток не подтверждено durable: " +
                           durabilityError);
         }
@@ -777,11 +933,31 @@ SudoScopedDefaultsTransactionResult ScopedDefaultsTransaction::release(
             releasedPaths.emplace_back(proof.canonicalPath);
         }
     }
+    // Durability of the RELEASED state: the exact post-write state is captured
+    // now and confirmed, so Success never rests on a state different from the
+    // one the unwrap produced.
     std::string durabilityError;
-    if (!proveObservedStateDurable(releasedPaths, durabilityError)) {
-        return fail(SudoScopedDefaultsResultKind::Failed,
-                    "восстановленное состояние не подтверждено durable: " +
-                        durabilityError);
+    for (const std::filesystem::path& path : releasedPaths) {
+        AtomicTargetState released;
+        std::string captureError;
+        if (!AtomicFileWriter::captureTargetState(path.string(), released,
+                                                  &captureError)) {
+            std::string absenceError;
+            if (!AtomicFileWriter::ensureTargetAbsentDurableIfCurrentState(
+                    path.string(), &absenceError)) {
+                return fail(SudoScopedDefaultsResultKind::Failed,
+                            "released-состояние не доказано для " +
+                                path.string() + ": " + captureError + "; " +
+                                absenceError);
+            }
+            continue;
+        }
+        if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                path.string(), released, &durabilityError)) {
+            return fail(SudoScopedDefaultsResultKind::Failed,
+                        "восстановленное состояние не подтверждено durable: " +
+                            durabilityError);
+        }
     }
 
     result.kind = SudoScopedDefaultsResultKind::Success;

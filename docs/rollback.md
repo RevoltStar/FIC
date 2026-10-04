@@ -1479,6 +1479,47 @@ no-op. Для канонического ресурса допустима не 
 Rollback также не может стать `Success`/`NothingToDo`, пока released-состояние
 (включая **отсутствие** обёртки) не подтверждено durable.
 
+### Exact ownership proof vs Release-subset proof
+
+Два РАЗНЫХ контракта доказательства, которые раньше были смешаны:
+
+* **Exact** (`ScopedDefaultsProofMode::Exact`) — используется перед каждым
+  переходом журнала, который **разрешает** запись (`Prepared -> Applied`,
+  нормализация refresh). Здесь КАЖДЫЙ ожидаемый proof обязан физически
+  существовать, по точному `canonicalPath`, с точным `payloadDigest`.
+  Отсутствующая обёртка — провал, даже если она «исчезла внешне».
+* **ReleaseSubset** — только для rollback/release. Отсутствующая обёртка,
+  доказанная журналом, — уже освобождённое подмножество; но её отсутствие
+  должно быть отдельно доказано durable.
+
+`releasedIds` допустимы только в ReleaseSubset. Семантика Exact решается по
+ВСЕМУ захваченному inventory, а не по одному файлу: proof, авторизованный в
+`a.conf`, законно не имеет обёртки в `b.conf`.
+
+### Единая snapshot generation
+
+Ownership proof, семантическая проверка и durability barrier работают на
+ОДНИХ И ТЕХ ЖЕ `AtomicTargetState`:
+
+```
+captureProofAndGraphState()      // весь graph + все proof paths
+  -> proveCapturedState()        // парс wrappers ИЗ captures, exact/released,
+                                 // глобальная уникальность, семантика
+  -> proveCapturedStateDurable() // ensureTargetDurableIfCurrentState() по ТЕМ ЖЕ
+                                 // captures
+  -> journal transition
+```
+
+Capture set = **все** документы графа **∪** все `canonicalPath` из журнала.
+Производный от старого wrapper inventory набор путей недопустим: файл, который
+только что получил обёртку, иначе не попадёт в capture и не будет проверен на
+дубликаты.
+
+Отсутствие файла доказывается типизированным барьером
+`ensureTargetAbsentDurableIfCurrentState()`. Ошибка capture **никогда** не
+трактуется как отсутствие: symlink, каталог, отказ прав или I/O-ошибка ведут к
+fail closed.
+
 Доказательство (proof) однозначно привязано к тройке
 `wrapperId + canonicalPath + payloadDigest`; `previous ⊆ target` сравнивается по
 полной идентичности. Каталог-пример: wrapper пропал внешне — отсутствие само по

@@ -41,6 +41,7 @@ using fic::sudoers::PreparedRecovery;
 using fic::sudoers::ScopedDefaultsLifecycle;
 using fic::sudoers::ScopedDefaultsLifecycleDeps;
 using fic::sudoers::ScopedDefaultsLifecycleOutcome;
+using fic::sudoers::ScopedDefaultsProofMode;
 using fic::sudoers::ScopedDefaultsTransaction;
 using fic::sudoers::SudoScopedDefaultsHooks;
 using fic::sudoers::SudoScopedDefaultsTransactionResult;
@@ -152,10 +153,6 @@ ScopedDefaultsLifecycleDeps productionDeps(
             return instance->normalizeSudoScopedDefaultsPreparedToPrevious(
                 id, proven, error);
         };
-    deps.journal.proveDurable = [](const std::vector<std::filesystem::path>& paths,
-                                   std::string& error) {
-        return fic::sudoers::proveObservedStateDurable(paths, error);
-    };
     deps.hooks = hooks;
     const PolicyRef policy = scopedPolicy();
     deps.journal.activeRecords = [policy](const PolicyRef&) {
@@ -536,8 +533,8 @@ void runByteExactRoundTrip(const std::string& original,
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    require(reconcile(configuration, productionHooks(configuration)).ok,
-            label + ": apply");
+    const auto outcome = reconcile(configuration, productionHooks(configuration));
+    require(outcome.ok, "reconcile failed [" + label + "]: " + outcome.message);
     bool stillActive = false;
     for (const auto& line : fic::sudoers::splitPhysicalLines(
              readFile(tree.root / "sudoers"))) {
@@ -937,7 +934,8 @@ void testPartialRollbackCompensated() {
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    require(reconcile(configuration, productionHooks(configuration)).ok, "apply");
+    require(reconcile(configuration, productionHooks(configuration)).ok,
+            "apply");
     const auto owned = activeOwned();
     require(owned.size() == 2, "two wrappers must exist");
     const std::string wrappedA = readFile(tree.root / "a.conf");
@@ -1381,7 +1379,8 @@ void testDuplicateIdBeforeReleaseCaptureRefused() {
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    require(reconcile(configuration, productionHooks(configuration)).ok, "apply");
+    require(reconcile(configuration, productionHooks(configuration)).ok,
+            "apply");
     const auto owned = activeOwned();
     require(owned.size() == 1, "one wrapper must exist");
 
@@ -1404,6 +1403,299 @@ void testDuplicateIdBeforeReleaseCaptureRefused() {
     require(readFile(tree.root / "sudoers").find("Defaults:alice exempt_group=wheel") !=
                 std::string::npos,
             "the foreign duplicate must be preserved byte-exactly");
+}
+
+
+// --- AA/AI: new target wrapper B disappears before the final commit ---------
+
+void testTargetWrapperDisappearsBeforeCommit() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "A");
+    const auto ownedA = activeOwned();
+
+    writeFile(tree.root / "sudoers",
+              wrapperBlock(ownedA[0].wrapperId, "Defaults:alice exempt_group=wheel") +
+              "Defaults:bob passwd_tries=9\n");
+    SudoScopedDefaultsHooks hooks = productionHooks(configuration);
+    bool unwrapped = false;
+    // After FIC wrapped B and after the original semantic postcondition, but
+    // BEFORE the strict final target proof, an external process unwraps B and
+    // the original Defaults:bob becomes active again.
+    hooks.reloadAndVerify = [&configuration, &unwrapped](std::string& e) {
+        if (!configuration.load(e)) {
+            return false;
+        }
+        if (unwrapped) {
+            return true;
+        }
+        unwrapped = true;
+        const auto path = configuration.graphDocuments()[0].path;
+        std::string content = readFile(path);
+        // Real unwrap of the newly installed wrapper, not a comment deletion.
+        const std::size_t begin = content.find("#@FIC_SUDO_DISABLED_BEGIN");
+        const std::size_t end = content.find("#@FIC_SUDO_DISABLED_END");
+        if (begin == std::string::npos || end == std::string::npos) {
+            return true;
+        }
+        const std::size_t lineEnd = content.find('\n', end);
+        const std::string body =
+            content.substr(begin, content.find('\n', begin) - begin);
+        (void)body;
+        const std::size_t markerEnd = content.find('@', content.find("LINE", begin));
+        const std::string restored =
+            content.substr(markerEnd + 1,
+                           (lineEnd == std::string::npos ? content.size() : lineEnd)
+                               - markerEnd - 1);
+        content = content.substr(0, begin) + restored +
+                  (lineEnd == std::string::npos ? "" : "\n") +
+                  content.substr(lineEnd == std::string::npos ? content.size()
+                                                             : lineEnd + 1);
+        writeFile(path, content);
+        return true;
+    };
+    const auto outcome = reconcile(configuration, hooks);
+    require(unwrapped, "the concurrent unwrap must have been injected");
+    require(!outcome.ok, "a vanished target wrapper must block the commit");
+    require(activePreparedCount() == 1,
+            "the Prepared record must survive a missing target wrapper");
+    bool bobActive = false;
+    for (const auto& line : fic::sudoers::splitPhysicalLines(
+             readFile(tree.root / "sudoers"))) {
+        if (line.text.rfind("Defaults:bob passwd_tries=9", 0) == 0) {
+            bobActive = true;
+        }
+    }
+    require(bobActive, "the semantic state must NOT be reported compliant");
+}
+
+// --- AB/AC: previous wrapper drifts or vanishes before normalization --------
+
+void runPreviousBrokenBeforeNormalization(bool removeWrapper) {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "A");
+    const auto ownedA = activeOwned();
+
+    writeFile(tree.root / "sudoers",
+              wrapperBlock(ownedA[0].wrapperId, "Defaults:alice exempt_group=wheel") +
+              "Defaults:bob passwd_tries=9\n");
+    SudoersConfiguration staged(options);
+    std::string stagedError;
+    require(staged.load(stagedError), stagedError);
+    ScopedDefaultsTransaction planner(staged, kPolicyName);
+    const auto plan = planner.plan(ownedA);
+    std::vector<SudoScopedDefaultsWrapperProof> fresh;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        fresh.push_back(mutation.proof);
+    }
+    stageRefresh(ownedA, policy, fresh);
+
+    // Break the PREVIOUS wrapper before the normalization proof runs.
+    if (removeWrapper) {
+        writeFile(tree.root / "sudoers", "Defaults:bob passwd_tries=9\n");
+    } else {
+        writeFile(tree.root / "sudoers",
+                  wrapperBlock(ownedA[0].wrapperId,
+                               "Defaults:root ALL=(ALL:ALL) ALL") +
+                  "Defaults:bob passwd_tries=9\n");
+    }
+
+    SudoersConfiguration afterRestart(options);
+    std::string loadError;
+    require(afterRestart.load(loadError), loadError);
+    const auto outcome = reconcile(afterRestart, productionHooks(afterRestart));
+    require(!outcome.ok, "normalization over a broken previous state is forbidden");
+    require(activePreparedCount() == 1,
+            "the Prepared record must survive an unprovable previous state");
+}
+
+void testPreviousDriftsBeforeNormalization() {
+    runPreviousBrokenBeforeNormalization(false);
+}
+
+void testPreviousDisappearsBeforeNormalization() {
+    runPreviousBrokenBeforeNormalization(true);
+}
+
+
+// --- AD: duplicate id inserted AFTER graph load, BEFORE rollback capture ----
+
+void testDuplicateInsertedAfterGraphLoadBeforeCapture() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "site.conf", "Defaults:alice exempt_group=wheel\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "site.conf").string() + "\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply");
+    const auto owned = activeOwned();
+    require(owned.size() == 1, "one wrapper must exist");
+    const std::string wrappedSite = readFile(tree.root / "site.conf");
+
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.sudoersOptions = [options]() { return options; };
+    // The graph is ALREADY loaded; the duplicate appears only afterwards, inside
+    // the window the beforeCapture seam models.
+    std::string mainBefore = readFile(tree.root / "sudoers");
+    SudoScopedDefaultsHooks hooks;
+    hooks.beforeCapture = [&tree, &mainBefore, &wrappedSite]() {
+        writeFile(tree.root / "sudoers", mainBefore + wrappedSite);
+    };
+    SudoersConfiguration release(options);
+    std::string releaseError;
+    require(release.load(releaseError), releaseError);
+    ScopedDefaultsTransaction transaction(release, kPolicyName);
+    const auto result = transaction.release(owned, hooks);
+    require(result.operation.conflict,
+            "a duplicate id inserted before the capture must be a Conflict");
+    require(!activeOwned().empty(), "the provenance must stay active");
+}
+
+// --- AE/AF: a non-regular proof target must NOT count as proven absence -----
+
+void runNonRegularProofTarget(bool asDirectory) {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "site.conf", "Defaults:alice exempt_group=wheel\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "site.conf").string() + "\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply");
+    const auto owned = activeOwned();
+    require(owned.size() == 1, "one wrapper must exist");
+
+    // Replace the proof path with something that is NOT a regular file.
+    std::filesystem::remove(tree.root / "site.conf");
+    if (asDirectory) {
+        std::filesystem::create_directories(tree.root / "site.conf");
+    } else {
+        std::error_code ignored;
+        std::filesystem::create_symlink("/etc/hostname", tree.root / "site.conf",
+                                        ignored);
+    }
+
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.sudoersOptions = [options]() { return options; };
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        policy, kScopedDefaultsResource, deps);
+    require(report.status != fic::rollback::RollbackStatus::Success,
+            "a non-regular proof target must not be reported as released");
+    require(!activeOwned().empty(),
+            "the provenance must stay active on a symlink/directory target");
+}
+
+void testSymlinkProofTargetNotAbsent() { runNonRegularProofTarget(false); }
+
+void testDirectoryProofTargetNotAbsent() { runNonRegularProofTarget(true); }
+
+// --- AG: a genuinely absent proof file may be proven as a durable absence ---
+
+void testGenuinelyAbsentProofFile() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const PolicyRef policy = scopedPolicy();
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "site.conf", "Defaults:alice exempt_group=wheel\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "site.conf").string() + "\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok, "apply");
+    const auto owned = activeOwned();
+    require(owned.size() == 1, "one wrapper must exist");
+
+    // The wrapper file is genuinely REMOVED externally: the released subset is
+    // legitimate, and the typed absence barrier proves it durably.
+    std::filesystem::remove(tree.root / "site.conf");
+    writeFile(tree.root / "sudoers",
+              "Defaults:alice exempt_group=wheel\n");
+
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.sudoersOptions = [options]() { return options; };
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        policy, kScopedDefaultsResource, deps);
+    require(report.status == fic::rollback::RollbackStatus::NothingToDo ||
+                report.status == fic::rollback::RollbackStatus::Success,
+            "a durable absence may resolve the record: " + report.message);
+}
+
+// --- AH: the filesystem changes between the exact proof and the barrier -----
+
+void testChangeBetweenProofAndDurability() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    writeFile(tree.root / "sudoers", "Defaults:alice exempt_group=wheel\n");
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+
+    // Durable barrier that first mutates the file, then reports success: the
+    // state-bound proof must notice the change and refuse.
+    class RacingBarrier {
+    public:
+        explicit RacingBarrier(std::filesystem::path path) : path_(std::move(path)) {
+            AtomicFileWriter::setDirectoryFsyncHookForTests(
+                [this](const std::string&) {
+                    std::string current = readFile(path_);
+                    current += "# racing writer\n";
+                    writeFile(path_, current);
+                    return true;
+                });
+        }
+        ~RacingBarrier() { AtomicFileWriter::setDirectoryFsyncHookForTests({}); }
+        RacingBarrier(const RacingBarrier&) = delete;
+        RacingBarrier& operator=(const RacingBarrier&) = delete;
+    private:
+        std::filesystem::path path_;
+    } racing(tree.root / "sudoers");
+
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    const auto plan = transaction.plan({});
+    std::vector<SudoScopedDefaultsWrapperProof> targets;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        targets.push_back(mutation.proof);
+    }
+    const auto applied = transaction.apply(plan.fresh, SudoScopedDefaultsHooks{});
+    require(applied.ok(), applied.operation.message);
+
+    SudoersConfiguration after(options);
+    std::string loadError;
+    require(after.load(loadError), loadError);
+    ScopedDefaultsTransaction prover(after, kPolicyName);
+    const auto captured = prover.captureProofAndGraphState(targets);
+    const auto proof = prover.proveCapturedState(
+        targets, captured, ScopedDefaultsProofMode::Exact);
+    require(proof.ok, "the exact proof itself must succeed: " + proof.message);
+    // Now the filesystem changes before the barrier runs.
+    std::string current = readFile(tree.root / "sudoers");
+    current += "# late external writer\n";
+    writeFile(tree.root / "sudoers", current);
+    std::string durabilityError;
+    require(!ScopedDefaultsTransaction::proveCapturedStateDurable(
+                proof.captured, durabilityError),
+            "the barrier must fail when the proven state changed");
 }
 
 } // namespace

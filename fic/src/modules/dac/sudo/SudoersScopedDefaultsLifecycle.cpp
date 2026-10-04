@@ -49,6 +49,35 @@ bool ScopedDefaultsLifecycle::collectActiveOwnership(
     return true;
 }
 
+
+// STRICT snapshot-bound resolution proof.
+//
+// capture -> prove (exact ownership + semantics on the SAME captures) ->
+// durability of EXACTLY those captures. A journal transition may only follow
+// this sequence; nothing re-reads the filesystem in between.
+bool ScopedDefaultsLifecycle::proveStrictState(
+    const std::string& policyName,
+    const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
+    ScopedDefaultsCapturedState& captured,
+    std::string& error,
+    bool requireNoActiveScopedDefaults) {
+    ScopedDefaultsTransaction transaction(*deps_.configuration, policyName);
+    captured = transaction.captureProofAndGraphState(proofs);
+    const ScopedDefaultsStateProof proof = transaction.proveCapturedState(
+        proofs, captured, ScopedDefaultsProofMode::Exact,
+        requireNoActiveScopedDefaults);
+    if (!proof.ok) {
+        error = proof.message;
+        return false;
+    }
+    if (!ScopedDefaultsTransaction::proveCapturedStateDurable(proof.captured,
+                                                               error)) {
+        return false;
+    }
+    captured = proof.captured;
+    return true;
+}
+
 ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     const std::string& policyName) {
     ScopedDefaultsRecoveryOutcome outcome;
@@ -99,25 +128,16 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     const PreparedRecovery classification =
         transaction.classifyPrepared(previous, target, classifyError);
     if (classification == PreparedRecovery::CompleteTarget) {
-        // Durability BEFORE commit: the wrapper being VISIBLE proves nothing if
-        // the rename that published it was never followed by a directory fsync.
-        std::string durabilityError;
-        if (!deps_.journal.proveDurable(proofPaths(target), durabilityError)) {
+        // STRICT: capture, prove the EXACT target set (including that every
+        // target wrapper physically exists) and the semantic invariant on those
+        // same captures, then confirm durability of exactly those captures.
+        ScopedDefaultsCapturedState captured;
+        std::string strictError;
+        if (!proveStrictState(policyName, target, captured, strictError)) {
             outcome.result = PreparedRecoveryResult::FailClosed;
             outcome.message =
-                "target-состояние не подтверждено durable; Prepared-запись "
-                "оставлена активной";
-            outcome.diagnostics.push_back(durabilityError);
-            return outcome;
-        }
-        // Ownership is re-proved against the exact target set immediately
-        // before the journal may claim it.
-        const std::string refusal =
-            transaction.validateCurrentOwnership(target);
-        if (!refusal.empty()) {
-            outcome.result = PreparedRecoveryResult::FailClosed;
-            outcome.message =
-                "target-состояние не доказано перед commit: " + refusal;
+                "target-состояние не доказано (snapshot/durability): " +
+                strictError;
             return outcome;
         }
         std::string commitError;
@@ -136,24 +156,10 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     }
 
     if (classification == PreparedRecovery::CompletePrevious) {
-        // Durability BEFORE discarding/normalizing: the previous side may
-        // itself have been produced by a compensation rename whose directory
-        // fsync never completed.
-        std::string durabilityError;
-        const std::vector<SudoScopedDefaultsWrapperProof>& provenSide =
-            previous.empty() ? target : previous;
-        if (!deps_.journal.proveDurable(proofPaths(provenSide),
-                                        durabilityError)) {
-            outcome.result = PreparedRecoveryResult::FailClosed;
-            outcome.message =
-                "previous-состояние не подтверждено durable; Prepared-запись "
-                "оставлена активной";
-            outcome.diagnostics.push_back(durabilityError);
-            return outcome;
-        }
         if (previous.empty()) {
-            // FRESH transition that provably never landed: nothing is owned, so
-            // removing the record loses no provenance.
+            // FRESH transition: the filesystem provably holds no FIC-owned
+            // wrapper, so there is nothing to prove and nothing to orphan. Only
+            // the removal of the record is required.
             std::string discardError;
             if (!deps_.journal.discard(preparedId, discardError)) {
                 outcome.result = PreparedRecoveryResult::FailClosed;
@@ -168,15 +174,21 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
             return outcome;
         }
         // REFRESH: the physical wrappers of `previous` are on disk and were
-        // proven by FIC BEFORE this transition. Discarding here would orphan
-        // them, so the record is normalized back to Applied(previous) instead.
-        const std::string refusal =
-            transaction.validateCurrentOwnership(previous);
-        if (!refusal.empty()) {
-            outcome.result = PreparedRecoveryResult::FailClosed;
-            outcome.message =
-                "previous-состояние не доказано перед normalization: " + refusal;
-            return outcome;
+        // proven by FIC BEFORE this transition. STRICT previous-side proof on
+        // ONE snapshot generation, then normalization; discarding here would
+        // orphan them.
+        {
+            ScopedDefaultsCapturedState captured;
+            std::string strictError;
+            if (!proveStrictState(policyName, previous, captured,
+                                  strictError,
+                                  false)) {
+                outcome.result = PreparedRecoveryResult::FailClosed;
+                outcome.message =
+                    "previous-состояние не доказано (snapshot/durability): " +
+                    strictError;
+                return outcome;
+            }
         }
         std::string normalizeError;
         if (!deps_.journal.normalizePreparedToPrevious(preparedId, previous,
@@ -267,16 +279,19 @@ bool ScopedDefaultsLifecycle::resolveAfterFailedMutation(
         }
         return true;
     }
-    // REFRESH: the previous wrappers are physically present and were proven by
-    // FIC before this transition. Deleting the record would orphan them, so it
-    // is normalized back to Applied(previous) on the SAME id.
-    std::string durabilityError;
-    if (!deps_.journal.proveDurable(proofPaths(previous), durabilityError)) {
-        outcome.message =
-            "previous-состояние не подтверждено durable; normalization "
-            "запрещена, Prepared-запись остаётся активной";
-        outcome.diagnostics.push_back(durabilityError);
-        return false;
+    // REFRESH: the previous wrappers must still exist EXACTLY and durably. A
+    // drifted or vanished A forbids the normalization, because normalizing would
+    // authorize a wrapper FIC can no longer prove.
+    {
+        ScopedDefaultsCapturedState captured;
+        std::string strictError;
+        if (!proveStrictState(kScopedDefaultsPolicyName, previous, captured,
+                              strictError, false)) {
+            outcome.message =
+                "previous-состояние не доказано (snapshot/durability), "
+                "normalization запрещена: " + strictError;
+            return false;
+        }
     }
     std::string normalizeError;
     if (!deps_.journal.normalizePreparedToPrevious(mutationId, previous,
@@ -387,37 +402,23 @@ ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
         return outcome;
     }
 
-    // FINAL ownership re-proof against the exact TARGET set. The initial
-    // preflight ran before the mutation; between then and here an external
-    // process may have edited an already-owned wrapper, and committing
-    // targetProofs in that case would authorize content FIC never proved.
-    std::string reloadError;
-    if (deps_.configuration != nullptr &&
-        !deps_.configuration->load(reloadError)) {
-        outcome.message = "не удалось перечитать sudoers перед commit: " +
-                          reloadError;
-        return outcome;
-    }
-    ScopedDefaultsTransaction finalTransaction(*deps_.configuration, policyName);
-    const std::string finalRefusal =
-        finalTransaction.validateCurrentOwnership(targetProofs);
-    if (!finalRefusal.empty()) {
-        // The filesystem holds installed FIC state, so the Prepared record MUST
-        // stay active: recovery will resolve it from the real physical state.
-        outcome.message =
-            "финальное доказательство владения не пройдено, commit запрещён: " +
-            finalRefusal;
-        return outcome;
-    }
-    // Durability barrier before the journal may claim the target ownership.
-    std::string durabilityError;
-    if (!deps_.journal.proveDurable(proofPaths(targetProofs),
-                                    durabilityError)) {
-        outcome.message =
-            "target-состояние не подтверждено durable; Prepared-запись "
-            "оставлена активной";
-        outcome.diagnostics.push_back(durabilityError);
-        return outcome;
+    // STRICT FINAL SNAPSHOT: capture -> exact target ownership AND the semantic
+    // invariant on THOSE captures -> durability of EXACTLY those captures.
+    // A wrapper that disappeared after the transaction, an edited existing
+    // wrapper or a re-activated scoped Defaults all fail here, and no unrelated
+    // filesystem read happens between the proof and the barrier.
+    {
+        ScopedDefaultsCapturedState captured;
+        std::string strictError;
+        if (!proveStrictState(policyName, targetProofs, captured,
+                              strictError)) {
+            // The filesystem holds installed FIC state, so the Prepared record
+            // MUST stay active: recovery resolves it from the real state.
+            outcome.message =
+                "строгое доказательство target-состояния не пройдено, commit "
+                "запрещён: " + strictError;
+            return outcome;
+        }
     }
 
     if (!deps_.journal.commit(mutationId, journalError)) {

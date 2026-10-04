@@ -104,6 +104,18 @@ Follow-up поверх `c325e92`:
   против которых выполняются CAS-записи.
 * **Селективная компенсация** `restoreSelectedSudoDisabledEntries()` позволяет
   откатить частичный target, не снимая previous-обёртки.
+* **Snapshot-bound proof (939e6e2+)**: `captureProofAndGraphState()` →
+  `proveCapturedState()` → `proveCapturedStateDurable()` работают на ОДНИХ
+  `AtomicTargetState`; между proof и durability нет перечитывания ФС.
+* **Exact vs ReleaseSubset**: `ScopedDefaultsProofMode`. Exact требует
+  физического наличия КАЖДОГО proof'а (минус = провал); releasedIds допустимы
+  только в ReleaseSubset (rollback). Глобальная полнота решается по всему
+  captured inventory.
+* **Семантика на тех же captures**: активный scoped Defaults — start-строка вне
+  FIC-обёртки; проверяется на тех же снимках, что и ownership.
+* **Typed absence**: `ensureTargetAbsentDurableIfCurrentState()`; ошибка
+  capture (symlink/каталог/прав/I-O) больше не считается отсутствием.
+* **Rollback capture set**: весь include-graph ∪ все proof canonicalPath.
 * **Include lexer**: escape-семантика upstream `copy_string()` для кавыченных и
   некавыченных путей (`\xHH`→hex, `\c`→c). Подтверждено по исходникам sudo
   1.9.13 (debian-12) и текущим — поведение идентично.

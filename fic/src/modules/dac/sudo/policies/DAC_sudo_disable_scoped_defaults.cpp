@@ -104,10 +104,6 @@ bool DAC_sudo_disable_scoped_defaults::apply() {
             return instance->normalizeSudoScopedDefaultsPreparedToPrevious(
                 id, proven, error);
         };
-    deps.journal.proveDurable = [](const std::vector<std::filesystem::path>& paths,
-                                   std::string& error) {
-        return fic::sudoers::proveObservedStateDurable(paths, error);
-    };
 deps.hooks.validate = [&configuration](std::string& error) {
         return configuration.validateConfiguration(error);
     };

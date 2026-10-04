@@ -154,7 +154,23 @@ struct SudoWrapperProvenanceCheck {
         return !payloadMalformed && !fileDuplicate && unknownIds.empty() &&
             driftedIds.empty();
     }
+
+    // Safe under the STRICTER exact contract: an externally released subset is
+    // acceptable for rollback but proves nothing about a target state.
+    bool safeAsExact() const {
+        return safeToRelease() && releasedIds.empty();
+    }
 };
+
+// Two DISTINCT contracts, previously conflated:
+//
+//   ReleaseSubset -- rollback/release semantics. A proven wrapper that already
+//     disappeared externally is an already released subset and is NOT an error.
+//   Exact -- target/previous state proof. EVERY expected proof must physically
+//     exist at its exact canonical path with its exact digest; an absent proof
+//     is a FAILURE, because resolving a journal transition on it would claim
+//     ownership of content that is not on disk.
+enum class SudoWrapperProofMode { ReleaseSubset, Exact };
 
 // `filePath` is the physical file the wrappers were parsed from: a proof is
 // valid only for the exact file it names.
@@ -162,7 +178,8 @@ SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
     const std::vector<SudoDisabledWrapper>& wrappers,
     const std::filesystem::path& filePath,
     const std::string& policyName,
-    const std::vector<SudoScopedDefaultsWrapperProof>& expectedProofs);
+    const std::vector<SudoScopedDefaultsWrapperProof>& expectedProofs,
+    SudoWrapperProofMode mode = SudoWrapperProofMode::ReleaseSubset);
 
 // Human-readable description of a failed provenance check; empty when
 // check.safeToRelease().

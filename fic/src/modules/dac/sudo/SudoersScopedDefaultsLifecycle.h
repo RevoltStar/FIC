@@ -48,11 +48,6 @@ struct ScopedDefaultsJournalAccess {
                        const std::vector<SudoScopedDefaultsWrapperProof>&,
                        std::string&)>
         normalizePreparedToPrevious;
-    // Durability barrier over the exact current state of the given files.
-    // A visible state is not a durable state.
-    std::function<bool(const std::vector<std::filesystem::path>&,
-                       std::string&)>
-        proveDurable;
 };
 
 struct ScopedDefaultsLifecycleDeps {
@@ -98,6 +93,16 @@ public:
     // Full production reconcile: recovery, ownership validation, planning,
     // prepare -> apply -> commit/discard.
     ScopedDefaultsLifecycleOutcome reconcile(const std::string& policyName);
+
+    // STRICT snapshot-bound resolution proof: capture -> exact ownership +
+    // semantics on the SAME captures -> durability of EXACTLY those captures.
+    // A journal transition may only follow this sequence.
+    bool proveStrictState(
+        const std::string& policyName,
+        const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
+        ScopedDefaultsCapturedState& captured,
+        std::string& error,
+        bool requireNoActiveScopedDefaults = true);
 
     // Shared resolution of a Prepared record after a failed mutation. Used by
     // every error path so a failed REFRESH always normalizes back to the proven

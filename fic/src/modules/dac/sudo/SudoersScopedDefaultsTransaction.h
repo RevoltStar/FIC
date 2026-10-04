@@ -4,6 +4,8 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/dac/sudo/SudoersDisabledWrapper.h"
 
+#include <fic/core/fs/AtomicFileWriter.h>
+
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -83,7 +85,7 @@ struct SudoScopedDefaultsTransactionResult {
 // file is not a durable file, so no journal transition may be justified by
 // merely observing a wrapper.
 bool proveObservedStateDurable(
-    const std::vector<std::filesystem::path>& paths,
+    const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
     std::string& error);
 
 // The deduplicated physical files a proof set authorizes, in deterministic
@@ -144,6 +146,42 @@ struct SudoScopedDefaultsHooks {
     std::function<void(const std::filesystem::path& path)> beforeWrite;
     // Deterministic seam invoked right before each compensation write.
     std::function<void(const std::filesystem::path& path)> beforeRestore;
+    // Deterministic seam invoked immediately BEFORE the rollback capture phase,
+    // i.e. after the graph snapshot was taken. Lets a test model a concurrent
+    // filesystem change inside exactly that window.
+    std::function<void()> beforeCapture;
+};
+
+// Which contract an ownership proof must satisfy.
+enum class ScopedDefaultsProofMode {
+    // EVERY expected proof must physically exist, at its exact canonical path,
+    // with its exact payload digest. Used before every journal transition that
+    // RESOLVES a record (commit, normalization).
+    Exact,
+    // A proven wrapper that already disappeared is an already released subset.
+    // Used only for rollback/release semantics.
+    ReleaseSubset
+};
+
+// ONE captured file: identity, metadata and exact content read through the same
+// descriptor.
+struct CapturedSudoersDocument {
+    std::filesystem::path path;
+    AtomicTargetState state;
+};
+
+// A single snapshot generation. Every piece of reasoning about wrapper state,
+// identity, duplicates and semantics is performed on THESE captures, and the
+// durability barrier later confirms exactly THESE states -- never a re-read.
+struct ScopedDefaultsCapturedState {
+    std::vector<CapturedSudoersDocument> documents;
+};
+
+struct ScopedDefaultsStateProof {
+    bool ok = false;
+    std::string message;
+    // Carried so the caller can prove durability of exactly the proven state.
+    ScopedDefaultsCapturedState captured;
 };
 
 class ScopedDefaultsTransaction {
@@ -199,6 +237,33 @@ public:
     SudoScopedDefaultsTransactionResult release(
         const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
         const SudoScopedDefaultsHooks& hooks);
+
+    // Captures the exact state of every file the proofs reference PLUS every
+    // current graph document, into ONE snapshot generation. A proof path outside
+    // the include graph is still captured: ownership lives in a physical file,
+    // and the include topology may have changed externally.
+    ScopedDefaultsCapturedState captureProofAndGraphState(
+        const std::vector<SudoScopedDefaultsWrapperProof>& proofs) const;
+
+    // Proves ownership over a CAPTURED snapshot: wrapper grammar, global
+    // uniqueness of ids, exact path binding, exact payload digest, and (in Exact
+    // mode) that EVERY expected proof physically exists. Also verifies, on the
+    // SAME captures, that no active scoped Defaults remains outside a wrapper.
+    // The returned proof carries the captures so the caller can confirm
+    // durability of exactly this state.
+    // `requireNoActiveScopedDefaults` is the TARGET-side invariant and must be
+    // false when proving a PREVIOUS side: an unresolved refresh legitimately
+    // leaves the new violation active until the re-plan suppresses it.
+    ScopedDefaultsStateProof proveCapturedState(
+        const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
+        const ScopedDefaultsCapturedState& captured,
+        ScopedDefaultsProofMode mode,
+        bool requireNoActiveScopedDefaults = true) const;
+
+    // State-bound durability barrier over the EXACT captures that were proven.
+    // A filesystem that changed since the capture fails closed.
+    static bool proveCapturedStateDurable(
+        const ScopedDefaultsCapturedState& captured, std::string& error);
 
     // Classifies an unresolved Prepared transition against the live graph.
     PreparedRecovery classifyPrepared(
