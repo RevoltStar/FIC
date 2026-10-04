@@ -1557,6 +1557,36 @@ unknown/duplicate/владеющей обёртки. Требуется пере
 * `RollbackStatus::Success` и `NothingToDo` — на том же снимке, чей
   durability затем подтверждается.
 
+### Разрешение refresh Prepared после компенсации
+
+Успешная механическая компенсация **не** разрешает нормализацию: она
+доказывает только те файлы, которые FIC фактически переписал. Внешний процесс
+мог изменить previous-обёртку в файле, которого транзакция не касалась.
+
+Поэтому перед каждым `normalizePreparedToPrevious()` выполняется
+snapshot-bound previous-resolution proof:
+
+```
+capture( graph ∪ previous paths ∪ target paths )
+  -> Exact(previous), без требования семантики
+  -> proveCapturedStateDurable(ТОТ ЖЕ capture)
+  -> normalize
+```
+
+`Exact(previous)` на полном capture **сам по себе** доказывает всё
+необходимое: каждый previous-wrapper существует ровно один раз, по точному
+`canonicalPath`, с точным digest; любая уцелевшая target-only обёртка является
+**unknown** wrapper для этого expected-набора и валит проверку; дубликаты,
+drift и некорректные маркеры тоже проваливают.
+
+`target` пути входят в capture обязательно: target-only обёртка могла выпасть
+из текущего include-графа (изменение topology) и иначе была бы невидима.
+
+`FullyReleased` здесь **не** используется: его контракт — терминальное
+whole-policy освобождение (не должна остаться ни одной wrapper этой политики),
+используемое для fresh discard и rollback `Success`/`NothingToDo`. Он
+ошибочно требовал бы отсутствия и законно сохраняемого previous-wrapper A.
+
 Доказательство (proof) однозначно привязано к тройке
 `wrapperId + canonicalPath + payloadDigest`; `previous ⊆ target` сравнивается по
 полной идентичности. Каталог-пример: wrapper пропал внешне — отсутствие само по

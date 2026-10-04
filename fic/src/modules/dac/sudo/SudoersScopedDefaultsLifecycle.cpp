@@ -88,41 +88,40 @@ bool ScopedDefaultsLifecycle::provePreviousResolution(
     const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
     ScopedDefaultsCapturedState& captured,
     std::string& error) {
-    // target-only = target \ previous. Proving it FullyReleased proves that no
-    // wrapper of the failed transition survived anywhere in the captured graph,
-    // including files the transaction never touched.
-    std::set<std::string> previousIds;
-    for (const SudoScopedDefaultsWrapperProof& proof : previousProofs) {
-        previousIds.insert(proof.wrapperId);
-    }
-    std::vector<SudoScopedDefaultsWrapperProof> targetOnly;
-    for (const SudoScopedDefaultsWrapperProof& proof : targetProofs) {
-        if (previousIds.count(proof.wrapperId) == 0) {
-            targetOnly.push_back(proof);
-        }
-    }
-    ScopedDefaultsTransaction transaction(*deps_.configuration, policyName);
-    std::vector<SudoScopedDefaultsWrapperProof> allProofs = previousProofs;
+    // Capture scope = current graph U previous paths U target paths.
+    //
+    // The TARGET paths matter: a target-only wrapper may have fallen out of the
+    // current include graph (topology change) and would otherwise be invisible.
+    // The semantic invariant is deliberately NOT required: an unresolved refresh
+    // legitimately leaves the new violation active.
+    std::vector<fic::sudoers::SudoScopedDefaultsWrapperProof> allProofs =
+        previousProofs;
     allProofs.insert(allProofs.end(), targetProofs.begin(), targetProofs.end());
+    ScopedDefaultsTransaction transaction(*deps_.configuration, policyName);
     if (!transaction.captureProofAndGraphState(allProofs, captured, error)) {
         return false;
     }
+    // Exact(previous) on the FULL capture already proves everything needed:
+    //   * every previous wrapper exists exactly once, at its exact
+    //     canonicalPath, with its exact payload digest;
+    //   * ANY surviving target-only wrapper is an UNKNOWN wrapper for this
+    //     expected set and therefore fails closed;
+    //   * duplicate ids, drift and malformed markers fail closed.
+    //
+    // A separate FullyReleased(targetOnly) check is deliberately NOT used: that
+    // mode is the whole-policy TERMINAL contract (no FIC wrapper of the policy
+    // may survive) used by fresh discard and rollback Success/NothingToDo. It
+    // would wrongly demand the absence of the previous wrapper A that must
+    // survive a refresh rewind.
     const ScopedDefaultsStateProof exact = transaction.proveCapturedState(
         previousProofs, captured, ScopedDefaultsProofMode::Exact, false);
     if (!exact.ok) {
         error = "previous-состояние не доказано: " + exact.message;
         return false;
     }
-    if (!targetOnly.empty()) {
-        const ScopedDefaultsStateProof gone = transaction.proveCapturedState(
-            targetOnly, captured, ScopedDefaultsProofMode::FullyReleased, false);
-        if (!gone.ok) {
-            error = "target-only обёртки не доказано отсутствующими: " +
-                    gone.message;
-            return false;
-        }
-    }
-    return true;
+    // Durability of EXACTLY the capture that was just proven.
+    return ScopedDefaultsTransaction::proveCapturedStateDurable(exact.captured,
+                                                               error);
 }
 
 bool ScopedDefaultsLifecycle::resolveFreshPreparedToNoOwnership(
@@ -274,15 +273,15 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
             return outcome;
         }
         // REFRESH: the physical wrappers of `previous` are on disk and were
-        // proven by FIC BEFORE this transition. STRICT previous-side proof on
-        // ONE snapshot generation, then normalization; discarding here would
-        // orphan them.
+        // proven by FIC BEFORE this transition. Classification is NOT the
+        // resolution authority: a final snapshot-bound previous-resolution proof
+        // (graph U previous U target paths, Exact, same-capture durability)
+        // decides. Discarding here would orphan them.
         {
             ScopedDefaultsCapturedState captured;
             std::string strictError;
-            if (!proveStrictState(policyName, previous, captured,
-                                  strictError,
-                                  false)) {
+            if (!provePreviousResolution(policyName, previous, target, captured,
+                                         strictError)) {
                 outcome.result = PreparedRecoveryResult::FailClosed;
                 outcome.message =
                     "previous-состояние не доказано (snapshot/durability): " +
@@ -330,6 +329,26 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
         }
         // REFRESH compensation: the surviving previous wrappers must stay
         // authorized, so the record is normalized instead of discarded.
+        // Compensated != ExactPrevious. compensateToPrevious() only proves the
+        // files it rewrote; an external writer may have touched a previous
+        // wrapper in a file the transaction never touched. A NEW post-operation
+        // capture must therefore re-prove the exact previous state before the
+        // journal may be normalized.
+        if (deps_.journal.afterPreparedCompensation) {
+            deps_.journal.afterPreparedCompensation();
+        }
+        {
+            ScopedDefaultsCapturedState finalPrevious;
+            std::string proofError;
+            if (!provePreviousResolution(policyName, previous, target,
+                                         finalPrevious, proofError)) {
+                outcome.result = PreparedRecoveryResult::FailClosed;
+                outcome.message =
+                    "post-compensation previous-состояние не доказано: " +
+                    proofError;
+                return outcome;
+            }
+        }
         std::string normalizeError;
         if (!deps_.journal.normalizePreparedToPrevious(preparedId, previous,
                                                        normalizeError)) {
@@ -378,10 +397,12 @@ bool ScopedDefaultsLifecycle::resolveAfterFailedMutation(
     // drifted or vanished A forbids the normalization, because normalizing would
     // authorize a wrapper FIC can no longer prove.
     {
+        // graph U previous paths U target paths, Exact(previous), durability of
+        // the SAME capture.
         ScopedDefaultsCapturedState captured;
         std::string strictError;
-        if (!proveStrictState(kScopedDefaultsPolicyName, previous, captured,
-                              strictError, false)) {
+        if (!provePreviousResolution(kScopedDefaultsPolicyName, previous,
+                                     target, captured, strictError)) {
             outcome.message =
                 "previous-состояние не доказано (snapshot/durability), "
                 "normalization запрещена: " + strictError;

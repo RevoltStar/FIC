@@ -48,6 +48,9 @@ struct ScopedDefaultsJournalAccess {
                        const std::vector<SudoScopedDefaultsWrapperProof>&,
                        std::string&)>
         normalizePreparedToPrevious;
+    // Test-only seam between a successful mechanical compensation and the final
+    // snapshot-bound previous-resolution proof.
+    std::function<void()> afterPreparedCompensation;
 };
 
 struct ScopedDefaultsLifecycleDeps {

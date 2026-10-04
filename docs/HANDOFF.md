@@ -133,10 +133,16 @@ Follow-up поверх `c325e92`:
 * **Единый fresh-resolver (§6–§9)**: `resolveFreshPreparedToNoOwnership()` —
   единственный путь к `discard` свежего Prepared (CompletePrevious, failed
   mutation, compensation-to-empty).
-* **ОТКРЫТО**: ExactPrevious после selective compensation (§7/§10/§11) —
-  при добавлении вскрылся реальный баг: `compensateToPrevious()` возвращает
-  true, оставляя target-only обёртку на диске. Фикс откачен, чтобы не
-  оставлять красный suite; требуется отдельная доработка.
+* **Root cause прошлого красного Y — ОПРОВЕРГНУТ (тест AY)**: прямой тест
+  доказал, что `compensateToPrevious()` возвращает true и оставляет на диске
+  РОВНО {A} — target-only обёртка НЕ остаётся. Ошибка была в proof-контракте:
+  `FullyReleased({B})` — whole-policy терминальный режим и требовал отсутствия
+  также законно сохраняемого previous-wrapper A.
+* **ExactPrevious после selective compensation — FIXED**:
+  `provePreviousResolution()` = capture(graph ∪ previous ∪ target) →
+  `Exact(previous)` → durability ТОГО ЖЕ capture. Применён перед ВСЕМИ тремя
+  production-вызовами `normalizePreparedToPrevious()` (CompletePrevious,
+  selective compensation, resolveAfterFailedMutation) — grep-аудит подтверждает.
 * **ОТКРЫТО**: @includedir topology identity (§18–§27) и multiline semantic
   parity (§28–§31). AL–AU регрессии не добавлены.
 * **Include lexer**: escape-семантика upstream `copy_string()` для кавыченных и

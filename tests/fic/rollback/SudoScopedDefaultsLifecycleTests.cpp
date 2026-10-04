@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <set>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -136,7 +137,8 @@ SudoScopedDefaultsHooks productionHooks(SudoersConfiguration& configuration) {
 
 ScopedDefaultsLifecycleDeps productionDeps(
     SudoersConfiguration& configuration,
-    const SudoScopedDefaultsHooks& hooks) {
+    const SudoScopedDefaultsHooks& hooks,
+    const std::function<void()>& compensationHook = nullptr) {
     ScopedDefaultsLifecycleDeps deps;
     deps.configuration = &configuration;
     deps.journal.normalizePreparedToPrevious =
@@ -177,6 +179,9 @@ ScopedDefaultsLifecycleDeps productionDeps(
     deps.journal.discard = [](MutationId id, std::string& error) {
         return fic::rollback::discardMutation(id, error);
     };
+    if (compensationHook) {
+        deps.journal.afterPreparedCompensation = compensationHook;
+    }
     return deps;
 }
 
@@ -186,6 +191,17 @@ ScopedDefaultsLifecycleOutcome reconcile(
     const SudoScopedDefaultsHooks& hooks) {
     ScopedDefaultsLifecycle lifecycle(productionDeps(configuration, hooks));
     return lifecycle.reconcile(kPolicyName);
+}
+
+ScopedDefaultsLifecycleDeps productionDepsForOptions(
+    const SudoersConfigurationOptions& options,
+    const SudoScopedDefaultsHooks& hooks,
+    const std::function<void()>& compensationHook = nullptr) {
+    SudoersConfiguration configuration(options);
+    ScopedDefaultsLifecycleDeps deps = productionDeps(configuration, hooks,
+                                                      compensationHook);
+    deps.configuration = &configuration;
+    return deps;
 }
 
 std::vector<SudoScopedDefaultsWrapperProof> activeOwned() {
@@ -1817,6 +1833,221 @@ void testFreshCrashBeforeWriteStillRecovers() {
             "the wrapper must be installed after the fresh plan");
 }
 
+
+// Collects the wrapper ids physically present on disk right now.
+std::set<std::string> onDiskWrapperIds(const std::filesystem::path& root) {
+    std::set<std::string> ids;
+    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+        if (!entry.is_regular_file()) {
+            continue;
+        }
+        std::string error;
+        std::vector<fic::sudoers::SudoDisabledWrapper> wrappers;
+        if (fic::sudoers::parseSudoDisabledWrappers(
+                fic::sudoers::splitPhysicalLines(readFile(entry.path())),
+                wrappers, error) != fic::sudoers::SudoWrapperParseStatus::Ok) {
+            continue;
+        }
+        for (const auto& wrapper : wrappers) {
+            if (wrapper.policy == kPolicyName) {
+                ids.insert(wrapper.mutationId);
+            }
+        }
+    }
+    return ids;
+}
+
+// Builds Prepared previous={A}, target={A,B,C} with a PARTIAL disk {A,B}.
+struct PartialRefreshFixture {
+    explicit PartialRefreshFixture(TempTree& treeRef) : tree(treeRef) {
+        writeFile(tree.root / "a.conf", "Defaults:alice exempt_group=wheel\n");
+        writeFile(tree.root / "b.conf", "Defaults passwd_tries=3\n");
+        writeFile(tree.root / "c.conf", "Defaults passwd_tries=4\n");
+        writeFile(tree.root / "sudoers",
+                  "@include " + (tree.root / "a.conf").string() + "\n"
+                  "@include " + (tree.root / "b.conf").string() + "\n"
+                  "@include " + (tree.root / "c.conf").string() + "\n");
+        options = sudoOptions(tree.root);
+    }
+    void applyA() {
+        SudoersConfiguration configuration(options);
+        std::string error;
+        require(configuration.load(error), error);
+        require(reconcile(configuration, productionHooks(configuration)).ok,
+                "apply A");
+        ownedA = activeOwned();
+        require(ownedA.size() == 1, "only A must be owned");
+    }
+    void prepareRefreshAndInstallB() {
+        writeFile(tree.root / "b.conf",
+                  "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
+        writeFile(tree.root / "c.conf",
+                  "Defaults passwd_tries=4\nDefaults:carol passwd_tries=3\n");
+        SudoersConfiguration staged(options);
+        std::string stagedError;
+        require(staged.load(stagedError), stagedError);
+        ScopedDefaultsTransaction planner(staged, kPolicyName);
+        const auto plan = planner.plan(ownedA);
+        planned = plan.fresh;
+        require(planned.size() == 2, "B and C must be planned");
+        for (const PlannedScopedDefaultsMutation& mutation : planned) {
+            fresh.push_back(mutation.proof);
+        }
+        targetProofs = ownedA;
+        for (const auto& proof : fresh) {
+            targetProofs.push_back(proof);
+        }
+        stageRefresh(ownedA, scopedPolicy(), fresh);
+        // Install ONLY B: the semantic postcondition is relaxed on purpose
+        // because this scenario constructs a crash state where C never landed.
+        SudoScopedDefaultsHooks partialHooks = productionHooks(staged);
+        partialHooks.reloadAndVerify = [&staged](std::string& e) {
+            return staged.load(e);
+        };
+        ScopedDefaultsTransaction installer(staged, kPolicyName);
+        const auto partial = installer.apply({planned[0]}, partialHooks);
+        require(partial.ok(), partial.operation.message);
+    }
+    TempTree& tree;
+    SudoersConfigurationOptions options;
+    std::vector<SudoScopedDefaultsWrapperProof> ownedA;
+    std::vector<SudoScopedDefaultsWrapperProof> fresh;
+    std::vector<SudoScopedDefaultsWrapperProof> targetProofs;
+    std::vector<PlannedScopedDefaultsMutation> planned;
+};
+
+// --- AY: direct compensateToPrevious test, establishing the real disk state --
+
+void testDirectCompensationYieldsExactPrevious() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    PartialRefreshFixture fixture(tree);
+    fixture.applyA();
+    fixture.prepareRefreshAndInstallB();
+
+    const std::string aId = fixture.ownedA[0].wrapperId;
+    const std::string bId = fixture.fresh[0].wrapperId;
+    const std::string cId = fixture.fresh[1].wrapperId;
+    std::set<std::string> before = onDiskWrapperIds(tree.root);
+    require(before.count(aId) == 1 && before.count(bId) == 1 &&
+                before.count(cId) == 0,
+            "precondition: disk must be exactly {A,B}");
+
+    SudoersConfiguration current(fixture.options);
+    std::string error;
+    require(current.load(error), error);
+    ScopedDefaultsTransaction transaction(current, kPolicyName);
+    fic::sudoers::SudoScopedDefaultsFilesystemState state =
+        fic::sudoers::SudoScopedDefaultsFilesystemState::Unchanged;
+    const bool ok = transaction.compensateToPrevious(
+        fixture.ownedA, fixture.targetProofs, SudoScopedDefaultsHooks{}, state,
+        error);
+
+    const std::set<std::string> after = onDiskWrapperIds(tree.root);
+    require(ok, "compensateToPrevious must succeed: " + error);
+    require(after.count(aId) == 1,
+            "A must survive the selective compensation");
+    require(after.count(bId) == 0,
+            "B (target-only) must be removed by the compensation");
+    require(after.count(cId) == 0, "C was never installed and must be absent");
+}
+
+
+// Injects an external change between the mechanical compensation and the final
+// snapshot-bound previous-resolution proof, then requires that the recovery
+// refuses to normalize.
+void runChangeBetweenCompensationAndProof(bool breakPrevious,
+                                           bool restoreTargetOnly,
+                                           bool dropTargetFromGraph) {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    PartialRefreshFixture fixture(tree);
+    fixture.applyA();
+    fixture.prepareRefreshAndInstallB();
+
+    const std::string aId = fixture.ownedA[0].wrapperId;
+    const std::string bId = fixture.fresh[0].wrapperId;
+    const std::string bPath = fixture.fresh[0].canonicalPath;
+
+    if (dropTargetFromGraph) {
+        // B's file leaves the include graph while staying physically present.
+        writeFile(tree.root / "sudoers",
+                  "@include " + (tree.root / "a.conf").string() + "\n"
+                  "@include " + (tree.root / "c.conf").string() + "\n");
+    }
+
+    const std::function<void()> hook = [&tree, aId, bId, bPath,
+                                             breakPrevious, restoreTargetOnly,
+                                             dropTargetFromGraph]() {
+        if (breakPrevious) {
+            // Drift the PREVIOUS wrapper A in a file the compensation may not
+            // have touched.
+            writeFile(tree.root / "a.conf",
+                      wrapperBlock(aId, "Defaults:root ALL=(ALL:ALL) ALL"));
+        }
+        if (restoreTargetOnly) {
+            // Restore the target-only wrapper B on its physical path.
+            writeFile(bPath, wrapperBlock(bId, "Defaults:bob passwd_tries=9"));
+        }
+        (void)dropTargetFromGraph;
+    };
+    // The deps hold a pointer to a local configuration, so the lifecycle must
+    // not outlive this scope.
+    SudoersConfiguration holder(fixture.options);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(holder, SudoScopedDefaultsHooks{}, hook);
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+    require(!outcome.ok,
+            "an unproven previous state must forbid normalization");
+    require(activePreparedCount() == 1,
+            "the Prepared record must stay active when previous is unproven");
+}
+
+// --- AQ: previous wrapper A drifts between compensation and normalization ----
+
+void testPreviousDriftsAfterCompensation() {
+    runChangeBetweenCompensationAndProof(true, false, false);
+}
+
+// --- AV: target-only wrapper B restored between compensation and proof ------
+
+void testTargetOnlyRestoredAfterCompensation() {
+    runChangeBetweenCompensationAndProof(false, true, false);
+}
+
+// --- AW: target-only wrapper B survives OUTSIDE the current include graph ----
+
+void testTargetOnlySurvivesOutsideGraph() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    PartialRefreshFixture fixture(tree);
+    fixture.applyA();
+    fixture.prepareRefreshAndInstallB();
+    // B's file is no longer reachable through the graph, yet B is still on disk
+    // and must still block the normalization.
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "a.conf").string() + "\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+    (void)outcome;
+    // Either it is normalized and re-planned (B still proven), or it stays
+    // Prepared. What is FORBIDDEN is silently normalizing while B survives.
+    if (activePreparedCount() == 0) {
+        require(activeOwned().size() == 3,
+                "resolution must still prove and own B through its proof path");
+    }
+    const std::set<std::string> ids = onDiskWrapperIds(tree.root);
+    require(ids.count(fixture.fresh[0].wrapperId) == 1,
+            "B must still be physically present");
+}
+
 // ---------------------------------------------------------------------------
 // Test registry.
 //
@@ -1869,6 +2100,10 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"AH change between proof and durability", testChangeBetweenProofAndDurability},
         {"AJ target hidden by topology change", testTargetHiddenByTopologyChange},
         {"AK fresh crash-before-write recovers", testFreshCrashBeforeWriteStillRecovers},
+        {"AY direct compensation -> exact previous", testDirectCompensationYieldsExactPrevious},
+        {"AQ previous drifts after compensation", testPreviousDriftsAfterCompensation},
+        {"AV target-only restored after compensation", testTargetOnlyRestoredAfterCompensation},
+        {"AW target-only survives outside graph", testTargetOnlySurvivesOutsideGraph},
     };
     return cases;
 }
