@@ -458,6 +458,7 @@ flowchart LR
     options --> handler[FileHandler / ConfigFileHandler]
     handler --> writer[AtomicFileWriter]
     sudoGraph[SudoersConfiguration] --> writer
+    sudoTx[SudoersScopedDefaultsTransaction] --> writer
     sysctlGraph[SysctlConfiguration] --> writer
     writer --> metadata{metadata policy}
     metadata -->|PreserveExisting| preserve[preserve existing uid gid mode]

@@ -1,6 +1,9 @@
 #include "rollback/MutationJournal.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/integrity/ContentDigest.h>
+#include <modules/dac/sudo/SudoersDisabledWrapper.h>
+#include <modules/dac/sudo/SudoersScopedDefaultsTransaction.h>
 #include <modules/identity_access/pam/PamProviderManagedBlock.h>
 #include <modules/identity_access/shared/login_defs/IdentityLoginDefsPolicySpec.h>
 #include <modules/oss/grub/GrubManagedBlock.h>
@@ -14,6 +17,7 @@
 #include <ctime>
 #include <functional>
 #include <limits>
+#include <map>
 #include <set>
 #include <system_error>
 #include <utility>
@@ -21,6 +25,101 @@
 #include <sys/types.h>
 
 namespace fic::rollback {
+
+// Write/read parity validators for the SUDO scoped-Defaults payload: the writer
+// must never persist a record the loader would reject.
+bool validateSudoScopedDefaultsProof(
+    const SudoScopedDefaultsWrapperProof& proof, std::string& error) {
+    if (proof.wrapperId.empty()) {
+        error = "SUDO scoped wrapper proof requires a non-empty wrapper id";
+        return false;
+    }
+    if (!fic::sudoers::isCanonicalSudoWrapperId(proof.wrapperId)) {
+        error = "SUDO scoped wrapper id has a non-canonical form: '" +
+            proof.wrapperId + "'";
+        return false;
+    }
+    if (!fic::core::ContentDigest::isCanonicalSha256Hex(proof.payloadDigest)) {
+        error = "SUDO scoped wrapper proof requires a canonical sha256 payload "
+                "digest, got: '" + proof.payloadDigest + "'";
+        return false;
+    }
+    return true;
+}
+
+bool validateProofSetUnique(
+    const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
+    const char* label,
+    std::string& error) {
+    std::set<std::string> seen;
+    for (const SudoScopedDefaultsWrapperProof& proof : proofs) {
+        if (!validateSudoScopedDefaultsProof(proof, error)) {
+            return false;
+        }
+        if (!seen.insert(proof.wrapperId).second) {
+            error = std::string(label) + " contains a duplicate wrapper id: '" +
+                proof.wrapperId + "'";
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validateSudoScopedDefaultsUndoPayload(
+    const UndoReleaseSudoScopedDefaults& payload, std::string& error) {
+    if (payload.policyName != fic::sudoers::kScopedDefaultsPolicyName) {
+        error = "SUDO scoped defaults payload policy mismatch: expected '" +
+            std::string(fic::sudoers::kScopedDefaultsPolicyName) + "', got '" +
+            payload.policyName + "'";
+        return false;
+    }
+    if (!validateProofSetUnique(payload.previousProofs, "previous_proofs",
+                                error) ||
+        !validateProofSetUnique(payload.targetProofs, "target_proofs", error)) {
+        return false;
+    }
+    // A refresh GROWS the ownership set: every wrapper FIC owned BEFORE the
+    // transition (previous) must still be owned AFTER it (target). A previous
+    // proof missing from the target set would silently orphan a live wrapper,
+    // so it is refused rather than guessed.
+    std::map<std::string, std::string> targetById;
+    for (const SudoScopedDefaultsWrapperProof& proof : payload.targetProofs) {
+        targetById.emplace(proof.wrapperId, proof.payloadDigest);
+    }
+    for (const SudoScopedDefaultsWrapperProof& proof : payload.previousProofs) {
+        const auto found = targetById.find(proof.wrapperId);
+        if (found == targetById.end()) {
+            error = "wrapper id '" + proof.wrapperId +
+                "' is claimed as previously owned but is absent from the "
+                "target proofs; FIC would orphan a live wrapper (fail closed)";
+            return false;
+        }
+        if (found->second != proof.payloadDigest) {
+            error = "wrapper id '" + proof.wrapperId +
+                "' carries a different digest in previous and target proofs "
+                "(fail closed)";
+            return false;
+        }
+    }
+    // A record that claims ownership must actually prove at least one wrapper;
+    // an empty target set cannot legitimately coexist with non-empty previous.
+    if (payload.previousProofs.empty() && payload.targetProofs.empty()) {
+        error = "SUDO scoped-defaults record must prove at least one wrapper "
+                "(fail closed)";
+        return false;
+    }
+    return true;
+}
+
+// True when both sides of a refresh transition are identical: an unresolved
+// Prepared record may only be re-prepared with the EXACT same transition.
+bool sameSudoScopedDefaultsTransition(
+    const UndoReleaseSudoScopedDefaults& left,
+    const UndoReleaseSudoScopedDefaults& right) {
+    return left.policyName == right.policyName &&
+        left.previousProofs == right.previousProofs &&
+        left.targetProofs == right.targetProofs;
+}
 namespace {
 
 using nlohmann::json;
@@ -65,11 +164,16 @@ json serializeUndoAction(const UndoAction& action) {
     } else if (const auto* scopedDefaults =
                    std::get_if<UndoReleaseSudoScopedDefaults>(&action.payload)) {
         value["policy"] = scopedDefaults->policyName;
-        json wrapperIds = json::array();
-        for (const std::string& id : scopedDefaults->wrapperIds) {
-            wrapperIds.push_back(id);
-        }
-        value["wrapper_ids"] = std::move(wrapperIds);
+        const auto proofs = [](const auto& source) {
+            json result = json::array();
+            for (const SudoScopedDefaultsWrapperProof& proof : source) {
+                result.push_back({{"wrapper_id", proof.wrapperId},
+                                  {"payload_digest", proof.payloadDigest}});
+            }
+            return result;
+        };
+        value["previous_proofs"] = proofs(scopedDefaults->previousProofs);
+        value["target_proofs"] = proofs(scopedDefaults->targetProofs);
     } else if (const auto* sshPolicy =
                    std::get_if<UndoRemoveSshManagedPolicy>(&action.payload)) {
         value["policy"] = sshPolicy->policyName;
@@ -818,23 +922,38 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         backend == MutationBackend::Sudo) {
         UndoReleaseSudoScopedDefaults payload;
         payload.policyName = value.value("policy", "");
-        if (payload.policyName.empty()) {
-            error = "release_sudo_scoped_defaults undo requires a policy";
-            return false;
-        }
-        const auto wrapperIt = value.find("wrapper_ids");
-        if (wrapperIt != value.end()) {
-            if (!wrapperIt->is_array()) {
-                error = "wrapper_ids must be an array";
+        const auto readProofs = [&value](const char* field,
+                                         std::vector<SudoScopedDefaultsWrapperProof>& out,
+                                         std::string& error) -> bool {
+            const auto it = value.find(field);
+            if (it == value.end()) {
+                return true;
+            }
+            if (!it->is_array()) {
+                error = std::string(field) + " must be an array";
                 return false;
             }
-            for (const json& item : *wrapperIt) {
-                if (!item.is_string() || item.get<std::string>().empty()) {
-                    error = "wrapper ids must be non-empty strings";
+            for (const json& item : *it) {
+                if (!item.is_object()) {
+                    error = std::string(field) + " entries must be objects";
                     return false;
                 }
-                payload.wrapperIds.push_back(item.get<std::string>());
+                SudoScopedDefaultsWrapperProof proof;
+                proof.wrapperId = item.value("wrapper_id", "");
+                proof.payloadDigest = item.value("payload_digest", "");
+                if (!validateSudoScopedDefaultsProof(proof, error)) {
+                    return false;
+                }
+                out.push_back(std::move(proof));
             }
+            return true;
+        };
+        if (!readProofs("previous_proofs", payload.previousProofs, error) ||
+            !readProofs("target_proofs", payload.targetProofs, error)) {
+            return false;
+        }
+        if (!validateSudoScopedDefaultsUndoPayload(payload, error)) {
+            return false;
         }
         action.payload = std::move(payload);
         return true;
@@ -2525,6 +2644,39 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             if (!validatePamUndoPayload(*pam, error)) return false;
         }
     }
+    if (record.undo.backend == MutationBackend::Sudo) {
+        const auto* sudoPayload = std::get_if<UndoReleaseSudoScopedDefaults>(
+            &record.undo.payload);
+        if (sudoPayload != nullptr) {
+            if (record.policy.moduleName != fic::sudoers::kSudoModuleName ||
+                record.policy.submoduleName !=
+                    fic::sudoers::kSudoSubmoduleName ||
+                record.policy.policyName != sudoPayload->policyName ||
+                record.resource !=
+                    fic::sudoers::kScopedDefaultsResource) {
+                error = "SUDO scoped-defaults mutation record identity does "
+                        "not match undo payload (fail closed)";
+                return false;
+            }
+            if (!validateSudoScopedDefaultsUndoPayload(*sudoPayload, error)) {
+                return false;
+            }
+            const bool refreshesActiveSudoRecord = std::any_of(
+                records_.begin(), records_.end(),
+                [&](const MutationRecord& current) {
+                    return current.isActive() &&
+                        current.policy == record.policy &&
+                        current.undo.backend == record.undo.backend &&
+                        current.resource == record.resource;
+                });
+            if (!refreshesActiveSudoRecord &&
+                !sudoPayload->previousProofs.empty()) {
+                error = "fresh SUDO scoped-defaults mutation must not claim "
+                        "previous wrapper proofs (fail closed)";
+                return false;
+            }
+        }
+    }
     if (record.undo.backend == MutationBackend::UserCreation) {
         const auto* payload = std::get_if<UndoRemoveUserCreationManagedPolicy>(
             &record.undo.payload);
@@ -2763,6 +2915,64 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                             "currently owned applied line as previous state "
                             "(fail closed)";
                     return false;
+                }
+            }
+            // SUDO scoped-defaults refresh guards: a repeated reconciliation must GROW the
+            // ownership set, never replace it. A wrapper FIC already created
+            // must never lose its journal permission.
+            if (record.undo.backend == MutationBackend::Sudo) {
+                const auto* newSudo = std::get_if<
+                    UndoReleaseSudoScopedDefaults>(&record.undo.payload);
+                const auto* oldSudo = std::get_if<
+                    UndoReleaseSudoScopedDefaults>(&existing.undo.payload);
+                if (newSudo != nullptr || oldSudo != nullptr) {
+                    if (oldSudo == nullptr || newSudo == nullptr) {
+                        error = "SUDO refresh changed the undo payload type "
+                                "(fail closed)";
+                        return false;
+                    }
+                    if (existing.status == MutationStatus::Prepared) {
+                        // An unresolved Prepared transition whose filesystem
+                        // write may already have happened may only be
+                        // re-prepared with the EXACT same transition.
+                        if (!sameSudoScopedDefaultsTransition(*oldSudo,
+                                                               *newSudo)) {
+                            error = "SUDO scoped-defaults refresh conflicts "
+                                    "with an unresolved Prepared transition "
+                                    "(fail closed): recover or complete the "
+                                    "existing transaction first";
+                            return false;
+                        }
+                    } else if (existing.status ==
+                               MutationStatus::RollbackFailed) {
+                        error = "SUDO scoped-defaults RollbackFailed provenance "
+                                "cannot be refreshed by ordinary apply (fail "
+                                "closed)";
+                        return false;
+                    } else {
+                        // Applied provenance: the new transition must carry
+                        // the currently owned proofs as its previous state.
+                        if (newSudo->previousProofs != oldSudo->targetProofs) {
+                            error = "SUDO scoped-defaults refresh does not carry "
+                                    "the currently owned wrapper proofs as its "
+                                    "previous state (fail closed)";
+                            return false;
+                        }
+                        std::set<std::string> targetIds;
+                        for (const SudoScopedDefaultsWrapperProof& proof :
+                             newSudo->targetProofs) {
+                            targetIds.insert(proof.wrapperId);
+                        }
+                        for (const SudoScopedDefaultsWrapperProof& proof :
+                             oldSudo->targetProofs) {
+                            if (targetIds.count(proof.wrapperId) == 0) {
+                                error = "SUDO scoped-defaults refresh would drop "
+                                        "ownership of existing wrapper '" +
+                                        proof.wrapperId + "' (fail closed)";
+                                return false;
+                            }
+                        }
+                    }
                 }
             }
             // PAM provider refresh guards: deterministic transition

@@ -77,19 +77,22 @@ IncludeDirective parseIncludeDirective(std::string_view logicalLine) {
 
     std::string decoded;
     if (trimmed[cursor] == '"') {
-        // Double-quoted pathname: whitespace needs no escaping, and the only
-        // recognized escape inside the quotes is a backslash.
+        // Quoted pathname. Upstream (<INSTR> in toke.l + expand_include() in
+        // sudoers.c) applies NO C-style unescaping here: the content between
+        // the quotes is taken VERBATIM and expand_include() only strips the
+        // surrounding quotes. A backslash inside the quotes therefore does not
+        // escape anything -- the single effect of \" is that it does not
+        // terminate the string (and both characters are kept).
+        // Decoding "\X -> X" here would make FIC open a DIFFERENT file than
+        // sudo opens, so the content is copied unchanged.
         ++cursor;
         bool closed = false;
         while (cursor < trimmed.size()) {
             const char c = trimmed[cursor];
-            if (c == '\\') {
-                if (cursor + 1 >= trimmed.size()) {
-                    directive.kind = IncludeKind::Unsupported;
-                    directive.error = "незавершённый escape в пути include";
-                    return directive;
-                }
-                decoded.push_back(trimmed[cursor + 1]);
+            if (c == '\\' && cursor + 1 < trimmed.size() &&
+                trimmed[cursor + 1] == '"') {
+                decoded.push_back('\\');
+                decoded.push_back('"');
                 cursor += 2;
                 continue;
             }
@@ -111,43 +114,61 @@ IncludeDirective parseIncludeDirective(std::string_view logicalLine) {
             directive.error = "пустой путь include в кавычках";
             return directive;
         }
-    } else {
-        // Unquoted pathname: whitespace ends the word unless backslash-escaped,
-        // and an unquoted '#' starts a trailing comment.
-        bool terminated = false;
-        while (cursor < trimmed.size()) {
-            const char c = trimmed[cursor];
-            if (c == '\\') {
-                if (cursor + 1 >= trimmed.size()) {
-                    directive.kind = IncludeKind::Unsupported;
-                    directive.error = "незавершённый escape в пути include";
-                    return directive;
-                }
-                decoded.push_back(trimmed[cursor + 1]);
-                cursor += 2;
-                continue;
-            }
-            if (c == '#') {
-                terminated = true;
-                break;
-            }
-            if (isSpace(c)) {
-                terminated = true;
-                break;
-            }
-            decoded.push_back(c);
+        // Nothing but whitespace/comment may follow the closing quote.
+        while (cursor < trimmed.size() && isSpace(trimmed[cursor])) {
             ++cursor;
         }
-        if (decoded.empty()) {
+        if (cursor < trimmed.size() && trimmed[cursor] != '#') {
             directive.kind = IncludeKind::Unsupported;
-            directive.error = "пустой путь include";
+            directive.error = "неожиданные символы после пути include";
             return directive;
         }
-        if (!terminated) {
-            // The whole argument was consumed; nothing may follow but
-            // whitespace/comment, which the checks below handle uniformly.
-            skipSpace();
+        directive.kind = kind;
+        directive.path = std::move(decoded);
+        return directive;
+    }
+
+    // Unquoted pathname.
+    //
+    // A backslash in an UNQUOTED include argument is deliberately rejected.
+    // Upstream keeps the token verbatim (fill() copies it unchanged), so whether
+    // `\ ` denotes an escaped blank or a literal backslash depends on the
+    // deployed sudo build, while sudoers(5) documents the escaped-blank form.
+    // FIC cannot prove which pathname the deployed sudo will open, and
+    // guessing wrong means reading a file sudo never reads. Explicit
+    // fail-closed is the safe answer; the quoted form is unambiguous.
+    for (std::size_t index = cursor; index < trimmed.size(); ++index) {
+        if (trimmed[index] == '\\') {
+            directive.kind = IncludeKind::Unsupported;
+            directive.error =
+                "экранирование обратным слэшем в некавыченном пути include "
+                "не поддерживается: используйте кавычки (\"path with spaces\")";
+            return directive;
         }
+    }
+
+    // Unquoted: whitespace ends the word, an unquoted '#' starts a comment.
+    while (cursor < trimmed.size()) {
+        const char c = trimmed[cursor];
+        if (c == '#' || isSpace(c)) {
+            break;
+        }
+        decoded.push_back(c);
+        ++cursor;
+    }
+    if (decoded.empty()) {
+        directive.kind = IncludeKind::Unsupported;
+        directive.error = "пустой путь include";
+        return directive;
+    }
+    // Only whitespace/comment may follow the pathname argument.
+    while (cursor < trimmed.size() && isSpace(trimmed[cursor])) {
+        ++cursor;
+    }
+    if (cursor < trimmed.size() && trimmed[cursor] != '#') {
+        directive.kind = IncludeKind::Unsupported;
+        directive.error = "неожиданные символы после пути include";
+        return directive;
     }
 
     skipSpace();

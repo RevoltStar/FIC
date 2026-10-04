@@ -2,6 +2,7 @@
 #define SUDOERSCONFIGURATION_H
 
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -39,6 +40,18 @@ struct SudoersConfigurationOptions {
 
 class SudoersConfiguration {
 public:
+    // THE single mutex serializing EVERY filesystem-mutating SUDO path:
+    // scalar managed Defaults apply, the authentication rewrite, scoped
+    // Defaults apply, managed-Defaults rollback and scoped-Defaults rollback.
+    // The previous per-translation-unit mutexes did NOT actually serialize
+    // apply against rollback, so the comment claiming they did was false.
+    //
+    // Lock ordering: this is the INNERMOST lock. Never hold a journal-internal
+    // mutex while acquiring it, and never hold it across a long process
+    // operation unless the backend genuinely needs it (the backend does: a
+    // read-modify-write of the same sudoers graph must not interleave).
+    static std::mutex& mutationMutex();
+
     explicit SudoersConfiguration(SudoersConfigurationOptions options);
 
     bool load(std::string& error);
@@ -77,51 +90,34 @@ public:
     // violation, which is what makes the hard P2 cases decidable.
     std::vector<std::string> scopedDefaultsViolations() const;
 
-    // Number of FIC_SUDO_DISABLED wrappers of the policy present in the
-    // current graph. Rollback uses it as the unrecorded-ownership proof: an
-    // orphan wrapper without an active journal record cannot be attributed and
-    // must fail closed instead of being silently ignored. A malformed marker
-    // structure yields -1 (fail closed).
-    long scopedDefaultsWrapperCount(const std::string& policyName) const;
+    // Read-only view of the loaded graph, consumed by
+    // SudoersScopedDefaultsTransaction. SudoersConfiguration stays the OWNER
+    // of parsing and the include graph; all scoped-Defaults remediation
+    // (planning, ownership proof, transactions, compensation) lives in the
+    // dedicated transaction component.
+    struct GraphDocument {
+        std::filesystem::path path;
+        std::string content;
+    };
 
-    // Generates the provenance ids the caller must journal BEFORE the
-    // filesystem mutation, one per scoped Defaults entry that is about to be
-    // wrapped. The ids are then passed to disableScopedDefaults(), so the
-    // prepared journal record is complete and never has to be rewritten.
-    static std::vector<std::string> planScopedDefaultsWrapperIds(
-        size_t violationCount);
+    struct GraphEntry {
+        size_t documentIndex = 0;
+        size_t firstLine = 0;
+        // PHYSICAL lines the logical entry occupies (1 for a single line).
+        size_t lineCount = 1;
+        std::string text;
+    };
 
-    // Temporarily deactivates every active scoped Defaults entry by wrapping
-    // the offending PHYSICAL lines into explicit FIC markers inside the very
-    // file that contains them (see SudoersDisabledWrapper.h).
-    //
-    // `wrapperIds` are the ids produced by planScopedDefaultsWrapperIds() for
-    // the CURRENTLY loaded graph; a mismatch with the actual violation count
-    // fails closed before any write.
-    //
-    // Failure semantics:
-    //   * the input graph is CAS-checked before any write;
-    //   * on any post-write failure the exact previous content of every
-    //     already written file is restored and re-validated by visudo;
-    //   * on a failed semantic postcondition the same compensation runs and
-    //     the policy is NOT reported as applied;
-    //   * crash-consistency of the whole transaction is NOT claimed: recovery
-    //     is the journal's Prepared record, which the caller writes before
-    //     calling this method.
-    SudoersOperationResult disableScopedDefaults(
-        const std::string& policyName,
-        const std::vector<std::string>& wrapperIds);
+    std::vector<GraphDocument> graphDocuments() const;
+    std::vector<GraphEntry> graphEntries() const;
 
-    // Rollback support: unwraps exactly the FIC-owned wrappers of the policy
-    // that still exist and whose ids the journal payload proves. Wrappers
-    // that already disappeared externally are treated as released and are
-    // never reconstructed. An unknown wrapper id or drifted markers fail
-    // closed with conflict=true.
-    SudoersOperationResult restoreScopedDefaults(
-        const std::string& policyName,
-        const std::vector<std::string>& allowedWrapperIds);
+    // Runs the configured validator (visudo) over the current configuration.
+    // Exposed for the scoped-Defaults transaction, which owns the filesystem
+    // steps but must not duplicate the sudoers-specific validation logic.
+    bool validateConfiguration(std::string& error) const { return validate(error); }
 
 private:
+
     struct Document {
         std::filesystem::path path;
         std::string content;

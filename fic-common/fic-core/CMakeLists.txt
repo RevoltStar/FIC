@@ -29,6 +29,7 @@ add_library(fic-core STATIC
     src/fs/TrustedFileReader.cpp
     src/i18n/LocalizationManager.cpp
     src/integrity/CommandHashStore.cpp
+    src/integrity/ContentDigest.cpp
     src/logging/Logger.cpp
     src/logging/SecurityAudit.cpp
     src/notification/NotifyUser.cpp

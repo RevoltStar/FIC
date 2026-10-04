@@ -1,7 +1,10 @@
 #include "modules/dac/sudo/SudoersDisabledWrapper.h"
 
+#include <fic/core/integrity/ContentDigest.h>
+
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <ctime>
 #include <map>
 #include <utility>
@@ -9,6 +12,81 @@
 #include <unistd.h>
 
 namespace fic::sudoers {
+
+bool isCanonicalSudoWrapperId(const std::string& wrapperId) {
+    constexpr const char* kPrefix = "FIC-SUDO-";
+    if (wrapperId.rfind(kPrefix, 0) != 0) {
+        return false;
+    }
+    // Five decimal groups separated by '-'.
+    int groups = 0;
+    std::size_t index = std::char_traits<char>::length(kPrefix);
+    while (index < wrapperId.size()) {
+        std::size_t digits = 0;
+        while (index < wrapperId.size() &&
+               std::isdigit(static_cast<unsigned char>(wrapperId[index])) != 0) {
+            ++index;
+            ++digits;
+        }
+        if (digits == 0) {
+            return false;
+        }
+        ++groups;
+        if (index == wrapperId.size()) {
+            break;
+        }
+        if (wrapperId[index] != '-') {
+            return false;
+        }
+        ++index;
+    }
+    return groups == 5;
+}
+
+std::vector<SudoPhysicalLine> splitPhysicalLines(const std::string& content) {
+    std::vector<SudoPhysicalLine> lines;
+    std::size_t start = 0;
+    while (start <= content.size()) {
+        const std::size_t newline = content.find('\n', start);
+        if (newline == std::string::npos) {
+            SudoPhysicalLine line;
+            line.text = content.substr(start);
+            line.terminator.clear();
+            if (!line.text.empty()) {
+                lines.push_back(std::move(line));
+            }
+            return lines;
+        }
+        SudoPhysicalLine line;
+        // A '\r' immediately before the '\n' belongs to the terminator, so a
+        // CRLF file is neither split incorrectly nor silently rewritten.
+        const std::size_t textEnd =
+            newline > start && content[newline - 1] == '\r' ? newline - 1 : newline;
+        line.text = content.substr(start, textEnd - start);
+        line.terminator = content.substr(textEnd, newline - textEnd + 1);
+        lines.push_back(std::move(line));
+        start = newline + 1;
+    }
+    return lines;
+}
+
+std::string joinPhysicalLines(const std::vector<SudoPhysicalLine>& lines) {
+    std::string content;
+    for (const SudoPhysicalLine& line : lines) {
+        content += line.text;
+        content += line.terminator;
+    }
+    return content;
+}
+
+std::string suppressedEntryBytes(const std::vector<SudoPhysicalLine>& lines) {
+    return joinPhysicalLines(lines);
+}
+
+std::string SudoDisabledWrapper::payloadDigest() const {
+    return fic::core::ContentDigest::sha256Hex(
+        suppressedEntryBytes(originalLines));
+}
 namespace {
 
 bool startsWith(const std::string& text, const char* prefix) {
@@ -84,7 +162,7 @@ bool parseWrapperMarker(const std::string& line,
 } // namespace
 
 SudoWrapperParseStatus parseSudoDisabledWrappers(
-    const std::vector<std::string>& lines,
+    const std::vector<SudoPhysicalLine>& lines,
     std::vector<SudoDisabledWrapper>& wrappers,
     std::string& error) {
     wrappers.clear();
@@ -93,8 +171,9 @@ SudoWrapperParseStatus parseSudoDisabledWrappers(
     bool inWrapper = false;
     SudoDisabledWrapper current;
     for (std::size_t index = 0; index < lines.size(); ++index) {
-        const std::string& line = lines[index];
-        if (startsWith(line, kSudoDisabledBeginPrefix)) {
+        const SudoPhysicalLine& line = lines[index];
+        const std::string& lineText = line.text;
+        if (startsWith(lineText, kSudoDisabledBeginPrefix)) {
             if (inWrapper) {
                 error = "вложенный FIC_SUDO_DISABLED_BEGIN в строке " +
                     std::to_string(index + 1);
@@ -102,7 +181,7 @@ SudoWrapperParseStatus parseSudoDisabledWrappers(
             }
             SudoDisabledWrapper wrapper;
             wrapper.beginLine = index;
-            if (!parseWrapperMarker(line, kSudoDisabledBeginPrefix,
+            if (!parseWrapperMarker(lineText, kSudoDisabledBeginPrefix,
                                     wrapper.policy, wrapper.mutationId, error)) {
                 return SudoWrapperParseStatus::Malformed;
             }
@@ -111,7 +190,7 @@ SudoWrapperParseStatus parseSudoDisabledWrappers(
             continue;
         }
 
-        if (startsWith(line, kSudoDisabledEndPrefix)) {
+        if (startsWith(lineText, kSudoDisabledEndPrefix)) {
             if (!inWrapper) {
                 error = "FIC_SUDO_DISABLED_END без BEGIN в строке " +
                     std::to_string(index + 1);
@@ -119,7 +198,7 @@ SudoWrapperParseStatus parseSudoDisabledWrappers(
             }
             std::string endPolicy;
             std::string endMutation;
-            if (!parseWrapperMarker(line, kSudoDisabledEndPrefix, endPolicy,
+            if (!parseWrapperMarker(lineText, kSudoDisabledEndPrefix, endPolicy,
                                     endMutation, error)) {
                 return SudoWrapperParseStatus::Malformed;
             }
@@ -140,18 +219,24 @@ SudoWrapperParseStatus parseSudoDisabledWrappers(
         }
 
         if (inWrapper) {
-            if (!startsWith(line, kSudoDisabledLinePrefix)) {
-                error = "не FIC-строка внутри FIC_SUDO_DISABLED блока: " + line;
+            if (!startsWith(lineText, kSudoDisabledLinePrefix)) {
+                error = "не FIC-строка внутри FIC_SUDO_DISABLED блока: " +
+                    lineText;
                 return SudoWrapperParseStatus::Malformed;
             }
-            current.originalLines.push_back(
-                line.substr(std::char_traits<char>::length(kSudoDisabledLinePrefix)));
+            SudoPhysicalLine original;
+            original.text = lineText.substr(
+                std::char_traits<char>::length(kSudoDisabledLinePrefix));
+            // FIC writes its own markers with a plain LF; the suppressed
+            // original keeps whatever terminator the foreign file used.
+            original.terminator = line.terminator;
+            current.originalLines.push_back(std::move(original));
             continue;
         }
 
-        if (startsWithIntroducer(line)) {
+        if (startsWithIntroducer(lineText)) {
             error = "неизвестный FIC-маркер sudoers в строке " +
-                std::to_string(index + 1) + ": " + line;
+                std::to_string(index + 1) + ": " + lineText;
             return SudoWrapperParseStatus::Malformed;
         }
     }
@@ -163,7 +248,7 @@ SudoWrapperParseStatus parseSudoDisabledWrappers(
     return SudoWrapperParseStatus::Ok;
 }
 
-void disableSudoEntry(std::vector<std::string>& lines,
+void disableSudoEntry(std::vector<SudoPhysicalLine>& lines,
                       std::size_t firstLine,
                       std::size_t lineCount,
                       const std::string& policyName,
@@ -173,14 +258,24 @@ void disableSudoEntry(std::vector<std::string>& lines,
     const std::string end = std::string(kSudoDisabledEndPrefix) +
         "policy=" + policyName + " mutation=" + mutationId + "@";
 
-    std::vector<std::string> wrapper;
+    const auto marker = [](const std::string& text) {
+        SudoPhysicalLine line;
+        line.text = text;
+        line.terminator = "\n";
+        return line;
+    };
+
+    std::vector<SudoPhysicalLine> wrapper;
     wrapper.reserve(lineCount + 2);
-    wrapper.push_back(begin);
+    wrapper.push_back(marker(begin));
     for (std::size_t offset = 0; offset < lineCount; ++offset) {
-        wrapper.push_back(std::string(kSudoDisabledLinePrefix) +
-                          lines[firstLine + offset]);
+        // The suppressed bytes are preserved verbatim, terminator included;
+        // only the LINE marker prefix is prepended.
+        SudoPhysicalLine original = lines[firstLine + offset];
+        original.text = std::string(kSudoDisabledLinePrefix) + original.text;
+        wrapper.push_back(std::move(original));
     }
-    wrapper.push_back(end);
+    wrapper.push_back(marker(end));
 
     lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(firstLine),
                 lines.begin() + static_cast<std::ptrdiff_t>(firstLine + lineCount));
@@ -188,11 +283,12 @@ void disableSudoEntry(std::vector<std::string>& lines,
                  wrapper.begin(), wrapper.end());
 }
 
-bool restoreSudoDisabledEntries(std::vector<std::string>& lines,
-                                const std::string& policyName,
-                                const std::vector<std::string>& allowedMutationIds,
-                                bool& changed,
-                                std::string& error) {
+bool restoreSudoDisabledEntries(
+    std::vector<SudoPhysicalLine>& lines,
+    const std::string& policyName,
+    const std::vector<SudoScopedDefaultsWrapperProof>& allowedProofs,
+    bool& changed,
+    std::string& error) {
     changed = false;
     std::vector<SudoDisabledWrapper> wrappers;
     if (parseSudoDisabledWrappers(lines, wrappers, error) !=
@@ -200,17 +296,18 @@ bool restoreSudoDisabledEntries(std::vector<std::string>& lines,
         error = "Не удалось разобрать FIC-маркеры sudoers: " + error;
         return false;
     }
+    // Ownership is proven BEFORE anything is rewritten: an unproven or
+    // drifted wrapper must leave the file completely untouched.
+    const SudoWrapperProvenanceCheck check =
+        checkSudoWrapperProvenance(wrappers, policyName, allowedProofs);
+    if (!check.safeToRelease()) {
+        error = describeSudoWrapperProvenance(check, policyName);
+        return false;
+    }
     for (std::size_t position = wrappers.size(); position-- > 0;) {
         const SudoDisabledWrapper& wrapper = wrappers[position];
         if (wrapper.policy != policyName) {
             continue;
-        }
-        if (std::find(allowedMutationIds.begin(), allowedMutationIds.end(),
-                      wrapper.mutationId) == allowedMutationIds.end()) {
-            error = "FIC_SUDO_DISABLED блок политики '" + policyName +
-                    "' имеет неизвестный mutation id '" + wrapper.mutationId +
-                    "'; владение не может быть доказано";
-            return false;
         }
         lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(wrapper.beginLine),
                     lines.begin() +
@@ -225,14 +322,11 @@ bool restoreSudoDisabledEntries(std::vector<std::string>& lines,
 SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
     const std::vector<SudoDisabledWrapper>& wrappers,
     const std::string& policyName,
-    const std::vector<std::string>& expectedMutationIds) {
+    const std::vector<SudoScopedDefaultsWrapperProof>& expectedProofs) {
     SudoWrapperProvenanceCheck check;
-    std::map<std::string, size_t> payloadCounts;
-    for (const std::string& id : expectedMutationIds) {
-        ++payloadCounts[id];
-    }
-    for (const auto& entry : payloadCounts) {
-        if (entry.second > 1) {
+    std::map<std::string, std::string> payloadById;
+    for (const SudoScopedDefaultsWrapperProof& proof : expectedProofs) {
+        if (!payloadById.emplace(proof.wrapperId, proof.payloadDigest).second) {
             check.payloadMalformed = true;
         }
     }
@@ -245,16 +339,29 @@ SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
         ++fileCounts[wrapper.mutationId];
     }
     for (const auto& entry : fileCounts) {
+        const std::string& id = entry.first;
         if (entry.second > 1) {
             check.fileDuplicate = true;
         }
-        if (payloadCounts.find(entry.first) == payloadCounts.end()) {
-            check.unknownIds.push_back(entry.first);
+        const auto proven = payloadById.find(id);
+        if (proven == payloadById.end()) {
+            check.unknownIds.push_back(id);
+            continue;
+        }
+        // A proven id whose CURRENT payload differs from the recorded digest
+        // is drift, not ownership: FIC must never activate content it did not
+        // suppress.
+        for (const SudoDisabledWrapper& wrapper : wrappers) {
+            if (wrapper.policy == policyName && wrapper.mutationId == id &&
+                wrapper.payloadDigest() != proven->second) {
+                check.driftedIds.push_back(id);
+                break;
+            }
         }
     }
-    for (const std::string& id : expectedMutationIds) {
-        if (fileCounts.find(id) == fileCounts.end()) {
-            check.releasedIds.push_back(id);
+    for (const SudoScopedDefaultsWrapperProof& proof : expectedProofs) {
+        if (fileCounts.find(proof.wrapperId) == fileCounts.end()) {
+            check.releasedIds.push_back(proof.wrapperId);
         }
     }
     return check;
@@ -277,6 +384,13 @@ std::string describeSudoWrapperProvenance(
     if (!check.unknownIds.empty()) {
         message += "; неизвестные mutation id:";
         for (const std::string& id : check.unknownIds) {
+            message += " " + id;
+        }
+    }
+    if (!check.driftedIds.empty()) {
+        message += "; содержимое подавленных записей изменено после "
+                   "применения (drift), id:";
+        for (const std::string& id : check.driftedIds) {
             message += " " + id;
         }
     }

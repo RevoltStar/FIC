@@ -2,6 +2,7 @@
 #define FIC_ROLLBACK_MUTATION_RECORD_H
 
 #include <fic/policy/PolicyDependency.h>
+#include <modules/dac/sudo/SudoersDisabledWrapper.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -85,9 +86,31 @@ struct UndoRemoveSshManagedPolicy {
 // the wrappers, never in the journal, so rollback never reconstructs
 // historical configuration and never re-creates a wrapper that disappeared
 // externally.
+// The proof type is owned by the SUDO backend component and REUSED here so the
+// persisted record and the physical wrapper model can never drift apart into
+// two incompatible shapes.
+using SudoScopedDefaultsWrapperProof = fic::sudoers::SudoScopedDefaultsWrapperProof;
+
+// Ownership provenance for the SUDO scoped-Defaults blocker
+// (sudo_disable_scoped_defaults).
+//
+// The persistent ownership state lives in the FIC_SUDO_DISABLED wrappers inside
+// the FOREIGN sudoers files themselves; this record carries ONLY provenance:
+//   * each proof names a wrapper FIC created AND carries a SHA-256 fingerprint
+//     of the exact bytes FIC suppressed inside it. Rollback re-computes that
+//     fingerprint from the live file and refuses on any mismatch, so FIC can
+//     never unwrap a body edited after FIC wrapped it.
+//   * the suppressed bytes are NEVER stored here and no whole-file snapshot is
+//     taken: this is not a backup.
+//   * targetProofs is the ownership set of the CURRENT target state;
+//     previousProofs is the ownership FIC released when the transition was
+//     prepared. A repeated reconciliation grows targetProofs and moves the old
+//     set into previousProofs, so a previously created wrapper never loses its
+//     journal permission.
 struct UndoReleaseSudoScopedDefaults {
-    std::string policyName; // FIC policy identity (marker policy= field)
-    std::vector<std::string> wrapperIds; // FIC-owned wrapper mutation ids
+    std::string policyName;
+    std::vector<SudoScopedDefaultsWrapperProof> previousProofs;
+    std::vector<SudoScopedDefaultsWrapperProof> targetProofs;
 };
 
 enum class UserCreationConfigKind { UseraddDefaults, LoginDefs, Adduser };

@@ -31,14 +31,44 @@ constexpr const char* kSudoDisabledLinePrefix = "#@FIC_SUDO_DISABLED_LINE@";
 // malformed: FIC never guesses whether a similar comment is its own.
 constexpr const char* kSudoMarkerIntroducer = "#@FIC_SUDO_";
 
+// One physical sudoers line together with its ORIGINAL line terminator.
+// Keeping the terminator is what makes the byte-exact contract real for CRLF
+// sudoers: stripping it and re-emitting "\n" would silently rewrite every line
+// of a foreign file.
+struct SudoPhysicalLine {
+    // Line content WITHOUT the terminator.
+    std::string text;
+    // The terminator that followed this line in the original bytes: "\n",
+    // "\r\n", or empty for a final line without a terminator.
+    std::string terminator;
+};
+
+// Splits raw file bytes into physical lines that REMEMBER their original
+// terminator. Never rewrites "\r\n" into "\n".
+std::vector<SudoPhysicalLine> splitPhysicalLines(const std::string& content);
+
+// Re-serializes physical lines, preserving every original terminator.
+std::string joinPhysicalLines(const std::vector<SudoPhysicalLine>& lines);
+
+// Canonical exact byte sequence of a suppressed entry: the concatenation of
+// every physical line's content plus its original terminator. This is the
+// byte-exact contract FIC suppresses and must restore, and the only thing the
+// journal fingerprints.
+std::string suppressedEntryBytes(const std::vector<SudoPhysicalLine>& lines);
+
 struct SudoDisabledWrapper {
     std::string policy;     // policy= field
     std::string mutationId; // mutation= field (stable provenance id)
     // Exact original physical lines, in order (a logical entry may span
-    // several physical lines).
-    std::vector<std::string> originalLines;
+    // several physical lines), terminators included.
+    std::vector<SudoPhysicalLine> originalLines;
     std::size_t beginLine = 0; // index of the BEGIN marker
     std::size_t endLine = 0;   // index of the END marker
+
+    // Stable digest of the CURRENT suppressed payload. Compared against the
+    // journal proof before unwrapping: a mismatch means the body changed after
+    // FIC wrapped it, and FIC must never activate content it does not own.
+    std::string payloadDigest() const;
 };
 
 enum class SudoWrapperParseStatus {
@@ -46,40 +76,67 @@ enum class SudoWrapperParseStatus {
     Malformed // duplicate, nested, misplaced or unparsable FIC markers
 };
 
+// One wrapper proof as persisted in the mutation journal: it names the wrapper
+// FIC created AND fingerprints the exact bytes FIC suppressed, so unwrapping
+// can be proven to release exactly FIC-owned content and nothing else. The
+// suppressed bytes themselves stay inside the wrapper; this is NOT a backup.
+struct SudoScopedDefaultsWrapperProof {
+    std::string wrapperId;
+    std::string payloadDigest;
+
+    bool operator==(const SudoScopedDefaultsWrapperProof& other) const {
+        return wrapperId == other.wrapperId &&
+            payloadDigest == other.payloadDigest;
+    }
+};
+
+// Canonical wrapper id syntax produced by generateSudoWrapperMutationId():
+// "FIC-SUDO-<digits>-<digits>-<digits>-<digits>-<digits>". Persisted proofs are
+// validated against it so a malformed or hand-written id is never treated as
+// proven provenance.
+bool isCanonicalSudoWrapperId(const std::string& wrapperId);
+
 // Parses the FIC wrapper markers of one sudoers file's physical lines.
 SudoWrapperParseStatus parseSudoDisabledWrappers(
-    const std::vector<std::string>& lines,
+    const std::vector<SudoPhysicalLine>& lines,
     std::vector<SudoDisabledWrapper>& wrappers,
     std::string& error);
 
 // Replaces the physical lines [firstLine, firstLine + lineCount) with a FIC
-// wrapper that preserves the original lines byte-exact. Idempotency and
-// marker-parsing failures are the caller's precondition.
-void disableSudoEntry(std::vector<std::string>& lines,
+// wrapper that preserves the original bytes exactly.
+void disableSudoEntry(std::vector<SudoPhysicalLine>& lines,
                       std::size_t firstLine,
                       std::size_t lineCount,
                       const std::string& policyName,
                       const std::string& mutationId);
 
 // Ownership-release provenance check (subset semantics, same contract as the
-// SSH model): every wrapper of the policy that STILL EXISTS must be proven by
-// the journal payload; payload ids whose wrappers already disappeared are an
-// externally released subset and never an error.
+// SSH model) extended with PAYLOAD PROOF:
+//   * every wrapper of the policy that STILL EXISTS must be proven by the
+//     journal payload, by id AND by payload digest;
+//   * payload entries whose wrappers already disappeared are an externally
+//     released subset and never an error;
+//   * a proven id whose CURRENT payload digest differs from the recorded one is
+//     DRIFT: FIC must not unwrap content it did not suppress.
 struct SudoWrapperProvenanceCheck {
-    bool payloadMalformed = false;  // duplicate ids in the journal payload
-    bool fileDuplicate = false;     // duplicate mutation id among file wrappers
-    std::vector<std::string> unknownIds;   // actual ids absent from the payload
-    std::vector<std::string> releasedIds;  // payload ids already gone (info)
+    bool payloadMalformed = false; // duplicate ids in the journal payload
+    bool fileDuplicate = false;    // duplicate mutation id among file wrappers
+    std::vector<std::string> unknownIds;  // actual ids absent from the payload
+    std::vector<std::string> releasedIds; // payload ids already gone (info)
+    // Proven ids whose current suppressed payload no longer matches the
+    // recorded digest. Never safe to release.
+    std::vector<std::string> driftedIds;
 
     bool safeToRelease() const {
-        return !payloadMalformed && !fileDuplicate && unknownIds.empty();
+        return !payloadMalformed && !fileDuplicate && unknownIds.empty() &&
+            driftedIds.empty();
     }
 };
 
 SudoWrapperProvenanceCheck checkSudoWrapperProvenance(
     const std::vector<SudoDisabledWrapper>& wrappers,
     const std::string& policyName,
-    const std::vector<std::string>& expectedMutationIds);
+    const std::vector<SudoScopedDefaultsWrapperProof>& expectedProofs);
 
 // Human-readable description of a failed provenance check; empty when
 // check.safeToRelease().
@@ -87,15 +144,15 @@ std::string describeSudoWrapperProvenance(
     const SudoWrapperProvenanceCheck& check,
     const std::string& policyName);
 
-// Restores the exact original lines of every wrapper of the policy whose id is
-// in allowedMutationIds and removes the wrappers. Fails closed when a wrapper
-// id is outside the allowed set or the markers are structurally broken: FIC
-// never uncomments a line it cannot prove it disabled itself.
-bool restoreSudoDisabledEntries(std::vector<std::string>& lines,
-                                const std::string& policyName,
-                                const std::vector<std::string>& allowedMutationIds,
-                                bool& changed,
-                                std::string& error);
+// Restores the exact original bytes of every wrapper of the policy whose id is
+// in allowedProofs and removes the wrappers. The proofs are re-verified FIRST,
+// so drift is refused with zero writes.
+bool restoreSudoDisabledEntries(
+    std::vector<SudoPhysicalLine>& lines,
+    const std::string& policyName,
+    const std::vector<SudoScopedDefaultsWrapperProof>& allowedProofs,
+    bool& changed,
+    std::string& error);
 
 // Stable, unique wrapper mutation id: wall-clock time with nanosecond
 // resolution, the process id and a per-process counter. Unique across rapid

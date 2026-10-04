@@ -4,6 +4,7 @@
 #include <fic/core/fs/AtomicFileWriter.h>
 
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/dac/sudo/SudoersScopedDefaultsTransaction.h"
 #include "modules/firewall/FirewallPolicies.h"
 #include "modules/net/ssh/SshConfigFile.h"
 #include "modules/net/ssh/SshManagedBlock.h"
@@ -270,7 +271,9 @@ MutationRollbackOutcome undoSudoSetting(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record,
     const UndoRemoveManagedSetting& undo) {
-    const std::lock_guard<std::mutex> lock(rollbackBackendMutex());
+    // The SHARED SUDO mutation mutex, not the generic backend mutex: apply and
+    // rollback must observe the same lock.
+    const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
 
     SudoersConfigurationOptions options = deps.sudoersOptions
         ? deps.sudoersOptions()
@@ -312,9 +315,22 @@ MutationRollbackOutcome undoSudoSetting(
 // proof: without an active journal record such a wrapper cannot be attributed
 // and rollback must fail closed.
 bool sudoScopedDefaultsOwnsWrappers(
-    const SudoersConfiguration& configuration,
+    SudoersConfiguration& configuration,
     const std::string& policyName) {
-    return configuration.scopedDefaultsWrapperCount(policyName) > 0;
+    fic::sudoers::ScopedDefaultsTransaction transaction(configuration, policyName);
+    std::vector<fic::sudoers::ScopedDefaultsTransaction::OwnedWrapper> inventory;
+    std::string error;
+    // A malformed marker structure also counts as "owns something we cannot
+    // attribute" and therefore fails closed.
+    if (!transaction.globalInventory(inventory, error)) {
+        return true;
+    }
+    for (const auto& owned : inventory) {
+        if (owned.wrapper.policy == policyName) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // SUDO scoped-Defaults ownership-release undo: unwraps only the FIC-owned
@@ -325,7 +341,8 @@ MutationRollbackOutcome undoSudoScopedDefaults(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record,
     const fic::rollback::UndoReleaseSudoScopedDefaults& undo) {
-    const std::lock_guard<std::mutex> lock(rollbackBackendMutex());
+    // The SHARED SUDO mutation mutex, matching the apply path.
+    const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
 
     MutationRollbackOutcome outcome;
     outcome.id = record.id;
@@ -342,9 +359,28 @@ MutationRollbackOutcome undoSudoScopedDefaults(
         return outcome;
     }
 
+    // Ownership release over the whole graph. The payload proves each wrapper
+    // by id AND payload digest, so a hand-edited body becomes a Conflict with
+    // zero writes instead of silently activated foreign content.
+    fic::sudoers::ScopedDefaultsTransaction transaction(
+        configuration, undo.policyName);
+    fic::sudoers::SudoScopedDefaultsHooks hooks;
+    hooks.validate = [&configuration](std::string& e) {
+        return configuration.validateConfiguration(e);
+    };
+    hooks.reloadAndVerify = [&configuration](std::string& e) {
+        return configuration.load(e);
+    };
+    const std::vector<fic::rollback::SudoScopedDefaultsWrapperProof> proofs(
+        undo.targetProofs.begin(), undo.targetProofs.end());
+    fic::sudoers::SudoScopedDefaultsOutcome transactionOutcome =
+        fic::sudoers::SudoScopedDefaultsOutcome::NoMutation;
     const SudoersOperationResult restoration =
-        configuration.restoreScopedDefaults(undo.policyName, undo.wrapperIds);
+        transaction.release(proofs, transactionOutcome, hooks);
     outcome.message = restoration.message;
+    for (const std::string& diagnostic : restoration.diagnostics) {
+        outcome.message += ". " + diagnostic;
+    }
     if (restoration.conflict) {
         outcome.status = RollbackStatus::Conflict;
     } else if (restoration.ok && restoration.targetMissing) {

@@ -189,6 +189,7 @@ add_executable(firewall_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(firewall_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -521,6 +522,7 @@ add_executable(sudoers_configuration_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
 )
 target_include_directories(sudoers_configuration_tests PRIVATE
@@ -606,6 +608,7 @@ add_executable(pam_provider_managed_entry_journal_tests
     fic/rollback/PamProviderManagedEntryJournalTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_provider_managed_entry_journal_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -653,6 +656,7 @@ add_executable(pam_provider_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamSlotAttachValidator.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_provider_rollback_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -702,6 +706,7 @@ add_executable(pam_provider_package_release_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamSlotAttachValidator.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_provider_package_release_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -739,6 +744,7 @@ add_executable(pam_provider_managed_entry_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/platform/PamProviderMetadata.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_provider_managed_entry_executor_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -762,6 +768,7 @@ add_executable(pam_provider_managed_flag_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/platform/PamProviderMetadata.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_provider_managed_flag_executor_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -776,6 +783,7 @@ add_executable(mutation_journal_tests
     fic/rollback/MutationJournalTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(mutation_journal_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -844,6 +852,7 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
@@ -880,6 +889,109 @@ target_link_libraries(rollback_executor_tests PRIVATE
 )
 add_test(NAME rollback_executor_tests COMMAND rollback_executor_tests)
 
+# End-to-end journal -> filesystem lifecycle for the SUDO scoped-defaults
+# blocker: real backend, real MutationJournal, real RollbackExecutor over
+# temporary sudoers trees.
+add_executable(sudo_scoped_defaults_lifecycle_tests
+    fic/rollback/SudoScopedDefaultsLifecycleTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PolicyDisableFlow.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/login_defs/IdentityLoginDefsManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/login_defs/IdentityLoginDefsManagedTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    # Step 7F: managed provider rollback backend + its physical layer.
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlockFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedEntryExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedFlagExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedLock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwhistoryConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamAuthUpdateTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamFaillockTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamSlotAttachValidator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotBootstrap.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordPackageRelease.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManagerFactory.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedBlock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
+)
+target_include_directories(sudo_scoped_defaults_lifecycle_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-core/include
+)
+target_link_libraries(sudo_scoped_defaults_lifecycle_tests PRIVATE
+    fic-core
+    fic-ipc
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME sudo_scoped_defaults_lifecycle_tests
+    COMMAND sudo_scoped_defaults_lifecycle_tests)
+
 add_executable(grub_policy_tests
     fic/modules/oss/grub/GrubPolicyTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
@@ -893,6 +1005,7 @@ add_executable(grub_policy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_disable_recovery.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(grub_policy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -918,6 +1031,7 @@ add_executable(grub_rollback_journal_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/policies/OSS_grub_disable_recovery.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(grub_rollback_journal_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1033,6 +1147,7 @@ add_executable(pam_slot_attach_validator_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_slot_attach_validator_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1062,6 +1177,7 @@ add_executable(pam_managed_password_slot_writer_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_managed_password_slot_writer_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1095,6 +1211,7 @@ add_executable(pam_password_slot_attach_validator_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_password_slot_attach_validator_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1129,6 +1246,7 @@ add_executable(pam_managed_password_slot_bootstrap_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_managed_password_slot_bootstrap_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1180,6 +1298,7 @@ add_executable(pam_password_topology_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_password_topology_executor_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1290,6 +1409,7 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
@@ -1340,6 +1460,7 @@ add_executable(pam_password_package_release_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_password_package_release_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1535,6 +1656,7 @@ add_executable(pam_capability_activation_policy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(pam_capability_activation_policy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1691,6 +1813,7 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/nss/NssConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/CompositePolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(identity_policy_hierarchy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1741,6 +1864,7 @@ add_executable(password_aging_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/password_aging/PasswordAgingPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/password_aging/PasswordAgingRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(password_aging_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1772,6 +1896,7 @@ add_executable(user_creation_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryMutation.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(user_creation_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1849,6 +1974,7 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
@@ -1954,6 +2080,7 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
@@ -2053,6 +2180,7 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
@@ -2125,6 +2253,12 @@ add_executable(command_hash_batch_tests
 target_link_libraries(command_hash_batch_tests PRIVATE fic-core)
 add_test(NAME command_hash_batch_tests COMMAND command_hash_batch_tests)
 set_tests_properties(command_hash_batch_tests PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(content_digest_tests
+    common/core/integrity/ContentDigestTests.cpp
+)
+target_link_libraries(content_digest_tests PRIVATE fic-core)
+add_test(NAME content_digest_tests COMMAND content_digest_tests)
 
 add_executable(command_hash_security_tests
     common/core/integrity/CommandHashSecurityTests.cpp

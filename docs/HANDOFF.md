@@ -3,14 +3,34 @@
 ## Current base
 
 * branch: `main`
-* base commit: `8f53a32` + SUDO hardening (include lexer, scoped Defaults
-  blocker, `sudo_exempt_group_disable`, reverse-dependency guard)
+* base commit: `240410f` + follow-up «Harden SUDO scoped-defaults provenance and
+  recovery lifecycle»
 
 ## Current task
 
-Hardening подсистемы SUDO: корректный разбор include-директив, запрет
-контекстных (scoped) `Defaults` отдельной политикой с ownership/rollback
-моделью, выделение `exempt_group` в отдельного владельца. Выполнено.
+Доработка подсистемы SUDO после `240410f`: provenance-safe обёртки
+scoped `Defaults`, crash-consistent транзакция, reconciliation-safe refresh и
+E2E-тест journal → filesystem. Выполнено.
+
+## Accepted architecture / invariants
+
+* `SudoersConfiguration` остаётся владельцем парсинга sudoers, include-графа и
+  конфигурационных примитивов. Вся remediation scoped `Defaults` вынесена в
+  `SudoersScopedDefaultsTransaction` (targets/dedup, глобальный инвентарь,
+  provenance, refresh-планирование, state-bound транзакция, компенсация,
+  typed outcome, rollback). Наружу у конфигурации остались только
+  `graphDocuments()/graphEntries()` и `validateConfiguration()`.
+* Payload `UndoReleaseSudoScopedDefaults` = `{policyName, previousProofs,
+  targetProofs}`, где proof = `{wrapperId, payloadDigest}`. Digest — SHA-256 от
+  **точных подавленных байтов вместе с terminator-ами строк**
+  (`fic::core::ContentDigest`, `SudoPhysicalLine`). Инвариант:
+  `previousProofs ⊆ targetProofs`.
+* Rollback пересчитывает digest **до** снятия обёртки; расхождение — `Conflict`
+  с нулём записей.
+* Только `NoMutation` / `MutatedAndCompensated` разрешают удалить `Prepared`.
+* Все мутационные пути SUDO сериализуются одним `SudoersConfiguration::mutationMutex()`.
+* Include-лексика: кавычки — **verbatim** (как в upstream `expand_include`),
+  некавыченный backslash — fail closed.
 
 ## Accepted architecture / invariants
 
@@ -51,22 +71,46 @@ Hardening подсистемы SUDO: корректный разбор include-�
   `SudoersConfigurationTests`, `PolicyExecutionPlannerTests`,
   `RollbackExecutorTests`.
 
+Follow-up поверх `240410f`:
+
+* `fic::core::ContentDigest` (SHA-256 через OpenSSL EVP) + `SudoPhysicalLine`
+  (line + оригинальный terminator) — byte-exact apply/rollback, включая CRLF.
+* `SudoersScopedDefaultsTransaction`: physical dedup, глобальный инвентарь
+  обёрток, проверка provenance по id+digest, `planRefresh`, `classifyPrepared`,
+  typed `SudoScopedDefaultsOutcome`, state-bound apply/release/компенсация
+  через `captureTargetState()`/`expectedTargetState`.
+* Payload журнала `{policyName, previousProofs, targetProofs}` + валидаторы
+  чтения/записи (канонические id, канонические digest, уникальность,
+  `previous ⊆ target`, refresh-guards для `Prepared`/`RollbackFailed`/`Applied`).
+* Единый `SudoersConfiguration::mutationMutex()` для всех пяти мутационных
+  путей SUDO (включая обе rollback-ветки).
+* Include-лексика: кавычки verbatim; некавыченный backslash — fail closed.
+* Новый E2E-таргет `sudo_scoped_defaults_lifecycle_tests` (8 сценариев) и
+  `content_digest_tests`.
+
 ## Changed areas
 
-* `fic/src/modules/dac/sudo/*` (backend, две новые политики)
+* `fic/src/modules/dac/sudo/*` (backend, транзакция, политики)
 * `fic/src/rollback/{MutationRecord.h,MutationJournal.cpp,RollbackExecutor.cpp}`
-* `fic/src/policy/execution/PolicyDependencyGraph.*`,
-  `fic/src/daemon/main_function.cpp`
-* `docs/{rollback.md,architecture-diagrams.md}`, `resources/{config,lang}`
+* `fic-common/fic-core/{include/fic/core/integrity,src/integrity}`
+* `tests/CMakeLists.txt`,
+  `tests/fic/rollback/SudoScopedDefaultsLifecycleTests.cpp`,
+  `tests/fic/modules/dac/SudoersConfigurationTests.cpp`
+* `docs/{rollback.md,architecture-diagrams.md,HANDOFF.md}`
 
 ## Validation
 
 * `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04`
 * `cmake --build build-check -j4` — RC=0
-* `ctest --test-dir build-check --output-on-failure` — 117/117 PASS
+* `ctest --test-dir build-check --output-on-failure` — 119/119 PASS
   (`command_hash_batch_tests` — Skipped, не связан с задачей)
-* `visudo-rs 0.2.13` использован как oracle для синтаксиса обёрток и
-  подтверждения, что FIC-комментарии остаются валидным sudoers.
+* `sudo_scoped_defaults_lifecycle_tests` — RC=0 (8 E2E-сценариев)
+* `content_digest_tests` — RC=0
+* `visudo-rs 0.2.13` использован как oracle для синтаксиса обёрток.
+  Для некавыченного backslash oracle непригоден: `visudo-rs` отказывает по
+  ownership каталога **до** разбора include, поэтому эта форма закрыта
+  fail-closed по upstream-исходникам (`toke.l` `<INSTR>` + `expand_include`),
+  а не проверкой на хосте.
 
 ## Remaining
 

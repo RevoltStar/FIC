@@ -9,7 +9,12 @@
 
 namespace {
 
-std::mutex sudoersMutex;
+// Serializes SUDO backend access. It is the SHARED SudoersConfiguration
+// lock, so apply and rollback observe the same mutex instead of two
+// unrelated translation-unit-local ones.
+std::mutex& sudoersMutex() {
+    return SudoersConfiguration::mutationMutex();
+}
 
 bool productionSudoersOptions(
     const fic::platform::SudoPlatformConfig& platformConfig,
@@ -74,7 +79,7 @@ bool Sudo::apply() {
         return false;
     }
 
-    const std::lock_guard<std::mutex> lock(sudoersMutex);
+    const std::lock_guard<std::mutex> lock(sudoersMutex());
 
     SudoersConfigurationOptions configurationOptions;
     std::string resolverError;
@@ -188,7 +193,7 @@ bool Sudo::apply() {
 }
 
 bool Sudo::applyRequireAuthentication() {
-    const std::lock_guard<std::mutex> lock(sudoersMutex);
+    const std::lock_guard<std::mutex> lock(sudoersMutex());
     const auto configuredValue = this->getValue();
     if (!configuredValue || *configuredValue != "ENABLE") {
         this->log("Эталон политики требования аутентификации не равен ENABLE", logLevel::ERROR);

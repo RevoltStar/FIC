@@ -586,6 +586,11 @@ std::filesystem::path normalizedExistingPath(const std::filesystem::path& path) 
 
 } // namespace
 
+std::mutex& SudoersConfiguration::mutationMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
 SudoersConfiguration::SudoersConfiguration(SudoersConfigurationOptions options)
     : options_(std::move(options)) {
 }
@@ -1059,337 +1064,26 @@ std::vector<std::string> SudoersConfiguration::scopedDefaultsViolations() const 
     return result;
 }
 
-namespace {
 
-// One scoped Defaults hit, resolved to the physical lines it occupies.
-struct ScopedDefaultsHit {
-    size_t documentIndex = 0;
-    size_t firstLine = 0;
-    size_t lineCount = 1;
-};
-
-std::vector<std::string> documentPhysicalLines(const std::string& content) {
-    std::vector<std::string> lines;
-    for (const auto& item : physicalLines(content)) {
-        lines.push_back(item.second);
-    }
-    return lines;
-}
-
-// Re-serializes an edited line vector, preserving the original file's
-// trailing-newline convention so an unrelated file is never reformatted by
-// this policy.
-std::string rewriteDocument(const std::string& originalContent,
-                            const std::vector<std::string>& lines) {
-    const bool finalNewline = !originalContent.empty() &&
-        originalContent.back() == '\n';
-    std::string content;
-    for (size_t index = 0; index < lines.size(); ++index) {
-        content += lines[index];
-        if (index + 1 < lines.size() || finalNewline) {
-            content.push_back('\n');
-        }
-    }
-    return content;
-}
-
-// Offset of the 1-based physical line number inside a lines vector.
-std::size_t lineOffset(const std::vector<std::string>& lines, size_t lineNumber) {
-    return lineNumber >= 1 ? lineNumber - 1 : 0;
-}
-
-} // namespace
-
-long SudoersConfiguration::scopedDefaultsWrapperCount(
-    const std::string& policyName) const {
-    long count = 0;
+std::vector<SudoersConfiguration::GraphDocument>
+SudoersConfiguration::graphDocuments() const {
+    std::vector<GraphDocument> documents;
+    documents.reserve(documents_.size());
     for (const Document& document : documents_) {
-        const std::vector<std::string> lines = documentPhysicalLines(document.content);
-        std::vector<fic::sudoers::SudoDisabledWrapper> wrappers;
-        std::string error;
-        if (fic::sudoers::parseSudoDisabledWrappers(lines, wrappers, error) !=
-            fic::sudoers::SudoWrapperParseStatus::Ok) {
-            return -1;
-        }
-        for (const fic::sudoers::SudoDisabledWrapper& wrapper : wrappers) {
-            if (wrapper.policy == policyName) {
-                ++count;
-            }
-        }
+        documents.push_back({document.path, document.content});
     }
-    return count;
+    return documents;
 }
 
-// __APPEND_DISABLE__
-std::vector<std::string> SudoersConfiguration::planScopedDefaultsWrapperIds(
-    size_t violationCount) {
-    std::vector<std::string> ids;
-    ids.reserve(violationCount);
-    for (size_t index = 0; index < violationCount; ++index) {
-        ids.push_back(fic::sudoers::generateSudoWrapperMutationId(
-            static_cast<int>(index)));
-    }
-    return ids;
-}
-
-SudoersOperationResult SudoersConfiguration::disableScopedDefaults(
-    const std::string& policyName,
-    const std::vector<std::string>& wrapperIds) {
-    SudoersOperationResult result;
-    std::string error;
-    if (!validate(error)) {
-        result.message = "Исходная конфигурация sudoers не прошла проверку: " + error;
-        return result;
-    }
-
-    // The FIC managed artifact never contains scoped Defaults (FIC only ever
-    // writes plain global Defaults there), but it is part of the graph, so
-    // detection deliberately covers it as well.
-    std::vector<ScopedDefaultsHit> hits;
+std::vector<SudoersConfiguration::GraphEntry>
+SudoersConfiguration::graphEntries() const {
+    std::vector<GraphEntry> entries;
+    entries.reserve(orderedLines_.size());
     for (const OrderedLine& line : orderedLines_) {
-        const std::string scope = fic::sudoers::scopedDefaultsScope(line.text);
-        if (scope.empty()) {
-            continue;
-        }
-        hits.push_back({line.documentIndex, line.firstLine, line.lineCount});
-        result.diagnostics.push_back("найдено " +
-            fic::sudoers::scopedDefaultsLocation({documents_[line.documentIndex].path,
-                                                   line.firstLine, line.lineCount,
-                                                   scope}));
+        entries.push_back({line.documentIndex, line.firstLine, line.lineCount,
+                            line.text});
     }
-    if (hits.empty()) {
-        result.ok = true;
-        result.message = "Активных контекстных Defaults не обнаружено";
-        return result;
-    }
-    // The caller journals the ids BEFORE the mutation; a mismatch means the
-    // graph changed between planning and applying.
-    if (wrapperIds.size() != hits.size()) {
-        result.message = "Число обёрток (" +
-            std::to_string(wrapperIds.size()) + ") не совпадает с числом "
-            "найденных контекстных Defaults (" +
-            std::to_string(hits.size()) + ")";
-        return result;
-    }
-
-    // Compare-and-swap precondition: refuse to mutate anything when a file
-    // changed after the graph was loaded.
-    for (const Document& document : documents_) {
-        if (!contentUnchanged(document, error)) {
-            result.message = error;
-            return result;
-        }
-    }
-
-    std::vector<std::pair<std::filesystem::path, std::string>> writtenDocuments;
-    const auto compensate = [&]() {
-        bool restored = true;
-        for (auto item = writtenDocuments.rbegin(); item != writtenDocuments.rend();
-             ++item) {
-            std::string restoreError;
-            if (!writeDocument(item->first, item->second, false, restoreError)) {
-                restored = false;
-                result.diagnostics.push_back("Ошибка компенсации " +
-                    item->first.string() + ": " + restoreError);
-            }
-        }
-        if (restored) {
-            std::string validationError;
-            if (!validate(validationError)) {
-                result.diagnostics.push_back(
-                    "Восстановленная конфигурация не прошла visudo: " +
-                    validationError);
-            }
-        }
-        return restored;
-    };
-
-    // Group by document, then wrap bottom-up so that each wrap never shifts
-    // the physical line indices of the entries still to be handled.
-    std::map<size_t, std::vector<ScopedDefaultsHit>> perDocument;
-    for (const ScopedDefaultsHit& hit : hits) {
-        perDocument[hit.documentIndex].push_back(hit);
-    }
-
-    size_t nextId = 0;
-    for (auto& entry : perDocument) {
-        Document& document = documents_[entry.first];
-        const std::string originalContent = document.content;
-        std::vector<std::string> lines = documentPhysicalLines(originalContent);
-        std::sort(entry.second.begin(), entry.second.end(),
-                  [](const ScopedDefaultsHit& left, const ScopedDefaultsHit& right) {
-                      return left.firstLine > right.firstLine;
-                  });
-
-        std::vector<std::string> createdIds;
-        for (const ScopedDefaultsHit& hit : entry.second) {
-            const std::size_t offset = lineOffset(lines, hit.firstLine);
-            if (offset + hit.lineCount > lines.size()) {
-                result.message = "Диапазон строк вышел за пределы файла " +
-                    document.path.string();
-                result.changed = !compensate();
-                return result;
-            }
-            const std::string& mutationId = wrapperIds[nextId++];
-            fic::sudoers::disableSudoEntry(lines, offset, hit.lineCount,
-                                           policyName, mutationId);
-            createdIds.push_back(mutationId);
-        }
-
-        const std::string newContent =
-            rewriteDocument(originalContent, lines);
-        if (!contentUnchanged(document, error)) {
-            result.message = error;
-            result.changed = !compensate();
-            return result;
-        }
-        if (!writeDocument(document.path, newContent, false, error)) {
-            result.message = "Не удалось обновить " + document.path.string() +
-                ": " + error;
-            result.changed = !compensate();
-            return result;
-        }
-        writtenDocuments.emplace_back(document.path, originalContent);
-        if (!validate(error)) {
-            result.message = "Конфигурация не прошла visudo после изменения " +
-                document.path.string() + ": " + error;
-            result.changed = !compensate();
-            return result;
-        }
-        result.diagnostics.insert(result.diagnostics.end(),
-                                  createdIds.begin(), createdIds.end());
-    }
-    // Reload the whole graph and re-check the semantic postcondition: the
-    // policy counts as applied only when NO active scoped Defaults remain.
-    if (!load(error)) {
-        result.message = "Не удалось перечитать sudoers после изменения: " + error;
-        result.changed = !compensate();
-        return result;
-    }
-    const std::vector<std::string> remaining = scopedDefaultsViolations();
-    if (!remaining.empty()) {
-        result.diagnostics.insert(result.diagnostics.end(),
-                                  remaining.begin(), remaining.end());
-        result.message = "После изменения остались активные контекстные Defaults";
-        result.changed = !compensate();
-        return result;
-    }
-
-    result.ok = true;
-    result.changed = true;
-    result.message = "Все активные контекстные Defaults временно отключены (" +
-        std::to_string(wrapperIds.size()) + " обёрток)";
-    return result;
-}
-
-SudoersOperationResult SudoersConfiguration::restoreScopedDefaults(
-    const std::string& policyName,
-    const std::vector<std::string>& allowedWrapperIds) {
-    SudoersOperationResult result;
-    std::string error;
-    if (!validate(error)) {
-        result.message = "Исходная конфигурация sudoers не прошла проверку: " + error;
-        return result;
-    }
-    for (const Document& document : documents_) {
-        if (!contentUnchanged(document, error)) {
-            result.message = error;
-            return result;
-        }
-    }
-
-    std::vector<std::pair<std::filesystem::path, std::string>> writtenDocuments;
-    const auto compensate = [&]() {
-        bool restored = true;
-        for (auto item = writtenDocuments.rbegin(); item != writtenDocuments.rend();
-             ++item) {
-            std::string restoreError;
-            if (!writeDocument(item->first, item->second, false, restoreError)) {
-                restored = false;
-                result.diagnostics.push_back("Ошибка компенсации " +
-                    item->first.string() + ": " + restoreError);
-            }
-        }
-        return restored;
-    };
-
-    size_t restoredFiles = 0;
-    for (const Document& document : documents_) {
-        std::vector<std::string> lines = documentPhysicalLines(document.content);
-        std::vector<fic::sudoers::SudoDisabledWrapper> wrappers;
-        const fic::sudoers::SudoWrapperParseStatus status =
-            fic::sudoers::parseSudoDisabledWrappers(lines, wrappers, error);
-        if (status != fic::sudoers::SudoWrapperParseStatus::Ok) {
-            result.conflict = true;
-            result.message = "Структура FIC-маркеров sudoers повреждена: " + error;
-            return result;
-        }
-        // Ownership release: every wrapper of the policy that still exists
-        // must be proven by the journal payload; payload ids whose wrappers
-        // already vanished are an externally released subset, never an error.
-        const fic::sudoers::SudoWrapperProvenanceCheck provenance =
-            fic::sudoers::checkSudoWrapperProvenance(wrappers, policyName,
-                                                    allowedWrapperIds);
-        if (!provenance.safeToRelease()) {
-            result.conflict = true;
-            result.message = fic::sudoers::describeSudoWrapperProvenance(
-                provenance, policyName);
-            return result;
-        }
-        for (const std::string& id : provenance.releasedIds) {
-            result.diagnostics.push_back(
-                "обёртка " + id + " уже отсутствует: владение внешне освобождено");
-        }
-
-        bool changed = false;
-        std::string restoreError;
-        if (!fic::sudoers::restoreSudoDisabledEntries(lines, policyName,
-                                                      allowedWrapperIds, changed,
-                                                      restoreError)) {
-            result.conflict = true;
-            result.message = restoreError;
-            return result;
-        }
-        if (!changed) {
-            continue;
-        }
-
-        const std::string newContent = rewriteDocument(document.content, lines);
-        if (!writeDocument(document.path, newContent, false, error)) {
-            result.message = "Не удалось восстановить " + document.path.string() +
-                ": " + error;
-            result.changed = !compensate();
-            return result;
-        }
-        writtenDocuments.emplace_back(document.path, document.content);
-        if (!validate(error)) {
-            result.message = "Конфигурация не прошла visudo после восстановления " +
-                document.path.string() + ": " + error;
-            result.changed = !compensate();
-            return result;
-        }
-        ++restoredFiles;
-    }
-
-    if (restoredFiles == 0) {
-        result.ok = true;
-        result.targetMissing = true;
-        result.message = "Обёртки FIC_SUDO_DISABLED политики '" + policyName +
-            "' отсутствуют: владение уже освобождено";
-        return result;
-    }
-
-    if (!load(error)) {
-        result.message = "Не удалось перечитать sudoers после восстановления: " + error;
-        result.changed = !compensate();
-        return result;
-    }
-
-    result.ok = true;
-    result.changed = true;
-    result.message = "Контекстные Defaults восстановлены в " +
-        std::to_string(restoredFiles) + " файлах";
-    return result;
+    return entries;
 }
 
 SudoersOperationResult SudoersConfiguration::enforceAuthentication() {
