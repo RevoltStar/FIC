@@ -114,7 +114,7 @@ bool ScopedDefaultsTransaction::globalInventory(
     return true;
 }
 
-std::string ScopedDefaultsTransaction::noopPreflight(
+std::string ScopedDefaultsTransaction::validateCurrentOwnership(
     const std::vector<SudoScopedDefaultsWrapperProof>& activeProofs) const {
     std::string error;
     std::vector<OwnedWrapper> inventory;
@@ -123,16 +123,15 @@ std::string ScopedDefaultsTransaction::noopPreflight(
     if (!globalInventory(inventory, error)) {
         return error;
     }
-    if (!targets().empty()) {
-        return "активные контекстные Defaults всё ещё присутствуют";
-    }
     std::vector<SudoDisabledWrapper> wrappers;
     wrappers.reserve(inventory.size());
     for (const OwnedWrapper& owned : inventory) {
-        wrappers.push_back(owned.wrapper);
+        if (owned.wrapper.policy == policyName_) {
+            wrappers.push_back(owned.wrapper);
+        }
     }
-    // Every FIC wrapper of this policy must be proven by the ACTIVE journal
-    // ownership set; an orphan is never adopted here.
+    // Every existing wrapper of this policy must be proven by the ACTIVE journal
+    // ownership set with an exact digest. An orphan is never adopted.
     const SudoWrapperProvenanceCheck check =
         checkSudoWrapperProvenance(wrappers, policyName_, activeProofs);
     if (!check.safeToRelease()) {
@@ -141,20 +140,31 @@ std::string ScopedDefaultsTransaction::noopPreflight(
     return {};
 }
 
-std::vector<SudoScopedDefaultsWrapperProof>
-ScopedDefaultsTransaction::planRefresh(
+std::string ScopedDefaultsTransaction::noopPreflight(
+    const std::vector<SudoScopedDefaultsWrapperProof>& activeProofs) const {
+    if (!targets().empty()) {
+        return "активные контекстные Defaults всё ещё присутствуют";
+    }
+    return validateCurrentOwnership(activeProofs);
+}
+
+ScopedDefaultsPlan ScopedDefaultsTransaction::plan(
     const std::vector<SudoScopedDefaultsWrapperProof>& owned) const {
-    std::vector<SudoScopedDefaultsWrapperProof> proofs = owned;
+    ScopedDefaultsPlan result;
+    result.owned = owned;
     const std::vector<SudoersConfiguration::GraphDocument> documents =
         configuration_.graphDocuments();
     const std::vector<ScopedDefaultsTarget> physical = targets();
     for (size_t index = 0; index < physical.size(); ++index) {
-        SudoScopedDefaultsWrapperProof proof;
-        proof.wrapperId = generateSudoWrapperMutationId(static_cast<int>(index));
-        proof.payloadDigest = suppressedDigest(documents, physical[index]);
-        proofs.push_back(std::move(proof));
+        PlannedScopedDefaultsMutation mutation;
+        mutation.target = physical[index];
+        mutation.proof.wrapperId =
+            generateSudoWrapperMutationId(static_cast<int>(index));
+        mutation.proof.payloadDigest =
+            suppressedDigest(documents, physical[index]);
+        result.fresh.push_back(std::move(mutation));
     }
-    return proofs;
+    return result;
 }
 
 namespace {
@@ -171,6 +181,27 @@ struct FileTransaction {
 // State-bound compensation: restores `original` ONLY when the target still is
 // exactly the state FIC installed. An externally changed file is preserved and
 // reported, never overwritten with FIC's historical content.
+// Invokes a user/injection hook, converting a thrown exception into a normal
+// failure string. A hook is the deterministic fault-injection seam, so an
+// escaping exception must never skip the compensation step.
+bool invokeHook(const std::function<void(const std::filesystem::path&)>& hook,
+                const std::filesystem::path& path,
+                std::string& error) {
+    if (!hook) {
+        return true;
+    }
+    try {
+        hook(path);
+    } catch (const std::exception& exception) {
+        error = exception.what();
+        return false;
+    } catch (...) {
+        error = "неизвестная ошибка в hook записи " + path.string();
+        return false;
+    }
+    return true;
+}
+
 bool compensateFiles(std::vector<FileTransaction>& transactions,
                      const std::function<void(const std::filesystem::path&)>& hook,
                      std::string& error) {
@@ -179,8 +210,12 @@ bool compensateFiles(std::vector<FileTransaction>& transactions,
         if (!item->installed.has_value()) {
             continue;
         }
-        if (hook) {
-            hook(item->path);
+        std::string hookError;
+        if (!invokeHook(hook, item->path, hookError)) {
+            allRestored = false;
+            error += "компенсация " + item->path.string() +
+                " прервана инжектированной ошибкой: " + hookError + "; ";
+            continue;
         }
         AtomicWriteOptions options;
         options.rejectSymlink = true;
@@ -208,23 +243,63 @@ bool compensateFiles(std::vector<FileTransaction>& transactions,
 
 } // namespace
 
-SudoersOperationResult ScopedDefaultsTransaction::apply(
-    const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
-    SudoScopedDefaultsOutcome& outcome,
+namespace {
+
+// Terminal-state helper used by EVERY failure branch of apply() and release().
+//
+// The filesystem state is derived from the transaction as a WHOLE, never from
+// the result of the single write that happened to fail: a failure on the last
+// file must not report "nothing was written" while an earlier file still holds
+// an installed wrapper.
+SudoScopedDefaultsFilesystemState settleFilesystemState(
+    const std::vector<FileTransaction>& transactions) {
+    for (const FileTransaction& item : transactions) {
+        if (item.installed.has_value()) {
+            return SudoScopedDefaultsFilesystemState::PartialOrUnknown;
+        }
+    }
+    return SudoScopedDefaultsFilesystemState::Unchanged;
+}
+
+// Attempts to restore every installed file. Returns the resulting state:
+// Unchanged when nothing had been installed, Compensated when every installed
+// file was provably restored, PartialOrUnknown otherwise.
+SudoScopedDefaultsFilesystemState settleWithCompensation(
+    std::vector<FileTransaction>& transactions,
+    const std::function<void(const std::filesystem::path&)>& hook,
+    std::string& error) {
+    if (settleFilesystemState(transactions) ==
+        SudoScopedDefaultsFilesystemState::Unchanged) {
+        return SudoScopedDefaultsFilesystemState::Unchanged;
+    }
+    return compensateFiles(transactions, hook, error)
+        ? SudoScopedDefaultsFilesystemState::Compensated
+        : SudoScopedDefaultsFilesystemState::PartialOrUnknown;
+}
+
+} // namespace
+
+SudoScopedDefaultsTransactionResult ScopedDefaultsTransaction::apply(
+    const std::vector<PlannedScopedDefaultsMutation>& fresh,
     const SudoScopedDefaultsHooks& hooks) {
-    outcome = SudoScopedDefaultsOutcome::NoMutation;
-    SudoersOperationResult result;
+    SudoScopedDefaultsTransactionResult result;
+    result.filesystemState = SudoScopedDefaultsFilesystemState::Unchanged;
     std::string error;
+
+    // Every early return below happens BEFORE the first write, so the
+    // filesystem is provably untouched and the Prepared record may be discarded.
+    const auto refuse = [&](const std::string& message) {
+        result.kind = SudoScopedDefaultsResultKind::Conflict;
+        result.operation.conflict = true;
+        result.operation.message = message;
+        result.filesystemState = SudoScopedDefaultsFilesystemState::Unchanged;
+        return result;
+    };
 
     std::vector<OwnedWrapper> inventory;
     if (!globalInventory(inventory, error)) {
-        outcome = SudoScopedDefaultsOutcome::Conflict;
-        result.conflict = true;
-        result.message = error;
-        return result;
+        return refuse(error);
     }
-    // A planned id must not collide with an id that already exists anywhere in
-    // the graph.
     std::set<std::string> usedIds;
     for (const OwnedWrapper& owned : inventory) {
         usedIds.insert(owned.wrapper.mutationId);
@@ -232,113 +307,125 @@ SudoersOperationResult ScopedDefaultsTransaction::apply(
     const std::vector<SudoersConfiguration::GraphDocument> documents =
         configuration_.graphDocuments();
 
-    // Each planned proof must match the suppressed bytes FIC is about to
-    // suppress, computed here from the graph. This replaces any count-based
-    // agreement: a mismatched plan fails closed before the first write.
-    const std::vector<ScopedDefaultsTarget> physical = targets();
-    if (physical.empty()) {
-        result.ok = true;
-        result.message = "Активных контекстных Defaults не обнаружено";
+    if (fresh.empty()) {
+        result.kind = SudoScopedDefaultsResultKind::Success;
+        result.operation.ok = true;
+        result.operation.message = "Активных контекстных Defaults не обнаружено";
         return result;
     }
-    if (targetProofs.size() != physical.size()) {
-        outcome = SudoScopedDefaultsOutcome::Conflict;
-        result.conflict = true;
-        result.message = "Число новых обёрток (" +
-            std::to_string(targetProofs.size()) + ") не совпадает с числом "
-            "физических целей (" + std::to_string(physical.size()) + ")";
-        return result;
-    }
-    for (size_t index = 0; index < physical.size(); ++index) {
-        const SudoScopedDefaultsWrapperProof& proof = targetProofs[index];
+
+    for (const PlannedScopedDefaultsMutation& mutation : fresh) {
+        const SudoScopedDefaultsWrapperProof& proof = mutation.proof;
         if (!isCanonicalSudoWrapperId(proof.wrapperId) ||
             !fic::core::ContentDigest::isCanonicalSha256Hex(
                 proof.payloadDigest)) {
-            outcome = SudoScopedDefaultsOutcome::Conflict;
-            result.conflict = true;
-            result.message = "Некорректная provenance новой обёртки";
-            return result;
+            return refuse("Некорректная provenance новой обёртки");
         }
         if (!usedIds.insert(proof.wrapperId).second) {
-            outcome = SudoScopedDefaultsOutcome::Conflict;
-            result.conflict = true;
-            result.message = "wrapper id '" + proof.wrapperId +
-                "' уже используется другим FIC_SUDO_DISABLED блоком";
-            return result;
+            return refuse("wrapper id '" + proof.wrapperId +
+                          "' уже используется другим FIC_SUDO_DISABLED блоком");
         }
-        // The digest must equal the digest of the exact bytes that will be
-        // suppressed, otherwise the record would prove content FIC never wrote.
-        if (proof.payloadDigest != suppressedDigest(documents, physical[index])) {
-            outcome = SudoScopedDefaultsOutcome::Conflict;
-            result.conflict = true;
-            result.message = "Подготовленный digest для обёртки '" +
-                proof.wrapperId + "' не совпадает с подавляемыми байтами";
-            return result;
+        // The proof must describe the bytes this very target suppresses.
+        if (proof.payloadDigest !=
+            suppressedDigest(documents, mutation.target)) {
+            return refuse("Подготовленный digest для обёртки '" +
+                          proof.wrapperId +
+                          "' не совпадает с подавляемыми байтами");
         }
     }
 
-    // Per-file plan: bottom-up wrapping so each wrap never shifts the line
-    // indices of the entries still to be handled.
+    // Group WHOLE (target, proof) pairs per file, then sort bottom-up. Sorting
+    // moves the pair, never the proof alone, so a proof can never end up on a
+    // different entry.
     std::map<std::filesystem::path,
-             std::vector<const ScopedDefaultsTarget*>> perDocument;
-    for (const ScopedDefaultsTarget& target : physical) {
-        perDocument[target.path].push_back(&target);
+             std::vector<PlannedScopedDefaultsMutation>> perDocument;
+    for (const PlannedScopedDefaultsMutation& mutation : fresh) {
+        perDocument[mutation.target.path].push_back(mutation);
     }
 
     std::vector<FileTransaction> transactions;
-    size_t proofCursor = targetProofs.size() - physical.size();
     for (auto& entry : perDocument) {
         FileTransaction transaction;
         transaction.path = entry.first;
         // State-bound precondition: capture the exact target state now.
         if (!AtomicFileWriter::captureTargetState(
                 entry.first.string(), transaction.captured, &error)) {
-            outcome = SudoScopedDefaultsOutcome::Conflict;
-            result.conflict = true;
-            result.message = "Не удалось зафиксировать состояние sudoers-файла " +
-                entry.first.string() + ": " + error;
-            return result;
+            return refuse("Не удалось зафиксировать состояние sudoers-файла " +
+                          entry.first.string() + ": " + error);
+        }
+        // Bind every planned line range to the SNAPSHOT it was computed from.
+        // Without this, an external writer that inserted or removed a line
+        // between load() and captureTargetState() would make FIC wrap a
+        // different entry than the one the journal proof describes. The range
+        // is never silently recomputed: the caller must reload and re-plan.
+        for (const auto& document : documents) {
+            if (document.path == entry.first) {
+                if (document.content != transaction.captured.content) {
+                    return refuse(
+                        "Sudoers-файл изменился между загрузкой графа и "
+                        "захватом состояния: " + entry.first.string() +
+                        "; требуется перезагрузка графа и новое планирование");
+                }
+                break;
+            }
         }
         std::vector<SudoPhysicalLine> lines = linesOf(transaction.captured.content);
         std::sort(entry.second.begin(), entry.second.end(),
-                  [](const ScopedDefaultsTarget* left,
-                     const ScopedDefaultsTarget* right) {
-                      return left->firstLine > right->firstLine;
+                  [](const PlannedScopedDefaultsMutation& left,
+                     const PlannedScopedDefaultsMutation& right) {
+                      return left.target.firstLine > right.target.firstLine;
                   });
-        for (const ScopedDefaultsTarget* target : entry.second) {
-            const std::size_t offset = lineOffset(lines, target->firstLine);
-            if (offset + target->lineCount > lines.size()) {
-                outcome = SudoScopedDefaultsOutcome::Conflict;
-                result.conflict = true;
-                result.message = "Диапазон строк вышел за пределы файла " +
-                    entry.first.string();
-                return result;
+        for (const PlannedScopedDefaultsMutation& mutation : entry.second) {
+            const std::size_t offset =
+                lineOffset(lines, mutation.target.firstLine);
+            if (offset + mutation.target.lineCount > lines.size()) {
+                return refuse("Диапазон строк вышел за пределы файла " +
+                              entry.first.string());
             }
-            disableSudoEntry(lines, offset, target->lineCount, policyName_,
-                             targetProofs[proofCursor++].wrapperId);
+            // Re-verify against the CAPTURED bytes, immediately before the
+            // wrapper is generated, not only at planning time.
+            std::vector<SudoPhysicalLine> capturedLines = lines;
+            const PlannedScopedDefaultsMutation unchanged = mutation;
+            // digest of exactly the lines this wrap will suppress
+            std::vector<SudoPhysicalLine> suppressed;
+            for (size_t n = 0; n < unchanged.target.lineCount; ++n) {
+                suppressed.push_back(capturedLines[offset + n]);
+            }
+            if (unchanged.proof.payloadDigest !=
+                SudoDisabledWrapper{{}, {}, suppressed, 0, 0}.payloadDigest()) {
+                return refuse("Подготовленный digest для обёртки '" +
+                              unchanged.proof.wrapperId +
+                              "' не совпадает с байтами захваченного снимка");
+            }
+            disableSudoEntry(lines, offset, unchanged.target.lineCount,
+                             policyName_, unchanged.proof.wrapperId);
         }
         transaction.newContent = joinPhysicalLines(lines);
         transactions.push_back(std::move(transaction));
     }
 
-    const auto fail = [&](const std::string& message) {
-        result.message = message;
+    const auto fail = [&](SudoScopedDefaultsResultKind kind,
+                       const std::string& message) {
+        result.kind = kind;
+        result.operation.message = message;
+        // The state is derived from the WHOLE transaction, so a failure on a
+        // later file never hides a wrapper already installed into an earlier
+        // one.
         std::string compensationError;
-        if (compensateFiles(transactions, hooks.beforeRestore,
-                            compensationError)) {
-            outcome = SudoScopedDefaultsOutcome::MutatedAndCompensated;
-        } else {
-            outcome = SudoScopedDefaultsOutcome::MutatedAndStillPresent;
-        }
+        result.filesystemState = settleWithCompensation(
+            transactions, hooks.beforeRestore, compensationError);
         if (!compensationError.empty()) {
-            result.diagnostics.push_back(compensationError);
+            result.operation.diagnostics.push_back(compensationError);
         }
         return result;
     };
 
     for (FileTransaction& transaction : transactions) {
-        if (hooks.beforeWrite) {
-            hooks.beforeWrite(transaction.path);
+        std::string hookError;
+        if (!invokeHook(hooks.beforeWrite, transaction.path, hookError)) {
+            return fail(SudoScopedDefaultsResultKind::Failed,
+                        "инжектированная ошибка записи " +
+                            transaction.path.string() + ": " + hookError);
         }
         AtomicWriteOptions options;
         options.rejectSymlink = true;
@@ -349,34 +436,35 @@ SudoersOperationResult ScopedDefaultsTransaction::apply(
                 transaction.path.string(), transaction.newContent, options,
                 &writeError, &writeResult)) {
             if (writeResult.preconditionFailed) {
-                // Someone else changed the file after our snapshot: FIC must
-                // not overwrite foreign content.
-                outcome = SudoScopedDefaultsOutcome::Conflict;
-                result.conflict = true;
-                result.message = "Sudoers-файл изменён после чтения: " +
-                    transaction.path.string();
-                return result;
+                // The file changed after our snapshot: FIC must not overwrite
+                // foreign content. Any wrapper installed earlier is still real
+                // and must be compensated, so this goes through fail().
+                return fail(SudoScopedDefaultsResultKind::Conflict,
+                            "Sudoers-файл изменён после чтения: " +
+                                transaction.path.string());
             }
             if (writeResult.installed) {
                 transaction.installed = writeResult.installedTargetState;
-                return fail("Не удалось записать " + transaction.path.string() +
-                            ": " + writeError);
             }
-            outcome = SudoScopedDefaultsOutcome::NoMutation;
-            result.message = "Не удалось записать " + transaction.path.string() +
-                ": " + writeError;
-            return result;
+            // Even a write that failed BEFORE installing anything must not
+            // report "no mutation" while an earlier file holds a wrapper.
+            return fail(SudoScopedDefaultsResultKind::Failed,
+                        "Не удалось записать " + transaction.path.string() +
+                            ": " + writeError);
         }
         transaction.installed = writeResult.installedTargetState;
         if (!writeResult.durabilityConfirmed) {
-            return fail("Не удалось подтвердить долговечность записи " +
-                        transaction.path.string());
+            return fail(SudoScopedDefaultsResultKind::Failed,
+                        "Не удалось подтвердить долговечность записи " +
+                            transaction.path.string());
         }
         if (hooks.validate) {
             std::string validationError;
             if (!hooks.validate(validationError)) {
-                return fail("Конфигурация не прошла visudo после изменения " +
-                            transaction.path.string() + ": " + validationError);
+                return fail(SudoScopedDefaultsResultKind::Failed,
+                            "Конфигурация не прошла visudo после изменения " +
+                                transaction.path.string() + ": " +
+                                validationError);
             }
         }
     }
@@ -385,32 +473,40 @@ SudoersOperationResult ScopedDefaultsTransaction::apply(
     if (hooks.reloadAndVerify) {
         std::string reloadError;
         if (!hooks.reloadAndVerify(reloadError)) {
-            return fail(reloadError);
+            return fail(SudoScopedDefaultsResultKind::Failed, reloadError);
         }
     }
 
-    outcome = SudoScopedDefaultsOutcome::Success;
-    result.ok = true;
-    result.changed = true;
-    result.message = "Активные контекстные Defaults временно отключены (" +
-        std::to_string(physical.size()) + " новых обёрток)";
+    result.kind = SudoScopedDefaultsResultKind::Success;
+    result.operation.ok = true;
+    result.operation.changed = true;
+    result.operation.message =
+        "Активные контекстные Defaults временно отключены (" +
+        std::to_string(fresh.size()) + " новых обёрток)";
+    result.filesystemState =
+        SudoScopedDefaultsFilesystemState::TargetInstalled;
     return result;
 }
 
-SudoersOperationResult ScopedDefaultsTransaction::release(
+SudoScopedDefaultsTransactionResult ScopedDefaultsTransaction::release(
     const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
-    SudoScopedDefaultsOutcome& outcome,
     const SudoScopedDefaultsHooks& hooks) {
-    outcome = SudoScopedDefaultsOutcome::NoMutation;
-    SudoersOperationResult result;
+    SudoScopedDefaultsTransactionResult result;
+    result.filesystemState = SudoScopedDefaultsFilesystemState::Unchanged;
     std::string error;
+
+    // Every early return below precedes the first write.
+    const auto refuse = [&](const std::string& message) {
+        result.kind = SudoScopedDefaultsResultKind::Conflict;
+        result.operation.conflict = true;
+        result.operation.message = message;
+        result.filesystemState = SudoScopedDefaultsFilesystemState::Unchanged;
+        return result;
+    };
 
     std::vector<OwnedWrapper> inventory;
     if (!globalInventory(inventory, error)) {
-        outcome = SudoScopedDefaultsOutcome::Conflict;
-        result.conflict = true;
-        result.message = error;
-        return result;
+        return refuse(error);
     }
 
     std::map<std::filesystem::path, std::vector<SudoDisabledWrapper>> byPath;
@@ -420,10 +516,11 @@ SudoersOperationResult ScopedDefaultsTransaction::release(
         }
     }
     if (byPath.empty()) {
-        result.ok = true;
-        result.targetMissing = true;
-        result.message = "Обёртки FIC_SUDO_DISABLED политики '" + policyName_ +
-            "' отсутствуют: владение уже освобождено";
+        result.kind = SudoScopedDefaultsResultKind::Success;
+        result.operation.ok = true;
+        result.operation.targetMissing = true;
+        result.operation.message = "Обёртки FIC_SUDO_DISABLED политики '" +
+            policyName_ + "' отсутствуют: владение уже освобождено";
         return result;
     }
 
@@ -434,10 +531,7 @@ SudoersOperationResult ScopedDefaultsTransaction::release(
         const SudoWrapperProvenanceCheck check =
             checkSudoWrapperProvenance(wrappers, policyName_, proofs);
         if (!check.safeToRelease()) {
-            outcome = SudoScopedDefaultsOutcome::Conflict;
-            result.conflict = true;
-            result.message = describeSudoWrapperProvenance(check, policyName_);
-            return result;
+            return refuse(describeSudoWrapperProvenance(check, policyName_));
         }
     }
 
@@ -447,21 +541,15 @@ SudoersOperationResult ScopedDefaultsTransaction::release(
         transaction.path = path;
         if (!AtomicFileWriter::captureTargetState(
                 path.string(), transaction.captured, &error)) {
-            outcome = SudoScopedDefaultsOutcome::Conflict;
-            result.conflict = true;
-            result.message = "Не удалось зафиксировать состояние sudoers-файла " +
-                path.string() + ": " + error;
-            return result;
+            return refuse("Не удалось зафиксировать состояние sudoers-файла " +
+                          path.string() + ": " + error);
         }
         std::vector<SudoPhysicalLine> lines = linesOf(transaction.captured.content);
         bool changed = false;
         std::string restoreError;
         if (!restoreSudoDisabledEntries(lines, policyName_, proofs, changed,
                                         restoreError)) {
-            outcome = SudoScopedDefaultsOutcome::Conflict;
-            result.conflict = true;
-            result.message = restoreError;
-            return result;
+            return refuse(restoreError);
         }
         if (!changed) {
             continue;
@@ -470,16 +558,36 @@ SudoersOperationResult ScopedDefaultsTransaction::release(
         transactions.push_back(std::move(transaction));
     }
     if (transactions.empty()) {
-        result.ok = true;
-        result.targetMissing = true;
-        result.message = "Обёртки FIC_SUDO_DISABLED политики '" + policyName_ +
-            "' отсутствуют: владение уже освобождено";
+        result.kind = SudoScopedDefaultsResultKind::Success;
+        result.operation.ok = true;
+        result.operation.targetMissing = true;
+        result.operation.message = "Обёртки FIC_SUDO_DISABLED политики '" +
+            policyName_ + "' отсутствуют: владение уже освобождено";
         return result;
     }
 
-for (FileTransaction& transaction : transactions) {
-        if (hooks.beforeWrite) {
-            hooks.beforeWrite(transaction.path);
+    // A partial release must never be reported as a completed rollback: if one
+    // wrapper is already unwrapped while another is not, and compensation
+    // cannot restore the first, the journal record MUST stay active.
+    const auto fail = [&](SudoScopedDefaultsResultKind kind,
+                          const std::string& message) {
+        result.kind = kind;
+        result.operation.message = message;
+        std::string compensationError;
+        result.filesystemState = settleWithCompensation(
+            transactions, hooks.beforeRestore, compensationError);
+        if (!compensationError.empty()) {
+            result.operation.diagnostics.push_back(compensationError);
+        }
+        return result;
+    };
+
+    for (FileTransaction& transaction : transactions) {
+        std::string hookError;
+        if (!invokeHook(hooks.beforeWrite, transaction.path, hookError)) {
+            return fail(SudoScopedDefaultsResultKind::Failed,
+                        "инжектированная ошибка записи " +
+                            transaction.path.string() + ": " + hookError);
         }
         AtomicWriteOptions options;
         options.rejectSymlink = true;
@@ -490,26 +598,16 @@ for (FileTransaction& transaction : transactions) {
                 transaction.path.string(), transaction.newContent, options,
                 &writeError, &writeResult)) {
             if (writeResult.preconditionFailed) {
-                outcome = SudoScopedDefaultsOutcome::Conflict;
-                result.conflict = true;
-                result.message = "Sudoers-файл изменён после чтения: " +
-                    transaction.path.string();
-                return result;
+                return fail(SudoScopedDefaultsResultKind::Conflict,
+                            "Sudoers-файл изменён после чтения: " +
+                                transaction.path.string());
             }
             if (writeResult.installed) {
                 transaction.installed = writeResult.installedTargetState;
             }
-            result.message = "Не удалось восстановить " + transaction.path.string() +
-                ": " + writeError;
-            std::string compensationError;
-            outcome = compensateFiles(transactions, hooks.beforeRestore,
-                                     compensationError)
-                ? SudoScopedDefaultsOutcome::MutatedAndCompensated
-                : SudoScopedDefaultsOutcome::MutatedAndStillPresent;
-            if (!compensationError.empty()) {
-                result.diagnostics.push_back(compensationError);
-            }
-            return result;
+            return fail(SudoScopedDefaultsResultKind::Failed,
+                        "Не удалось восстановить " + transaction.path.string() +
+                            ": " + writeError);
         }
         transaction.installed = writeResult.installedTargetState;
         bool valid = writeResult.durabilityConfirmed;
@@ -517,30 +615,116 @@ for (FileTransaction& transaction : transactions) {
             std::string validationError;
             valid = hooks.validate(validationError);
             if (!valid) {
-                result.diagnostics.push_back(validationError);
+                result.operation.diagnostics.push_back(validationError);
             }
         }
         if (!valid) {
-            result.message = "Восстановление не подтверждено для " +
-                transaction.path.string();
-            std::string compensationError;
-            outcome = compensateFiles(transactions, hooks.beforeRestore,
-                                     compensationError)
-                ? SudoScopedDefaultsOutcome::MutatedAndCompensated
-                : SudoScopedDefaultsOutcome::MutatedAndStillPresent;
-            if (!compensationError.empty()) {
-                result.diagnostics.push_back(compensationError);
-            }
-            return result;
+            return fail(SudoScopedDefaultsResultKind::Failed,
+                        "Восстановление не подтверждено для " +
+                            transaction.path.string());
         }
     }
 
-    outcome = SudoScopedDefaultsOutcome::Success;
-    result.ok = true;
-    result.changed = true;
-    result.message = "Контекстные Defaults восстановлены в " +
+    result.kind = SudoScopedDefaultsResultKind::Success;
+    result.operation.ok = true;
+    result.operation.changed = true;
+    result.operation.message = "Контекстные Defaults восстановлены в " +
         std::to_string(transactions.size()) + " файлах";
     return result;
+}
+
+bool ScopedDefaultsTransaction::compensateToPrevious(
+    const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
+    const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+    const SudoScopedDefaultsHooks& hooks,
+    SudoScopedDefaultsFilesystemState& state,
+    std::string& error) const {
+    state = SudoScopedDefaultsFilesystemState::Unchanged;
+
+    // Only wrappers that belong to TARGET but not to PREVIOUS are removed; the
+    // already-owned ones are never touched.
+    std::map<std::string, std::string> previousIds;
+    for (const SudoScopedDefaultsWrapperProof& proof : previousProofs) {
+        previousIds.emplace(proof.wrapperId, proof.payloadDigest);
+    }
+    std::vector<SudoScopedDefaultsWrapperProof> targetOnly;
+    for (const SudoScopedDefaultsWrapperProof& proof : targetProofs) {
+        if (previousIds.find(proof.wrapperId) == previousIds.end()) {
+            targetOnly.push_back(proof);
+        }
+    }
+    if (targetOnly.empty()) {
+        // Nothing target-only exists; the only sane reason to be here is that a
+        // previous wrapper vanished, which cannot be repaired by unwrapping.
+        error = "частичное состояние Prepared невозможно компенсировать: "
+                "отсутствуют целевые обёртки, но состояние не совпадает с previous";
+        return false;
+    }
+
+    std::vector<OwnedWrapper> inventory;
+    if (!globalInventory(inventory, error)) {
+        return false;
+    }
+    std::map<std::filesystem::path, std::vector<SudoDisabledWrapper>> byPath;
+    for (const OwnedWrapper& owned : inventory) {
+        if (owned.wrapper.policy == policyName_) {
+            byPath[owned.path].push_back(owned.wrapper);
+        }
+    }
+
+    std::vector<FileTransaction> transactions;
+    for (const auto& [path, wrappers] : byPath) {
+        FileTransaction transaction;
+        transaction.path = path;
+        if (!AtomicFileWriter::captureTargetState(
+                path.string(), transaction.captured, &error)) {
+            return false;
+        }
+        std::vector<SudoPhysicalLine> lines = linesOf(transaction.captured.content);
+        bool changed = false;
+        std::string restoreError;
+        if (!restoreSudoDisabledEntries(lines, policyName_, targetOnly, changed,
+                                        restoreError)) {
+            error = restoreError;
+            return false;
+        }
+        if (!changed) {
+            continue;
+        }
+        transaction.newContent = joinPhysicalLines(lines);
+        transactions.push_back(std::move(transaction));
+    }
+    if (transactions.empty()) {
+        return false;
+    }
+
+    for (FileTransaction& transaction : transactions) {
+        std::string hookError;
+        if (!invokeHook(hooks.beforeWrite, transaction.path, hookError)) {
+            state = SudoScopedDefaultsFilesystemState::PartialOrUnknown;
+            error = "компенсация частичного Prepared прервана для " +
+                    transaction.path.string() + ": " + hookError;
+            return false;
+        }
+        AtomicWriteOptions options;
+        options.rejectSymlink = true;
+        options.expectedTargetState = transaction.captured;
+        AtomicWriteResult writeResult;
+        std::string writeError;
+        if (!AtomicFileWriter::writeWithResult(
+                transaction.path.string(), transaction.newContent, options,
+                &writeError, &writeResult)) {
+            state = SudoScopedDefaultsFilesystemState::PartialOrUnknown;
+            error = "компенсация частичного Prepared не удалась для " +
+                    transaction.path.string() + ": " + writeError;
+            return false;
+        }
+        transaction.installed = writeResult.installedTargetState;
+    }
+    // Compensation deliberately does NOT overwrite FIC's own published state
+    // back: the wrappers are simply unwrapped, which is the previous side.
+    state = SudoScopedDefaultsFilesystemState::Compensated;
+    return true;
 }
 
 PreparedRecovery ScopedDefaultsTransaction::classifyPrepared(

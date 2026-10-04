@@ -83,6 +83,50 @@ std::string suppressedEntryBytes(const std::vector<SudoPhysicalLine>& lines) {
     return joinPhysicalLines(lines);
 }
 
+// Explicit terminator provenance for a suppressed line.
+//
+// The wrapper FRAMING must always be well-formed comment lines terminated by
+// LF. Otherwise a suppressed FINAL line that had no trailing newline would run
+// physically into the END marker and corrupt a single comment line. The
+// original terminator therefore cannot be recovered from the physical wrapper
+// line and is encoded explicitly:
+//
+//     #@FIC_SUDO_DISABLED_LINE@eol=<lf|crlf|none>@<original content>
+//
+// The digest is still computed from the ORIGINAL bytes reconstructed from this
+// metadata, never from the framing bytes, and a hand-edited eol value yields a
+// digest mismatch (Conflict) rather than a silent normalization.
+constexpr const char* kSudoLineEolPrefix = "eol=";
+
+std::string encodeSudoLineEol(const std::string& terminator) {
+    if (terminator == "\n") {
+        return "lf";
+    }
+    if (terminator == "\r\n") {
+        return "crlf";
+    }
+    if (terminator.empty()) {
+        return "none";
+    }
+    return {}; // unsupported terminator: caller must fail closed
+}
+
+bool decodeSudoLineEol(const std::string& value, std::string& terminator) {
+    if (value == "lf") {
+        terminator = "\n";
+        return true;
+    }
+    if (value == "crlf") {
+        terminator = "\r\n";
+        return true;
+    }
+    if (value == "none") {
+        terminator.clear();
+        return true;
+    }
+    return false;
+}
+
 std::string SudoDisabledWrapper::payloadDigest() const {
     return fic::core::ContentDigest::sha256Hex(
         suppressedEntryBytes(originalLines));
@@ -224,12 +268,30 @@ SudoWrapperParseStatus parseSudoDisabledWrappers(
                     lineText;
                 return SudoWrapperParseStatus::Malformed;
             }
-            SudoPhysicalLine original;
-            original.text = lineText.substr(
+            const std::string body = lineText.substr(
                 std::char_traits<char>::length(kSudoDisabledLinePrefix));
-            // FIC writes its own markers with a plain LF; the suppressed
-            // original keeps whatever terminator the foreign file used.
-            original.terminator = line.terminator;
+            if (!startsWith(body, kSudoLineEolPrefix)) {
+                error = "FIC_SUDO_DISABLED_LINE без явного eol=метаданных: " +
+                    lineText;
+                return SudoWrapperParseStatus::Malformed;
+            }
+            const std::size_t valueStart =
+                std::char_traits<char>::length(kSudoLineEolPrefix);
+            const std::size_t at = body.find('@', valueStart);
+            if (at == std::string::npos) {
+                error = "FIC_SUDO_DISABLED_LINE без разделителя '@': " + lineText;
+                return SudoWrapperParseStatus::Malformed;
+            }
+            SudoPhysicalLine original;
+            // Everything after the metadata separator is the original content,
+            // taken verbatim: it may itself contain spaces, '@' and '='.
+            original.text = body.substr(at + 1);
+            if (!decodeSudoLineEol(body.substr(valueStart, at - valueStart),
+                                   original.terminator)) {
+                error = "неизвестный eol=код в FIC_SUDO_DISABLED_LINE: " +
+                    lineText;
+                return SudoWrapperParseStatus::Malformed;
+            }
             current.originalLines.push_back(std::move(original));
             continue;
         }
@@ -261,6 +323,9 @@ void disableSudoEntry(std::vector<SudoPhysicalLine>& lines,
     const auto marker = [](const std::string& text) {
         SudoPhysicalLine line;
         line.text = text;
+        // Wrapper FRAMING is always LF-terminated so that every wrapper line is
+        // an independent, syntactically valid comment line even when the
+        // suppressed entry ended at EOF without a newline.
         line.terminator = "\n";
         return line;
     };
@@ -269,11 +334,12 @@ void disableSudoEntry(std::vector<SudoPhysicalLine>& lines,
     wrapper.reserve(lineCount + 2);
     wrapper.push_back(marker(begin));
     for (std::size_t offset = 0; offset < lineCount; ++offset) {
-        // The suppressed bytes are preserved verbatim, terminator included;
-        // only the LINE marker prefix is prepended.
-        SudoPhysicalLine original = lines[firstLine + offset];
-        original.text = std::string(kSudoDisabledLinePrefix) + original.text;
-        wrapper.push_back(std::move(original));
+        const SudoPhysicalLine& original = lines[firstLine + offset];
+        const std::string eol = encodeSudoLineEol(original.terminator);
+        SudoPhysicalLine line = marker(std::string(kSudoDisabledLinePrefix) +
+                                      kSudoLineEolPrefix + eol + "@" +
+                                      original.text);
+        wrapper.push_back(std::move(line));
     }
     wrapper.push_back(marker(end));
 

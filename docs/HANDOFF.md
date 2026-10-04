@@ -61,42 +61,45 @@ E2E-тест journal → filesystem. Выполнено.
 
 ## Completed
 
-* Новые компоненты: `SudoersIncludeDirective`, `SudoersScopedDefaults`,
-  `SudoersDisabledWrapper` + новые политики `sudo_disable_scoped_defaults`,
-  `sudo_exempt_group_disable`.
-* `MutationRecord`/`MutationJournal`/`RollbackExecutor`: payload
-  `UndoReleaseSudoScopedDefaults`, whitelist enrollment без default-positive,
-  orphan-обёртка без активной записи журнала → fail closed.
-* Зависимости и обратный guard; регрессии в
-  `SudoersConfigurationTests`, `PolicyExecutionPlannerTests`,
-  `RollbackExecutorTests`.
+Follow-up поверх `c325e92`:
 
-Follow-up поверх `240410f`:
-
-* `fic::core::ContentDigest` (SHA-256 через OpenSSL EVP) + `SudoPhysicalLine`
-  (line + оригинальный terminator) — byte-exact apply/rollback, включая CRLF.
-* `SudoersScopedDefaultsTransaction`: physical dedup, глобальный инвентарь
-  обёрток, проверка provenance по id+digest, `planRefresh`, `classifyPrepared`,
-  typed `SudoScopedDefaultsOutcome`, state-bound apply/release/компенсация
-  через `captureTargetState()`/`expectedTargetState`.
-* Payload журнала `{policyName, previousProofs, targetProofs}` + валидаторы
-  чтения/записи (канонические id, канонические digest, уникальность,
-  `previous ⊆ target`, refresh-guards для `Prepared`/`RollbackFailed`/`Applied`).
-* Единый `SudoersConfiguration::mutationMutex()` для всех пяти мутационных
-  путей SUDO (включая обе rollback-ветки).
-* Include-лексика: кавычки verbatim; некавыченный backslash — fail closed.
-* Новый E2E-таргет `sudo_scoped_defaults_lifecycle_tests` (8 сценариев) и
-  `content_digest_tests`.
+* **Wrapper format**: явная provenance terminator'а —
+  `#@FIC_SUDO_DISABLED_LINE@eol=<lf|crlf|none>@<content>`. Framing обёртки всегда
+  LF-терминирован, поэтому подавленная строка без финального newline больше не
+  сливается с END-маркером. Digest считается от ORIGINAL-байтов; правка `eol`
+  даёт mismatch, а не silent normalization.
+* **Модель результата** разделена на причину (`SudoScopedDefaultsResultKind`)
+  и состояние ФС (`SudoScopedDefaultsFilesystemState`). Судьбу `Prepared`
+  решает ТОЛЬКО состояние ФС: `Unchanged`/`Compensated` разрешают discard.
+* **Partial-write fix**: `settleFilesystemState()`/`settleWithCompensation()`
+  выводят состояние из ВСЕЙ транзакции — падение на последнем файле больше не
+  сообщает «ничего не записано», пока в первом лежит обёртка.
+* **Graph-snapshot CAS**: `captured.content == GraphDocument.content` перед
+  построением `newContent`; mismatch → Conflict, ноль записей, нужен reload+re-plan.
+* **Proof↔target binding**: `PlannedScopedDefaultsMutation{target, proof}`;
+  сортировка перемещает пары целиком, `proofCursor` удалён; digest
+  перепроверяется по захваченному снимку перед генерацией обёртки.
+* **Prepared recovery в production**: `ScopedDefaultsLifecycle` — journal state
+  machine (recovery, ownership validation, planning, prepare→apply→commit/discard).
+  `CompleteTarget` → commit существующей записи; `CompletePrevious` → discard;
+  `Indeterminate` → `compensateToPrevious()` либо fail closed. Новые id поверх
+  unresolved Prepared не минтятся.
+* **Ownership preflight** выполняется перед ЛЮБОЙ мутацией, не только в no-op:
+  orphan/drift блокирует reconciliation.
+* **Одна активная запись**: `collectActiveOwnership()` fail closed при >1.
+* **Rollback compensation** + сохранение provenance при частичном rollback.
+* **Include lexer**: escape-семантика upstream `copy_string()` для кавыченных и
+  некавыченных путей (`\xHH`→hex, `\c`→c). Подтверждено по исходникам sudo
+  1.9.13 (debian-12) и текущим — поведение идентично.
 
 ## Changed areas
 
-* `fic/src/modules/dac/sudo/*` (backend, транзакция, политики)
-* `fic/src/rollback/{MutationRecord.h,MutationJournal.cpp,RollbackExecutor.cpp}`
-* `fic-common/fic-core/{include/fic/core/integrity,src/integrity}`
-* `tests/CMakeLists.txt`,
-  `tests/fic/rollback/SudoScopedDefaultsLifecycleTests.cpp`,
-  `tests/fic/modules/dac/SudoersConfigurationTests.cpp`
-* `docs/{rollback.md,architecture-diagrams.md,HANDOFF.md}`
+* `fic/src/modules/dac/sudo/{SudoersDisabledWrapper,SudoersScopedDefaultsTransaction,SudoersScopedDefaultsLifecycle,SudoersIncludeDirective}.*`
+* `fic/src/modules/dac/sudo/policies/DAC_sudo_disable_scoped_defaults.cpp`
+* `fic/src/rollback/RollbackExecutor.cpp`
+* `tests/fic/rollback/SudoScopedDefaultsLifecycleTests.cpp`,
+  `tests/fic/modules/dac/SudoersConfigurationTests.cpp`, `tests/CMakeLists.txt`
+* `docs/{rollback.md,HANDOFF.md}`
 
 ## Validation
 

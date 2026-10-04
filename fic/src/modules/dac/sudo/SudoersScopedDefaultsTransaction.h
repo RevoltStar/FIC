@@ -32,28 +32,51 @@ constexpr const char* kSudoSubmoduleName = "SudoEdit";
 // the ownership domain, independent of the files involved.
 constexpr const char* kScopedDefaultsResource = "sudo/scoped_defaults/wrappers";
 
-// Typed transaction outcome. The caller MUST NOT infer "may I discard journal
-// provenance" from a boolean: only NoMutation and MutatedAndCompensated prove
-// that no FIC-owned filesystem state remains.
-enum class SudoScopedDefaultsOutcome {
-    NoMutation,
-    MutatedAndCompensated,
-    MutatedAndStillPresent,
+// WHY an operation ended. This says nothing about what is on disk.
+enum class SudoScopedDefaultsResultKind {
     Success,
-    Conflict
+    Conflict,
+    Failed
 };
+
+// What FIC-owned state is provably present on disk. This is the ONLY thing
+// that may decide the fate of a Prepared journal record.
+enum class SudoScopedDefaultsFilesystemState {
+    // FIC provably published NO filesystem change at all.
+    Unchanged,
+    // FIC published changes and restored every one of them; this is proven.
+    Compensated,
+    // FIC published the complete target state and it is intended to stay.
+    TargetInstalled,
+    // FIC published something and the current on-disk state can no longer be
+    // proven (compensation failed, CAS conflict, durability unknown).
+    PartialOrUnknown
+};
+
+// The single invariant that governs the journal: a Prepared record may be
+// discarded ONLY when nothing FIC-owned can remain. The failure REASON never
+// decides this, so a pre-write Conflict (which proves zero writes) still
+// permits discard, while a Failed operation that already installed a wrapper
+// never does.
+inline bool allowsDiscardPrepared(SudoScopedDefaultsFilesystemState state) {
+    return state == SudoScopedDefaultsFilesystemState::Unchanged ||
+        state == SudoScopedDefaultsFilesystemState::Compensated;
+}
 
 // True when FIC-owned state may still be present on disk, i.e. the Prepared
 // journal record MUST stay active.
-inline bool outcomeLeavesOwnedState(SudoScopedDefaultsOutcome outcome) {
-    return outcome == SudoScopedDefaultsOutcome::MutatedAndStillPresent;
+inline bool leavesOwnedState(SudoScopedDefaultsFilesystemState state) {
+    return state == SudoScopedDefaultsFilesystemState::PartialOrUnknown;
 }
 
-// True when the caller may safely discard the Prepared record.
-inline bool outcomeAllowsDiscard(SudoScopedDefaultsOutcome outcome) {
-    return outcome == SudoScopedDefaultsOutcome::NoMutation ||
-        outcome == SudoScopedDefaultsOutcome::MutatedAndCompensated;
-}
+struct SudoScopedDefaultsTransactionResult {
+    SudoersOperationResult operation;
+    SudoScopedDefaultsResultKind kind = SudoScopedDefaultsResultKind::Failed;
+    SudoScopedDefaultsFilesystemState filesystemState =
+        SudoScopedDefaultsFilesystemState::Unchanged;
+
+    bool ok() const { return kind == SudoScopedDefaultsResultKind::Success; }
+};
 
 // One physical scoped Defaults occurrence to suppress. A sudoers file may be
 // included several times, so the same logical entry appears many times in the
@@ -63,6 +86,24 @@ struct ScopedDefaultsTarget {
     std::filesystem::path path;
     size_t firstLine = 0;
     size_t lineCount = 1;
+};
+
+// A proof permanently bound to ONE concrete physical target.
+//
+// The association must never be reconstructed from a positional cursor: the
+// planner emits pairs, and grouping/sorting moves whole pairs, so a proof can
+// only ever describe the payload of its own entry.
+struct PlannedScopedDefaultsMutation {
+    ScopedDefaultsTarget target;
+    SudoScopedDefaultsWrapperProof proof;
+};
+
+// The result of one planning pass: what FIC already owns, and the new
+// (target, proof) pairs to create. Both are produced together so the ids in
+// the journal and the ids written to disk can never diverge.
+struct ScopedDefaultsPlan {
+    std::vector<SudoScopedDefaultsWrapperProof> owned;
+    std::vector<PlannedScopedDefaultsMutation> fresh;
 };
 
 // Deterministic classification of an unresolved Prepared transition against
@@ -112,39 +153,55 @@ public:
     bool globalInventory(std::vector<OwnedWrapper>& inventory,
                          std::string& error) const;
 
-    // Read-only no-op preflight: "no active scoped Defaults" is NOT success by
-    // itself. Every FIC wrapper of this policy must be proven by the ACTIVE
-    // journal ownership set and the wrapper grammar must be intact. An orphan
-    // wrapper is never adopted by creating a record for it. Returns an empty
-    // string when the no-op is legitimate, otherwise the refusal reason.
+    // Read-only ownership preflight. Verifies the GLOBAL wrapper grammar, the
+    // GLOBAL uniqueness of wrapper ids, and that every existing wrapper of this
+    // policy is proven by `activeProofs` with an exact payload digest. A
+    // physical wrapper without proven ownership (orphan) always fails closed; a
+    // proven wrapper that already disappeared externally is an already
+    // released subset and is not an error.
+    //
+    // This MUST run before a no-op AND before any new mutation, so an existing
+    // orphan or drifted wrapper blocks reconciliation too, not just no-op.
+    std::string validateCurrentOwnership(
+        const std::vector<SudoScopedDefaultsWrapperProof>& activeProofs) const;
+
+    // Same checks as validateCurrentOwnership(), additionally requiring that no
+    // active scoped Defaults remain.
     std::string noopPreflight(
         const std::vector<SudoScopedDefaultsWrapperProof>& activeProofs) const;
 
     // Plans the NEXT transition on top of `owned` (the currently proven
-    // ownership). The new target proofs keep every wrapper FIC already owns,
-    // so a repeated reconciliation grows the ownership set instead of
-    // replacing it and orphaning the previously created wrappers.
-    std::vector<SudoScopedDefaultsWrapperProof> planRefresh(
+    // ownership). Each new proof is returned BOUND to its physical target.
+    ScopedDefaultsPlan plan(
         const std::vector<SudoScopedDefaultsWrapperProof>& owned) const;
 
-    // Wraps every current target. `targetProofs` must be exactly planRefresh()
-    // applied to the currently owned set.
-    SudoersOperationResult apply(
-        const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
-        SudoScopedDefaultsOutcome& outcome,
+    // Wraps every planned target. `fresh` must be the `fresh` list of a single
+    // plan() call: proof and target travel together, never by position.
+    SudoScopedDefaultsTransactionResult apply(
+        const std::vector<PlannedScopedDefaultsMutation>& fresh,
         const SudoScopedDefaultsHooks& hooks);
 
     // Unwraps exactly the wrappers proven by `proofs`. Drift, an unknown id
     // or a duplicate id is a Conflict with ZERO writes.
-    SudoersOperationResult release(
+    SudoScopedDefaultsTransactionResult release(
         const std::vector<SudoScopedDefaultsWrapperProof>& proofs,
-        SudoScopedDefaultsOutcome& outcome,
         const SudoScopedDefaultsHooks& hooks);
 
     // Classifies an unresolved Prepared transition against the live graph.
     PreparedRecovery classifyPrepared(
         const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
         const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+        std::string& error) const;
+
+    // Compensates a PARTIAL target: removes only the wrappers that belong to
+    // target but not to previous, using their exact proof plus CAS, so the
+    // filesystem returns to the previous side. Used by Prepared recovery.
+    // Returns false when the result can no longer be proven.
+    bool compensateToPrevious(
+        const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
+        const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
+        const SudoScopedDefaultsHooks& hooks,
+        SudoScopedDefaultsFilesystemState& state,
         std::string& error) const;
 
 private:

@@ -443,16 +443,22 @@ void testIncludeArgumentLexing() {
     const std::vector<Case> cases = {
         {"@include /etc/sudoers.local # site settings", true, true, "/etc/sudoers.local"},
         {"#include /etc/sudoers.local # site settings", true, true, "/etc/sudoers.local"},
-        // An unquoted backslash is refused: FIC cannot prove which pathname the
-        // deployed sudo opens for that form.
-        {"@include /etc/sudoers\\ local", true, false, ""},
-        {"#include /etc/sudoers\\ local", true, false, ""},
         {"@include \"/etc/sudoers local\"", true, true, "/etc/sudoers local"},
         {"@include \"/etc/sudoers local\" # site", true, true, "/etc/sudoers local"},
         {"@includedir /etc/sudoers.d # drop-in", true, true, "/etc/sudoers.d"},
         {"#includedir /etc/sudoers.d # drop-in", true, true, "/etc/sudoers.d"},
-        // Unquoted backslash: fail closed (see testEscapedAndQuotedIncludePaths).
-        {"@include /etc/a\\\\b", true, false, nullptr},
+        // Escaped whitespace in an unquoted include argument is VALID upstream
+        // (copy_string() collapses "\\ " to " "), identical in 1.9.13+ and
+        // current: the tokenizer keeps "\\ " inside the <GOTINC> token.
+        {"@include /etc/a\\b", true, true, "/etc/ab"},
+        {"@include /etc/sudoers\\ local", true, true, "/etc/sudoers local"},
+        {"#include /etc/sudoers\\ local", true, true, "/etc/sudoers local"},
+        // Inside quotes the escapes are collapsed too (append()->copy_string()),
+        // so "\\\\" is a single backslash and "\\\"" is a literal quote.
+        {"@include \"/etc/back\\\\slash\"", true, true, "/etc/back\\slash"},
+        {"@include \"/etc/a\\\"b\"", true, true, "/etc/a\"b"},
+        // "\\xHH" is a hex byte.
+        {"@include /etc/a\\x2fb", true, true, "/etc/a/b"},
         {"  @include /etc/spaces  ", true, true, "/etc/spaces"},
         {"# a plain comment mentioning @include /etc/x", false, false, nullptr},
         {"#includenotadirective /etc/x", false, false, nullptr},
@@ -550,31 +556,40 @@ void testEscapedAndQuotedIncludePaths() {
     require(quotedValue.found && quotedValue.value == "5",
             "double-quoted include pathname must resolve to the real file");
 
-    // A backslash inside the quotes is NOT an escape: the file actually named
-    // is ".../back\slash", so FIC must open that same path.
+    // To name a file whose path really contains a backslash, the include line
+    // must escape it: upstream copy_string() collapses "\\" to a single "\".
+    // The on-disk name holds one backslash; the include text holds two.
     writeFile(options.mainPath,
-              "@include \"" + (tree.root / backslashName).string() + "\"\n");
+              "@include \"" + tree.root.string() + "/back\\\\slash\"\n");
     SudoersConfiguration backslashed(options);
     error.clear();
     require(backslashed.load(error), error);
     const auto backslashValue =
         backslashed.inspectGlobalDefault("passwd_tries");
     require(backslashValue.found && backslashValue.value == "7",
-            "a backslash inside quotes is a literal path character, not an "
-            "escape: FIC and sudo must pick the same pathname");
+            "an escaped backslash must resolve to the same file sudo opens: " +
+                error);
 
-    // An UNQUOTED backslash is refused rather than guessed: FIC cannot prove
-    // which pathname the deployed sudo opens.
-    writeFile(options.mainPath,
-              "@include " + (tree.root / quotedName).string().substr(
-                  0, 1) + "\\" + (tree.root / quotedName).string().substr(1) +
-              "\n");
+    // An UNQUOTED escaped blank is valid upstream (the <GOTINC> token keeps
+    // "\\ " and copy_string() collapses it to " ").
+    std::string escaped;
+    const std::string realPath = (tree.root / quotedName).string();
+    for (const char c : realPath) {
+        if (c == ' ') {
+            escaped += "\\ ";
+        } else {
+            escaped += c;
+        }
+    }
+    writeFile(options.mainPath, "@include " + escaped + "\n");
     SudoersConfiguration unquotedEscape(options);
     error.clear();
-    require(!unquotedEscape.load(error),
-            "an unquoted backslash in an include pathname must fail closed");
-    require(error.find("обратным слэшем") != std::string::npos,
-            "the refusal must name the unsupported backslash form");
+    require(unquotedEscape.load(error),
+            "an escaped blank in an unquoted include path must resolve: " +
+                error);
+    const auto escapedValue = unquotedEscape.inspectGlobalDefault("passwd_tries");
+    require(escapedValue.found && escapedValue.value == "5",
+            "escaped whitespace must resolve to the same file sudo opens");
 }
 
 void testRelativeNestedAndOrderedIncludes() {
@@ -744,19 +759,16 @@ void testExemptGroupSingleOwnership() {
             "a contextual exempt_group must be a scoped Defaults violation");
     fic::sudoers::ScopedDefaultsTransaction transaction(
         contextual, "sudo_disable_scoped_defaults");
-    const auto proofs = transaction.planRefresh({});
+    const auto plan = transaction.plan({});
     fic::sudoers::SudoScopedDefaultsHooks hooks;
     hooks.reloadAndVerify = [&contextual](std::string& reloadError) {
         return contextual.load(reloadError) &&
             contextual.scopedDefaultsViolations().empty();
     };
-    fic::sudoers::SudoScopedDefaultsOutcome outcome =
-        fic::sudoers::SudoScopedDefaultsOutcome::NoMutation;
-    const auto blocked = transaction.apply(proofs, outcome, hooks);
-    require(blocked.ok, blocked.message);
+    const auto blocked = transaction.apply(plan.fresh, hooks);
+    require(blocked.ok(), blocked.operation.message);
     require(contextual.scopedDefaultsViolations().empty(),
             "after the blocker no contextual exempt_group may remain active");
-    (void)outcome;
 }
 
 void testManagedExemptGroupFailsWhenShadowed() {

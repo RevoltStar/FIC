@@ -373,22 +373,28 @@ MutationRollbackOutcome undoSudoScopedDefaults(
     };
     const std::vector<fic::rollback::SudoScopedDefaultsWrapperProof> proofs(
         undo.targetProofs.begin(), undo.targetProofs.end());
-    fic::sudoers::SudoScopedDefaultsOutcome transactionOutcome =
-        fic::sudoers::SudoScopedDefaultsOutcome::NoMutation;
-    const SudoersOperationResult restoration =
-        transaction.release(proofs, transactionOutcome, hooks);
-    outcome.message = restoration.message;
-    for (const std::string& diagnostic : restoration.diagnostics) {
+    const fic::sudoers::SudoScopedDefaultsTransactionResult restoration =
+        transaction.release(proofs, hooks);
+    outcome.message = restoration.operation.message;
+    for (const std::string& diagnostic : restoration.operation.diagnostics) {
         outcome.message += ". " + diagnostic;
     }
-    if (restoration.conflict) {
+    if (restoration.operation.conflict) {
         outcome.status = RollbackStatus::Conflict;
-    } else if (restoration.ok && restoration.targetMissing) {
+    } else if (restoration.ok() && restoration.operation.targetMissing) {
         outcome.status = RollbackStatus::NothingToDo;
-    } else if (restoration.ok) {
+    } else if (restoration.ok()) {
         outcome.status = RollbackStatus::Success;
     } else {
+        // A PARTIAL release (one wrapper unwrapped, another still wrapped) must
+        // never be reported as a completed rollback: Failed/RollbackFailed keeps
+        // the journal record active so the provenance is preserved.
         outcome.status = RollbackStatus::Failed;
+        if (fic::sudoers::leavesOwnedState(restoration.filesystemState)) {
+            outcome.message +=
+                ". Часть обёрток не восстановлена; владение остаётся за "
+                "активной записью journal";
+        }
     }
     return outcome;
 }

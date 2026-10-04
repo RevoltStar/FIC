@@ -527,6 +527,7 @@ add_executable(sudoers_configuration_tests
 )
 target_include_directories(sudoers_configuration_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/include
 )
 target_link_libraries(sudoers_configuration_tests PRIVATE fic-core Threads::Threads)
 add_test(NAME sudoers_configuration_tests COMMAND sudoers_configuration_tests)
@@ -879,6 +880,7 @@ add_executable(rollback_executor_tests
 )
 target_include_directories(rollback_executor_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/include
 )
 target_link_libraries(rollback_executor_tests PRIVATE
     fic-core
@@ -894,6 +896,7 @@ add_test(NAME rollback_executor_tests COMMAND rollback_executor_tests)
 # temporary sudoers trees.
 add_executable(sudo_scoped_defaults_lifecycle_tests
     fic/rollback/SudoScopedDefaultsLifecycleTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsLifecycle.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/PolicyDisableFlow.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
@@ -981,6 +984,7 @@ add_executable(sudo_scoped_defaults_lifecycle_tests
 target_include_directories(sudo_scoped_defaults_lifecycle_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
     ${CMAKE_SOURCE_DIR}/fic-common/fic-core/include
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/include
 )
 target_link_libraries(sudo_scoped_defaults_lifecycle_tests PRIVATE
     fic-core

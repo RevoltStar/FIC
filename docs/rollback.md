@@ -1388,9 +1388,16 @@ alias/negation случаи закрываются без построения e
 
 ```
 #@FIC_SUDO_DISABLED_BEGIN policy=<policy> mutation=<id>@
-#@FIC_SUDO_DISABLED_LINE@<исходная физическая строка, byte-exact>
+#@FIC_SUDO_DISABLED_LINE@eol=<lf|crlf|none>@<исходная физическая строка>
 #@FIC_SUDO_DISABLED_END policy=<policy> mutation=<id>@
 ```
+
+`eol=` — явная provenance terminator'а подавленной строки. Framing обёртки
+всегда завершается LF, поэтому запись без финального newline не сливается с
+END-маркером, а её terminator хранится в метаданных, а не выводится из
+физической строки обёртки. Digest считается от ORIGINAL-байтов
+(`content` + оригинальные terminator'ы), поэтому ручная правка `eol` или тела
+даёт digest mismatch (`Conflict`), а не silent normalization.
 
 Несколько нарушений, несколько файлов и многострочные записи поддерживаются;
 unrelated содержимое не меняется.
@@ -1414,11 +1421,18 @@ unrelated содержимое не меняется.
 перезагрузка графа → семантическая postcondition (активных scoped `Defaults`
 нет) → commit.
 
-Ошибки различаются **типизированным** исходом `SudoScopedDefaultsOutcome`:
-`NoMutation` и `MutatedAndCompensated` доказывают, что FIC-owned состояния
-не осталось, и только они разрешают удалить `Prepared`-запись;
-`MutatedAndStillPresent` требует оставить её активной; `Conflict` означает,
-что недоказанных записей не было вовсе.
+Ошибки различаются двумя независимыми осями: причина
+(`SudoScopedDefaultsResultKind`: Success / Conflict / Failed) и состояние ФС
+(`SudoScopedDefaultsFilesystemState`: Unchanged / Compensated / TargetInstalled /
+PartialOrUnknown). Судьбу `Prepared`-записи решает **только** состояние ФС:
+`Unchanged` и `Compensated` доказывают отсутствие FIC-owned остатков и
+разрешают discard; `PartialOrUnknown` требует оставить запись активной.
+Причина `Conflict` сама по себе ничего не решает, поэтому pre-write conflict
+(ноль записей) корректно освобождает `Prepared`.
+
+Состояние выводится из транзакции **целиком**, а не из результата последней
+записи: падение на втором файле не может сообщить «ничего не записано», пока в
+первом установлена обёртка.
 
 Компенсация тоже state-bound: она восстанавливает предыдущий content
 **только** если файл всё ещё находится в установленном FIC состоянии.
@@ -1429,7 +1443,18 @@ No-op (активных scoped `Defaults` нет) — тоже требует pr
 валиден, грамматика обёрток цела, глобальный инвентарь согласован и каждая
 FIC-обёртка доказана **активной** записью журнала. Осиротевшая обёртка без
 записи журнала даёт fail closed и **не усыновляется** (файл и журнал не
-меняются).
+меняются). Тот же preflight выполняется перед **любой** мутацией, поэтому
+существующая orphan/drifted-обёртка блокирует и reconciliation, а не только
+no-op. Для канонического ресурса допустима не более чем одна активная запись
+журнала; несколько записей — fail closed, а не конкатенация proof-множеств.
+
+Восстановление после сбоя выполняется в начале следующего production-вызова
+(`ScopedDefaultsLifecycle::recoverPrepared`) ДО любого планирования: существующая
+`Prepared`-запись классифицируется по живой ФС — `CompleteTarget` (доказанно
+завершена) → commit существующей записи без минтинга новых id; `CompletePrevious`
+(доказанно не применялась) → discard и свежее планирование; `Indeterminate` →
+попытка точной компенсации target-only обёрток к previous, иначе fail closed с
+сохранением записи. Поверх неразрешённой `Prepared` новые id никогда не минтятся.
 
 Rollback — ownership release: снимаются только те обёртки, которые ещё
 существуют и чьи id **и digest** доказаны payload'ом. Обёртка, исчезнувшая внешне, —
