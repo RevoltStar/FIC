@@ -55,8 +55,16 @@ struct ScopedDefaultsJournalAccess {
     // a journal transition (commit / normalize / discard). Lets a test change
     // the directory membership in the exact window the guard protects.
     std::function<void()> beforeFinalTopologyGuard;
-    // Test-only seam immediately BEFORE the no-op topology guard.
-    std::function<void()> beforeNoOpTopologyGuard;
+    // Test-only seam immediately BEFORE the no-op fresh semantic capture.
+    // Covers the CONTENT race window: a member can be rewritten before the
+    // capture reads it, and that rewrite must be visible to the proof.
+    std::function<void()> beforeNoOpSemanticCapture;
+    // Test-only seam immediately AFTER the successful no-op semantic proof and
+    // immediately BEFORE the FINAL no-op topology guard, which is the last
+    // security-sensitive action before an unchanged success. The name states
+    // the call site precisely, because this window is the one the guard exists
+    // to close.
+    std::function<void()> beforeNoOpFinalTopologyGuard;
 };
 
 struct ScopedDefaultsLifecycleDeps {

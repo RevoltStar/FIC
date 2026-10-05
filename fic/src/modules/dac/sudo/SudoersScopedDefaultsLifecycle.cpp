@@ -541,30 +541,30 @@ ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
     const ScopedDefaultsPlan plan = transaction.plan(owned);
     if (plan.fresh.empty()) {
         // A no-op is a SECURITY-SENSITIVE decision: "there is nothing to do" is
-        // only true for the graph that was actually loaded. A new @includedir
-        // member may have appeared meanwhile and brought active scoped Defaults
-        // that this plan never saw, so membership is re-proved before any
-        // success. Fail the call: no internal retry loop.
-        if (deps_.journal.beforeNoOpTopologyGuard) {
-            deps_.journal.beforeNoOpTopologyGuard();
-        }
-        std::string topologyError;
-        if (!verifyTopologyUnchanged("no-op", topologyError)) {
-            outcome.message = topologyError;
-            return outcome;
-        }
-        // Topology membership alone does NOT prove file contents: an external
-        // process may rewrite an EXISTING member, keeping the filename set
-        // identical while activating a scoped Defaults that plan() never saw
-        // (plan() reads the earlier graph snapshot).
+        // only true for the filesystem state that was actually proven.
         //
-        // So the no-op is re-proven on a FRESH capture:
+        // AUTHORITY ORDER. Topology membership alone does NOT prove file
+        // contents: an external process may rewrite an EXISTING member, keeping
+        // the filename set identical while activating a scoped Defaults that
+        // plan() never saw, because plan() reads the earlier graph snapshot. So
+        // the CONTENT side is proven first, on a FRESH capture:
         //   capture(graph U owned proof paths)
         //     -> ReleaseSubset ownership proof (a missing proven wrapper stays
         //        an externally released subset, which is the existing contract)
         //     -> semantic invariant on THAT capture: no active scoped Defaults
         // A drifted, unknown, duplicated or malformed wrapper, or an active
         // scoped Defaults visible only in the new capture, fails closed.
+        //
+        // The TOPOLOGY guard is deliberately LAST. A brand-new @includedir member
+        // cannot be discovered by a capture built from the previously loaded
+        // graph: captureProofAndGraphState() only knows the graph documents and
+        // the journal proof paths, so a member that appears after the capture
+        // is invisible to the semantic proof. Verifying membership as the FINAL
+        // action closes exactly that window, and nothing filesystem-related is
+        // read between the guard and the unchanged success.
+        if (deps_.journal.beforeNoOpSemanticCapture) {
+            deps_.journal.beforeNoOpSemanticCapture();
+        }
         ScopedDefaultsCapturedState noopCaptured;
         std::string noopCaptureError;
         if (!transaction.captureProofAndGraphState(owned, noopCaptured,
@@ -582,6 +582,15 @@ ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
             outcome.message =
                 "no-op не доказан на актуальном состоянии файлов: " +
                 noopProof.message;
+            return outcome;
+        }
+
+        if (deps_.journal.beforeNoOpFinalTopologyGuard) {
+            deps_.journal.beforeNoOpFinalTopologyGuard();
+        }
+        std::string topologyError;
+        if (!verifyTopologyUnchanged("no-op", topologyError)) {
+            outcome.message = topologyError;
             return outcome;
         }
         outcome.ok = true;

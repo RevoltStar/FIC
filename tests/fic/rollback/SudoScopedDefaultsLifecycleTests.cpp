@@ -2609,7 +2609,7 @@ void testNewDropinBeforeNoOp() {
 
     fic::sudoers::ScopedDefaultsLifecycleDeps deps =
         productionDeps(configuration, SudoScopedDefaultsHooks{});
-    deps.journal.beforeNoOpTopologyGuard = [&fixture]() {
+    deps.journal.beforeNoOpFinalTopologyGuard = [&fixture]() {
         writeFile(fixture.dropins / "bnew",
                   "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
     };
@@ -3022,11 +3022,12 @@ void testSameMemberContentRaceBeforeNoOp() {
 
     fic::sudoers::ScopedDefaultsLifecycleDeps deps =
         productionDeps(configuration, SudoScopedDefaultsHooks{});
-    deps.journal.beforeNoOpTopologyGuard = [&tree]() {
+    deps.journal.beforeNoOpSemanticCapture = [&tree]() {
         // SAME filename, so the membership topology is unchanged...
         writeFile(tree.root / "dropins" / "abase",
                   "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
-        // ...but the file now activates a scoped Defaults.
+        // ...but the file now activates a scoped Defaults, which the fresh
+        // capture must see.
     };
     fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
     const auto outcome = lifecycle.reconcile(kPolicyName);
@@ -3056,7 +3057,7 @@ void testBenignMemberContentChangeStillNoOp() {
 
     fic::sudoers::ScopedDefaultsLifecycleDeps deps =
         productionDeps(configuration, SudoScopedDefaultsHooks{});
-    deps.journal.beforeNoOpTopologyGuard = [&tree]() {
+    deps.journal.beforeNoOpSemanticCapture = [&tree]() {
         // Bytes change, but NO scoped Defaults is activated: a plain comment
         // and another global Defaults. This must NOT be a security failure.
         writeFile(tree.root / "dropins" / "abase",
@@ -3069,6 +3070,93 @@ void testBenignMemberContentChangeStillNoOp() {
     require(outcome.ok && outcome.unchanged,
             "a benign same-member change must still allow a legitimate no-op: " +
                 outcome.message);
+}
+
+
+// --- R8: a NEW @includedir member appearing AFTER the semantic proof -------
+// The content proof cannot see it: captureProofAndGraphState() only knows the
+// previously loaded graph documents and the journal proof paths. Only the FINAL
+// topology guard closes this window.
+
+void testNewMemberAfterSemanticProofBlocksNoOp() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    std::filesystem::create_directories(tree.root / "dropins");
+    writeFile(tree.root / "dropins" / "abase", "Defaults passwd_tries=3\n");
+    writeFile(tree.root / "sudoers",
+              "@includedir " + (tree.root / "dropins").string() + "\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.scopedDefaultsViolations().empty(),
+            "the loaded graph must have no active scoped Defaults");
+
+    bool semanticCaptureReached = false;
+    bool createdAfterProof = false;
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeNoOpSemanticCapture = [&semanticCaptureReached]() {
+        semanticCaptureReached = true;
+    };
+    deps.journal.beforeNoOpFinalTopologyGuard = [&tree, &semanticCaptureReached,
+                                                 &createdAfterProof]() {
+        // The semantic proof has already succeeded on its capture at this
+        // point; the drop-in is created afterwards and is therefore invisible
+        // to that capture.
+        require(semanticCaptureReached,
+                "the semantic capture must happen before the final guard");
+        createdAfterProof = true;
+        writeFile(tree.root / "dropins" / "bnew",
+                  "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(createdAfterProof, "the test must inject the drop-in after the proof");
+    require(!outcome.unchanged,
+            "a new eligible member appearing after the semantic proof must "
+            "block the unchanged success");
+    require(!(outcome.ok && outcome.unchanged),
+            "no successful unchanged result may be returned");
+    require(activePreparedCount() == 0, "no journal record may be created");
+    require(activeOwned().empty(), "no ownership may be recorded");
+}
+
+// --- R9: no membership change in the final window keeps the no-op valid ----
+
+void testStableNoOpStillSucceeds() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    std::filesystem::create_directories(tree.root / "dropins");
+    writeFile(tree.root / "dropins" / "abase", "Defaults passwd_tries=3\n");
+    writeFile(tree.root / "sudoers",
+              "@includedir " + (tree.root / "dropins").string() + "\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.scopedDefaultsViolations().empty(),
+            "the loaded graph must have no active scoped Defaults");
+
+    bool semanticProofPassed = false;
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeNoOpFinalTopologyGuard = [&semanticProofPassed]() {
+        // The final window is reached, but NOTHING changes on disk: the no-op
+        // must stay valid, so the reordering cannot become always-fail.
+        semanticProofPassed = true;
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(semanticProofPassed, "the final window must be reached");
+    require(outcome.ok && outcome.unchanged,
+            "an unchanged no-op must remain valid when nothing changes: " +
+                outcome.message);
+    require(activePreparedCount() == 0, "no journal record may be created");
 }
 
 // ---------------------------------------------------------------------------
@@ -3152,6 +3240,8 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"R5 post-compensation topology mismatch blocks normalize", testPostCompensationTopologyMismatchBlocksNormalize},
         {"R6 same-member content race blocks stale no-op", testSameMemberContentRaceBeforeNoOp},
         {"R7 benign same-member change keeps the no-op", testBenignMemberContentChangeStillNoOp},
+        {"R8 new member after semantic proof blocks no-op", testNewMemberAfterSemanticProofBlocksNoOp},
+        {"R9 stable final window keeps the no-op valid", testStableNoOpStillSucceeds},
     };
     return cases;
 }

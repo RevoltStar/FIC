@@ -26,6 +26,12 @@ crash-consistent транзакция, snapshot-bound ownership preflight. Вы�
   `proveCapturedState(ReleaseSubset, requireNoActiveScopedDefaults=true)`).
   `plan().fresh.empty()` недостаточно: `plan()` читает более ранний graph
   snapshot, а topology identity не доказывает содержимое member'ов.
+* **Порядок no-op: semantic capture ПЕРЕД final topology guard.** Новый
+  `@includedir` member не может быть найден capture'ом, построенным из ранее
+  загруженного graph, поэтому topology verification — последнее
+  security-sensitive действие перед `unchanged = true`. Два отдельных seam'а:
+  `beforeNoOpSemanticCapture` (content-гонка, R6/R7) и
+  `beforeNoOpFinalTopologyGuard` (topology-гонка после proof, R8/R9).
   Ownership contract прежний: отсутствующий доказанный wrapper — допустимый
   externally released subset.
 * **Topology snapshot = последний успешный `load()` объекта**, а не исходный

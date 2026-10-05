@@ -175,14 +175,22 @@ Topology identity **не** доказывает содержимое файло�
 активировать scoped `Defaults`, которого `plan()` не видел: `plan()` читает
 graph snapshot, построенный раньше.
 
-Поэтому перед `unchanged = true` выполняется свежий capture:
+**Порядок authority важен.** Успешный no-op:
 
 ```text
-capture(graph ∪ owned proof paths)
-  → proveCapturedState(owned, capture, ReleaseSubset, requireNoActiveScopedDefaults=true)
-  → verify topology unchanged
+fresh filesystem capture (graph ∪ owned proof paths)
+  → ownership ReleaseSubset
+  → no-active-scoped-Defaults semantic proof
+  → FINAL @includedir topology verification
   → unchanged success
 ```
+
+Topology verification стоит **последней** именно потому, что новый member
+каталога не может быть обнаружен capture, построенным из ранее загруженного
+graph: `captureProofAndGraphState()` знает только graph documents и journal
+proof paths. Member, появившийся после capture, невидим semantic proof'у.
+Поэтому проверка membership — последнее security-sensitive действие, и между ней
+и `unchanged = true` не выполняется ни одного filesystem proof/read.
 
 Ownership contract для no-op прежний: отсутствующий доказанный wrapper — это
 допустимый externally released subset (`ReleaseSubset`). Но drifted, unknown,
