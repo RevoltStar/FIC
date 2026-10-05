@@ -1,3 +1,4 @@
+#include "modules/dac/sudo/SudoersLogicalEntries.h"
 #include "modules/dac/sudo/SudoersScopedDefaults.h"
 #include "modules/dac/sudo/SudoersScopedDefaultsTransaction.h"
 
@@ -313,18 +314,54 @@ ScopedDefaultsStateProof ScopedDefaultsTransaction::proveCapturedState(
             proof.message = parseError;
             return proof;
         }
+        // THE shared logical-entry assembler: the semantic decision is taken on
+        // whole logical entries, exactly like SudoersConfiguration builds them,
+        // so a multi-line scoped Defaults can no longer be classified one
+        // physical line at a time.
+        const std::vector<SudoLogicalEntry> entries =
+            assembleSudoLogicalEntries(lines);
+        // beginLine/endLine index the BEGIN/END MARKER lines themselves, and a
+        // FIC-created wrapper replaces the original entry with its marker
+        // payload, so the suppressed PAYLOAD is strictly BETWEEN the markers.
+        // Marking the marker lines as suppressed would misattribute them to a
+        // logical entry and invent a boundary conflict FIC never produces.
         std::vector<bool> suppressed(lines.size(), false);
         for (const SudoDisabledWrapper& wrapper : wrappers) {
-            for (std::size_t n = wrapper.beginLine; n <= wrapper.endLine &&
+            const std::size_t payloadBegin = wrapper.beginLine + 1;
+            const std::size_t payloadEnd =
+                wrapper.endLine > wrapper.beginLine ? wrapper.endLine - 1
+                                                    : wrapper.beginLine;
+            for (std::size_t n = payloadBegin; n <= payloadEnd &&
                                                 n < suppressed.size(); ++n) {
                 suppressed[n] = true;
             }
         }
-        for (std::size_t index = 0; index < lines.size(); ++index) {
-            if (suppressed[index]) {
+        for (const SudoLogicalEntry& entry : entries) {
+            std::size_t suppressedCount = 0;
+            for (std::size_t offset = 0; offset < entry.lineCount; ++offset) {
+                const std::size_t index = entry.firstPhysicalLine + offset;
+                if (index < suppressed.size() && suppressed[index]) {
+                    ++suppressedCount;
+                }
+            }
+            if (suppressedCount == entry.lineCount) {
                 continue;
             }
-            if (scopedDefaultsScope(lines[index].text).empty()) {
+            // Some physical lines of this logical entry are inside a FIC
+            // wrapper and some are not.
+            const bool entryPartiallySuppressed = suppressedCount > 0;
+            // A FIC-created wrapper always owns a WHOLE logical entry, so a
+            // logical entry straddling a wrapper boundary means the file was
+            // edited into a shape FIC never produces. Its semantics cannot be
+            // guessed, so the proof fails closed.
+            if (entryPartiallySuppressed) {
+                proof.message =
+                    "логическая запись частично пересекает границу "
+                    "FIC-обёртки в " +
+                    document.path.string() + "; доказательство невозможно";
+                return proof;
+            }
+            if (scopedDefaultsScope(entry.text).empty()) {
                 continue;
             }
             proof.message = "активный контекстный Defaults остаётся вне "

@@ -41,6 +41,13 @@ using fic::sudoers::PlannedScopedDefaultsMutation;
 using fic::sudoers::PreparedRecovery;
 using fic::sudoers::ScopedDefaultsLifecycle;
 using fic::sudoers::ScopedDefaultsLifecycleDeps;
+using fic::sudoers::ScopedDefaultsStateProof;
+
+// A harmless non-scoped line so multiline fixtures have a stable first line.
+static const std::string kRootLine = "root ALL=(ALL:ALL) ALL\n";
+
+// Counts the multiline parity scenarios that actually ran.
+int executedMultiline = 0;
 using fic::sudoers::ScopedDefaultsLifecycleOutcome;
 using fic::sudoers::ScopedDefaultsCapturedState;
 using fic::sudoers::ScopedDefaultsProofMode;
@@ -3159,6 +3166,216 @@ void testStableNoOpStillSucceeds() {
     require(activePreparedCount() == 0, "no journal record may be created");
 }
 
+
+// ===========================================================================
+// ML: multiline parity. The parser and the snapshot-bound semantic proof now
+// share ONE physical -> logical assembler, so a multi-line scoped Defaults can
+// never be classified one physical line at a time.
+// ===========================================================================
+
+// --- ML1: a multi-line scoped Defaults is ONE violation and ONE target -----
+
+void testMultilineScopedDefaultsPlannedAsOneTarget() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    writeFile(tree.root / "sudoers", kRootLine + "Defaults:alice env_reset, \\\n    passwd_tries=5\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.scopedDefaultsViolations().size() == 1,
+            "the configuration must see exactly ONE violation");
+
+    // graphEntries() also carries the non-scoped root line, so the multi-line
+    // entry is located by its physical span rather than by position.
+    const auto entries = configuration.graphEntries();
+    const SudoersConfiguration::GraphEntry* multiline = nullptr;
+    for (const SudoersConfiguration::GraphEntry& entry : entries) {
+        if (entry.lineCount > 1) {
+            multiline = &entry;
+            break;
+        }
+    }
+    require(multiline != nullptr,
+            "a logical entry spanning several physical lines must exist");
+    require(multiline->lineCount == 2,
+            "the entry must span BOTH physical lines");
+    require(multiline->firstLine == 2,
+            "firstLine stays 1-based and must not shift");
+
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    const auto plan = transaction.plan({});
+    require(plan.fresh.size() == 1,
+            "the whole logical entry must become exactly ONE target");
+    require(plan.fresh.front().target.lineCount == 2,
+            "the target must cover both physical lines");
+    ++executedMultiline;
+}
+
+// --- ML2: the snapshot semantic proof SEES an active multi-line entry ------
+
+void testMultilineActiveEntrySeenBySnapshotProof() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    writeFile(tree.root / "sudoers", kRootLine + "Defaults:alice env_reset, \\\n    passwd_tries=5\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    // No wrappers at all: the multi-line entry is an active violation and the
+    // proof must say so instead of scanning physical lines one by one.
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    ScopedDefaultsCapturedState captured;
+    std::string captureError;
+    require(transaction.captureProofAndGraphState({}, captured, captureError),
+            captureError);
+    const ScopedDefaultsStateProof proof = transaction.proveCapturedState(
+        {}, captured, ScopedDefaultsProofMode::ReleaseSubset,
+        /*requireNoActiveScopedDefaults=*/true);
+    require(!proof.ok,
+            "an active MULTI-LINE scoped Defaults must fail the semantic proof");
+    require(proof.message.find("активный") != std::string::npos,
+            "the diagnostic must report the active entry: " + proof.message);
+    ++executedMultiline;
+}
+
+// --- ML3: a WRAPPED multi-line entry is suppressed, not a false violation ---
+// The marker payload of a wrapped continuation still contains a backslash, so a
+// physical-line scanner could re-assemble it and see a phantom violation.
+
+void testWrappedMultilineEntryIsSuppressed() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    writeFile(tree.root / "sudoers", kRootLine + "Defaults:alice env_reset, \\\n    passwd_tries=5\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    ScopedDefaultsTransaction planner(configuration, kPolicyName);
+    const auto plan = planner.plan({});
+    require(plan.fresh.size() == 1, "one target is expected");
+    SudoScopedDefaultsHooks hooks = productionHooks(configuration);
+    ScopedDefaultsTransaction installer(configuration, kPolicyName);
+    const auto applied = installer.apply(plan.fresh, hooks);
+    require(applied.ok(), applied.operation.message);
+
+    std::vector<SudoScopedDefaultsWrapperProof> targets;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        targets.push_back(mutation.proof);
+    }
+    SudoersConfiguration after(options);
+    std::string reloadError;
+    require(after.load(reloadError), reloadError);
+    ScopedDefaultsTransaction verifier(after, kPolicyName);
+    ScopedDefaultsCapturedState captured;
+    std::string captureError;
+    require(verifier.captureProofAndGraphState(targets, captured, captureError),
+            captureError);
+    const ScopedDefaultsStateProof proof = verifier.proveCapturedState(
+        targets, captured, ScopedDefaultsProofMode::Exact,
+        /*requireNoActiveScopedDefaults=*/true);
+    require(proof.ok,
+            "a WRAPPED multi-line entry must not look like an active "
+            "violation: " + proof.message);
+    ++executedMultiline;
+}
+
+// --- ML4 + ML6 + ML7: byte-exact rollback, CRLF and no-final-newline -------
+
+void testMultilineByteExactRollback(const std::string& original,
+                                    const std::string& label) {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    writeFile(tree.root / "sudoers", original);
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+    const std::string before = readAll(tree.root / "sudoers");
+    require(before == original, label + ": the fixture must be byte-exact");
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok,
+            label + ": apply must succeed: " + error);
+    require(readAll(tree.root / "sudoers") != original,
+            label + ": apply must change the file");
+
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.sudoersOptions = [options]() { return options; };
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        scopedPolicy(), kScopedDefaultsResource, deps);
+    require(report.status == fic::rollback::RollbackStatus::Success,
+            label + ": rollback must succeed: " + report.message);
+    require(readAll(tree.root / "sudoers") == original,
+            label + ": rollback must restore the EXACT original bytes");
+    ++executedMultiline;
+}
+
+void testMultilineByteExactRollbackLf() {
+    testMultilineByteExactRollback(
+        kRootLine + "Defaults:alice env_reset, \\\n    passwd_tries=5\n", "LF multiline");
+}
+
+void testMultilineByteExactRollbackCrlf() {
+    testMultilineByteExactRollback(
+        kRootLine + "Defaults:alice env_reset, \\\r\n    passwd_tries=5\r\n", "CRLF multiline");
+}
+
+void testMultilineByteExactRollbackNoFinalNewline() {
+    testMultilineByteExactRollback(
+        kRootLine + "Defaults:alice env_reset, \\\n    passwd_tries=5", "no-final-newline multiline");
+}
+
+
+// --- ML8: a logical entry that STRADDLES a wrapper boundary fails closed ---
+// A FIC-created wrapper always owns a WHOLE logical entry, so a logical entry
+// that starts inside the marker payload and continues past the END marker is a
+// shape FIC never produces. Its semantics cannot be guessed, so the proof fails
+// closed instead of guessing.
+
+void testLogicalEntryStraddlingWrapperFailsClosed() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    writeFile(tree.root / "sudoers", "#@FIC_SUDO_DISABLED_BEGIN policy=sudo_disable_scoped_defaults mutation=FIC-SUDO-1-1-1-1-1@\n#@FIC_SUDO_DISABLED_LINE@eol=lf@Defaults:alice env_reset, \\\n#@FIC_SUDO_DISABLED_END policy=sudo_disable_scoped_defaults mutation=FIC-SUDO-1-1-1-1-1@\n    passwd_tries=5\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+
+    // Prove the wrapper as OWNED, so the ownership checks pass and the failure
+    // that remains is exactly the boundary conflict under test. The digest is
+    // taken from the parser itself, never hardcoded.
+    const std::vector<fic::sudoers::SudoPhysicalLine> lines =
+        fic::sudoers::splitPhysicalLines(readAll(tree.root / "sudoers"));
+    std::vector<fic::sudoers::SudoDisabledWrapper> parsed;
+    std::string parseError;
+    require(fic::sudoers::parseSudoDisabledWrappers(
+                lines, parsed, parseError) ==
+                fic::sudoers::SudoWrapperParseStatus::Ok,
+            parseError);
+    require(parsed.size() == 1, "the fixture must contain one wrapper");
+    SudoScopedDefaultsWrapperProof owned;
+    owned.wrapperId = parsed[0].mutationId;
+    owned.canonicalPath =
+        fic::sudoers::canonicalizeSudoProofPath(tree.root / "sudoers");
+    owned.payloadDigest = parsed[0].payloadDigest();
+    const std::vector<SudoScopedDefaultsWrapperProof> proofs{owned};
+
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    ScopedDefaultsCapturedState captured;
+    std::string captureError;
+    require(transaction.captureProofAndGraphState(proofs, captured, captureError),
+            captureError);
+    const ScopedDefaultsStateProof proof = transaction.proveCapturedState(
+        proofs, captured, ScopedDefaultsProofMode::ReleaseSubset,
+        /*requireNoActiveScopedDefaults=*/true);
+    require(!proof.ok,
+            "a logical entry crossing a wrapper boundary must fail closed");
+    require(proof.message.find("частично") != std::string::npos,
+            "the diagnostic must name the boundary conflict: " + proof.message);
+    ++executedMultiline;
+}
+
 // ---------------------------------------------------------------------------
 // Test registry.
 //
@@ -3242,6 +3459,13 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"R7 benign same-member change keeps the no-op", testBenignMemberContentChangeStillNoOp},
         {"R8 new member after semantic proof blocks no-op", testNewMemberAfterSemanticProofBlocksNoOp},
         {"R9 stable final window keeps the no-op valid", testStableNoOpStillSucceeds},
+        {"ML1 multiline scoped Defaults planned as one target", testMultilineScopedDefaultsPlannedAsOneTarget},
+        {"ML2 snapshot proof sees active multiline entry", testMultilineActiveEntrySeenBySnapshotProof},
+        {"ML3 wrapped multiline entry is suppressed", testWrappedMultilineEntryIsSuppressed},
+        {"ML4 multiline rollback is byte-exact (LF)", testMultilineByteExactRollbackLf},
+        {"ML6 multiline rollback is byte-exact (CRLF)", testMultilineByteExactRollbackCrlf},
+        {"ML7 multiline rollback is byte-exact (no final newline)", testMultilineByteExactRollbackNoFinalNewline},
+        {"ML8 logical entry straddling a wrapper boundary fails closed", testLogicalEntryStraddlingWrapperFailsClosed},
     };
     return cases;
 }

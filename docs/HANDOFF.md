@@ -38,6 +38,27 @@ crash-consistent транзакция, snapshot-bound ownership preflight. Вы�
   pre-plan: `reloadAndVerify()` вызывает `configuration.load()` и тем самым
   обновляет snapshot. Generations не вводились.
 
+## SUDO multiline parity: shared logical-entry assembler
+
+* Parser и snapshot-bound semantic proof используют **один** assembler
+  `SudoersLogicalEntries::assembleSudoLogicalEntries()`. Второго multiline
+  parser'а нет.
+* Задача была — **дедупликация**, а не улучшение semantics. Существующие quirks
+  (два пробела при continuation; backslash последней строки файла не срезается)
+  воспроизведены дословно и закреплены unit-тестами primitive'а.
+* **Physical bytes остаются authority** для ownership, `payloadDigest`, CAS и
+  byte-exact suppression. Logical entries — только для semantic classification
+  и physical-span planning. Digest logical text в journal не попадает.
+* `beginLine`/`endLine` — индексы маркеров; suppressed payload лежит строго
+  между ними. Entry, частично пересекающая границу обёртки, — форма, которую
+  FIC не создаёт, и она **fail closed**.
+* Известное наблюдение: для `scopedDefaultsScope()` старый physical-line scan и
+  новый logical scan **agree by construction**, т.к. classifier смотрит только в
+  начало текста, которое всегда приходит из первой physical line. Наблюдаемого
+  false positive/negative на валидном sudoers найти не удалось; refactor
+  устраняет dual semantics конструктивно, а ML8 пинит новую fail-closed
+  семантику boundary-конфликта.
+
 ## SUDO security proof = files + @includedir topology
 
 * Доказательство состоит из **двух частей**, и изменение любой инвалидирует
@@ -209,8 +230,8 @@ Follow-up поверх `c325e92`:
   `Exact(previous)` → durability ТОГО ЖЕ capture. Применён перед ВСЕМИ тремя
   production-вызовами `normalizePreparedToPrevious()` (CompletePrevious,
   selective compensation, resolveAfterFailedMutation) — grep-аудит подтверждает.
-* **ОТКРЫТО**: @includedir topology identity (§18–§27) и multiline semantic
-  parity (§28–§31). AL–AU регрессии не добавлены.
+* **Multiline semantic parity — ЗАКРЫТА**: parser и snapshot-bound semantic proof
+  используют один shared assembler (см. раздел «SUDO multiline parity»).
 * **Include lexer**: escape-семантика upstream `copy_string()` для кавыченных и
   некавыченных путей (`\xHH`→hex, `\c`→c). Подтверждено по исходникам sudo
   1.9.13 (debian-12) и текущим — поведение идентично.
@@ -241,19 +262,19 @@ Follow-up поверх `c325e92`:
 
 ## Remaining
 
-* **НЕ ИСПРАВЛЕНО (отдельная задача): multiline semantic parity.** Snapshot
-  semantic proof (no-op, fresh capture) остаётся physical-line based. Закрытый
-  здесь race — single-line (`Defaults:bob passwd_tries=9`). Многострочные
-  `Defaults` с continuation по-прежнему не распознаются как активные
-  нарушения, и это НЕ замаскировано как исправленное.
+* **Multiline parity закрыта для continuation-семантики**, но это НЕ полная
+  реализация sudoers grammar: assembler отвечает только за physical -> logical
+  сборку. Комментарии, include-лексика и wrapper-парсинг остались отдельными
+  слоями поверх сборки.
 * **Topology snapshot — последний успешный `load()`**, а не исходный pre-plan
   topology: `reloadAndVerify()` вызывает `configuration.load()`. Generations не
   вводились; guards сравнивают membership с последним `load()`.
-* **Нерешённая отдельная проблема (не входит в этот commit):** discovery новых
-  неизвестных файлов, появившихся в `@includedir` и не известных ни journal, ни
-  graph. Для них у FIC ещё нет известного canonical path, поэтому preflight их
-  не инспектирует. Это НЕ ownership-outside-graph problem — там путь уже
-  известен journal proof.
+* **Topology discovery, актуальная формулировка:** новый member каталога заранее
+  не входит в file capture (его canonical path ещё не известен), но изменение
+  eligible membership **обнаруживается** final `@includedir` topology guard'ом и
+  инвалидирует security-sensitive decision. Читать contents неизвестного нового
+  member для отказа не требуется. Прежняя формулировка «проблема не решена»
+  устарела.
 
 
 * Полный E2E с реальным применением политик на хосте не запускался (unsafe

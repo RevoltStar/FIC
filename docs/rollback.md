@@ -198,6 +198,42 @@ duplicate и malformed wrapper, а также активный scoped Defaults, 
 новом capture, — fail closed. Benious изменение байтов того же member без
 активизации scoped Defaults (комментарий, global Defaults) no-op **не** ломает.
 
+### SUDO multiline parity: один shared logical-entry assembler
+
+Parser и snapshot-bound semantic proof **не должны** по-разному понимать один и
+тот же sudoers-файл. Оба используют единственный assembler:
+
+```text
+SudoersLogicalEntries::assembleSudoLogicalEntries()
+  physical lines → SudoLogicalEntry { firstPhysicalLine, lineCount, text }
+```
+
+* `SudoersConfiguration::expandDocument()` строит из него include graph и
+  ordered lines.
+* `ScopedDefaultsTransaction::proveCapturedState()` принимает semantic решение
+  по **logical entry**, а не по одной physical line.
+
+Задача изменения — **дедупликация** semantics, а не её улучшение. Сохранён
+прежний contract: trim → нечётное число trailing backslash означает
+continuation → снять один terminal `\` → добавить ровно один пробел → append
+trim следующей строки. Существующие quirks (в т.ч. два пробела при
+continuation и сохранение backslash у последней строки файла) воспроизведены
+дословно и закреплены unit-тестами.
+
+**Physical bytes остаются authority** для ownership, `payloadDigest`, CAS и
+byte-exact suppression. Logical entries используются только для sudoers
+semantic classification и physical-span planning. Никакого
+`digest(logical text)` в journal proof не появилось.
+
+Wrapper span: `beginLine`/`endLine` — индексы **маркеров**, а suppressed
+payload лежит строго между ними. Логическая entry целиком внутри payload
+считается suppressed; entry, частично пересекающая границу обёртки, — это
+форма, которую FIC никогда не создаёт, поэтому она **fail closed** с явной
+диагностикой, а не угадыванием semantics.
+
+**Multiline parity ≠ полная реализация sudoers grammar.** Это общий assembler
+logical entries, а не завершённый sudoers-парсер.
+
 ### SUDO security proof = files + @includedir topology
 
 Доказательство безопасности SUDO состоит из **двух независимых частей**:

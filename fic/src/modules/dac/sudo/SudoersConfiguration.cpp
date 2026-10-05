@@ -1,6 +1,7 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/dac/sudo/SudoersDisabledWrapper.h"
 #include "modules/dac/sudo/SudoersIncludeDirective.h"
+#include "modules/dac/sudo/SudoersLogicalEntries.h"
 #include "modules/dac/sudo/SudoersScopedDefaults.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
@@ -729,17 +730,19 @@ bool SudoersConfiguration::expandDocument(size_t documentIndex,
     }
     includeStack.push_back(documentPath);
 
-    const auto lines = physicalLines(documentContent);
-    for (size_t i = 0; i < lines.size(); ++i) {
-        const size_t firstLine = lines[i].first;
-        std::string logical = lines[i].second;
-        size_t consumed = 1;
-        while (hasContinuation(logical) && i + 1 < lines.size()) {
-            std::string trimmed = trimCopy(logical);
-            trimmed.pop_back();
-            logical = trimmed + " " + trimCopy(lines[++i].second);
-            ++consumed;
-        }
+    // THE shared physical -> logical assembly. The snapshot-bound semantic
+    // proof in ScopedDefaultsTransaction uses the very same assembler, so the
+    // include graph and the security proof cannot disagree about how a
+    // continuation is read.
+    const std::vector<fic::sudoers::SudoLogicalEntry> entries =
+        fic::sudoers::assembleSudoLogicalEntries(
+            fic::sudoers::splitPhysicalLines(documentContent));
+    for (const fic::sudoers::SudoLogicalEntry& entry : entries) {
+        // Physical coordinates stay 1-based here, so existing diagnostics do not
+        // shift by one.
+        const size_t firstLine = entry.firstPhysicalLine + 1;
+        const size_t consumed = entry.lineCount;
+        std::string logical = entry.text;
 
         // The include directive is recognized BEFORE any comment handling:
         // '#' is the comment introducer but also part of the legacy
