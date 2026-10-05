@@ -271,6 +271,10 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
         }
         std::string recoveryTopologyError;
         if (!verifyTopologyUnchanged("commit существующей Prepared", recoveryTopologyError)) {
+            // Never NotPresent: reconcile() continues on any non-FailClosed
+            // result, which would treat an unresolved Prepared record as if it
+            // did not exist.
+            outcome.result = PreparedRecoveryResult::FailClosed;
             outcome.message = recoveryTopologyError;
             return outcome;
         }
@@ -330,6 +334,11 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
         std::string normalizeTopologyError;
         if (!verifyTopologyUnchanged("normalize к previous",
                                      normalizeTopologyError)) {
+            // A topology failure with an ACTIVE Prepared record must NEVER be
+            // reported as NotPresent: reconcile() only stops early on
+            // FailClosed, so defaulting here would let it continue and mint new
+            // wrapper ids on top of an unresolved record.
+            outcome.result = PreparedRecoveryResult::FailClosed;
             outcome.message = normalizeTopologyError;
             return outcome;
         }
@@ -393,6 +402,16 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
                 return outcome;
             }
         }
+        if (deps_.journal.beforeFinalTopologyGuard) {
+            deps_.journal.beforeFinalTopologyGuard();
+        }
+        std::string compensationTopologyError;
+        if (!verifyTopologyUnchanged("normalize к previous после компенсации",
+                                     compensationTopologyError)) {
+            outcome.result = PreparedRecoveryResult::FailClosed;
+            outcome.message = compensationTopologyError;
+            return outcome;
+        }
         std::string normalizeError;
         if (!deps_.journal.normalizePreparedToPrevious(preparedId, previous,
                                                        normalizeError)) {
@@ -452,6 +471,15 @@ bool ScopedDefaultsLifecycle::resolveAfterFailedMutation(
                 "normalization запрещена: " + strictError;
             return false;
         }
+    }
+    if (deps_.journal.beforeFinalTopologyGuard) {
+        deps_.journal.beforeFinalTopologyGuard();
+    }
+    std::string normalizeTopologyError;
+    if (!verifyTopologyUnchanged("normalize к previous после неудачной мутации",
+                                 normalizeTopologyError)) {
+        outcome.message = normalizeTopologyError;
+        return false;
     }
     std::string normalizeError;
     if (!deps_.journal.normalizePreparedToPrevious(mutationId, previous,
@@ -523,6 +551,37 @@ ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
         std::string topologyError;
         if (!verifyTopologyUnchanged("no-op", topologyError)) {
             outcome.message = topologyError;
+            return outcome;
+        }
+        // Topology membership alone does NOT prove file contents: an external
+        // process may rewrite an EXISTING member, keeping the filename set
+        // identical while activating a scoped Defaults that plan() never saw
+        // (plan() reads the earlier graph snapshot).
+        //
+        // So the no-op is re-proven on a FRESH capture:
+        //   capture(graph U owned proof paths)
+        //     -> ReleaseSubset ownership proof (a missing proven wrapper stays
+        //        an externally released subset, which is the existing contract)
+        //     -> semantic invariant on THAT capture: no active scoped Defaults
+        // A drifted, unknown, duplicated or malformed wrapper, or an active
+        // scoped Defaults visible only in the new capture, fails closed.
+        ScopedDefaultsCapturedState noopCaptured;
+        std::string noopCaptureError;
+        if (!transaction.captureProofAndGraphState(owned, noopCaptured,
+                                                   noopCaptureError)) {
+            outcome.message =
+                "не удалось захватить sudoers-пути для проверки no-op: " +
+                noopCaptureError;
+            return outcome;
+        }
+        const ScopedDefaultsStateProof noopProof =
+            transaction.proveCapturedState(
+                owned, noopCaptured, ScopedDefaultsProofMode::ReleaseSubset,
+                /*requireNoActiveScopedDefaults=*/true);
+        if (!noopProof.ok) {
+            outcome.message =
+                "no-op не доказан на актуальном состоянии файлов: " +
+                noopProof.message;
             return outcome;
         }
         outcome.ok = true;

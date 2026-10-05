@@ -2802,6 +2802,275 @@ void testNewDropinBeforeFreshDiscard() {
             "the Prepared record must remain active");
 }
 
+
+// ===========================================================================
+// Topology-resolution gaps: every normalize path needs a topology guard, a
+// topology failure with an active Prepared record must be FailClosed (never
+// NotPresent), and a no-op must rest on a FRESH semantic capture.
+// ===========================================================================
+
+// A refresh Prepared whose target never landed, with a known @includedir that a
+// test can mutate in the protected window.
+struct TopologyRefreshFixture {
+    explicit TopologyRefreshFixture(TempTree& treeRef) : tree(treeRef) {
+        writeFile(tree.root / "a.conf", "Defaults:alice exempt_group=wheel\n");
+        writeFile(tree.root / "b.conf", "Defaults passwd_tries=3\n");
+        std::filesystem::create_directories(tree.root / "dropins");
+        writeFile(tree.root / "dropins" / "abase", "Defaults passwd_tries=5\n");
+        writeFile(tree.root / "sudoers",
+                  "@include " + (tree.root / "a.conf").string() + "\n"
+                  "@include " + (tree.root / "b.conf").string() + "\n"
+                  "@includedir " + (tree.root / "dropins").string() + "\n");
+        options = sudoOptions(tree.root);
+        applyA();
+        // Stage the refresh but install nothing: the filesystem keeps {A}, so
+        // the classification is CompletePrevious. Two distinct violations give
+        // target {A,B,C}, which the Indeterminate test partially installs.
+        writeFile(tree.root / "b.conf",
+                  "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
+        writeFile(tree.root / "dropins" / "cbase",
+                  "Defaults passwd_tries=5\nDefaults:carol passwd_tries=4\n");
+        SudoersConfiguration staged(options);
+        std::string stagedError;
+        require(staged.load(stagedError), stagedError);
+        ScopedDefaultsTransaction planner(staged, kPolicyName);
+        const auto plan = planner.plan(ownedA);
+        // The STAGED planned mutations are kept: wrapper ids embed a timestamp,
+        // so re-planning later would mint DIFFERENT ids than the journal record
+        // and the disk state would no longer match the recorded target.
+        planned = plan.fresh;
+        require(planned.size() >= 2,
+                "the refresh must plan at least two wrappers");
+        std::vector<SudoScopedDefaultsWrapperProof> fresh;
+        for (const PlannedScopedDefaultsMutation& mutation : planned) {
+            fresh.push_back(mutation.proof);
+        }
+        target = fresh;
+        stageRefresh(ownedA, scopedPolicy(), fresh);
+    }
+
+    // Installs the first `count` STAGED target wrappers, producing a genuine
+    // partial disk state.
+    void installPartialTarget(size_t count) {
+        SudoersConfiguration staged(options);
+        std::string stagedError;
+        require(staged.load(stagedError), stagedError);
+        SudoScopedDefaultsHooks installHooks = productionHooks(staged);
+        installHooks.reloadAndVerify = [&staged](std::string& e) {
+            return staged.load(e);
+        };
+        ScopedDefaultsTransaction installer(staged, kPolicyName);
+        std::vector<PlannedScopedDefaultsMutation> slice(planned.begin(),
+                                                         planned.begin() + count);
+        const auto applied = installer.apply(slice, installHooks);
+        require(applied.ok(), applied.operation.message);
+    }
+
+    void installWholeTarget() {
+        installPartialTarget(planned.size());
+    }
+    void applyA() {
+        SudoersConfiguration configuration(options);
+        std::string error;
+        require(configuration.load(error), error);
+        require(reconcile(configuration, productionHooks(configuration)).ok,
+                "apply A: " + error);
+        ownedA = activeOwned();
+        require(ownedA.size() == 1, "only A must be owned");
+    }
+    // Each call adds a DIFFERENT eligible member, so calling it twice in one
+    // test really changes membership twice (an idempotent write would leave the
+    // topology identical and silently pass).
+    void newDropin() {
+        ++dropinCounter;
+        writeFile(tree.root / "dropins" / ("bnew" + std::to_string(dropinCounter)),
+                  "Defaults passwd_tries=5\nDefaults:carol passwd_tries=4\n");
+    }
+    TempTree& tree;
+    SudoersConfigurationOptions options;
+    std::vector<SudoScopedDefaultsWrapperProof> ownedA;
+    std::vector<SudoScopedDefaultsWrapperProof> target;
+    std::vector<PlannedScopedDefaultsMutation> planned;
+    int dropinCounter = 0;
+};
+
+// --- R3: CompletePrevious topology mismatch => FailClosed -----------------
+
+void testCompletePreviousTopologyMismatchFailsClosed() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    TopologyRefreshFixture fixture(tree);
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&fixture]() {
+        fixture.newDropin();
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+
+    const auto recovery = lifecycle.recoverPrepared(kPolicyName);
+    require(recovery.result == fic::sudoers::PreparedRecoveryResult::FailClosed,
+            "a CompletePrevious topology mismatch must be FailClosed, never "
+            "NotPresent");
+    require(activePreparedCount() == 1, "the Prepared record must remain active");
+
+    // ...and through reconcile() the unresolved record must not be ignored.
+    SudoersConfiguration again(fixture.options);
+    std::string againError;
+    require(again.load(againError), againError);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps2 =
+        productionDeps(again, SudoScopedDefaultsHooks{});
+    deps2.journal.beforeFinalTopologyGuard = [&fixture]() {
+        fixture.newDropin();
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle2(std::move(deps2));
+    const auto outcome = lifecycle2.reconcile(kPolicyName);
+    require(!outcome.ok, "reconcile must not succeed over a stale topology");
+    require(!outcome.unchanged, "reconcile must not report unchanged");
+    require(activePreparedCount() == 1, "the Prepared record must remain active");
+}
+
+// --- R4: CompleteTarget topology mismatch => FailClosed -------------------
+
+void testCompleteTargetTopologyMismatchFailsClosed() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    TopologyRefreshFixture fixture(tree);
+    // Install the whole STAGED target, so the classification is CompleteTarget.
+    fixture.installWholeTarget();
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&fixture]() {
+        fixture.newDropin();
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+
+    const auto recovery = lifecycle.recoverPrepared(kPolicyName);
+    require(recovery.result == fic::sudoers::PreparedRecoveryResult::FailClosed,
+            "a CompleteTarget topology mismatch must be FailClosed, never "
+            "NotPresent");
+    require(activePreparedCount() == 1,
+            "the Prepared record must NOT be committed to Applied");
+}
+
+// --- R6: post-compensation normalize topology mismatch => no normalize -----
+// previous={A}, target={A,B}, B is installed so the state is Indeterminate,
+// compensateToPrevious() rewinds B, the previous proof passes, and the
+// topology changes right before normalize.
+
+void testPostCompensationTopologyMismatchBlocksNormalize() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    TopologyRefreshFixture fixture(tree);
+    // Install ONLY the first planned wrapper, so the disk state {A,B} is a strict
+    // subset of target {A,B,...}: the classification is Indeterminate and the
+    // selective compensation has REAL work.
+    fixture.installPartialTarget(1);
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    bool compensated = false;
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.afterPreparedCompensation = [&compensated]() {
+        compensated = true;
+    };
+    deps.journal.beforeFinalTopologyGuard = [&fixture, &compensated]() {
+        // Only mutate the topology once the compensation really happened, so the
+        // test provably reaches the post-compensation normalize window.
+        if (compensated) {
+            fixture.newDropin();
+        }
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+
+    const auto recovery = lifecycle.recoverPrepared(kPolicyName);
+    require(compensated,
+            "the test must really pass through a successful "
+            "compensateToPrevious()");
+    require(recovery.result == fic::sudoers::PreparedRecoveryResult::FailClosed,
+            "a post-compensation topology mismatch must be FailClosed");
+    require(activePreparedCount() == 1,
+            "the Prepared record must stay active: no normalize");
+}
+
+// --- R5: same-member content race before a no-op --------------------------
+
+void testSameMemberContentRaceBeforeNoOp() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    // A GLOBAL Defaults is not a scoped violation, so the loaded graph has
+    // nothing to remediate.
+    std::filesystem::create_directories(tree.root / "dropins");
+    writeFile(tree.root / "dropins" / "abase", "Defaults passwd_tries=3\n");
+    writeFile(tree.root / "sudoers",
+              "@includedir " + (tree.root / "dropins").string() + "\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.scopedDefaultsViolations().empty(),
+            "the loaded graph must have no active scoped Defaults");
+
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeNoOpTopologyGuard = [&tree]() {
+        // SAME filename, so the membership topology is unchanged...
+        writeFile(tree.root / "dropins" / "abase",
+                  "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
+        // ...but the file now activates a scoped Defaults.
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!(outcome.ok && outcome.unchanged),
+            "a stale unchanged success is forbidden when a member's CONTENT "
+            "changed under the same name");
+    require(!outcome.unchanged, "the reconcile must not report unchanged");
+}
+
+// --- R6b: benign same-member content change stays a valid no-op ------------
+
+void testBenignMemberContentChangeStillNoOp() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    std::filesystem::create_directories(tree.root / "dropins");
+    writeFile(tree.root / "dropins" / "abase", "Defaults passwd_tries=3\n");
+    writeFile(tree.root / "sudoers",
+              "@includedir " + (tree.root / "dropins").string() + "\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.scopedDefaultsViolations().empty(),
+            "the loaded graph must have no active scoped Defaults");
+
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeNoOpTopologyGuard = [&tree]() {
+        // Bytes change, but NO scoped Defaults is activated: a plain comment
+        // and another global Defaults. This must NOT be a security failure.
+        writeFile(tree.root / "dropins" / "abase",
+                  "# a benign comment\nDefaults passwd_tries=3\n"
+                  "Defaults log_input=1\n");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(outcome.ok && outcome.unchanged,
+            "a benign same-member change must still allow a legitimate no-op: " +
+                outcome.message);
+}
+
 // ---------------------------------------------------------------------------
 // Test registry.
 //
@@ -2878,6 +3147,11 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"AT8 ownership outside graph with includedir", testOwnershipOutsideGraphWithIncludedir},
         {"AV-topology new drop-in before recovery normalization", testNewDropinBeforeRecoveryNormalization},
         {"AW-topology new drop-in before fresh discard", testNewDropinBeforeFreshDiscard},
+        {"R3 CompletePrevious topology mismatch is FailClosed", testCompletePreviousTopologyMismatchFailsClosed},
+        {"R4 CompleteTarget topology mismatch is FailClosed", testCompleteTargetTopologyMismatchFailsClosed},
+        {"R5 post-compensation topology mismatch blocks normalize", testPostCompensationTopologyMismatchBlocksNormalize},
+        {"R6 same-member content race blocks stale no-op", testSameMemberContentRaceBeforeNoOp},
+        {"R7 benign same-member change keeps the no-op", testBenignMemberContentChangeStillNoOp},
     };
     return cases;
 }

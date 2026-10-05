@@ -11,6 +11,27 @@
 Доработка подсистемы SUDO: provenance-safe обёртки scoped `Defaults`,
 crash-consistent транзакция, snapshot-bound ownership preflight. Выполнено.
 
+## SUDO refresh normalization и no-op: topology + snapshot
+
+* **Каждый** refresh normalization требует: `Exact(previous)` на
+  `graph ∪ previous ∪ target` → durability того же capture → стабильная
+  `@includedir` topology → normalize. Guard стоит перед всеми тремя
+  production-вызовами `normalizePreparedToPrevious()`: `CompletePrevious`,
+  `Indeterminate → compensateToPrevious()` и `resolveAfterFailedMutation()`.
+* **Topology failure при активной Prepared = `FailClosed`, никогда `NotPresent`**:
+  `reconcile()` продолжает flow на любом не-`FailClosed` результате, поэтому
+  `NotPresent` при неразрешённой записи привёл бы к minting новых wrapper ids.
+* **Успешный no-op требует двух вещей:** стабильный membership **и** свежий
+  snapshot semantic proof (`captureProofAndGraphState` →
+  `proveCapturedState(ReleaseSubset, requireNoActiveScopedDefaults=true)`).
+  `plan().fresh.empty()` недостаточно: `plan()` читает более ранний graph
+  snapshot, а topology identity не доказывает содержимое member'ов.
+  Ownership contract прежний: отсутствующий доказанный wrapper — допустимый
+  externally released subset.
+* **Topology snapshot = последний успешный `load()` объекта**, а не исходный
+  pre-plan: `reloadAndVerify()` вызывает `configuration.load()` и тем самым
+  обновляет snapshot. Generations не вводились.
+
 ## SUDO security proof = files + @includedir topology
 
 * Доказательство состоит из **двух частей**, и изменение любой инвалидирует
@@ -214,6 +235,14 @@ Follow-up поверх `c325e92`:
 
 ## Remaining
 
+* **НЕ ИСПРАВЛЕНО (отдельная задача): multiline semantic parity.** Snapshot
+  semantic proof (no-op, fresh capture) остаётся physical-line based. Закрытый
+  здесь race — single-line (`Defaults:bob passwd_tries=9`). Многострочные
+  `Defaults` с continuation по-прежнему не распознаются как активные
+  нарушения, и это НЕ замаскировано как исправленное.
+* **Topology snapshot — последний успешный `load()`**, а не исходный pre-plan
+  topology: `reloadAndVerify()` вызывает `configuration.load()`. Generations не
+  вводились; guards сравнивают membership с последним `load()`.
 * **Нерешённая отдельная проблема (не входит в этот commit):** discovery новых
   неизвестных файлов, появившихся в `@includedir` и не известных ни journal, ни
   graph. Для них у FIC ещё нет известного canonical path, поэтому preflight их

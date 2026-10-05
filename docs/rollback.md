@@ -138,6 +138,58 @@ in-memory копии текущего конфига (`validatePlannedRollbackId
 классифицировать. Валидные сценарии дубликатов (`Port 22/Port 2022`, три
 одинаковых `Port 22`, before/after collision) сохраняются.
 
+### Refresh normalization требует стабильной topology
+
+Каждый SUDO refresh normalization требует ровно этой последовательности:
+
+```text
+Exact(previous) на graph ∪ previous ∪ target paths
+  → durability ЭТОГО ЖЕ capture
+  → стабильная @includedir topology
+  → normalize
+```
+
+Topology guard стоит перед **каждым** production-вызовом
+`normalizePreparedToPrevious()`: ветка `CompletePrevious`, ветка
+`Indeterminate → compensateToPrevious()` и `resolveAfterFailedMutation()`.
+
+### Topology failure при активной Prepared = FailClosed
+
+`recoverPrepared()` **никогда** не возвращает `NotPresent`, если активная
+Prepared-запись была найдена, но recovery не смог доказанно её
+commit/normalize/discard: расхождение topology → `FailClosed`.
+
+Это существенно, потому что `reconcile()` продолжает обычный flow на любом
+результате, кроме `FailClosed`. `NotPresent` при неразрешённой Prepared привело
+бы к minting новых wrapper ids поверх неразрешённой записи.
+
+### Успешный no-op требует ДВЕХ независимых вещей
+
+```text
+- стабильный @includedir membership;
+- свежий snapshot semantic proof, что активных scoped Defaults не осталось.
+```
+
+Topology identity **не** доказывает содержимое файлов. Внешний процесс может
+переписать **существующий** member, оставив множество имён неизменным, и
+активировать scoped `Defaults`, которого `plan()` не видел: `plan()` читает
+graph snapshot, построенный раньше.
+
+Поэтому перед `unchanged = true` выполняется свежий capture:
+
+```text
+capture(graph ∪ owned proof paths)
+  → proveCapturedState(owned, capture, ReleaseSubset, requireNoActiveScopedDefaults=true)
+  → verify topology unchanged
+  → unchanged success
+```
+
+Ownership contract для no-op прежний: отсутствующий доказанный wrapper — это
+допустимый externally released subset (`ReleaseSubset`). Но drifted, unknown,
+duplicate и malformed wrapper, а также активный scoped Defaults, видимый только в
+новом capture, — fail closed. Benious изменение байтов того же member без
+активизации scoped Defaults (комментарий, global Defaults) no-op **не** ломает.
+
 ### SUDO security proof = files + @includedir topology
 
 Доказательство безопасности SUDO состоит из **двух независимых частей**:
