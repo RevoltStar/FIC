@@ -88,11 +88,15 @@ public:
     virtual bool applyQuarantine(bool enabled, std::string& diagnostic) = 0;
 };
 
-// A no-op backend, used when containment is not wired yet and in tests that
-// only exercise the state machine.
+// An unavailable backend: absence of a production firewall cannot prove
+// quarantine at ISOLATE.
 class NullIncidentNetworkBackend final : public IncidentNetworkBackend {
 public:
-    bool applyQuarantine(bool, std::string& diagnostic) override {
+    bool applyQuarantine(bool enabled, std::string& diagnostic) override {
+        if (enabled) {
+            diagnostic = "incident network backend is unavailable";
+            return false;
+        }
         diagnostic.clear();
         return true;
     }

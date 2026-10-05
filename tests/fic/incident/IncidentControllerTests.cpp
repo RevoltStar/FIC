@@ -88,6 +88,7 @@ public:
     // This models a backend that reports success without effect, and is the
     // case a "successful call == proven action" implementation would miss.
     bool sessionsActuallyRemoved = true;
+    bool terminationPerformed = true;
 
     std::vector<std::string> actions;
 
@@ -117,7 +118,7 @@ public:
     ::fic::session::ContainmentOutcome terminateSession(
         const LoginSession& session) override {
         actions.push_back("terminate-session:" + session.id);
-        if (sessionsActuallyRemoved) {
+        if (terminationPerformed && sessionsActuallyRemoved) {
             // Model the effect: a terminated session leaves the inventory, so
             // a later reconciliation finds nothing left to contain.
             sessions.erase(std::remove_if(
@@ -127,7 +128,7 @@ public:
                 }),
                 sessions.end());
         }
-        return {true, ""};
+        return {terminationPerformed, terminationPerformed ? "" : "refused"};
     }
 
     ::fic::session::ContainmentOutcome terminateUser(
@@ -151,9 +152,14 @@ public:
         for (const LoginSession& session : gone) {
             actions.push_back("verify-gone:" + session.id);
         }
-        if (!gone.empty() && !sessionsActuallyRemoved) {
-            diagnostic = "sessions are still present";
-            return false;
+        for (const LoginSession& target : gone) {
+            if (std::any_of(sessions.begin(), sessions.end(),
+                            [&](const LoginSession& current) {
+                                return current.id == target.id;
+                            })) {
+                diagnostic = "sessions are still present";
+                return false;
+            }
         }
         return true;
     }
@@ -193,6 +199,9 @@ struct Harness {
 
     explicit Harness(const std::filesystem::path& statePath)
         : controller(IncidentStateStore(statePath), sessions, network) {
+        if (!std::filesystem::exists(statePath)) {
+            writeState(statePath, "UNLOCKED\n");
+        }
     }
 };
 
@@ -217,11 +226,11 @@ void testRaiseIsMonotonicThroughTheController(const TempTree& tree) {
 
     const IncidentResult first =
         harness.controller.raise(IncidentSeverity::Hard, source, "policy failed");
-    require(first.ok && first.escalated, "the first raise must persist");
+    require(!first.ok && first.escalated, "the first raise persists but PAM gate is unavailable");
     require(first.effectiveSeverity == IncidentSeverity::Hard,
             "the effective severity must be HARD");
-    require(first.runtime == RuntimeState::Active,
-            "a fully proven containment must be ACTIVE");
+    require(first.runtime == RuntimeState::Degraded,
+            "missing PAM gate must keep runtime DEGRADED");
 
     // A lower severity must never lower the persisted state.
     const IncidentResult second = harness.controller.raise(
@@ -243,6 +252,11 @@ void testRaiseIsMonotonicThroughTheController(const TempTree& tree) {
 void testNotificationIsDeduplicatedBySeverity(const TempTree& tree) {
     Harness harness(tree.statePath);
     IncidentSource source = policySource("a");
+    std::vector<IncidentSeverity> notifications;
+    harness.controller.setNotifySink(
+        [&](IncidentSeverity severity, const std::string&) {
+            notifications.push_back(severity);
+        });
 
     harness.controller.raise(IncidentSeverity::Standard, source, "first");
     // Two more raises at the same level must not escalate, which is the
@@ -253,8 +267,143 @@ void testNotificationIsDeduplicatedBySeverity(const TempTree& tree) {
     // Escalating to a higher severity is a real change and is the only thing
     // that re-notifies.
     harness.controller.raise(IncidentSeverity::Hard, source, "worse");
-    require(harness.controller.status().severity == IncidentSeverity::Hard,
+    harness.controller.raise(IncidentSeverity::Hard, source, "repeat hard");
+    harness.controller.raise(IncidentSeverity::Isolate, source, "isolate");
+    require(notifications == std::vector<IncidentSeverity>{
+                IncidentSeverity::Standard, IncidentSeverity::Hard,
+                IncidentSeverity::Isolate},
+            "only genuine severity escalations must notify");
+    require(harness.controller.status().severity == IncidentSeverity::Isolate,
             "the escalation must be recorded");
+    harness.controller.clear("admin");
+    harness.controller.raise(IncidentSeverity::Standard, source, "new incident");
+    require(notifications.size() == 4 &&
+                notifications.back() == IncidentSeverity::Standard,
+            "successful clear must reset notification deduplication");
+}
+
+void testUnavailableBackendsRemainUnproven(const TempTree& tree) {
+    writeState(tree.statePath, "UNLOCKED\n");
+    IncidentController controller(IncidentStateStore(tree.statePath), nullptr, nullptr);
+    const IncidentResult result = controller.raise(
+        IncidentSeverity::Isolate, policySource("a"), "isolate");
+    const auto status = controller.status();
+    require(!result.ok && result.runtime == RuntimeState::Degraded,
+            "unavailable backends cannot prove ISOLATE containment");
+    require(!status.containment.pamGateActive &&
+                !status.containment.sessionsContained &&
+                !status.containment.userRuntimeContained &&
+                !status.containment.networkQuarantined,
+            "component status must report only proven containment");
+}
+
+void testNetworkFailureStillAttemptsSessionsAndUsers(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    harness.network->succeed = false;
+    const auto result = harness.controller.raise(
+        IncidentSeverity::Isolate, policySource("a"), "isolate");
+    const auto status = harness.controller.status();
+    require(!result.ok && result.runtime == RuntimeState::Degraded,
+            "network failure must degrade containment");
+    require(harness.sessions->acted("terminate-session:c1") &&
+                harness.sessions->acted("terminate-user:1000"),
+            "independent containment must proceed after network failure");
+    require(!status.containment.networkQuarantined &&
+                status.containment.sessionsContained &&
+                status.containment.userRuntimeContained,
+            "per-component status must remain accurate");
+}
+
+void testFailedTerminationIsNotSilentlyVerified(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    harness.sessions->terminationPerformed = false;
+    const auto result = harness.controller.raise(
+        IncidentSeverity::Hard, policySource("a"), "hard");
+    require(!result.ok && !harness.controller.status().containment.sessionsContained,
+            "failed termination with live target must not prove sessions gone");
+    require(harness.sessions->acted("verify-gone:c1") &&
+                harness.sessions->acted("verify-gone:c2"),
+            "verification must cover intended targets");
+}
+
+void testClearCleanupFailureIsDegraded(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    harness.controller.raise(IncidentSeverity::Hard, policySource("a"), "hard");
+    harness.network->succeed = false;
+    const auto result = harness.controller.clear("admin");
+    require(!result.ok && result.runtime == RuntimeState::Degraded &&
+                result.effectiveSeverity == IncidentSeverity::Unlocked,
+            "durable clear with failed cleanup must report UNLOCKED/DEGRADED");
+}
+
+void testAuditAndNotifyFailuresDoNotCancelContainment(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    int audits = 0;
+    int notifications = 0;
+    harness.controller.setAuditSink([&](const std::string&) {
+        ++audits;
+        throw std::runtime_error("audit unavailable");
+    });
+    harness.controller.setNotifySink(
+        [&](IncidentSeverity, const std::string&) {
+            ++notifications;
+            throw std::runtime_error("notify unavailable");
+        });
+    const auto result = harness.controller.raise(
+        IncidentSeverity::Hard, policySource("a"), "hard");
+    require(result.effectiveSeverity == IncidentSeverity::Hard &&
+                harness.sessions->acted("terminate-session:c1"),
+            "sink failure must not cancel containment");
+    require(audits == 1 && notifications == 1,
+            "controller must call both observability sinks");
+}
+
+void testFailedClearKeepsDegradedRuntime(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    const auto raised = harness.controller.raise(
+        IncidentSeverity::Hard, policySource("a"), "hard");
+    require(raised.runtime == RuntimeState::Degraded,
+            "fixture must start DEGRADED without PAM gate");
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    const auto cleared = harness.controller.clear("admin");
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!cleared.ok && cleared.runtime == RuntimeState::Degraded,
+            "failed clear must not upgrade DEGRADED to ACTIVE");
+    require(cleared.effectiveSeverity == IncidentSeverity::Isolate,
+            "failed compensation must report ISOLATE");
+}
+
+void testPersistenceFailureNeverReturnsOk(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    const auto raised = harness.controller.raise(
+        IncidentSeverity::Hard, policySource("a"), "hard");
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!raised.ok && raised.runtime == RuntimeState::Degraded &&
+                raised.effectiveSeverity == IncidentSeverity::Isolate,
+            "unproven persistence must override successful runtime actions");
+    require(harness.sessions->acted("terminate-session:c1") &&
+                harness.sessions->acted("terminate-user:1000"),
+            "ISOLATE containment must still be attempted");
+}
+
+void testFailedClearReconcilesNewIsolateState(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    const auto soft = harness.controller.raise(
+        IncidentSeverity::Soft, policySource("a"), "soft");
+    require(soft.runtime == RuntimeState::Active, "SOFT fixture must be ACTIVE");
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    const auto cleared = harness.controller.clear("admin");
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!cleared.ok && cleared.effectiveSeverity == IncidentSeverity::Isolate &&
+                cleared.runtime == RuntimeState::Degraded,
+            "failed clear must not reuse a SOFT runtime proof for ISOLATE");
+    require(harness.network->quarantineActive &&
+                harness.sessions->acted("terminate-session:c1"),
+            "failed clear must attempt containment for its new severity");
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +416,8 @@ void testStandardLocksAndVerifiesGraphicalSessions(const TempTree& tree) {
     const IncidentResult result = harness.controller.raise(
         IncidentSeverity::Standard, policySource("a"), "standard");
 
-    require(result.ok, "STANDARD containment must be proven");
+    require(!result.ok && result.runtime == RuntimeState::Degraded,
+            "STANDARD cannot be fully proven without a PAM gate");
     // The graphical session was locked AND verified.
     require(harness.sessions->acted("lock:c1"),
             "the graphical session must be locked");
@@ -291,7 +441,7 @@ void testUnverifiableLockEscalatesToTermination(const TempTree& tree) {
     const IncidentResult result = harness.controller.raise(
         IncidentSeverity::Standard, policySource("a"), "standard");
 
-    require(result.ok, "the escalation to termination must be proven");
+    require(!result.ok, "the PAM gate is still unavailable");
     require(harness.sessions->acted("lock:c1"),
             "the lock must still be attempted first");
     require(harness.sessions->acted("terminate-session:c1"),
@@ -324,7 +474,7 @@ void testIsolateQuarantinesNetworkAndTerminatesUserRuntime(
     const IncidentResult result = harness.controller.raise(
         IncidentSeverity::Isolate, policySource("a"), "isolate");
 
-    require(result.ok, "ISOLATE containment must be proven");
+    require(!result.ok, "ISOLATE cannot be fully proven without a PAM gate");
     require(harness.network->quarantineActive,
             "ISOLATE must apply the network quarantine");
     require(harness.sessions->acted("terminate-session:c1") &&
@@ -399,7 +549,7 @@ void testReconcileRestoresContainmentAfterRestart(const TempTree& tree) {
     Harness harness(tree.statePath);
 
     const IncidentResult reconciled = harness.controller.reconcile();
-    require(reconciled.ok, "reconciliation of a persisted HARD must be proven");
+    require(!reconciled.ok, "reconciliation lacks a PAM gate proof");
     require(harness.sessions->acted("terminate-session:c1"),
             "reconciliation must re-terminate surviving sessions");
     require(reconciled.effectiveSeverity == IncidentSeverity::Hard,
@@ -413,7 +563,7 @@ void testReconcileRestoresIsolateContainment(const TempTree& tree) {
     Harness harness(tree.statePath);
 
     const IncidentResult reconciled = harness.controller.reconcile();
-    require(reconciled.ok, "reconciliation of ISOLATE must be proven");
+    require(!reconciled.ok, "reconciliation lacks a PAM gate proof");
     require(harness.network->quarantineActive,
             "reconciliation must restore the network quarantine");
 }
@@ -446,6 +596,21 @@ int main() {
          testRaiseIsMonotonicThroughTheController},
         {"notification_is_deduplicated_by_severity",
          testNotificationIsDeduplicatedBySeverity},
+        {"unavailable_backends_remain_unproven",
+         testUnavailableBackendsRemainUnproven},
+        {"network_failure_still_attempts_sessions_and_users",
+         testNetworkFailureStillAttemptsSessionsAndUsers},
+        {"failed_termination_is_not_silently_verified",
+         testFailedTerminationIsNotSilentlyVerified},
+        {"clear_cleanup_failure_is_degraded", testClearCleanupFailureIsDegraded},
+        {"audit_and_notify_failures_do_not_cancel_containment",
+         testAuditAndNotifyFailuresDoNotCancelContainment},
+        {"failed_clear_keeps_degraded_runtime",
+         testFailedClearKeepsDegradedRuntime},
+        {"persistence_failure_never_returns_ok",
+         testPersistenceFailureNeverReturnsOk},
+        {"failed_clear_reconciles_new_isolate_state",
+         testFailedClearReconcilesNewIsolateState},
         {"standard_locks_and_verifies_graphical_sessions",
          testStandardLocksAndVerifiesGraphicalSessions},
         {"unverifiable_lock_escalates_to_termination",

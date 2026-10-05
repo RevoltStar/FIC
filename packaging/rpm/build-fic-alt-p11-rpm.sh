@@ -488,9 +488,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    chown -R root:fic /opt/fic || true
+    find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
     find /opt/fic -type d -exec chmod 2750 {} \; || true
-    find /opt/fic -type f -exec chmod 0640 {} \; || true
+    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || true
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \; || true
@@ -528,9 +528,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    chown -R root:fic /opt/fic || true
+    find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
     find /opt/fic -type d -exec chmod 2750 {} \\; || true
-    find /opt/fic -type f -exec chmod 0640 {} \\; || true
+    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \\; || true
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \\; || true
@@ -571,9 +571,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    chown -R root:fic /opt/fic || true
+    find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
     find /opt/fic -type d -exec chmod 2750 {} \\; || true
-    find /opt/fic -type f -exec chmod 0640 {} \\; || true
+    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \\; || true
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \\; || true
@@ -607,11 +607,13 @@ fi
 # the daemon's own fail-closed parser. An existing - including corrupt or
 # foreign - state is left strictly untouched and remains BROKEN_STATE
 # (ISOLATE); an upgrade never repairs a missing or corrupt state to UNLOCKED.
-/opt/fic/bin/fic --maintenance incident-init || exit 1
+if [ "\${1:-}" -eq 1 ]; then
+    /opt/fic/bin/fic --maintenance incident-init || exit 1
+fi
 
-chown -R root:fic /opt/fic || exit 1
+find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || exit 1
 find /opt/fic -type d -exec chmod 2750 {} \; || exit 1
-find /opt/fic -type f -exec chmod 0640 {} \; || exit 1
+find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || exit 1
 find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \; || exit 1
 
 /opt/fic/bin/fic --trust-sync-platform || exit 1
@@ -785,9 +787,9 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    chown -R root:fic /opt/fic || true
+    find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
     find /opt/fic -type d -exec chmod 2750 {} \; || true
-    find /opt/fic -type f -exec chmod 0640 {} \; || true
+    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || true
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \; || true

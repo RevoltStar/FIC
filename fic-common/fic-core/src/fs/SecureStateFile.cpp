@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstring>
 #include <optional>
+#include <utility>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -16,7 +17,17 @@ std::string errnoMessage() {
     return std::strerror(errno);
 }
 
+std::function<void(const std::filesystem::path&)>& postReadHook() {
+    static std::function<void(const std::filesystem::path&)> hook;
+    return hook;
+}
+
 } // namespace
+void setSecureStatePostReadHookForTests(
+    std::function<void(const std::filesystem::path&)> hook) {
+    postReadHook() = std::move(hook);
+}
+
 bool proveSafeParentDirectory(
     const std::filesystem::path& parent,
     const SecureStateFileExpectation& expectation,
@@ -43,6 +54,9 @@ bool proveSafeParentDirectory(
     } else if (expectation.parentOwner.has_value() &&
                info.st_uid != *expectation.parentOwner) {
         detail = "parent directory has unsafe ownership: " + parent.string();
+    } else if (expectation.parentGroup.has_value() &&
+               info.st_gid != *expectation.parentGroup) {
+        detail = "parent directory has unsafe group: " + parent.string();
     } else if (expectation.exactParentMode != 0 &&
                (info.st_mode & 07777) != expectation.exactParentMode) {
         detail = "parent directory has unsafe mode: " + parent.string();
@@ -159,6 +173,10 @@ SecureStateReadResult readSecureStateFile(
         return result;
     }
 
+    if (postReadHook()) {
+        postReadHook()(path);
+    }
+
     // Re-fstat the SAME descriptor: identity and size must be unchanged from
     // the pre-read proof. A concurrent in-place rewrite is reported as a race
     // instead of being silently parsed.
@@ -170,7 +188,29 @@ SecureStateReadResult readSecureStateFile(
         return result;
     }
     if (after.st_dev != before.st_dev || after.st_ino != before.st_ino ||
-        after.st_size != before.st_size) {
+        after.st_size != before.st_size ||
+        after.st_mtim.tv_sec != before.st_mtim.tv_sec ||
+        after.st_mtim.tv_nsec != before.st_mtim.tv_nsec ||
+        after.st_ctim.tv_sec != before.st_ctim.tv_sec ||
+        after.st_ctim.tv_nsec != before.st_ctim.tv_nsec) {
+        result.detail = "state file changed during the proof: " + path.string();
+        ::close(descriptor);
+        return result;
+    }
+    // A same-size in-place rewrite can fit within one timestamp tick. Read
+    // the tiny object a second time through the same descriptor as a direct
+    // byte-level check, then recheck mutation metadata once more.
+    std::string second(content.size() + 1, '\0');
+    const ssize_t secondCount = ::pread(
+        descriptor, second.data(), second.size(), 0);
+    struct stat finalInfo {};
+    if (secondCount != static_cast<ssize_t>(content.size()) ||
+        second.compare(0, content.size(), content) != 0 ||
+        ::fstat(descriptor, &finalInfo) != 0 ||
+        finalInfo.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        finalInfo.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        finalInfo.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        finalInfo.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
         result.detail = "state file changed during the proof: " + path.string();
         ::close(descriptor);
         return result;

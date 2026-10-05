@@ -764,6 +764,21 @@ target_include_directories(incident_controller_tests PRIVATE
 target_link_libraries(incident_controller_tests PRIVATE fic-core)
 add_test(NAME incident_controller_tests COMMAND incident_controller_tests)
 
+add_executable(policy_incident_reporter_tests
+    fic/incident/PolicyIncidentReporterTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/PolicyIncidentReporter.cpp
+)
+target_include_directories(policy_incident_reporter_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(policy_incident_reporter_tests PRIVATE fic-core fic-policy)
+add_test(NAME policy_incident_reporter_tests COMMAND policy_incident_reporter_tests)
+add_test(NAME incident_apply_routing_static_checks
+         COMMAND ${Python3_EXECUTABLE}
+                 ${CMAKE_CURRENT_SOURCE_DIR}/fic/incident/IncidentApplyRoutingChecks.py)
+
 add_executable(pam_provider_managed_entry_executor_tests
     fic/modules/identity_access/pam/PamProviderManagedEntryExecutorTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp

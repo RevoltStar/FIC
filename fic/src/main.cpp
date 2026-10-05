@@ -63,6 +63,7 @@
 #include "incident/IncidentController.h"
 #include "incident/IncidentStateStore.h"
 #include "incident/PolicyIncidentReporter.h"
+#include <fic/core/fs/FileStats.h>
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
@@ -349,6 +350,21 @@ fic::incident::IncidentController& incidentController() {
         fic::incident::IncidentStateStore(),
         nullptr,
         std::make_shared<fic::incident::NullIncidentNetworkBackend>());
+    static const bool sinksInstalled = [] {
+        controller.setAuditSink([](const std::string& line) {
+            write_audit_log(json::parse(line));
+        });
+        controller.setNotifySink([](fic::core::IncidentSeverity severity,
+                                    const std::string& reason) {
+            const notifyLevel level = severity >= fic::core::IncidentSeverity::Hard
+                ? notifyLevel::FATAL : notifyLevel::ERROR;
+            NotifyUser::notify_user("fic-incident",
+                fic::core::incidentSeverityToken(severity) + ": " + reason,
+                level);
+        });
+        return true;
+    }();
+    (void)sinksInstalled;
     return controller;
 }
 
@@ -714,6 +730,8 @@ json handle_request(json request,
                     reloadError.value());
             }
             PolicyApplySummary summary = applyAllPolicies(policyRegistry);
+            fic::incident::PolicyIncidentReporter(incidentController()).report(
+                policyRegistry, summary, "manual apply_all");
             const bool ok = isPolicyApplySuccessful(summary, "all", "") &&
                 latestGlobalReport.successful();
             return policy_apply_summary_json(
@@ -732,6 +750,8 @@ json handle_request(json request,
                     reloadError.value());
             }
             PolicyApplySummary summary = applyModulePolicies(policyRegistry, module);
+            fic::incident::PolicyIncidentReporter(incidentController()).report(
+                policyRegistry, summary, "manual apply_module " + module);
             const bool ok = isPolicyApplySuccessful(summary, module, "all") &&
                 latestGlobalReport.successfulForModule(module);
             return policy_apply_summary_json(
@@ -751,6 +771,8 @@ json handle_request(json request,
             }
             PolicyApplySummary summary =
                 applyPolicy(policyRegistry, module, policy);
+            fic::incident::PolicyIncidentReporter(incidentController()).report(
+                policyRegistry, summary, "manual apply_policy " + module + "/" + policy);
             Policy* requested = getPolicyClass(policyRegistry, module, policy);
             const bool globalOk = requested == nullptr ||
                 latestGlobalReport.successfulForPolicy({
@@ -1174,7 +1196,16 @@ int main(int argc, char* argv[]) {
             options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
             options.fileMode = 0640;
             options.fileOwner = 0;
-            options.fileGroup = ::getegid();
+            uid_t rootId = 0;
+            gid_t ficGroupId = 0;
+            const auto groupLookup = FileStats::resolve_owner_group(
+                "root", "fic", rootId, ficGroupId);
+            if (!groupLookup) {
+                std::cerr << "fic group is unavailable: " << groupLookup.message
+                          << std::endl;
+                return 1;
+            }
+            options.fileGroup = ficGroupId;
 
             AtomicWriteResult writeResult;
             std::string writeError;

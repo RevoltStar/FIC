@@ -64,7 +64,7 @@ PolicyIncidentReporter::PolicyIncidentReporter(IncidentController& controller)
     }
 
     if (activations.empty()) {
-        return IncidentSeverity::Unlocked;
+        return controller_.status().severity;
     }
 
     // Deterministic order, so the audit record is reproducible regardless of

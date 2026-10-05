@@ -133,7 +133,8 @@ private:
     // Retry barrier for a rename that published the new severity before its
     // parent directory fsync succeeded.
     RaiseResult confirmInstalledDurability(RaiseResult result) const;
-    RaiseResult encodeDurableBrokenStateLocked() const;
+    RaiseResult encodeDurableBrokenStateLocked(
+        const std::optional<AtomicTargetState>& expected = std::nullopt) const;
     RaiseResult writeLocked(const AtomicTargetState& precondition,
                             ::fic::core::IncidentSeverity target,
                             bool allowCreate) const;

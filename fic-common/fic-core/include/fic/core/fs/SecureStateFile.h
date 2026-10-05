@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 
 namespace fic::core {
@@ -19,14 +20,14 @@ namespace fic::core {
 //   open(O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
 //     -> fstat(fd): regular file, expected owner/group/mode, size bound
 //     -> bounded read THROUGH THE SAME fd (never a second open)
-//     -> fstat(fd) again: same identity AND same size
+//     -> fstat(fd) again: same identity, size and mutation timestamps
+//     -> second bounded read through the same descriptor: same bytes
 //     -> parent directory proven safe
 //
 // Every stage runs on ONE descriptor, so there is no window where the
 // pathname is resolved twice and the object could be swapped in between.
-// The trailing re-fstat is what turns "we read something" into "we read a
-// stable object": a concurrent in-place writer that changes the size during
-// the read is reported as a race instead of being silently parsed.
+// The trailing proofs reject concurrent in-place rewrites even when they
+// preserve file size. A malicious root can still defeat ordinary file proofs.
 struct SecureStateFileExpectation {
     std::optional<uid_t> owner;
     std::optional<gid_t> group;
@@ -43,6 +44,7 @@ struct SecureStateFileExpectation {
     // these exact permission bits (0 disables the mode check).
     mode_t exactParentMode = 0;
     std::optional<uid_t> parentOwner;
+    std::optional<gid_t> parentGroup;
 };
 
 enum class SecureStateReadStatus {
@@ -79,6 +81,11 @@ inline constexpr std::uintmax_t SECURE_STATE_READ_HARD_MAX_BYTES = 4096;
 SecureStateReadResult readSecureStateFile(
     const std::filesystem::path& path,
     const SecureStateFileExpectation& expectation);
+
+// Test-only seam between the bounded read and its final descriptor proof.
+// Production must never set this hook.
+void setSecureStatePostReadHookForTests(
+    std::function<void(const std::filesystem::path&)> hook);
 
 // Proves that `parent` is a real directory (not a symlink) and matches the
 // parent expectations. Exposed separately because the incident state owner

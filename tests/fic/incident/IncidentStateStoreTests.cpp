@@ -2,6 +2,7 @@
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/incident/IncidentSeverity.h>
+#include <fic/core/fs/SecureStateFile.h>
 
 #include <sys/stat.h>
 
@@ -45,6 +46,7 @@ public:
     ~TempDir() {
         AtomicFileWriter::setDirectoryFsyncHookForTests({});
         AtomicFileWriter::setRemovePreunlinkHookForTests({});
+        fic::core::setSecureStatePostReadHookForTests({});
         std::error_code ignored;
         std::filesystem::remove_all(directory, ignored);
     }
@@ -160,8 +162,17 @@ void testWrongMetadataStateIsBroken(const TempDir& temp) {
     require(store.read().provenance == IncidentStateStore::Provenance::Broken,
             "a group/world writable state file must be Broken");
 
-    // Directory instead of a regular file.
+    ::chmod(path.c_str(), 0600);
+    require(store.read().provenance == IncidentStateStore::Provenance::Broken,
+            "a restrictive but noncanonical mode must still be Broken");
+
     ::chmod(path.c_str(), 0640);
+    ::chmod(temp.directory.c_str(), 0750);
+    require(store.read().provenance == IncidentStateStore::Provenance::Broken,
+            "wrong parent mode must be Broken");
+    ::chmod(temp.directory.c_str(), 0700);
+
+    // Directory instead of a regular file.
     ::unlink(path.c_str());
     ::mkdir(path.c_str(), 0755);
     require(store.read().provenance == IncidentStateStore::Provenance::Broken,
@@ -205,12 +216,80 @@ void testRaiseIsMonotonicAndIdempotent(const TempDir& temp) {
             "the persisted file must still say STANDARD, got: " + persisted);
 }
 
-void testRaiseFromAbsentCreatesState(const TempDir& temp) {
+void testRaiseFromAbsentPreservesIsolate(const TempDir& temp) {
     IncidentStateStore store(statePath(temp));
     const auto raised = store.raiseToAtLeast(IncidentSeverity::Hard);
-    require(raised.durable, "raising from absence must persist");
-    require(store.read().severity == IncidentSeverity::Hard,
-            "raising from absence must write HARD");
+    require(raised.durable && raised.brokenStatePersisted,
+            "absence must receive a durability proof");
+    require(raised.effectiveSeverity == IncidentSeverity::Isolate,
+            "raising from absence must preserve ISOLATE");
+    require(store.read().provenance == IncidentStateStore::Provenance::Absent,
+            "ordinary raise must not create a weaker state");
+}
+
+void testSameSizeInPlaceRewriteIsUnprovable(const TempDir& temp) {
+    const auto path = statePath(temp);
+    writeState(path, "HARD\n");
+    IncidentStateStore store(path);
+    fic::core::setSecureStatePostReadHookForTests(
+        [](const std::filesystem::path& target) {
+            std::fstream stream(target, std::ios::in | std::ios::out);
+            stream.write("SOFT\n", 5);
+            stream.flush();
+        });
+    const auto read = store.read();
+    fic::core::setSecureStatePostReadHookForTests({});
+    require(read.provenance == IncidentStateStore::Provenance::Broken,
+            "same-size in-place mutation must fail the state proof");
+}
+
+void testAbsentRequiresDurabilityBarrier(const TempDir& temp) {
+    IncidentStateStore store(statePath(temp));
+    int barriers = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string&) { ++barriers; return false; });
+    const auto raised = store.raiseToAtLeast(IncidentSeverity::Soft);
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(barriers > 0 && !raised.durable,
+            "absence must not be called durable without parent fsync");
+    require(store.read().provenance == IncidentStateStore::Provenance::Absent,
+            "SOFT raise must not materialize missing state");
+}
+
+void testPostRenameFailureFallsBackToDurableAbsence(const TempDir& temp) {
+    const auto path = statePath(temp);
+    writeState(path, "UNLOCKED\n");
+    IncidentStateStore store(path);
+    int barriers = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string&) { return ++barriers > 2; });
+    const auto raised = store.raiseToAtLeast(IncidentSeverity::Hard);
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(barriers >= 3 && raised.durable && raised.brokenStatePersisted,
+            "failed write and retry must run durable BROKEN fallback");
+    require(store.read().provenance == IncidentStateStore::Provenance::Absent,
+            "reboot observation must be ISOLATE");
+}
+
+void testPostRenameFallbackPreservesReplacement(const TempDir& temp) {
+    const auto path = statePath(temp);
+    writeState(path, "UNLOCKED\n");
+    IncidentStateStore store(path);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    AtomicFileWriter::setRemovePreunlinkHookForTests(
+        [&](const std::string& target) {
+            ::unlink(target.c_str());
+            writeState(target, "STANDARD\n");
+        });
+    const auto raised = store.raiseToAtLeast(IncidentSeverity::Hard);
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    AtomicFileWriter::setRemovePreunlinkHookForTests({});
+    require(!raised.durable && !raised.brokenStatePersisted,
+            "a swapped target cannot prove durable fallback");
+    require(store.read().provenance == IncidentStateStore::Provenance::Proven &&
+                store.read().severity == IncidentSeverity::Standard,
+            "post-rename fallback must not delete the replacement");
 }
 
 // A conditional write whose precondition was invalidated must refuse to
@@ -387,6 +466,38 @@ void testClearRequiresDurableUnlocked(const TempDir& temp) {
             "a successful clear must persist UNLOCKED");
 }
 
+void testFailedClearRestoresPreviousIncident(const TempDir& temp) {
+    const auto path = statePath(temp);
+    writeState(path, "HARD\n");
+    IncidentStateStore store(path);
+    int barriers = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string&) { return ++barriers > 2; });
+    const auto cleared = store.clear();
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!cleared.ok && cleared.effectiveSeverity == IncidentSeverity::Hard,
+            "failed clear must restore previous severity");
+    const auto read = store.read();
+    require(read.provenance == IncidentStateStore::Provenance::Proven &&
+                read.severity == IncidentSeverity::Hard,
+            "restored HARD must be the live pathname");
+}
+
+void testFailedClearFallsBackToDurableBroken(const TempDir& temp) {
+    const auto path = statePath(temp);
+    writeState(path, "HARD\n");
+    IncidentStateStore store(path);
+    int barriers = 0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string&) { return ++barriers > 4; });
+    const auto cleared = store.clear();
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!cleared.ok && cleared.effectiveSeverity == IncidentSeverity::Isolate,
+            "failed clear/restore must become ISOLATE");
+    require(store.read().provenance == IncidentStateStore::Provenance::Absent,
+            "failed clear must leave durably absent BROKEN state");
+}
+
 void testClearFailsClosedWhenDurabilityIsUnprovable(const TempDir& temp) {
     const std::filesystem::path path = statePath(temp);
     writeState(path, "HARD\n");
@@ -398,20 +509,11 @@ void testClearFailsClosedWhenDurabilityIsUnprovable(const TempDir& temp) {
 
     require(!cleared.ok,
             "a clear whose durability cannot be proven must fail");
-    require(cleared.effectiveSeverity == IncidentSeverity::Hard,
-            "the previous incident must remain active after a failed clear");
-    // Critically: the file must NOT have been deleted to fake a clear.
-    require(std::filesystem::exists(path),
-            "clear must never remove the state file as a shortcut");
-    // The rename published UNLOCKED into the running filesystem, but FIC could
-    // never prove it durable. FIC therefore does not treat the system as
-    // cleared: clear() failed, and the caller keeps the previous severity. The
-    // on-disk token may already say UNLOCKED, which is exactly why the result
-    // contract reports ok=false and why the DEGRADED path exists.
-    require(!cleared.ok,
-            "an unconfirmed clear must stay failed even if rename published it");
-    require(cleared.effectiveSeverity == IncidentSeverity::Hard,
-            "FIC must report the previous incident as still effective");
+    require(cleared.effectiveSeverity == IncidentSeverity::Isolate,
+            "unrecoverable clear must report ISOLATE");
+    require(store.read().provenance != IncidentStateStore::Provenance::Proven ||
+                store.read().severity != IncidentSeverity::Unlocked,
+            "failed clear must not leave usable UNLOCKED");
 }
 
 void testClearRefusesUnprovableState(const TempDir& temp) {
@@ -449,7 +551,14 @@ int main() {
         {"symlink_state_is_broken", testSymlinkStateIsBroken},
         {"wrong_metadata_state_is_broken", testWrongMetadataStateIsBroken},
         {"raise_is_monotonic_and_idempotent", testRaiseIsMonotonicAndIdempotent},
-        {"raise_from_absent_creates_state", testRaiseFromAbsentCreatesState},
+        {"raise_from_absent_preserves_isolate", testRaiseFromAbsentPreservesIsolate},
+        {"same_size_in_place_rewrite_is_unprovable",
+         testSameSizeInPlaceRewriteIsUnprovable},
+        {"absent_requires_durability_barrier", testAbsentRequiresDurabilityBarrier},
+        {"post_rename_failure_falls_back_to_durable_absence",
+         testPostRenameFailureFallsBackToDurableAbsence},
+        {"post_rename_fallback_preserves_replacement",
+         testPostRenameFallbackPreservesReplacement},
         {"stale_writer_cannot_lose_an_update", testStaleWriterCannotLoseAnUpdate},
         {"durable_broken_fallback_encodes_absence",
          testDurableBrokenFallbackEncodesAbsence},
@@ -462,6 +571,9 @@ int main() {
         {"broken_fallback_refuses_unprovable_object",
          testBrokenFallbackRefusesUnprovableObject},
         {"clear_requires_durable_unlocked", testClearRequiresDurableUnlocked},
+        {"failed_clear_restores_previous_incident", testFailedClearRestoresPreviousIncident},
+        {"failed_clear_falls_back_to_durable_broken",
+         testFailedClearFallsBackToDurableBroken},
         {"clear_fails_closed_when_durability_is_unprovable",
          testClearFailsClosedWhenDurabilityIsUnprovable},
         {"clear_refuses_unprovable_state", testClearRefusesUnprovableState},

@@ -2,6 +2,7 @@
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/fs/FileStats.h>
 
 #include <cstdint>
 #include <unistd.h>
@@ -106,12 +107,18 @@ std::optional<uid_t>& expectedStateParentOwner() {
     return owner;
 }
 
+bool& testIdentityOverride() {
+    static bool enabled = false;
+    return enabled;
+}
+
 } // namespace
 
 void IncidentStateStore::setOwnershipExpectationForTests(
     std::optional<uid_t> owner, std::optional<uid_t> parentOwner) {
     expectedStateOwner() = owner;
     expectedStateParentOwner() = parentOwner;
+    testIdentityOverride() = true;
 }
 
 ::fic::core::SecureStateFileExpectation IncidentStateStore::lockedStateExpectation() {
@@ -120,10 +127,19 @@ void IncidentStateStore::setOwnershipExpectationForTests(
     // group/other writable, at most one link, and small enough that the hard
     // read bound is the only size that can ever apply.
     expectation.owner = expectedStateOwner();
-    expectation.forbiddenMode = 0022;
+    gid_t group = ::getegid();
+    if (!testIdentityOverride()) {
+        uid_t rootId = 0;
+        group = static_cast<gid_t>(-1);
+        FileStats::resolve_owner_group("root", "fic", rootId, group);
+    }
+    expectation.group = group;
+    expectation.exactMode = 0640;
     expectation.maxSize = 64;
     expectation.requireSingleLink = true;
     expectation.parentOwner = expectedStateParentOwner();
+    expectation.parentGroup = group;
+    expectation.exactParentMode = testIdentityOverride() ? 0700 : 02750;
     return expectation;
 }
 
@@ -169,15 +185,9 @@ IncidentStateStore::RaiseResult IncidentStateStore::writeLocked(
     options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
     options.fileMode = precondition.mode == 0 ? 0640 : precondition.mode;
     options.fileOwner = precondition.owner;
-    options.fileGroup = precondition.group;
-    // A created file takes FIC's group. In production that is root's group,
-    // which the daemon can always set; the value must never be an unproven
-    // zero, because an unprivileged writer could not reproduce it and the
-    // resulting file would fail its own metadata proof on the next read.
-    if (options.fileGroup.value_or(0) == 0 && allowCreate &&
-        ::geteuid() != 0) {
-        options.fileGroup = ::getegid();
-    }
+    options.fileGroup = allowCreate
+        ? lockedStateExpectation().group
+        : std::optional<gid_t>(precondition.group);
     // The optimistic precondition is what makes this a compare-and-swap
     // against a cooperating writer instead of a blind overwrite. It only
     // applies when a real predecessor was proven: for a create-from-absence
@@ -253,7 +263,6 @@ IncidentStateStore::RaiseResult IncidentStateStore::confirmInstalledDurability(
         // ISOLATE here and the caller escalates its runtime to containment.
         result.effectiveSeverity = ::fic::core::IncidentSeverity::Isolate;
         result.brokenStatePersisted = false;
-        result.installedState.reset();
         result.detail = "incident state durability could not be confirmed: " +
             error;
         return result;
@@ -283,18 +292,8 @@ IncidentStateStore::RaiseResult IncidentStateStore::raiseToAtLeast(
             return encodeDurableBrokenStateLocked();
         }
         if (current.provenance == Provenance::Absent) {
-            // Nothing is persisted at all. Creating the file is a normal
-            // monotonic raise: absence is the lowest possible state.
-            AtomicTargetState empty;
-            empty.mode = 0640;
-            empty.owner = expectedStateOwner().value_or(0);
-            RaiseResult created = writeLocked(empty, requested, true);
-            if (created.persistence == PersistenceResult::DurableConfirmed) {
-                return created;
-            }
-            if (created.persistence == PersistenceResult::InstalledNotDurable) {
-                return confirmInstalledDurability(created);
-            }
+            // Absence is already effective ISOLATE. Only bootstrap or an
+            // explicit administrative clear may create a weaker state.
             return encodeDurableBrokenStateLocked();
         }
 
@@ -318,7 +317,9 @@ IncidentStateStore::RaiseResult IncidentStateStore::raiseToAtLeast(
             return written;
         }
         if (written.persistence == PersistenceResult::InstalledNotDurable) {
-            return confirmInstalledDurability(written);
+            RaiseResult confirmed = confirmInstalledDurability(written);
+            return confirmed.durable ? confirmed
+                : encodeDurableBrokenStateLocked(written.installedState);
         }
         if (written.persistence == PersistenceResult::NotInstalled) {
             // Lost the optimistic race: reread, recompute max(), retry. This is
@@ -347,15 +348,21 @@ IncidentStateStore::RaiseResult IncidentStateStore::raiseToAtLeast(
 //      detected and NOT deleted,
 //   3. the parent directory is fsynced and the absence re-proven.
 IncidentStateStore::RaiseResult
-IncidentStateStore::encodeDurableBrokenStateLocked() const {
+IncidentStateStore::encodeDurableBrokenStateLocked(
+    const std::optional<AtomicTargetState>& expected) const {
     RaiseResult result;
     result.effectiveSeverity = ::fic::core::IncidentSeverity::Isolate;
     result.persistence = PersistenceResult::Failed;
 
     const ReadResult current = read();
     if (current.provenance == Provenance::Absent) {
-        // Already durably absent: BROKEN_STATE is already the encoding.
-        result.durable = true;
+        std::string error;
+        result.durable = AtomicFileWriter::ensureTargetAbsentDurableIfCurrentState(
+            path_.string(), &error);
+        if (!result.durable) {
+            result.detail = "incident state absence is not durable: " + error;
+            return result;
+        }
         result.brokenStatePersisted = true;
         result.effectiveSeverity = ::fic::core::IncidentSeverity::Isolate;
         result.persistence = PersistenceResult::DurableConfirmed;
@@ -372,6 +379,17 @@ IncidentStateStore::encodeDurableBrokenStateLocked() const {
         result.detail = "incident state object is not provable and was not "
             "removed: " + current.detail;
         return result;
+    }
+
+    if (expected.has_value()) {
+        const AtomicTargetState& actual = *current.provenState;
+        if (actual.identity.device != expected->identity.device ||
+            actual.identity.inode != expected->identity.inode ||
+            actual.mode != expected->mode || actual.owner != expected->owner ||
+            actual.group != expected->group || actual.content != expected->content) {
+            result.detail = "installed incident state was replaced before BROKEN fallback";
+            return result;
+        }
     }
 
     std::string error;
@@ -453,6 +471,33 @@ IncidentStateStore::ClearResult IncidentStateStore::clear() const {
         current.provenance == Provenance::Absent);
     if (written.persistence == PersistenceResult::InstalledNotDurable) {
         written = confirmInstalledDurability(written);
+    }
+    if (!written.durable && written.installedState.has_value()) {
+        // A failed downgrade may already have published UNLOCKED. Restore the
+        // exact prior severity conditionally, or remove the installed object
+        // as a BROKEN/ISOLATE witness. Never report the prior severity while
+        // a usable UNLOCKED pathname remains.
+        if (current.provenance == Provenance::Proven) {
+            RaiseResult restored = writeLocked(
+                *written.installedState, current.severity, false);
+            if (restored.persistence == PersistenceResult::InstalledNotDurable) {
+                restored = confirmInstalledDurability(restored);
+            }
+            if (restored.durable) {
+                result.effectiveSeverity = current.severity;
+                result.persistence = restored.persistence;
+                result.detail = "clear failed; previous incident restored durably";
+                return result;
+            }
+            if (restored.installedState.has_value()) {
+                written.installedState = restored.installedState;
+            }
+        }
+        const RaiseResult broken = encodeDurableBrokenStateLocked(written.installedState);
+        result.effectiveSeverity = ::fic::core::IncidentSeverity::Isolate;
+        result.persistence = broken.persistence;
+        result.detail = "clear failed; " + broken.detail;
+        return result;
     }
     result.persistence = written.persistence;
     result.effectiveSeverity = written.durable

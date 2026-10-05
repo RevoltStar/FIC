@@ -33,8 +33,8 @@ public:
     explicit PolicyIncidentReporter(IncidentController& controller);
 
     // Inspects every result and raises the accumulated severity once. Returns
-    // the severity that was requested of the controller, which is the
-    // Unlocked sentinel when no enabled policy failed.
+    // the effective global incident severity after processing, including
+    // when this summary contains no new activation.
     ::fic::core::IncidentSeverity report(
         PolicyRegistry& registry,
         const PolicyApplySummary& summary,
