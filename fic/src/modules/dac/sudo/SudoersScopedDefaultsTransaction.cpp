@@ -1253,42 +1253,4 @@ bool ScopedDefaultsTransaction::compensateToPrevious(
     return true;
 }
 
-PreparedRecovery ScopedDefaultsTransaction::classifyPrepared(
-    const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
-    const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
-    std::string& error) const {
-    std::vector<OwnedWrapper> inventory;
-    if (!globalInventory(inventory, error)) {
-        return PreparedRecovery::Indeterminate;
-    }
-    std::vector<SudoDisabledWrapper> wrappers;
-    for (const OwnedWrapper& owned : inventory) {
-        if (owned.wrapper.policy == policyName_) {
-            wrappers.push_back(owned.wrapper);
-        }
-    }
-    // Both sides are compared by EXACT wrapper identity + payload digest. A
-    // state matching neither side (or only partially) is ambiguous and is
-    // never guessed.
-    const auto matchesExactly = [&wrappers](
-            const std::vector<SudoScopedDefaultsWrapperProof>& expected) {
-        std::map<std::string, std::string> expectedById;
-        for (const SudoScopedDefaultsWrapperProof& proof : expected) {
-            expectedById[proof.wrapperId] = proof.payloadDigest;
-        }
-        std::map<std::string, std::string> actualById;
-        for (const SudoDisabledWrapper& wrapper : wrappers) {
-            actualById[wrapper.mutationId] = wrapper.payloadDigest();
-        }
-        return expectedById == actualById;
-    };
-    if (matchesExactly(targetProofs)) {
-        return PreparedRecovery::CompleteTarget;
-    }
-    if (matchesExactly(previousProofs)) {
-        return PreparedRecovery::CompletePrevious;
-    }
-    return PreparedRecovery::Indeterminate;
-}
-
 } // namespace fic::sudoers

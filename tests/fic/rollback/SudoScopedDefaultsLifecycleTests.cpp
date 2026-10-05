@@ -3376,6 +3376,66 @@ void testLogicalEntryStraddlingWrapperFailsClosed() {
     ++executedMultiline;
 }
 
+
+// --- CL: Prepared classification is SNAPSHOT-BOUND ---------------------------
+// A previous wrapper that is physically present but no longer reachable through
+// the current include graph must STILL be visible to the classifier, because the
+// journal proves its canonical path.
+//
+// A graph-only classifier could not do this: an inventory limited to the current
+// include graph would see NO wrappers at all, match neither side, and answer
+// Indeterminate for a record that physically holds exactly the previous
+// ownership. No such graph-only recovery API exists any more.
+
+void testClassificationSeesPreviousWrapperOutsideGraph() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    TopologyRefreshFixture fixture(tree);
+
+    // The @include for a.conf disappears while a.conf itself stays physical and
+    // still carries wrapper A. The @includedir membership is untouched, so the
+    // topology guard is not what decides this test.
+    writeFile(tree.root / "sudoers",
+              kRootLine +
+                  "@include " + (tree.root / "b.conf").string() + "\n"
+                  "@includedir " + (tree.root / "dropins").string() + "\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+
+    // Direct classifier contract on the explicit captured authority state.
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    const std::vector<SudoScopedDefaultsWrapperProof> previous =
+        fixture.ownedA;
+    std::vector<SudoScopedDefaultsWrapperProof> allProofs = previous;
+    allProofs.insert(allProofs.end(), fixture.target.begin(),
+                     fixture.target.end());
+    ScopedDefaultsCapturedState captured;
+    std::string captureError;
+    require(transaction.captureProofAndGraphState(allProofs, captured,
+                                                  captureError),
+            captureError);
+    std::string classifyError;
+    const PreparedRecovery classification = transaction.classifyCaptured(
+        previous, fixture.target, captured, classifyError);
+    require(classification == PreparedRecovery::CompletePrevious,
+            "a previous wrapper outside the current graph must still classify "
+            "as CompletePrevious, not Indeterminate");
+
+    // And the recovery flow must therefore normalize the record back to the
+    // proven previous ownership instead of attempting a compensation.
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto recovery = lifecycle.recoverPrepared(kPolicyName);
+    require(recovery.result == fic::sudoers::PreparedRecoveryResult::NormalizedExisting,
+            "recovery must normalize to the previous ownership: " +
+                recovery.message);
+    require(activePreparedCount() == 0,
+            "the record must be resolved to Applied(previous)");
+}
+
 // ---------------------------------------------------------------------------
 // Test registry.
 //
@@ -3466,6 +3526,7 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"ML6 multiline rollback is byte-exact (CRLF)", testMultilineByteExactRollbackCrlf},
         {"ML7 multiline rollback is byte-exact (no final newline)", testMultilineByteExactRollbackNoFinalNewline},
         {"ML8 logical entry straddling a wrapper boundary fails closed", testLogicalEntryStraddlingWrapperFailsClosed},
+        {"CL classification sees previous wrapper outside the graph", testClassificationSeesPreviousWrapperOutsideGraph},
     };
     return cases;
 }

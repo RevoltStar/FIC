@@ -303,16 +303,16 @@ public:
     // longer be reachable through @include/@includedir. The capture set is the
     // union of the current graph and EVERY previous/target proof path, and the
     // comparison uses the FULL proof identity (id + path + digest).
+    //
+    // This is the ONLY Prepared recovery classifier. There is deliberately no
+    // graph-only variant: a caller must first build the explicit captured
+    // authority state with captureProofAndGraphState(), which is what forces
+    // every recovery decision to see journal-known proof paths that fell out of
+    // the current include graph.
     PreparedRecovery classifyCaptured(
         const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
         const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
         const ScopedDefaultsCapturedState& captured,
-        std::string& error) const;
-
-    // Classifies an unresolved Prepared transition against the live graph.
-    PreparedRecovery classifyPrepared(
-        const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
-        const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,
         std::string& error) const;
 
     // Compensates a PARTIAL target: removes only the wrappers that belong to

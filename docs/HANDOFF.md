@@ -207,6 +207,12 @@ Follow-up поверх `c325e92`:
   (фактически выполнялось 27 из 35). Введён registry + runtime-счётчик, который
   печатает `Executed N of N lifecycle test functions`. Это устранило ложное
   сообщение «35 сценариев» в предыдущем отчёте.
+* **Legacy graph-only `classifyPrepared()` УДАЛЁН.** `classifyCaptured()` —
+  единственный classifier Prepared recovery. Recovery caller обязан СНАЧАЛА
+  построить явный captured authority state через
+  `captureProofAndGraphState(previous ∪ target)`, и только затем классифицировать.
+  Graph-only recovery API не существует и не должен появляться: именно он скрывал
+  journal-known proof path, выпавший из current include graph.
 * **classifyCaptured() (§1–§3)**: Prepared-классификация работает по capture
   `graph ∪ previous ∪ target` и по полной identity (id+path+digest).
 * **Fresh CompletePrevious durability (§4/§5)**: discard только после durable
