@@ -8,9 +8,28 @@
 
 ## Current task
 
-Доработка подсистемы SUDO после `240410f`: provenance-safe обёртки
-scoped `Defaults`, crash-consistent транзакция, reconciliation-safe refresh и
-E2E-тест journal → filesystem. Выполнено.
+Доработка подсистемы SUDO: provenance-safe обёртки scoped `Defaults`,
+crash-consistent транзакция, snapshot-bound ownership preflight. Выполнено.
+
+## SUDO ownership preflight — physical-path based
+
+* **Current include graph НЕ является authority владения.** Preflight работает
+  по scope = `current graph ∪ все canonicalPath из активных journal proof`.
+* Реализация: `ScopedDefaultsTransaction::validateCurrentOwnership()` вызывает
+  существующий `captureProofAndGraphState()` + `proveCapturedState(...,
+  ReleaseSubset, false)`. Второй параллельный preflight НЕ создавался;
+  `noopPreflight()` делегирует тому же коду, поэтому оба пути (no-op и новая
+  мутация) закрыты одним контрактом.
+* Fail closed: drift, relocated wrapper (тот же id+digest в другом файле),
+  unknown id, duplicate внутри файла и **global duplicate** между graph-файлом и
+  proof-only путём, malformed маркеры, а также capture failure (symlink,
+  directory, permission, I/O), который **никогда** не переклассифицируется в
+  отсутствие.
+* Физически исчезновение доказанной обёртки остаётся already-released subset и
+  ошибкой не является — существующий external-release контракт намеренно НЕ
+  переопределён.
+* Durability в preflight не требуется (read-only, journal transition не
+  происходит).
 
 ## Accepted architecture / invariants
 
@@ -174,6 +193,13 @@ Follow-up поверх `c325e92`:
   а не проверкой на хосте.
 
 ## Remaining
+
+* **Нерешённая отдельная проблема (не входит в этот commit):** discovery новых
+  неизвестных файлов, появившихся в `@includedir` и не известных ни journal, ни
+  graph. Для них у FIC ещё нет известного canonical path, поэтому preflight их
+  не инспектирует. Это НЕ ownership-outside-graph problem — там путь уже
+  известен journal proof.
+
 
 * Полный E2E с реальным применением политик на хосте не запускался (unsafe
   runtime validation по AGENTS.md).

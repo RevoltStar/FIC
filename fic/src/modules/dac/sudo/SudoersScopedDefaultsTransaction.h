@@ -214,20 +214,36 @@ public:
     bool globalInventory(std::vector<OwnedWrapper>& inventory,
                          std::string& error) const;
 
-    // Read-only ownership preflight. Verifies the GLOBAL wrapper grammar, the
-    // GLOBAL uniqueness of wrapper ids, and that every existing wrapper of this
-    // policy is proven by `activeProofs` with an exact payload digest. A
-    // physical wrapper without proven ownership (orphan) always fails closed; a
-    // proven wrapper that already disappeared externally is an already
-    // released subset and is not an error.
+    // Read-only, SNAPSHOT-BOUND ownership preflight.
     //
-    // This MUST run before a no-op AND before any new mutation, so an existing
-    // orphan or drifted wrapper blocks reconciliation too, not just no-op.
+    // The current include graph is NOT the ownership authority. An external
+    // process can remove an @include while the journal still proves ownership of
+    // a wrapper that physically remains at its canonical path, so the capture
+    // scope is the current graph UNION every `activeProofs` canonical path.
+    //
+    // On that ONE snapshot it verifies: the GLOBAL wrapper grammar, the GLOBAL
+    // uniqueness of wrapper ids across the combined set (so a duplicate in a
+    // graph file and in a proof-only path is detected), and that every existing
+    // wrapper of this policy is proven by `activeProofs` naming that EXACT file
+    // with an EXACT payload digest. Drift, a relocated wrapper, an unknown id,
+    // a duplicate inside one file, malformed markers and any capture failure
+    // (symlink, directory, permission, I/O) fail closed and are never
+    // reclassified as an absence.
+    //
+    // A proven wrapper that physically disappeared is an already released
+    // subset and stays NOT an error: that pre-existing external-release
+    // contract is deliberately preserved here.
+    //
+    // Durability is intentionally not required, because no journal transition
+    // happens here.
+    //
+    // This MUST run before a no-op AND before any new mutation, so an
+    // unprovable ownership blocks reconciliation too, not just no-op.
     std::string validateCurrentOwnership(
         const std::vector<SudoScopedDefaultsWrapperProof>& activeProofs) const;
 
-    // Same checks as validateCurrentOwnership(), additionally requiring that no
-    // active scoped Defaults remain.
+    // Same snapshot-bound ownership checks as validateCurrentOwnership(),
+    // additionally requiring that no active scoped Defaults remain.
     std::string noopPreflight(
         const std::vector<SudoScopedDefaultsWrapperProof>& activeProofs) const;
 

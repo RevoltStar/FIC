@@ -138,6 +138,50 @@ in-memory копии текущего конфига (`validatePlannedRollbackId
 классифицировать. Валидные сценарии дубликатов (`Port 22/Port 2022`, три
 одинаковых `Port 22`, before/after collision) сохраняются.
 
+### SUDO ownership preflight — physical-path based
+
+Ownership preflight для активного SUDO-владения **опирается на physical path, а
+не на current include graph**.
+
+Внешний процесс может удалить `@include`, пока journal всё ещё доказывает
+владение обёрткой, физически оставшейся на её canonical path. Graph-only
+inventory в такой момент молча перестаёт инспектировать ровно те файлы, на
+которые journal претендует, и вернул бы `ok/unchanged` поверх недоказанного
+владения.
+
+Scope capture:
+
+```text
+current include graph  UNION  все canonicalPath из активных journal proof
+```
+
+На этом единственном snapshot доказывается владение:
+
+* **global uniqueness** wrapper id по объединённому set — один id не может
+  физически существовать в двух файлах;
+* **per file** существующая обёртка доказывается активным proof, который
+  называет **ровно этот** файл и **ровно** этот payload digest;
+* **drift** (изменившийся payload), **relocated wrapper** (тот же id+digest в
+  другом файле), **unknown id**, **duplicate** внутри файла и **malformed**
+  маркеры — fail closed;
+* **capture failure** (symlink, directory, permission, I/O) — fail closed и
+  **никогда** не переклассифицируется в отсутствие: для этого существует
+  типизированная absence primitive;
+* физически исчезновение доказанной обёртки остаётся **already released
+  subset** и ошибкой не является — существующий external-release контракт
+  намеренно не переопределяется.
+
+Durability здесь намеренно **не** требуется: preflight read-only, journal
+transition не происходит.
+
+Preflight обязателен и перед no-op, и перед любой новой мутацией, поэтому
+недоказанное владение блокирует не только no-op: новое нарушение B не будет
+запланировано и применено поверх недоказанного A.
+
+**Нерешённая отдельная проблема:** discovery новых неизвестных файлов,
+появившихся в `@includedir` и не известных ни journal, ни graph, этим
+префлайтом не решается — для них у FIC ещё нет известного canonical path.
+
 ### Atomic write result: installed != durable
 
 `AtomicWriteResult` различает **installed** и **durability-confirmed**:

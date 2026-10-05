@@ -2138,6 +2138,277 @@ void testPreviousExactButDurabilityFails() {
             "the record must be normalized to Applied(previous) afterwards");
 }
 
+
+// ===========================================================================
+// AT: ownership preflight is PHYSICAL-PATH based, not graph based.
+//
+// The current include graph is NOT the ownership authority: an external process
+// can remove an @include while the journal still proves ownership of a wrapper
+// that physically remains at its canonical path.
+// ===========================================================================
+
+// Applied: journal owns wrapper A in site.conf, and site.conf IS in the graph.
+struct OutsideGraphFixture {
+    OutsideGraphFixture(TempTree& treeRef, const std::string& name)
+        : tree(treeRef), site(tree.root / name) {
+        writeFile(site, "Defaults:alice exempt_group=wheel\n");
+        // A NON-scoped line, so the initial reconcile owns exactly A.
+        writeFile(tree.root / "other.conf", "alice ALL=(ALL:ALL) ALL\n");
+        options = sudoOptions(tree.root);
+        includeSite();
+        SudoersConfiguration configuration(options);
+        std::string error;
+        require(configuration.load(error), error);
+        require(reconcile(configuration, productionHooks(configuration)).ok,
+                "apply A: " + error);
+        owned = activeOwned();
+        require(owned.size() == 1, "journal must own exactly A");
+        require(owned[0].canonicalPath ==
+                    fic::sudoers::canonicalizeSudoProofPath(site),
+                "the proof must name the site.conf canonical path");
+    }
+    // The external process removes the @include; the file stays physical.
+    void dropInclude() { includeSite_ = false; writeGraph(); }
+    void includeSite() { includeSite_ = true; writeGraph(); }
+    void writeGraph() {
+        std::string content;
+        if (includeSite_) {
+            content += "@include " + site.string() + "\n";
+        }
+        content += "@include " + (tree.root / "other.conf").string() + "\n";
+        writeFile(tree.root / "sudoers", content);
+    }
+    TempTree& tree;
+    std::filesystem::path site;
+    SudoersConfigurationOptions options;
+    std::vector<SudoScopedDefaultsWrapperProof> owned;
+    bool includeSite_ = true;
+};
+
+std::string readAll(const std::filesystem::path& path) {
+    std::ifstream stream(path, std::ios::binary);
+    std::ostringstream buffer;
+    buffer << stream.rdbuf();
+    return buffer.str();
+}
+
+// --- AT: drifted owned wrapper outside the graph must fail closed ------------
+
+void testOwnedWrapperDriftedOutsideGraph() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    OutsideGraphFixture fixture(tree, "site.conf");
+    fixture.dropInclude();
+    const std::string before = readAll(fixture.site);
+    // Drift the payload INSIDE wrapper A, in a file the graph no longer sees.
+    const std::string drifted = before;
+    size_t at = drifted.find("exempt_group=wheel");
+    require(at != std::string::npos, "wrapper A body must be present");
+    std::string mutated = drifted;
+    mutated.replace(at, std::string("exempt_group=wheel").size(),
+                    "exempt_group=daemon");
+    writeFile(fixture.site, mutated);
+    const std::string driftedOnDisk = readAll(fixture.site);
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto outcome = reconcile(configuration, productionHooks(configuration));
+
+    require(!outcome.ok, "a drifted owned wrapper outside the graph must fail");
+    require(!outcome.unchanged, "it must never be reported as a no-op");
+    require(activePreparedCount() == 0,
+            "no new Prepared record may be created");
+    require(activeOwned().size() == 1,
+            "the existing ownership record must remain active");
+    require(readAll(fixture.site) == driftedOnDisk,
+            "FIC must not have written the file");
+}
+
+// --- AT2: exact owned wrapper outside the graph is FOUND and accepted -------
+
+void testOwnedWrapperExactOutsideGraph() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    OutsideGraphFixture fixture(tree, "site.conf");
+    fixture.dropInclude();
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    // The preflight must PASS: the wrapper really is inspected through its
+    // proof canonical path even though the graph does not contain it.
+    const std::string refusal =
+        transaction.validateCurrentOwnership(fixture.owned);
+    require(refusal.empty(),
+            "an exact owned wrapper outside the graph must be accepted: " +
+                refusal);
+
+    // NOTE: an EMPTY proof set deliberately does NOT discover site.conf. With no
+    // proof there is no known canonical path to capture, which is the separate
+    // @include topology-discovery problem and is intentionally out of scope here.
+    //
+    // ...and that success is NOT blind: the same id/path with a tampered digest
+    // fails, which proves the file CONTENT is really inspected.
+    // A tampered digest on the same id/path must fail closed, which proves the
+    // file's CONTENT is really inspected rather than merely tolerated.
+    SudoScopedDefaultsWrapperProof tampered = fixture.owned[0];
+    tampered.payloadDigest += "0";
+    require(!transaction.validateCurrentOwnership({tampered}).empty(),
+            "a tampered payload digest must fail closed");
+
+    // The wrapper really is still there, and the no-op path is legitimate.
+    require(onDiskWrapperIds(tree.root).count(fixture.owned[0].wrapperId) == 1,
+            "A must still be physically present");
+}
+
+// --- AT3: the same id+digest moved to another file must fail ---------------
+
+void testOwnedWrapperMovedOutsideGraph() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    OutsideGraphFixture fixture(tree, "site.conf");
+    fixture.dropInclude();
+    // Move the EXACT wrapper into a different file that IS in the graph.
+    const std::string body = readAll(fixture.site);
+    writeFile(fixture.site, "");
+    writeFile(tree.root / "other.conf", body);
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    const std::string refusal =
+        transaction.validateCurrentOwnership(fixture.owned);
+    require(!refusal.empty(),
+            "a relocated wrapper does not prove ownership: " + refusal);
+
+    const auto outcome = reconcile(configuration, productionHooks(configuration));
+    require(!outcome.ok, "a moved owned wrapper must fail closed");
+    require(activePreparedCount() == 0, "no Prepared record may be created");
+}
+
+// --- AT4: an unknown wrapper on a proof-only path must fail closed ---------
+
+void testUnknownWrapperOnProofOnlyPath() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    OutsideGraphFixture fixture(tree, "site.conf");
+    fixture.dropInclude();
+    writeFile(fixture.site,
+              readAll(fixture.site) +
+                  wrapperBlock("FIC-SUDO-1-2-3-4-5", "Defaults:eve x=1"));
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    const std::string refusal =
+        transaction.validateCurrentOwnership(fixture.owned);
+    require(!refusal.empty(),
+            "an unknown wrapper on a proof-only path must fail closed: " +
+                refusal);
+    const auto outcome = reconcile(configuration, productionHooks(configuration));
+    require(!outcome.ok, "reconcile must fail closed");
+}
+
+// --- AT5: the same id in a graph file and in a proof-only path must fail ----
+
+void testDuplicateIdAcrossGraphAndProofOnlyPath() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    OutsideGraphFixture fixture(tree, "site.conf");
+    fixture.dropInclude();
+    // A copy of the very same wrapper id lands in a graph file.
+    writeFile(tree.root / "other.conf",
+              readAll(fixture.site));
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    const std::string refusal =
+        transaction.validateCurrentOwnership(fixture.owned);
+    require(!refusal.empty(),
+            "a duplicate id across the combined capture must fail closed: " +
+                refusal);
+    const auto outcome = reconcile(configuration, productionHooks(configuration));
+    require(!outcome.ok, "reconcile must fail closed before any write");
+    require(activePreparedCount() == 0, "no Prepared record may be created");
+}
+
+// --- AT6: a non-regular owned proof path must fail closed ------------------
+
+void testNonRegularOwnedProofPath(bool asDirectory) {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    OutsideGraphFixture fixture(tree, "site.conf");
+    fixture.dropInclude();
+    std::filesystem::remove(fixture.site);
+    if (asDirectory) {
+        std::filesystem::create_directories(fixture.site);
+    } else {
+        writeFile(tree.root / "elsewhere.conf", "alice ALL=(ALL:ALL) ALL\n");
+        std::error_code ec;
+        std::filesystem::create_symlink(tree.root / "elsewhere.conf",
+                                        fixture.site, ec);
+        require(!ec, "the test symlink must be created");
+    }
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    ScopedDefaultsTransaction transaction(configuration, kPolicyName);
+    const std::string refusal =
+        transaction.validateCurrentOwnership(fixture.owned);
+    require(!refusal.empty(),
+            std::string("a non-regular owned path (") +
+                (asDirectory ? "directory" : "symlink") +
+                ") must fail closed and never count as released: " + refusal);
+    const auto outcome = reconcile(configuration, productionHooks(configuration));
+    require(!outcome.ok, "reconcile must fail closed");
+}
+
+void testOwnedPathAsDirectory() { testNonRegularOwnedProofPath(true); }
+void testOwnedPathAsSymlink() { testNonRegularOwnedProofPath(false); }
+
+// --- AT7: a new violation must NOT be applied over a broken ownership -------
+
+void testNewViolationOverBrokenOwnership() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    OutsideGraphFixture fixture(tree, "site.conf");
+    fixture.dropInclude();
+    const std::string drifted = readAll(fixture.site);
+    std::string mutated = drifted;
+    size_t at = mutated.find("exempt_group=wheel");
+    require(at != std::string::npos, "wrapper A body must be present");
+    mutated.replace(at, std::string("exempt_group=wheel").size(),
+                    "exempt_group=daemon");
+    writeFile(fixture.site, mutated);
+
+    // A brand-new active violation inside the CURRENT graph.
+    writeFile(tree.root / "other.conf",
+              "Defaults:bob passwd_tries=5\nDefaults:bob passwd_tries=9\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    const auto outcome = reconcile(configuration, productionHooks(configuration));
+
+    require(!outcome.ok,
+            "a new violation must not be planned over an unproven ownership");
+    require(activePreparedCount() == 0, "zero new Prepared records");
+    require(activeOwned().size() == 1, "the old record must remain active");
+    require(onDiskWrapperIds(tree.root).count(fixture.owned[0].wrapperId) == 1,
+            "no new wrapper may be installed");
+    const std::set<std::string> ids = onDiskWrapperIds(tree.root);
+    require(ids.size() == 1,
+            "exactly the pre-existing wrapper A must exist on disk");
+    require(readAll(fixture.site) == mutated, "FIC must not have written");
+}
+
 // ---------------------------------------------------------------------------
 // Test registry.
 //
@@ -2194,7 +2465,15 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"AQ previous drifts after compensation", testPreviousDriftsAfterCompensation},
         {"AV target-only restored after compensation", testTargetOnlyRestoredAfterCompensation},
         {"AW target-only survives outside graph", testTargetOnlySurvivesOutsideGraph},
-        {"AY durability failure blocks previous normalization", testPreviousExactButDurabilityFails},
+        {"AZ durability failure blocks previous normalization", testPreviousExactButDurabilityFails},
+        {"AT drifted owned wrapper outside graph", testOwnedWrapperDriftedOutsideGraph},
+        {"AT2 exact owned wrapper outside graph", testOwnedWrapperExactOutsideGraph},
+        {"AT3 moved owned wrapper outside graph", testOwnedWrapperMovedOutsideGraph},
+        {"AT4 unknown wrapper on proof-only path", testUnknownWrapperOnProofOnlyPath},
+        {"AT5 duplicate id across graph and proof-only path", testDuplicateIdAcrossGraphAndProofOnlyPath},
+        {"AT6a owned proof path is a directory", testOwnedPathAsDirectory},
+        {"AT6b owned proof path is a symlink", testOwnedPathAsSymlink},
+        {"AT7 new violation over broken ownership", testNewViolationOverBrokenOwnership},
     };
     return cases;
 }

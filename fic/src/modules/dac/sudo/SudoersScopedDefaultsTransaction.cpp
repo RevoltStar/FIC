@@ -404,39 +404,38 @@ bool ScopedDefaultsTransaction::globalInventory(
 
 std::string ScopedDefaultsTransaction::validateCurrentOwnership(
     const std::vector<SudoScopedDefaultsWrapperProof>& activeProofs) const {
-    std::string error;
-    std::vector<OwnedWrapper> inventory;
-    // Malformed FIC markers anywhere in the graph fail closed before any
-    // ownership reasoning.
-    if (!globalInventory(inventory, error)) {
-        return error;
+    // The current include graph is NOT the ownership authority. An external
+    // process may have removed an @include while the journal still proves
+    // ownership of a wrapper that physically remains at its canonical path, so
+    // a graph-only inventory would silently stop inspecting exactly the files
+    // the journal claims.
+    //
+    // The capture set is therefore the current graph UNION every active proof
+    // path. Ownership is then decided ON THAT SNAPSHOT:
+    //   * GLOBAL uniqueness of wrapper ids across the combined set, so a
+    //     duplicate id in a graph file and in a proof-only path is detected;
+    //   * per file, an existing wrapper must be proven by an active proof that
+    //     names that EXACT file with an EXACT payload digest. Drift, a moved
+    //     wrapper, an unknown id, a duplicate inside one file and malformed
+    //     markers all fail closed;
+    //   * a proven wrapper that is physically gone stays an already released
+    //     subset, which is the pre-existing external-release contract and is
+    //     deliberately NOT redefined here;
+    //   * a capture failure (symlink, directory, permission, I/O) fails closed
+    //     and is never reclassified as an absence.
+    //
+    // Durability is intentionally NOT required: this is a read-only preflight
+    // and no journal transition happens here.
+    ScopedDefaultsCapturedState captured;
+    std::string captureError;
+    if (!captureProofAndGraphState(activeProofs, captured, captureError)) {
+        return "не удалось захватить sudoers-пути для проверки владения: " +
+               captureError;
     }
-    std::vector<SudoDisabledWrapper> wrappers;
-    wrappers.reserve(inventory.size());
-    for (const OwnedWrapper& owned : inventory) {
-        if (owned.wrapper.policy == policyName_) {
-            wrappers.push_back(owned.wrapper);
-        }
-    }
-    // Every existing wrapper of this policy must be proven by the ACTIVE journal
-    // ownership set with an exact digest. An orphan is never adopted.
-    std::vector<SudoScopedDefaultsWrapperProof> fileProofs;
-    std::map<std::string, std::vector<SudoDisabledWrapper>> byPath;
-    for (const OwnedWrapper& owned : inventory) {
-        if (owned.wrapper.policy == policyName_) {
-            byPath[owned.path].push_back(owned.wrapper);
-        }
-    }
-    // Ownership is proven PER FILE against the proofs that name that exact
-    // file, so one proof can never authorize a wrapper in another document.
-    for (const auto& [path, fileWrappers] : byPath) {
-        const SudoWrapperProvenanceCheck check = checkSudoWrapperProvenance(
-            fileWrappers, path, policyName_, activeProofs);
-        if (!check.safeToRelease()) {
-            return describeSudoWrapperProvenance(check, policyName_);
-        }
-    }
-    return {};
+    const ScopedDefaultsStateProof proof = proveCapturedState(
+        activeProofs, captured, ScopedDefaultsProofMode::ReleaseSubset,
+        /*requireNoActiveScopedDefaults=*/false);
+    return proof.ok ? std::string() : proof.message;
 }
 
 std::string ScopedDefaultsTransaction::noopPreflight(
