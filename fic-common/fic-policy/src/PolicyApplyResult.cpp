@@ -2,7 +2,22 @@
 
 #include <algorithm>
 
-std::string policyApplyStatusToString(PolicyApplyStatus status) {
+std::string policyFailureOriginToString(PolicyFailureOrigin origin) {
+    switch (origin) {
+        case PolicyFailureOrigin::None:
+            return "none";
+        case PolicyFailureOrigin::OwnApplyFailure:
+            return "own_apply_failure";
+        case PolicyFailureOrigin::RequiredDependencyBlocked:
+            return "required_dependency_blocked";
+        case PolicyFailureOrigin::DependencyCycle:
+            return "dependency_cycle";
+        case PolicyFailureOrigin::ExecutionInfrastructureFailure:
+            return "execution_infrastructure_failure";
+    }
+    return "none";
+}
+    std::string policyApplyStatusToString(PolicyApplyStatus status) {
     switch (status) {
         case PolicyApplyStatus::Applied:
             return "applied";

@@ -1,0 +1,447 @@
+#include "incident/IncidentController.h"
+
+#include <fic/core/logging/Logger.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/logging/SecurityAudit.h>
+#include <fic/core/notification/NotifyUser.h>
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
+#include <utility>
+
+namespace fic::incident {
+namespace {
+
+using json = nlohmann::json;
+using ::fic::core::IncidentSeverity;
+using ::fic::core::incidentSeverityAllowsOrdinaryLogin;
+using ::fic::core::incidentSeverityIsUnlocked;
+using session::LoginSession;
+using session::LoginUser;
+using session::SessionKind;
+
+// A session is contained when it is gone, or - for a graphical session at
+// STANDARD - when the lock was requested AND independently verified.
+// Recovery identities are never touched.
+bool isOrdinaryTarget(const LoginSession& session) {
+    return !session.recovery;
+}
+
+} // namespace
+
+std::string runtimeStateToString(RuntimeState state) {
+    switch (state) {
+        case RuntimeState::Inactive:
+            return "inactive";
+        case RuntimeState::Applying:
+            return "applying";
+        case RuntimeState::Active:
+            return "active";
+        case RuntimeState::Degraded:
+            return "degraded";
+        case RuntimeState::Clearing:
+            return "clearing";
+    }
+    return "unknown";
+}
+
+IncidentController::IncidentController()
+    : stateStore_(),
+      sessions_(nullptr),
+      network_(std::make_shared<NullIncidentNetworkBackend>()) {
+}
+
+IncidentController::IncidentController(
+    IncidentStateStore stateStore,
+    std::shared_ptr<session::SessionContainmentBackend> sessions,
+    std::shared_ptr<IncidentNetworkBackend> network)
+    : stateStore_(std::move(stateStore)),
+      sessions_(std::move(sessions)),
+      network_(network != nullptr
+                   ? std::move(network)
+                   : std::make_shared<NullIncidentNetworkBackend>()) {
+}
+
+// The containment flow. Severity determines WHICH actions are performed; the
+// runtime state records whether they were PROVEN.
+//
+//   SOFT      : the PAM access gate denies nothing yet; nothing to terminate.
+//   STANDARD  : deny new ordinary logins, then LOCK graphical sessions and
+//               VERIFY the lock. An unverifiable lock escalates to session
+//               termination. SSH/TTY sessions are terminated outright.
+//   HARD      : deny new ordinary logins and terminate ALL ordinary login
+//               sessions. Background user processes may survive.
+//   ISOLATE   : quarantine the network as early as possible, deny new logins,
+//               terminate sessions AND the affected ordinary user runtime
+//               (including lingering user managers).
+IncidentResult IncidentController::applyContainment(
+    IncidentSeverity severity,
+    const std::string& reason) {
+    IncidentResult result;
+    result.effectiveSeverity = severity;
+    runtime_ = RuntimeState::Applying;
+
+    ContainmentStatus status;
+    // The PAM access gate is the login decision. It is "active" whenever
+    // ordinary logins are not allowed at this severity.
+    status.pamGateActive = !incidentSeverityAllowsOrdinaryLogin(severity);
+
+    if (incidentSeverityIsUnlocked(severity)) {
+        // Clearing removes the reversible containment state. It deliberately
+        // does NOT unlock any desktop session: unblocking a user's screen is
+        // an interactive decision, not a side effect of clearing an incident.
+        std::string networkDiagnostic;
+        const bool networkOk =
+            network_->applyQuarantine(false, networkDiagnostic);
+        status.networkQuarantined = false;
+        status.pamGateActive = false;
+        status.sessionsContained = true;
+        status.userRuntimeContained = true;
+
+        containment_ = status;
+        runtime_ = (networkOk && status.sessionsContained)
+            ? RuntimeState::Inactive
+            : RuntimeState::Degraded;
+        result.runtime = runtime_;
+        result.ok = runtime_ == RuntimeState::Inactive;
+        result.detail = networkOk
+            ? "incident cleared"
+            : "incident cleared but network quarantine removal failed: " +
+                networkDiagnostic;
+        return result;
+    }
+
+    // Network quarantine: applied as early as possible for ISOLATE.
+    if (severity == IncidentSeverity::Isolate) {
+        std::string networkDiagnostic;
+        const bool networkOk =
+            network_->applyQuarantine(true, networkDiagnostic);
+        status.networkQuarantined = networkOk;
+        if (!networkOk) {
+            containment_ = status;
+            runtime_ = RuntimeState::Degraded;
+            result.runtime = runtime_;
+            result.ok = false;
+            result.detail = "network quarantine failed: " + networkDiagnostic;
+            return result;
+        }
+    }
+
+    // Session containment. SOFT does not touch existing sessions.
+    if (severity >= IncidentSeverity::Standard && sessions_ != nullptr) {
+        const std::vector<LoginSession> sessions = sessions_->listSessions();
+        std::vector<LoginSession> toTerminate;
+        std::vector<LoginSession> terminated;
+
+        for (const LoginSession& session : sessions) {
+            if (!isOrdinaryTarget(session)) {
+                // Recovery identities must survive containment.
+                continue;
+            }
+            const SessionKind kind = sessions_->classifySession(session);
+            if (severity == IncidentSeverity::Standard &&
+                kind == SessionKind::Graphical) {
+                // A successful LockSession() call is NOT a proven lock, so the
+                // lock is verified independently. An unverifiable lock escalates
+                // to session termination rather than assuming success.
+                const session::ContainmentOutcome lockOutcome =
+                    sessions_->lockSession(session);
+                std::string verifyDiagnostic;
+                if (lockOutcome.performed &&
+                    sessions_->verifySessionLocked(session, verifyDiagnostic)) {
+                    continue;
+                }
+                toTerminate.push_back(session);
+                continue;
+            }
+            // HARD/ISOLATE terminate everything; at STANDARD a terminal session
+            // (ssh/tty) cannot be locked, so it is terminated as well.
+            toTerminate.push_back(session);
+        }
+
+        for (const LoginSession& session : toTerminate) {
+            const session::ContainmentOutcome outcome =
+                sessions_->terminateSession(session);
+            if (outcome.performed) {
+                terminated.push_back(session);
+            }
+        }
+
+        std::string goneDiagnostic;
+        const bool sessionsGone =
+            terminated.empty() ||
+            sessions_->verifySessionsGone(terminated, goneDiagnostic);
+        status.sessionsContained = sessionsGone;
+        if (!sessionsGone) {
+            runtime_ = RuntimeState::Degraded;
+            containment_ = status;
+            result.runtime = runtime_;
+            result.ok = false;
+            result.detail = "session containment could not be proven: " +
+                goneDiagnostic;
+            return result;
+        }
+    } else if (sessions_ == nullptr) {
+        // No containment backend wired: containment cannot be claimed.
+        status.sessionsContained = false;
+    } else {
+        status.sessionsContained = true;
+    }
+
+    // ISOLATE additionally terminates the affected ordinary user runtime,
+    // including lingering user managers, so a contained attacker cannot keep a
+    // foothold outside any login session.
+    if (severity == IncidentSeverity::Isolate && sessions_ != nullptr) {
+        const std::vector<LoginUser> users = sessions_->listUsers();
+        for (const LoginUser& user : users) {
+            // Service accounts and recovery identities are never terminated,
+            // and the target set comes from logind - never from /etc/passwd or
+            // from a bare UID >= UID_MIN test.
+            if (user.recovery || user.serviceAccount) {
+                continue;
+            }
+            const session::ContainmentOutcome outcome =
+                sessions_->terminateUser(user);
+            if (!outcome.performed) {
+                runtime_ = RuntimeState::Degraded;
+                containment_ = status;
+                result.runtime = runtime_;
+                result.ok = false;
+                result.detail = "user runtime termination failed for uid " +
+                    std::to_string(user.uid) + ": " + outcome.diagnostic;
+                return result;
+            }
+            std::string runtimeDiagnostic;
+            if (!sessions_->verifyUserRuntimeGone(user, runtimeDiagnostic)) {
+                runtime_ = RuntimeState::Degraded;
+                containment_ = status;
+                result.runtime = runtime_;
+                result.ok = false;
+                result.detail = "user runtime containment could not be proven: " +
+                    runtimeDiagnostic;
+                return result;
+            }
+        }
+        status.userRuntimeContained = true;
+    } else {
+        status.userRuntimeContained = true;
+    }
+
+    containment_ = status;
+    runtime_ = RuntimeState::Active;
+    result.runtime = runtime_;
+    result.ok = true;
+    result.detail = reason;
+    return result;
+}
+
+// Public operations.
+
+IncidentResult IncidentController::raise(
+    IncidentSeverity requested,
+    const IncidentSource& source,
+    const std::string& reason) {
+    // Transitions are serialised so two concurrent detectors cannot interleave
+    // their read/compute/write cycles.
+    std::lock_guard<std::mutex> guard(transitionMutex_);
+
+    const IncidentStateStore::ReadResult before = stateStore_.read();
+    IncidentResult result;
+    result.previousSeverity =
+        before.provenance == IncidentStateStore::Provenance::Proven
+            ? before.severity
+            : IncidentSeverity::Isolate;
+
+    const IncidentStateStore::RaiseResult raised =
+        stateStore_.raiseToAtLeast(requested);
+    result.ok = raised.durable;
+    result.effectiveSeverity = raised.durable
+        ? raised.effectiveSeverity
+        : IncidentSeverity::Isolate;
+    result.escalated = raised.escalated;
+    result.brokenState = raised.brokenStatePersisted;
+    result.detail = raised.detail;
+
+    if (!raised.durable) {
+        // Neither the requested severity nor a durable absence could be
+        // established. The persistent witness may still claim a lower severity,
+        // so the runtime containment is escalated to ISOLATE and the runtime
+        // state becomes DEGRADED: the system is contained, but FIC cannot prove
+        // the containment is the recorded one.
+        // Audit is a bounded observability concern: a failure to record one
+        // must never cancel or delay the containment itself.
+        recordAudit("incident_persistence_failed", result, source, reason);
+        IncidentResult contained = applyContainment(
+            IncidentSeverity::Isolate,
+            "incident state could not be persisted; containing at ISOLATE");
+        contained.previousSeverity = result.previousSeverity;
+        contained.escalated = result.escalated;
+        contained.brokenState = result.brokenState;
+        recordAudit("incident_action_failed", contained, source, reason);
+        return contained;
+    }
+
+    const IncidentResult contained = applyContainment(
+        result.effectiveSeverity, reason);
+    result.runtime = contained.runtime;
+    result.detail = contained.detail.empty() ? result.detail : contained.detail;
+    // The incident is only fully established when BOTH halves succeeded: the
+    // severity is durably persisted AND its containment is proven. A proven
+    // persistence with failed containment is DEGRADED, never "ok".
+    result.ok = result.ok && contained.ok;
+    recordAudit(contained.ok ? "incident_raise" : "incident_action_failed",
+                result, source, reason);
+    // Notification is a UX concern and must never gate containment: it is
+    // emitted only for a genuine escalation, so a repeated raise of the same
+    // level does not spam identical desktop notifications.
+    if (result.escalated) {
+        notifySeverity(result.effectiveSeverity, reason);
+    }
+    return result;
+}
+
+IncidentResult IncidentController::clear(const std::string& actor) {
+    std::lock_guard<std::mutex> guard(transitionMutex_);
+    runtime_ = RuntimeState::Clearing;
+
+    const IncidentStateStore::ReadResult before = stateStore_.read();
+    IncidentResult result;
+    result.previousSeverity =
+        before.provenance == IncidentStateStore::Provenance::Proven
+            ? before.severity
+            : IncidentSeverity::Isolate;
+
+    const IncidentStateStore::ClearResult cleared = stateStore_.clear();
+    result.ok = cleared.ok;
+    result.effectiveSeverity = cleared.effectiveSeverity;
+    result.detail = cleared.detail;
+
+    if (!cleared.ok) {
+        // Fail closed: the incident is still in force and containment stays
+        // exactly where it was. The audit trail records the refusal.
+        runtime_ = RuntimeState::Active;
+        result.runtime = runtime_;
+        IncidentSource source;
+        source.name = "administrator";
+        recordAudit("incident_clear", result, source,
+                    "clear refused for actor " + actor);
+        return result;
+    }
+
+    // The persistent state is now a durably proven UNLOCKED, so the reversible
+    // containment state is removed. No desktop session is unlocked.
+    const IncidentResult contained = applyContainment(
+        IncidentSeverity::Unlocked, "incident cleared by " + actor);
+    result.runtime = contained.runtime;
+    result.detail = contained.detail;
+
+    lastNotified_.reset();
+    IncidentSource source;
+    source.name = "administrator";
+    recordAudit("incident_clear", result, source,
+                "cleared by " + actor);
+    return result;
+}
+
+IncidentStatus IncidentController::status() {
+    std::lock_guard<std::mutex> guard(transitionMutex_);
+    const IncidentStateStore::ReadResult read = stateStore_.read();
+    IncidentStatus status;
+    status.stateProven = read.provenance == IncidentStateStore::Provenance::Proven;
+    // Only a positively proven UNLOCKED means "no incident". Everything else -
+    // including a missing, corrupt or unprovable state file - is ISOLATE.
+    status.severity = status.stateProven
+        ? read.severity
+        : IncidentSeverity::Isolate;
+    status.runtime = runtime_;
+    status.containment = containment_;
+    status.detail = read.detail;
+    return status;
+}
+
+IncidentResult IncidentController::reconcile() {
+    std::lock_guard<std::mutex> guard(transitionMutex_);
+    // The status is derived inline rather than through status(): the public
+    // accessor takes the same lock, and re-entering it here would deadlock.
+    const IncidentStateStore::ReadResult read = stateStore_.read();
+    IncidentResult result;
+    result.previousSeverity =
+        read.provenance == IncidentStateStore::Provenance::Proven
+            ? read.severity
+            : IncidentSeverity::Isolate;
+    result.effectiveSeverity = result.previousSeverity;
+    result.brokenState =
+        read.provenance != IncidentStateStore::Provenance::Proven;
+    result.runtime = runtime_;
+
+    // Reconciliation NEVER changes the severity: it only re-proves the
+    // containment that the persisted severity requires.
+    const IncidentResult contained =
+        applyContainment(result.effectiveSeverity, "startup reconciliation");
+    result.runtime = contained.runtime;
+    result.ok = contained.ok;
+    result.detail = contained.detail;
+    return result;
+}
+
+void IncidentController::recordAudit(
+    const std::string& event,
+    const IncidentResult& result,
+    const IncidentSource& source,
+    const std::string& reason) const {
+    if (!auditSink_) {
+        return;
+    }
+    // The controller never decides WHERE the audit trail lives: it hands the
+    // structured event to the injected sink, which the daemon wires to the
+    // security audit trail. A sink failure is swallowed on purpose - audit and
+    // notification must never cancel or delay containment.
+    try {
+        auditSink_(::fic::core::security_audit::serializeJsonLine(
+            ::fic::core::security_audit::makeEvent("fic", json{
+                {"event", event},
+                {"previous_severity",
+                 ::fic::core::incidentSeverityToken(result.previousSeverity)},
+                {"effective_severity",
+                 ::fic::core::incidentSeverityToken(result.effectiveSeverity)},
+                {"escalated", result.escalated},
+                {"broken_state", result.brokenState},
+                {"runtime_state", runtimeStateToString(result.runtime)},
+                {"source", source.name},
+                {"reason", reason},
+                {"detail", result.detail},
+                {"policy", {
+                    {"module", source.policyModule},
+                    {"submodule", source.policySubmodule},
+                    {"policy", source.policyName}
+                }},
+                {"device_id", source.deviceId},
+                {"failure_origin", source.failureOrigin}
+            })));
+    } catch (...) {
+        // An audit failure must never cancel containment.
+    }
+}
+
+void IncidentController::notifySeverity(
+    IncidentSeverity severity,
+    const std::string& reason) const {
+    // Deduplicate: the same severity must not produce repeated identical
+    // desktop notifications. A new, higher severity always notifies.
+    if (lastNotified_.has_value() &&
+        !::fic::core::incidentSeverityLess(severity, *lastNotified_)) {
+        return;
+    }
+    lastNotified_ = severity;
+    if (!notifySink_) {
+        return;
+    }
+    try {
+        notifySink_(severity, reason);
+    } catch (...) {
+        // A notification failure must never cancel or delay containment.
+    }
+}
+
+} // namespace fic::incident

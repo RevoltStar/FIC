@@ -9,6 +9,7 @@
 #include <fic/core/config/ModuleConfigFileHandler.h>
 #include <fic/policy/PolicyDependency.h>
 #include <fic/policy/PolicyTypeValue.h>
+#include <fic/core/incident/IncidentSeverity.h>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -47,7 +48,7 @@ protected:
         const PolicyDependencyCondition& condition);
 public:
     //Задано ли значение политики в конфигурационном файле
-    bool hasConfiguredValue(){
+    bool hasConfiguredValue() const {
         return this->moduleConf->hasConfiguredValue(this->policyName);
     }
 
@@ -110,11 +111,30 @@ public:
     }
 
     //Включена ли указанная политика?
-    bool isEnabled(){
-        if(moduleConf->getPolicyStatus(this->policyName) == "ENABLE"){
-            return true;
+    bool isEnabled() const {
+        return moduleConf->getPolicyStatus(this->policyName) == "ENABLE";
+    }
+
+    // Severity this Policy raises the system incident to when it FAILS.
+    //
+    // ViolationSeverity::None (the default) means "never react": such a
+    // policy contributes nothing to incident state. Every reacting policy
+    // declares its OWN severity - there is deliberately no inheritance along
+    // the dependency graph. A policy that is blocked by a Required
+    // dependency still raises its own severity, because the policy itself
+    // ended in Failed.
+    ::fic::core::ViolationSeverity getViolationSeverity() const {
+        if (moduleConf != nullptr &&
+            moduleConf->hasPolicyViolationSeverity(this->policyName)) {
+            return moduleConf->getPolicyViolationSeverity(this->policyName);
         }
-        return false;
+        return getDefaultViolationSeverity();
+    }
+
+    // Compiled-in default used when the module configuration does not carry
+    // an explicit <policy>.violation_severity entry.
+    virtual ::fic::core::ViolationSeverity getDefaultViolationSeverity() const {
+        return ::fic::core::ViolationSeverity::None;
     }
     //Валидация параметра
     bool validate(std::string value){

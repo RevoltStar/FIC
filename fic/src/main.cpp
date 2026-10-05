@@ -49,6 +49,7 @@
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/runtime/SystemBootInfo.h>
 #include <fic/core/config/ConfigSchemaManager.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
@@ -59,6 +60,9 @@
 #include "session/SessionEventServer.h"
 #include "session/SessionReadyValidation.h"
 #include "session/SystemGraphicalSessionInventory.h"
+#include "incident/IncidentController.h"
+#include "incident/IncidentStateStore.h"
+#include "incident/PolicyIncidentReporter.h"
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
@@ -337,6 +341,17 @@ void install_desktop_global_report(
     }
 }
 
+// The daemon owns the single IncidentController instance. Every detector -
+// policy failures, device events, administrative actions - reports through it,
+// so there is exactly one runtime owner of the shared incident state.
+fic::incident::IncidentController& incidentController() {
+    static fic::incident::IncidentController controller(
+        fic::incident::IncidentStateStore(),
+        nullptr,
+        std::make_shared<fic::incident::NullIncidentNetworkBackend>());
+    return controller;
+}
+
 bool run_daemon_apply_all_pass(
     PolicyRegistry& policyRegistry,
     DesktopGlobalConfigReconciler& desktopGlobalConfig,
@@ -375,6 +390,13 @@ bool run_daemon_apply_all_pass(
         desktopGlobalReport.diagnostic();
     const PolicyApplySummary summary = applyAllPoliciesExceptModule(
         policyRegistry, "FIREWALL");
+    // Policy failures are reported once, from the finished execution summary,
+    // through the single incident controller. A failed registry reload above
+    // returned early, so no incident is derived from a stale registry.
+    const fic::core::IncidentSeverity policyIncident =
+        fic::incident::PolicyIncidentReporter(incidentController()).report(
+            policyRegistry, summary,
+            "policy apply pass (" + reason + ")");
     std::string firewallError;
     const bool firewallOk = fic::firewall::reconcileFirewall(
         executables, firewallError);
@@ -384,7 +406,8 @@ bool run_daemon_apply_all_pass(
         {"ok", ok},
         {"registry_reload", true},
         {"desktop_global_configuration", desktopGlobalConfigOk},
-        {"firewall_reconciliation", firewallOk}
+        {"firewall_reconciliation", firewallOk},
+        {"incident_severity", fic::core::incidentSeverityToken(policyIncident)}
     };
     if (!desktopGlobalConfigError.empty()) {
         result["desktop_global_configuration_error"] =
@@ -442,20 +465,6 @@ json log_records_json(
         bootId,
         cursor,
         limit);
-}
-
-json lock_status_json() {
-    SingleLineFileHandler lockStatus(fic::core::FicRuntimePaths::get().lockStatusFile.string());
-    if (!lockStatus.loadConfig()) {
-        return fic::ipc::make_error_response("failed to read lock status");
-    }
-
-    const bool locked = lockStatus.getValue() != "0";
-    return json{
-        {"ok", true},
-        {"message", locked ? "locked" : "unlocked"},
-        {"locked", locked}
-    };
 }
 
 json handle_request(json request,
@@ -771,18 +780,66 @@ json handle_request(json request,
         if (command == "calc_hash") {
             return calcHashCommandResponse(value);
         }
-        if (command == "lock") {
-            bool ok = lock(executables);
-            return ok ? fic::ipc::make_ok_response("computer locked")
-                      : fic::ipc::make_error_response("failed to lock computer");
+        if (command == "incident_status") {
+            const fic::incident::IncidentStatus status =
+                incidentController().status();
+            return json{
+                {"ok", true},
+                {"message", status.stateProven ? "incident state proven"
+                                                : "incident state not proven"},
+                {"severity", fic::core::incidentSeverityToken(status.severity)},
+                {"state_proven", status.stateProven},
+                {"runtime", fic::incident::runtimeStateToString(status.runtime)},
+                {"runtime_containment", {
+                    {"pam_gate_active", status.containment.pamGateActive},
+                    {"sessions_contained", status.containment.sessionsContained},
+                    {"user_runtime_contained",
+                     status.containment.userRuntimeContained},
+                    {"network_quarantined",
+                     status.containment.networkQuarantined}
+                }},
+                {"detail", status.detail}
+            };
         }
-        if (command == "unlock") {
-            bool ok = unlock();
-            return ok ? fic::ipc::make_ok_response("computer unlocked")
-                      : fic::ipc::make_error_response("failed to unlock computer");
+        if (command == "incident_raise") {
+            const std::optional<fic::core::IncidentSeverity> severity =
+                fic::core::parseIncidentSeverityToken(value);
+            if (!severity.has_value() ||
+                *severity == fic::core::IncidentSeverity::Unlocked) {
+                // UNLOCKED is not a raisable severity: lowering the incident
+                // is an explicit administrative clear, never a raise.
+                return fic::ipc::make_error_response(
+                    "incident raise requires SOFT, STANDARD, HARD or ISOLATE");
+            }
+            fic::incident::IncidentSource source;
+            source.name = "administrator";
+            const fic::incident::IncidentResult raised =
+                incidentController().raise(
+                    *severity, source, "administrative raise via IPC");
+            return json{
+                {"ok", raised.ok},
+                {"message", raised.detail.empty()
+                                 ? "incident raised"
+                                 : raised.detail},
+                {"severity",
+                 fic::core::incidentSeverityToken(raised.effectiveSeverity)},
+                {"escalated", raised.escalated},
+                {"broken_state", raised.brokenState},
+                {"runtime", fic::incident::runtimeStateToString(raised.runtime)}
+            };
         }
-        if (command == "lockstatus") {
-            return lock_status_json();
+        if (command == "incident_clear") {
+            const fic::incident::IncidentResult cleared =
+                incidentController().clear("administrator");
+            return json{
+                {"ok", cleared.ok},
+                {"message", cleared.detail.empty()
+                                 ? "incident cleared"
+                                 : cleared.detail},
+                {"severity",
+                 fic::core::incidentSeverityToken(cleared.effectiveSeverity)},
+                {"runtime", fic::incident::runtimeStateToString(cleared.runtime)}
+            };
         }
 
         return fic::ipc::make_error_response("unknown command: " + command);
@@ -823,8 +880,13 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
 
     const std::string command = request.at("command").get<std::string>();
     if (command == "shutdown" || command == "reload_config" ||
-        command == "apply_all" || command == "lock" || command == "unlock") {
+        command == "apply_all" || command == "incident_status" ||
+        command == "incident_clear") {
         return fic::ipc::request_has_only_fields(request, {"command"}, error);
+    }
+    if (command == "incident_raise") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "value"}, error);
     }
     if (command == "set_policy_value") {
         return fic::ipc::request_has_only_fields(
@@ -1077,6 +1139,73 @@ int main(int argc, char* argv[]) {
         const std::string command = get_arg_value(argc, argv, 2);
         const auto& paths = fic::core::FicRuntimePaths::get();
         std::string maintenanceError;
+        if (command == "incident-init") {
+            // The ONLY sanctioned creator of the initial incident state, and it
+            // belongs to the main fic package lifecycle alone.
+            //
+            // Invariants:
+            //   * an existing object is NEVER repaired, replaced or recreated -
+            //     a corrupt or foreign state file stays BROKEN (ISOLATE);
+            //   * creation is conditional (exclusive) so it cannot race another
+            //     writer into overwriting a state that appeared meanwhile;
+            //   * the new state is fsynced and then re-read through the same
+            //     fail-closed parser, so "created" means "proven UNLOCKED".
+            if (::geteuid() != 0) {
+                std::cerr << "incident state bootstrap must be run as root"
+                          << std::endl;
+                return 1;
+            }
+            fic::incident::IncidentStateStore store(paths.lockStatusFile);
+            const auto existing = store.read();
+            if (existing.provenance !=
+                fic::incident::IncidentStateStore::Provenance::Absent) {
+                std::cerr << "FIC incident state already exists ("
+                          << incidentProvenanceReason(existing.provenance)
+                          << "); leaving it untouched" << std::endl;
+                return 0;
+            }
+
+            AtomicWriteOptions options;
+            options.createIfMissing = true;
+            options.rejectSymlink = true;
+            // Exclusive: fail rather than clobber an object that appeared
+            // between the absence proof and this write.
+            options.exclusiveCreate = true;
+            options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+            options.fileMode = 0640;
+            options.fileOwner = 0;
+            options.fileGroup = ::getegid();
+
+            AtomicWriteResult writeResult;
+            std::string writeError;
+            const bool written = AtomicFileWriter::writeWithResult(
+                paths.lockStatusFile.string(), "UNLOCKED\n", options,
+                &writeError, &writeResult);
+            if (!written) {
+                std::cerr << "could not create FIC incident state: "
+                          << writeError << std::endl;
+                return 1;
+            }
+
+            // Durability barrier, then an independent re-read through the
+            // fail-closed parser. Only a proven UNLOCKED may report success.
+            if (!AtomicFileWriter::ensureTargetDurable(
+                    paths.lockStatusFile.string(), &writeError)) {
+                std::cerr << "could not confirm FIC incident state durability: "
+                          << writeError << std::endl;
+                return 1;
+            }
+            const auto proven = store.read();
+            if (proven.provenance !=
+                    fic::incident::IncidentStateStore::Provenance::Proven ||
+                !fic::core::incidentSeverityIsUnlocked(proven.severity)) {
+                std::cerr << "FIC incident state could not be proven UNLOCKED"
+                          << std::endl;
+                return 1;
+            }
+            std::cout << "FIC incident state proven UNLOCKED" << std::endl;
+            return 0;
+        }
         if (command == "ensure-config") {
             if (!fic::core::ConfigSchemaManager::ensureConfigs(
                     paths.defaultConfigDir, paths.configDir,
@@ -1631,6 +1760,19 @@ int main(int argc, char* argv[]) {
 
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
+
+    // Crash reconciliation. The persistent state is read with the fail-closed
+    // parser FIRST, so a missing/corrupt/unprovable state is already treated as
+    // ISOLATE before any containment decision is made. Reconciliation never
+    // changes the severity - it only re-proves the containment it requires.
+    {
+        const fic::incident::IncidentResult reconciled =
+            incidentController().reconcile();
+        if (!reconciled.ok) {
+            std::cerr << "FIC incident reconciliation is DEGRADED: "
+                      << reconciled.detail << std::endl;
+        }
+    }
 
     (void)::sd_notify(0, "STATUS=Applying startup policies");
     bool startupRegistryReloadFailed = false;

@@ -61,13 +61,13 @@ PolicyApplyResult executeOwnPolicy(
         });
     }
 
-    return {
+    const bool succeeded = applied && exceptionMessage.empty();
+
+    PolicyApplyResult result{
         ref.moduleName,
         ref.submoduleName,
         ref.policyName,
-        applied && exceptionMessage.empty()
-            ? PolicyApplyStatus::Applied
-            : PolicyApplyStatus::Failed,
+        succeeded ? PolicyApplyStatus::Applied : PolicyApplyStatus::Failed,
         exceptionMessage.empty()
             ? (applied ? "Политика успешно применена"
                        : "Не удалось применить политику")
@@ -75,6 +75,12 @@ PolicyApplyResult executeOwnPolicy(
         std::move(diagnostics),
         captured.truncated
     };
+    // The policy's own apply() was actually invoked here.
+    result.ownApplyAttempted = true;
+    result.failureOrigin = succeeded
+        ? PolicyFailureOrigin::None
+        : PolicyFailureOrigin::OwnApplyFailure;
+    return result;
 }
 
 } // namespace
@@ -151,6 +157,8 @@ const PolicyApplyResult& PolicyExecutionPlanner::executePolicy(
                     formatPolicyRef(ref)
             }}
         };
+        result.ownApplyAttempted = false;
+        result.failureOrigin = PolicyFailureOrigin::DependencyCycle;
         const auto inserted = results_.emplace(ref, std::move(result));
         summary.add(inserted.first->second);
         return inserted.first->second;
@@ -205,6 +213,11 @@ const PolicyApplyResult& PolicyExecutionPlanner::executePolicy(
             "Required dependency was not applied",
             std::move(dependencyDiagnostics)
         };
+        // This policy ended in Failed even though its own apply() never ran.
+        // The dependent policy therefore activates ITS OWN violation severity:
+        // this is not severity inheritance along the dependency graph.
+        result.ownApplyAttempted = false;
+        result.failureOrigin = PolicyFailureOrigin::RequiredDependencyBlocked;
     } else {
         result = executeOwnPolicy(ref, *policy);
         result.diagnostics.insert(

@@ -50,7 +50,21 @@ void print_help() {
               << "  device reset <id>\n"
               << "  device check-permanent\n"
               << "  hash calc <path>\n"
-              << "  lock | unlock | lockstatus | status | shutdown\n";
+              << "  incident status\n"
+              << "  incident raise <soft|standard|hard|isolate>\n"
+              << "  incident clear\n"
+              << "  status | shutdown\n";
+}
+
+// Maps the CLI's lower-case severity argument to the authoritative token the
+// daemon stores. The mapping is exhaustive here and validated again by the
+// daemon's strict parser, so an unknown value can never be invented.
+const char* severity_to_token(const std::string& severity) {
+    if (severity == "soft") return "SOFT";
+    if (severity == "standard") return "STANDARD";
+    if (severity == "hard") return "HARD";
+    if (severity == "isolate") return "ISOLATE";
+    return "SOFT";
 }
 
 int print_response(const json& response) {
@@ -507,8 +521,35 @@ int main(int argc, char* argv[]) {
         return print_response(client.request({{"command", "calc_hash"}, {"value", path}}));
     }
 
-    if (command == "lock" || command == "unlock" || command == "lockstatus") {
-        return print_response(client.request({{"command", command}}));
+    if (command == "incident") {
+        const std::string action = arg(argc, argv, 2);
+        if (action == "status") {
+            return print_response(
+                client.request({{"command", "incident_status"}}));
+        }
+        if (action == "clear") {
+            return print_response(
+                client.request({{"command", "incident_clear"}}));
+        }
+        if (action == "raise") {
+            const std::string severity = arg(argc, argv, 3);
+            if (severity != "soft" && severity != "standard" &&
+                severity != "hard" && severity != "isolate") {
+                std::cerr << "incident raise requires one of: "
+                          << "soft, standard, hard, isolate" << std::endl;
+                return 1;
+            }
+            // The severity travels to the daemon as its authoritative token;
+            // the daemon parses it strictly, so the CLI never has to decide
+            // what a severity means.
+            return print_response(client.request({
+                {"command", "incident_raise"},
+                {"value", severity_to_token(severity)}
+            }));
+        }
+        std::cerr << "Unknown incident action: " << action << std::endl;
+        print_help();
+        return 1;
     }
 
     std::cout << "Unknown command" << std::endl;

@@ -509,9 +509,16 @@ fi
 if [ -d /opt/fic ]; then
     mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
-    if [ ! -f /opt/fic/lockstatus ]; then
-        printf '0\n' > /opt/fic/lockstatus
-    fi
+    # FIC incident state (/opt/fic/lockstatus) is AUTHORITATIVE security state.
+    #
+    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
+    # state file: after the incident-state schema change a missing state file
+    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
+    # "0" would silently turn an uncontainable system into an apparently clean
+    # one, which is exactly the fail-open the incident model forbids.
+    #
+    # Only the main fic package may create the initial state, and only after it
+    # has proven the file durable. Everything else leaves it strictly alone.
 
     if [ ! -f /opt/fic/db/commandhash.txt ]; then
         : > /opt/fic/db/commandhash.txt
@@ -548,9 +555,16 @@ fi
 if [ -d /opt/fic ]; then
     mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
-    if [ ! -f /opt/fic/lockstatus ]; then
-        printf '0\n' > /opt/fic/lockstatus
-    fi
+    # FIC incident state (/opt/fic/lockstatus) is AUTHORITATIVE security state.
+    #
+    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
+    # state file: after the incident-state schema change a missing state file
+    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
+    # "0" would silently turn an uncontainable system into an apparently clean
+    # one, which is exactly the fail-open the incident model forbids.
+    #
+    # Only the main fic package may create the initial state, and only after it
+    # has proven the file durable. Everything else leaves it strictly alone.
 
     if [ ! -f /opt/fic/db/commandhash.txt ]; then
         : > /opt/fic/db/commandhash.txt
@@ -587,9 +601,16 @@ fi
 if [ -d /opt/fic ]; then
     mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
-    if [ ! -f /opt/fic/lockstatus ]; then
-        printf '0\n' > /opt/fic/lockstatus
-    fi
+    # FIC incident state (/opt/fic/lockstatus) is AUTHORITATIVE security state.
+    #
+    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
+    # state file: after the incident-state schema change a missing state file
+    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
+    # "0" would silently turn an uncontainable system into an apparently clean
+    # one, which is exactly the fail-open the incident model forbids.
+    #
+    # Only the main fic package may create the initial state, and only after it
+    # has proven the file durable. Everything else leaves it strictly alone.
 
     if [ ! -f /opt/fic/db/commandhash.txt ]; then
         : > /opt/fic/db/commandhash.txt
@@ -719,9 +740,16 @@ fi
 if [ -d /opt/fic ]; then
     mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
-    if [ ! -f /opt/fic/lockstatus ]; then
-        printf '0\n' > /opt/fic/lockstatus
-    fi
+    # FIC incident state (/opt/fic/lockstatus) is AUTHORITATIVE security state.
+    #
+    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
+    # state file: after the incident-state schema change a missing state file
+    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
+    # "0" would silently turn an uncontainable system into an apparently clean
+    # one, which is exactly the fail-open the incident model forbids.
+    #
+    # Only the main fic package may create the initial state, and only after it
+    # has proven the file durable. Everything else leaves it strictly alone.
 
     if [ ! -f /opt/fic/db/commandhash.txt ]; then
         : > /opt/fic/db/commandhash.txt
@@ -751,6 +779,15 @@ fi
 /opt/fic/bin/fic-dick --maintenance initialize-db
 /opt/fic/bin/fic --maintenance check-config
 /opt/fic/bin/fic-dick --maintenance check-db
+
+# The main fic package is the single lifecycle owner of the authoritative
+# incident state. It creates the state ONLY when it is genuinely absent, does
+# so exclusively (never clobbering an object that appeared meanwhile), proves
+# the durability barrier and then re-reads the file through the same fail-closed
+# parser the daemon uses. An existing - including corrupt or foreign - state is
+# left strictly untouched and remains BROKEN_STATE (ISOLATE); an upgrade never
+# silently repairs a missing or corrupt state into UNLOCKED.
+/opt/fic/bin/fic --maintenance incident-init
 
 chown -R root:fic /opt/fic
 find /opt/fic -type d -exec chmod 2750 {} \;

@@ -39,6 +39,11 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_SOURCE_DIR}
     )
     add_test(
+        NAME incident_state_lifecycle_static_checks
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/IncidentStateLifecycleChecks.py
+    )
+    add_test(
         NAME notification_packaging_static_checks
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/notification-packaging-checks.py.in
@@ -737,6 +742,27 @@ add_executable(atomic_file_writer_remove_tests
 target_link_libraries(atomic_file_writer_remove_tests PRIVATE fic-core)
 add_test(NAME atomic_file_writer_remove_tests
          COMMAND atomic_file_writer_remove_tests)
+
+add_executable(incident_state_store_tests
+    fic/incident/IncidentStateStoreTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+)
+target_include_directories(incident_state_store_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(incident_state_store_tests PRIVATE fic-core)
+add_test(NAME incident_state_store_tests COMMAND incident_state_store_tests)
+
+add_executable(incident_controller_tests
+    fic/incident/IncidentControllerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+)
+target_include_directories(incident_controller_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(incident_controller_tests PRIVATE fic-core)
+add_test(NAME incident_controller_tests COMMAND incident_controller_tests)
 
 add_executable(pam_provider_managed_entry_executor_tests
     fic/modules/identity_access/pam/PamProviderManagedEntryExecutorTests.cpp

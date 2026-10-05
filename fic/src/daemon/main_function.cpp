@@ -53,16 +53,7 @@ void print_help_help(){
     std::cout << "  help                                     Выводит эту справку." << std::endl;
 }
 
-void print_help_lock(){
-    std::cout << "  lock                                     Заблокировать компьютер." << std::endl;
-}
-void print_help_unlock(){
-    std::cout << "  unlock                                   Разблокировать компьютер." << std::endl;
-}
 
-void print_help_lockstatus(){
-    std::cout << "  lockstatus                               Информация о блокировке" << std::endl;
-}
 
 void print_help_hash(){
     std::cout << "  hash calc <путь_к_исполняемому_файлу>    Вычислить (пересчитать хэш-сумму файла)" << std::endl;
@@ -91,92 +82,14 @@ void print_help() {
     print_help_policylist();
     print_help_modulelist();
 
-    print_help_lock();
-    print_help_unlock();
-    print_help_lockstatus();
-
     print_help_hash();
 }
 /*Функции вывода справки*/
 
 /*Собственно, функции FIC*/
-//Заблокировать компьютер
-bool lock(const fic::platform::PlatformExecutableResolver& executables){
-    const std::string lockStatusPath = fic::core::FicRuntimePaths::get().lockStatusFile.string();
-    SingleLineFileHandler slch = SingleLineFileHandler(lockStatusPath);
-    if(!slch.loadConfig()){
-        std::cerr << "    Не удалось прочитать файл " << lockStatusPath << std::endl;
-        return false;
-    }
-
-    if(!slch.setValue("", "1")){
-        std::cerr << "    Прозошла ошибка при блокировке компьютера" << std::endl;
-        return false;
-    }
-    if(!slch.saveConfig()){
-        std::cerr << "    Прозошла ошибка при блокировке компьютера" << std::endl;
-        return false;
-    }
-
-    std::cout << "    Компьютер заблокирован" << std::endl;
-
-    //Производим блокировку всех активных сессий
-    std::filesystem::path loginctl;
-    std::string resolverError;
-    if (!executables.resolve(
-            fic::platform::ExecutableId::Loginctl,
-            loginctl,
-            resolverError)) {
-        std::cerr << "    Не удалось выбрать loginctl: "
-                  << resolverError << std::endl;
-        return false;
-    }
-    const bool res = VerifiedProcessExecutor::execute(
-        loginctl.string(), {"lock-sessions"}).success();
-
-    if(!res){
-        std::cerr << "    Не удалось произвести блокировку активных сессий." << std::endl;
-        return false;
-    }
-    return true;
-}
-
-//Разблокировать компьютер
-bool unlock(){
-    const std::string lockStatusPath = fic::core::FicRuntimePaths::get().lockStatusFile.string();
-    SingleLineFileHandler slch = SingleLineFileHandler(lockStatusPath);
-    if(!slch.loadConfig()){
-        std::cerr << "    Не удалось прочитать файл " << lockStatusPath << std::endl;
-        return false;
-    }
-
-    if(!slch.setValue("", "0")){
-        std::cerr << "    Прозошла ошибка при разблокировке компьютера" << std::endl;
-        return false;
-    }
-    if(!slch.saveConfig()){
-        std::cerr << "    Прозошла ошибка при разблокировке компьютера" << std::endl;
-        return false;
-    }
-    std::cout << "    Компьютер разблокирован" << std::endl;
-    return true;
-}
-
-//Текущий статус
-bool lockstatus(){
-    const std::string lockStatusPath = fic::core::FicRuntimePaths::get().lockStatusFile.string();
-    SingleLineFileHandler slch = SingleLineFileHandler(lockStatusPath);
-    if(!slch.loadConfig()){
-        std::cerr << "    Не удалось прочитать файл " << lockStatusPath << std::endl;
-        return false;
-    }
-    if (slch.getValue() == "0"){
-        std::cout << "    Разблокировано" << std::endl;
-    }else{
-        std::cout << "    Заблокировано" << std::endl;
-    }
-    return true;
-}
+// lock()/unlock()/lockstatus() were removed together with the permissive
+// SingleLineFileHandler lockstatus protocol: the incident controller owns the
+// authoritative state and its fail-closed parser replaced the old 0/1 tokens.
 
 //Получить значение параметра
 std::string getArgvValue(int argc, char* argv[], int ind){

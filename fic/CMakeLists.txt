@@ -20,11 +20,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Автоматическое сканирование исходников
+# GLOB_RECURSE already descends the whole tree; the explicit depth wildcards
+# only exist to make the intended source roots obvious at a glance.
 file(GLOB_RECURSE SRC_FILES
     "src/*.cpp"
     "src/*/*.cpp"
     "src/*/*/*.cpp"
     "src/*/*/*/*.cpp"
+    "src/*/*/*/*/*.cpp"
 )
 
 # Собираем заголовки для IDE и MOC

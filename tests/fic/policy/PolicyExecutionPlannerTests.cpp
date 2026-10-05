@@ -6,6 +6,7 @@
 #include "policy/registry/PolicyRegistryInitialization.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -35,7 +36,7 @@ struct PolicyBehavior {
     int calls = 0;
 };
 
-class TestPolicy final : public Policy {
+class TestPolicy : public Policy {
 public:
     TestPolicy(
         PolicyRef identity,
@@ -947,6 +948,262 @@ void testSudoDependencyGraphShape(const std::filesystem::path& root) {
 
 }
 
+// ---------------------------------------------------------------------------
+// Violation severity semantics.
+//
+// The mandatory matrix from the incident specification, verified end to end
+// through the real execution planner and the real Policy metadata:
+//
+//   A Required->B, B fails  => B raises Y, A raises X (A is itself Failed),
+//                              result = max(X, Y). This is NOT inheritance:
+//                              A fires because A ITSELF ended in Failed.
+//   A Recommended->B, A succeeds, B fails
+//                           => only B raises, result = Y.
+//   A Recommended->B, both fail
+//                           => result = max(X, Y).
+// ---------------------------------------------------------------------------
+
+// Minimal policy that carries an explicit violation severity, so the matrix
+// can be driven from configuration rather than from compiled-in defaults.
+class SeverityPolicy final : public TestPolicy {
+public:
+    using TestPolicy::TestPolicy;
+
+    ::fic::core::ViolationSeverity getDefaultViolationSeverity() const override {
+        return ::fic::core::ViolationSeverity::None;
+    }
+};
+
+// Mirrors the daemon-side decision: for every result of an ENABLED policy
+// that ended in Failed, that policy's OWN violation severity is activated.
+// The iteration order cannot change the outcome because the merge is a max.
+::fic::core::IncidentSeverity severityRaisedBy(
+    const PolicyApplySummary& summary,
+    const PolicyRegistry& registry) {
+    ::fic::core::IncidentSeverity raised = ::fic::core::IncidentSeverity::Unlocked;
+    for (const PolicyApplyResult& policyResult : summary.getResults()) {
+        const PolicyRef owner{policyResult.moduleName,
+                              policyResult.submoduleName,
+                              policyResult.policyName};
+        const Policy* policy = registry.findPolicy(owner);
+        // A result for a policy that is no longer in the registry cannot be
+        // attributed a severity, and therefore cannot raise one.
+        if (policy == nullptr || !policy->isEnabled()) {
+            continue;
+        }
+        if (!policyResult.activatesIncident()) {
+            continue;
+        }
+        const ::fic::core::ViolationSeverity severity =
+            policy->getViolationSeverity();
+        if (!::fic::core::violationSeverityReacts(severity)) {
+            continue;
+        }
+        raised = ::fic::core::maxIncidentSeverity(
+            raised,
+            ::fic::core::violationSeverityToIncidentSeverity(severity));
+    }
+    return raised;
+}
+
+// Writes the module configuration into the runtime tree that main() already
+// initialized. FicRuntimePaths is intentionally a once-only singleton, so the
+// severity scenarios configure it in place instead of re-initializing.
+struct SeverityFixture {
+    SeverityFixture() {
+        configPath = fic::core::FicRuntimePaths::get().configDir / "AUDIT.conf";
+    }
+    std::filesystem::path configPath;
+};
+
+// Builds A (with a dependency on B) and B, with the requested severities and
+// apply outcomes, then returns the summary and the registry.
+struct MatrixResult {
+    PolicyApplySummary summary;
+    PolicyRegistry registry;
+};
+
+MatrixResult runMatrix(
+    PolicyDependencyStrength strength,
+    ::fic::core::ViolationSeverity aSeverity,
+    ::fic::core::ViolationSeverity bSeverity,
+    bool aFails,
+    bool bFails) {
+    SeverityFixture fixture;
+    {
+        std::ofstream config(fixture.configPath, std::ios::trunc);
+        config << "_schema_version=1\n"
+               << "a.status=ENABLE\na.violation_severity="
+               << ::fic::core::violationSeverityToken(aSeverity) << "\n"
+               << "b.status=ENABLE\nb.violation_severity="
+               << ::fic::core::violationSeverityToken(bSeverity) << "\n";
+    }
+
+    PolicyBehavior aBehavior;
+    PolicyBehavior bBehavior;
+    aBehavior.result = !aFails;
+    bBehavior.result = !bFails;
+    std::vector<std::string> order;
+
+    const PolicyRef b = ref("b");
+    const PolicyRef a = ref("a");
+    PolicyList policies;
+    policies.push_back(std::make_unique<SeverityPolicy>(b, bBehavior, order));
+    policies.push_back(std::make_unique<SeverityPolicy>(
+        a, aBehavior, order,
+        std::vector<PolicyDependency>{{b, strength, {}}}));
+    MatrixResult built;
+    built.registry = buildRegistry(std::move(policies));
+
+    PolicyExecutionRequest request;
+    request.requestedRoots.push_back(a);
+    built.summary = PolicyExecutionPlanner(built.registry).execute(request);
+    return built;
+}
+
+// A Required->B where B fails. B raises Y; A is ITSELF Failed
+// (RequiredDependencyBlocked) and raises X. The result is max(X, Y) and NOT
+// an inheritance of Y onto A.
+void testRequiredDependencyRaisesBothOwnSeverities() {
+    using VS = ::fic::core::ViolationSeverity;
+    using IS = ::fic::core::IncidentSeverity;
+
+    const MatrixResult isolateSoft = runMatrix(
+        PolicyDependencyStrength::Required, VS::Isolate, VS::Soft,
+        /*aFails=*/false, /*bFails=*/true);
+    require(result(isolateSoft.summary, ref("a")).status ==
+                PolicyApplyStatus::Failed,
+            "a Required-blocked dependent must be Failed");
+    require(result(isolateSoft.summary, ref("a")).failureOrigin ==
+                PolicyFailureOrigin::RequiredDependencyBlocked,
+            "the blocked dependent must report RequiredDependencyBlocked");
+    require(!result(isolateSoft.summary, ref("a")).ownApplyAttempted,
+            "a blocked dependent must not have run its own apply()");
+    require(severityRaisedBy(isolateSoft.summary, isolateSoft.registry) ==
+                IS::Isolate,
+            "A=ISOLATE with B=SOFT failing must raise ISOLATE");
+
+    const MatrixResult softHard = runMatrix(
+        PolicyDependencyStrength::Required, VS::Soft, VS::Hard,
+        /*aFails=*/false, /*bFails=*/true);
+    require(severityRaisedBy(softHard.summary, softHard.registry) == IS::Hard,
+            "A=SOFT with B=HARD failing must raise HARD");
+}
+
+// A Recommended->B where A SUCCEEDS and B fails. Only B raises: a
+// Recommended dependency failure must NOT fail the dependent.
+void testRecommendedDependencyDoesNotRaiseTheDependent() {
+    using VS = ::fic::core::ViolationSeverity;
+    using IS = ::fic::core::IncidentSeverity;
+
+    const MatrixResult run = runMatrix(
+        PolicyDependencyStrength::Recommended, VS::Isolate, VS::Hard,
+        /*aFails=*/false, /*bFails=*/true);
+    require(result(run.summary, ref("a")).status == PolicyApplyStatus::Applied,
+            "a Recommended dependency failure must not fail the dependent");
+    require(result(run.summary, ref("a")).failureOrigin ==
+                PolicyFailureOrigin::None,
+            "an applied policy has no failure origin");
+    require(severityRaisedBy(run.summary, run.registry) == IS::Hard,
+            "only the failing dependency may raise its own severity");
+}
+
+// A Recommended->B where BOTH fail: each raises its own severity.
+void testRecommendedDependencyRaisesBothWhenBothFail() {
+    using VS = ::fic::core::ViolationSeverity;
+    using IS = ::fic::core::IncidentSeverity;
+
+    const MatrixResult run = runMatrix(
+        PolicyDependencyStrength::Recommended, VS::Isolate, VS::Soft,
+        /*aFails=*/true, /*bFails=*/true);
+    require(severityRaisedBy(run.summary, run.registry) == IS::Isolate,
+            "both failures must raise max(X, Y)");
+    require(result(run.summary, ref("a")).ownApplyAttempted,
+            "a policy that failed on its own must report ownApplyAttempted");
+    require(result(run.summary, ref("a")).failureOrigin ==
+                PolicyFailureOrigin::OwnApplyFailure,
+            "an own-apply failure must report OwnApplyFailure");
+}
+
+// A policy with violation severity NONE never contributes to incident state,
+// even when it fails.
+void testNoneSeverityNeverRaises() {
+    using VS = ::fic::core::ViolationSeverity;
+    using IS = ::fic::core::IncidentSeverity;
+
+    const MatrixResult run = runMatrix(
+        PolicyDependencyStrength::Required, VS::None, VS::None,
+        /*aFails=*/true, /*bFails=*/true);
+    require(severityRaisedBy(run.summary, run.registry) == IS::Unlocked,
+            "NONE severities must never raise an incident");
+}
+
+// The full mandatory matrix X\\Y, verified row by row.
+void testFullRequiredDependencyMatrix() {
+    using VS = ::fic::core::ViolationSeverity;
+    using IS = ::fic::core::IncidentSeverity;
+    const std::vector<VS> levels = {VS::None, VS::Soft, VS::Standard,
+                                    VS::Hard, VS::Isolate};
+    for (const VS x : levels) {
+        for (const VS y : levels) {
+            const MatrixResult run = runMatrix(
+                PolicyDependencyStrength::Required, x, y,
+                /*aFails=*/false, /*bFails=*/true);
+            const ::fic::core::IncidentSeverity expected =
+                ::fic::core::maxIncidentSeverity(
+                    x == VS::None ? IS::Unlocked
+                                  : ::fic::core::violationSeverityToIncidentSeverity(x),
+                    y == VS::None ? IS::Unlocked
+                                  : ::fic::core::violationSeverityToIncidentSeverity(y));
+            require(severityRaisedBy(run.summary, run.registry) == expected,
+                    "required matrix cell X=" +
+                        ::fic::core::violationSeverityToken(x) +
+                        " Y=" + ::fic::core::violationSeverityToken(y) +
+                        " must raise the max of the two");
+        }
+    }
+}
+
+// A disabled policy must never raise an incident, even when its result set
+// says otherwise, because only ENABLED policies react.
+void testDisabledPolicyDoesNotRaise() {
+    using VS = ::fic::core::ViolationSeverity;
+    using IS = ::fic::core::IncidentSeverity;
+
+    SeverityFixture fixture;
+    {
+        std::ofstream config(fixture.configPath, std::ios::trunc);
+        config << "_schema_version=1\n"
+               << "a.status=ENABLE\na.violation_severity=ISOLATE\n"
+               << "b.status=DISABLE\nb.violation_severity=HARD\n";
+    }
+
+    PolicyBehavior aBehavior;
+    PolicyBehavior bBehavior;
+    std::vector<std::string> order;
+    const PolicyRef b = ref("b");
+    PolicyList policies;
+    policies.push_back(std::make_unique<SeverityPolicy>(b, bBehavior, order));
+    policies.push_back(std::make_unique<SeverityPolicy>(
+        ref("a"), aBehavior, order,
+        std::vector<PolicyDependency>{{b, PolicyDependencyStrength::Required, {}}}));
+    PolicyRegistry registry = buildRegistry(std::move(policies));
+
+    PolicyExecutionRequest request;
+    request.requestedRoots.push_back(ref("a"));
+    const PolicyApplySummary summary =
+        PolicyExecutionPlanner(registry).execute(request);
+    // The DISABLED dependency itself never raises (it is not an enabled
+    // failing policy). The enabled dependent A is Failed because its required
+    // dependency was not applied, so A raises its OWN ISOLATE severity.
+    require(result(summary, ref("b")).status == PolicyApplyStatus::Disabled,
+            "a disabled policy must report Disabled");
+    require(result(summary, ref("a")).status == PolicyApplyStatus::Failed,
+            "a policy blocked by a disabled required dependency must fail");
+    require(severityRaisedBy(summary, registry) == IS::Isolate,
+            "only the enabled failing policy may raise, using its own severity");
+}
+
 int main() {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() /
@@ -974,6 +1231,12 @@ int main() {
         testGraphValidation(root);
         testEnabledRequiredDependentsGuard(root);
         testSudoDependencyGraphShape(root);
+        testRequiredDependencyRaisesBothOwnSeverities();
+        testRecommendedDependencyDoesNotRaiseTheDependent();
+        testRecommendedDependencyRaisesBothWhenBothFail();
+        testNoneSeverityNeverRaises();
+        testFullRequiredDependencyMatrix();
+        testDisabledPolicyDoesNotRaise();
     } catch (...) {
         fs::remove_all(root);
         throw;

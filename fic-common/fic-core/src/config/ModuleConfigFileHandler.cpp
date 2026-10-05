@@ -19,6 +19,44 @@ std::string ModuleConfigFileHandler::valueKey(const std::string& policy) {
     return policy + ".value";
 }
 
+std::string ModuleConfigFileHandler::violationSeverityKey(
+    const std::string& policy) {
+    return policy + ".violation_severity";
+}
+
+bool ModuleConfigFileHandler::hasPolicyViolationSeverity(
+    const std::string& policy) const {
+    return ConfigFileHandler::isParameterExists(violationSeverityKey(policy));
+}
+
+::fic::core::ViolationSeverity ModuleConfigFileHandler::getPolicyViolationSeverity(
+    const std::string& policy) const {
+    const std::string key = violationSeverityKey(policy);
+    if (!ConfigFileHandler::isParameterExists(key)) {
+        // No entry: the caller falls back to the compiled-in default.
+        return ::fic::core::ViolationSeverity::None;
+    }
+    const std::optional<::fic::core::ViolationSeverity> parsed = ::fic::core::parseViolationSeverityToken(
+        ConfigFileHandler::getValue(key));
+    if (!parsed.has_value()) {
+        // An unparsable severity must not degrade the reaction: a policy whose
+        // configured severity cannot be understood is treated as ISOLATE.
+        return ::fic::core::ViolationSeverity::Isolate;
+    }
+    return *parsed;
+}
+
+bool ModuleConfigFileHandler::setPolicyViolationSeverity(
+    const std::string& policy,
+    ::fic::core::ViolationSeverity severity) {
+    if (policy.empty()) {
+        return false;
+    }
+    return ConfigFileHandler::setValue(
+        violationSeverityKey(policy),
+        ::fic::core::violationSeverityToken(severity));
+}
+
 bool ModuleConfigFileHandler::hasPolicyStatus(const std::string& policy) const {
     return ConfigFileHandler::isParameterExists(statusKey(policy));
 }
@@ -27,7 +65,7 @@ bool ModuleConfigFileHandler::hasConfiguredValue(const std::string& policy) cons
     return ConfigFileHandler::isParameterExists(valueKey(policy));
 }
 
-std::string ModuleConfigFileHandler::getPolicyStatus(const std::string& policy) {
+std::string ModuleConfigFileHandler::getPolicyStatus(const std::string& policy) const {
     const std::string key = statusKey(policy);
     if (!ConfigFileHandler::isParameterExists(key)) {
         return DISABLED_STATUS;

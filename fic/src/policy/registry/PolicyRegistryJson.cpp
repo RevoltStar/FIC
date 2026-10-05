@@ -1,5 +1,9 @@
 #include "policy/registry/PolicyRegistryJson.h"
 
+#include <fic/core/incident/IncidentSeverity.h>
+
+using ::fic::core::violationSeverityToken;
+
 #include <nlohmann/json.hpp>
 
 nlohmann::json moduleDescriptorsJson(const PolicyRegistry& registry)
@@ -56,8 +60,27 @@ nlohmann::json policyToJson(const std::string& module,
         {"editor", editorSpec.editor},
         {"validator", editorSpec.validator},
         {"possible_values", possibleValues},
-        {"restriction", policyClass.getPolicyRestriction()}
+        {"restriction", policyClass.getPolicyRestriction()},
+        // Incident metadata. The effective severity is what the daemon
+        // activates when THIS policy ends in Failed; it is never inherited
+        // along the dependency graph.
+        {"violation_severity",
+         violationSeverityToken(policyClass.getViolationSeverity())},
+        {"default_violation_severity",
+         violationSeverityToken(policyClass.getDefaultViolationSeverity())}
     };
+
+    // The full set a client may choose, so an editor never has to invent one.
+    nlohmann::json violationSeverities = nlohmann::json::array();
+    for (const ::fic::core::ViolationSeverity severity :
+         {::fic::core::ViolationSeverity::None,
+          ::fic::core::ViolationSeverity::Soft,
+          ::fic::core::ViolationSeverity::Standard,
+          ::fic::core::ViolationSeverity::Hard,
+          ::fic::core::ViolationSeverity::Isolate}) {
+        violationSeverities.push_back(violationSeverityToken(severity));
+    }
+    item["violation_severity_values"] = std::move(violationSeverities);
 
     if (editorSpec.min.has_value()) {
         item["min"] = *editorSpec.min;

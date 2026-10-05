@@ -127,9 +127,6 @@ void print_help_modulelist();
 void print_help_policylist();
 void print_help_policyrestrictioninfo();
 void print_help_help();
-void print_help_lock();
-void print_help_unlock();
-void print_help_lockstatus();
 void print_help_hash();
 void print_help_policy_action();
 
@@ -138,12 +135,6 @@ void print_help();
 /*Функции вывода справки*/
 
 
-//Заблокировать компьютер
-bool lock(const fic::platform::PlatformExecutableResolver& executables);
-//Разблокировать компьютер
-bool unlock();
-//Текущий статус
-bool lockstatus();
 //Получить значение параметра
 std::string getArgvValue(int argc, char* argv[], int ind);
 
