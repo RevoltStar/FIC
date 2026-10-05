@@ -6,6 +6,36 @@
 * base commit: `240410f` + follow-up «Harden SUDO scoped-defaults provenance and
   recovery lifecycle»
 
+## Final subsystem status
+
+```text
+sudo_disable_scoped_defaults hardening COMPLETE
+```
+
+Closure-аудит не выявил новых достижимых P0/P1 lifecycle defects. Единственный
+найденный production defect (liveness wedge в selective compensation) исправлен
+и закрыт regression'ом `LV`.
+
+**Intentional limitations** (не дефекты):
+
+* Не полная реализация sudoers grammar: assembler отвечает только за
+  physical → logical сборку; comments, include-лексика и wrapper-парсинг —
+  отдельные слои.
+* Некоторые неподдерживаемые syntax forms (например `%`-подстановки в
+  include) fail closed.
+* Атомарный filesystem snapshot против malicious root **не заявляется**;
+  topology-модель защищает от реалистичной конкурентной модификации
+  (admin, package manager, configuration manager).
+* Продолжения сохраняют существующие quirks (два пробела; backslash последней
+  строки файла не срезается) — это дедупликация semantics, а не её исправление.
+* Полный host E2E не запускался: он изменяет реальное системное состояние и
+  запрещён правилами проекта. Вся валидация — детерминированные unit/contract/
+  lifecycle-тесты на временных деревьях.
+* **Test gap:** отдельного детерминированного regression на topology guard
+  внутри `resolveAfterFailedMutation()` нет — сценарий не достигает этой ветки
+  через публичный API. Это не production bug: guard присутствует и покрыт
+  эквивалентной проверкой recovery-пути.
+
 ## Current task
 
 Доработка подсистемы SUDO: provenance-safe обёртки scoped `Defaults`,
@@ -256,15 +286,50 @@ Follow-up поверх `c325e92`:
 
 * `cmake -S . -B build-check -DFIC_TARGET_PLATFORM=ubuntu-24.04`
 * `cmake --build build-check -j4` — RC=0
-* `ctest --test-dir build-check --output-on-failure` — 119/119 PASS
+* `ctest --test-dir build-check --output-on-failure` — 120/120 PASS
   (`command_hash_batch_tests` — Skipped, не связан с задачей)
-* `sudo_scoped_defaults_lifecycle_tests` — RC=0 (8 E2E-сценариев)
+* `sudo_scoped_defaults_lifecycle_tests` — RC=0, 77/77 сценариев
+* `sudoers_logical_entries_tests` — RC=0, 8 contract-тестов assembler'а
+* `sudoers_configuration_tests` — RC=0
+* `mutation_journal_tests` — RC=0
+* `rollback_executor_tests` — RC=0
+* `policy_execution_planner_tests` — RC=0
 * `content_digest_tests` — RC=0
 * `visudo-rs 0.2.13` использован как oracle для синтаксиса обёрток.
   Для некавыченного backslash oracle непригоден: `visudo-rs` отказывает по
   ownership каталога **до** разбора include, поэтому эта форма закрыта
   fail-closed по upstream-исходникам (`toke.l` `<INSTR>` + `expand_include`),
   а не проверкой на хосте.
+
+## Closure audit (final)
+
+Проведён end-to-end audit state machine `sudo_disable_scoped_defaults` на
+closure-этапе. Найден и исправлен **один** реальный production defect
+(liveness), остальные исторические concerns оказались недостижимыми или уже
+закрытыми.
+
+* **Исправлено: selective compensation была ограничена current graph.**
+  `compensateToPrevious()` строил work inventory через graph-only
+  `globalInventory()`. Target-only wrapper на journal-known `canonicalPath`,
+  выпавшем из include graph, был невидим → компенсация не давала работы →
+  recovery отвечал FailClosed → **permanent recoverability wedge** (каждый
+  retry упирался в тот же тупик). Теперь inventory строится из
+  `captureProofAndGraphState(previous ∪ target)`, как уже делает `release()`.
+  Safety не нарушалась (ownership record оставался активным), страдала
+  liveness. Regression `LV` (RED до фикса).
+* **Проверено, `release(): transactions.empty()` недостижим.** Provenance
+  проверяется для каждого файла ДО цикла, а `restoreSudoDisabledEntries()`
+  ставит `changed=true` для каждой доказанной обёртки. Значит
+  `byPath != empty ⇒ transactions != empty`. Ветка задокументирована как
+  инвариант; логика не менялась.
+* **Topology snapshot-generation counterexample не найден.** Baseline = последний
+  успешный `load()`; любой `reloadAndVerify()` сопровождается свежим capture +
+  semantic proof + final topology guard в том же пути. Окно закрыто.
+* **Test gap (не production bug):** детерминированный regression на topology
+  guard внутри `resolveAfterFailedMutation()` построить не удалось — сценарий
+  не достигает этой ветки через публичный API. Guard присутствует и покрыт
+  эквивалентной проверкой в recovery-пути. Тест, не дифференцирующий
+  наличие guard'а, сознательно НЕ добавлен.
 
 ## Remaining
 

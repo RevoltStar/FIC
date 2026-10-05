@@ -198,6 +198,17 @@ duplicate и malformed wrapper, а также активный scoped Defaults, 
 новом capture, — fail closed. Benious изменение байтов того же member без
 активизации scoped Defaults (комментарий, global Defaults) no-op **не** ломает.
 
+### Selective compensation — capture-first, не graph-only
+
+`compensateToPrevious()` строит work inventory из
+`captureProofAndGraphState(previous ∪ target)`, а **не** из graph-only
+`globalInventory()`. Target-only wrapper, физически существующий на
+journal-known `canonicalPath`, выпавшем из current include graph, обязан быть
+компенсируемым: иначе компенсация не даёт работы, recovery отвечает
+`FailClosed`, и запись **необратимо** застревает, поскольку каждый retry упирается
+в тот же тупик. Safety при этом не нарушалась — ownership record оставался
+активным, — страдала именно liveness.
+
 ### SUDO multiline parity: один shared logical-entry assembler
 
 Parser и snapshot-bound semantic proof **не должны** по-разному понимать один и

@@ -1904,6 +1904,25 @@ struct PartialRefreshFixture {
         const auto partial = installer.apply({planned[0]}, partialHooks);
         require(partial.ok(), partial.operation.message);
     }
+    // Installs the STAGED target wrappers that are still missing, reusing the
+    // STAGED proofs: re-planning would mint different wrapper ids than the
+    // journal record, and the disk would no longer match the recorded target.
+    void installStagedRemaining() {
+        SudoersConfiguration staged(options);
+        std::string stagedError;
+        require(staged.load(stagedError), stagedError);
+        SudoScopedDefaultsHooks partialHooks = productionHooks(staged);
+        partialHooks.reloadAndVerify = [&staged](std::string& e) {
+            return staged.load(e);
+        };
+        ScopedDefaultsTransaction installer(staged, kPolicyName);
+        // prepareRefreshAndInstallB() installed planned[0] only.
+        require(planned.size() >= 2, "a remaining staged wrapper is expected");
+        const std::vector<PlannedScopedDefaultsMutation> remaining(
+            planned.begin() + 1, planned.end());
+        const auto applied = installer.apply(remaining, partialHooks);
+        require(applied.ok(), applied.operation.message);
+    }
     TempTree& tree;
     SudoersConfigurationOptions options;
     std::vector<SudoScopedDefaultsWrapperProof> ownedA;
@@ -2025,37 +2044,21 @@ void testTargetOnlySurvivesOutsideGraph() {
     const std::string bPath = fixture.fresh[0].canonicalPath;
 
     // Disk becomes {A,B,C}: C is installed and stays INSIDE the include graph,
-    // so compensateToPrevious() has REAL target-only work to do.
-    {
-        SudoersConfiguration staged(fixture.options);
-        std::string stagedError;
-        require(staged.load(stagedError), stagedError);
-        SudoScopedDefaultsHooks partialHooks = productionHooks(staged);
-        partialHooks.reloadAndVerify = [&staged](std::string& e) {
-            return staged.load(e);
-        };
-        ScopedDefaultsTransaction installer(staged, kPolicyName);
-        // B is already installed by the fixture; install ONLY C so the disk
-        // becomes exactly {A,B,C}.
-        const auto rest = installer.apply({fixture.planned[1]}, partialHooks);
-        require(rest.ok(), rest.operation.message);
-    }
-    const std::set<std::string> installed =
-        onDiskWrapperIds(tree.root);
+    // so the compensation has a real target-only file to work on.
+    fixture.installStagedRemaining();
+    const std::set<std::string> installed = onDiskWrapperIds(tree.root);
     require(installed.count(bId) == 1, "B must be installed");
     require(installed.size() == 3, "disk must be exactly {A,B,C}");
 
-    // B's file leaves the include graph while staying physically present, and B
-    // drifts from its target proof. The drift is required: capture includes the
-    // TARGET paths, so a pristine {A,B,C} would classify as CompleteTarget and
-    // never reach the selective compensation.
+    // B's file leaves the include graph while staying physical, and B drifts
+    // from its target proof. A capture-first compensation now sees B as well, so
+    // the DRIFT is what must stop the rewind: a drifted wrapper can never be
+    // safely unwrapped, and rewriting it would activate foreign content.
     writeFile(bPath, wrapperBlock(bId, "Defaults:bob passwd_tries=10"));
     writeFile(tree.root / "sudoers",
               "@include " + (tree.root / "a.conf").string() + "\n"
               "@include " + (tree.root / "c.conf").string() + "\n");
 
-    // Deterministic assertion that the run really went through a SUCCESSFUL
-    // compensateToPrevious(): the hook only runs after it returns Compensated.
     bool compensationRan = false;
     const std::function<void()> hook = [&compensationRan]() {
         compensationRan = true;
@@ -2068,16 +2071,14 @@ void testTargetOnlySurvivesOutsideGraph() {
     fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
     const auto outcome = lifecycle.reconcile(kPolicyName);
 
-    require(compensationRan,
-            "the test must pass through a successful compensateToPrevious()");
     require(!outcome.ok,
-            "a surviving target-only wrapper must forbid normalization");
+            "a drifted target-only wrapper outside the graph must fail closed");
+    require(!compensationRan,
+            "the compensation must refuse before publishing any work");
     require(activePreparedCount() == 1,
-            "the Prepared record must stay active: no normalize to "
-            "Applied(previous)");
-    // B was captured through targetProof.canonicalPath and is still physical.
+            "the Prepared record must stay active: no normalize");
     require(onDiskWrapperIds(tree.root).count(bId) == 1,
-            "B must still be physically present");
+            "the drifted wrapper must be left physically untouched");
 }
 
 
@@ -3436,6 +3437,67 @@ void testClassificationSeesPreviousWrapperOutsideGraph() {
             "the record must be resolved to Applied(previous)");
 }
 
+
+// --- LV: selective compensation must not be limited to the current graph ----
+//
+// LIVENESS, not safety: a target-only wrapper that physically exists at a
+// journal-known canonicalPath which has fallen out of the current include graph
+// is invisible to a graph-only inventory. Compensation then produces no work,
+// recovery answers FailClosed, and the Prepared record can never be resolved:
+// every retry reaches exactly the same dead end.
+//
+// The expected resolution is CompensatedExisting/normalize, because the wrapper
+// is real, journal-known and removable by its proof.
+
+void testCompensationSeesTargetOnlyWrapperOutsideGraph() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    TopologyRefreshFixture fixture(tree);
+    // Install only the first target wrapper: disk is a strict subset of target,
+    // so the classification is Indeterminate and compensation must run.
+    fixture.installPartialTarget(1);
+    require(fixture.planned.size() >= 2,
+            "the target must hold more than one wrapper");
+
+    // The file carrying the installed target-only wrapper leaves the include
+    // graph while staying physical at its journal proof path.
+    const std::filesystem::path orphan = fixture.planned.front().target.path;
+    const std::string orphanName = orphan.filename().string();
+    writeFile(tree.root / "sudoers",
+              kRootLine +
+                  "@include " + (tree.root / "a.conf").string() + "\n"
+                  "@include " + (tree.root / "c.conf").string() + "\n"
+                  "@includedir " + (tree.root / "dropins").string() + "\n");
+    (void)orphanName;
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    // The wrapper really is gone from the graph but present on disk.
+    require(onDiskWrapperIds(tree.root).size() >= 2,
+            "previous and the target-only wrapper must both be physical");
+
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto recovery = lifecycle.recoverPrepared(kPolicyName);
+
+    require(recovery.result !=
+                fic::sudoers::PreparedRecoveryResult::FailClosed,
+            "a journal-known target-only wrapper outside the graph must not "
+            "wedge recovery: " + recovery.message);
+    require(recovery.result ==
+                fic::sudoers::PreparedRecoveryResult::CompensatedExisting ||
+                recovery.result ==
+                    fic::sudoers::PreparedRecoveryResult::NormalizedExisting,
+            "the record must be resolved back to the previous ownership: " +
+                recovery.message);
+    require(activePreparedCount() == 0,
+            "no Prepared record may be left active");
+}
+
+
+
 // ---------------------------------------------------------------------------
 // Test registry.
 //
@@ -3527,6 +3589,7 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"ML7 multiline rollback is byte-exact (no final newline)", testMultilineByteExactRollbackNoFinalNewline},
         {"ML8 logical entry straddling a wrapper boundary fails closed", testLogicalEntryStraddlingWrapperFailsClosed},
         {"CL classification sees previous wrapper outside the graph", testClassificationSeesPreviousWrapperOutsideGraph},
+        {"LV compensation reaches a target-only wrapper outside the graph", testCompensationSeesTargetOnlyWrapperOutsideGraph},
     };
     return cases;
 }

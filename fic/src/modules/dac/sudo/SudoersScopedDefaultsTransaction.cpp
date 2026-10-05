@@ -1017,6 +1017,17 @@ SudoScopedDefaultsTransactionResult ScopedDefaultsTransaction::release(
         transaction.newContent = joinPhysicalLines(lines);
         transactions.push_back(std::move(transaction));
     }
+    // Unreachable while byPath is non-empty, and deliberately NOT a second
+    // shortcut around the FullyReleased proof:
+    //   * provenance was verified for EVERY file above, so every wrapper left in
+    //     byPath is proven by `proofs` for that exact file;
+    //   * restoreSudoDisabledEntries() sets changed=true for every proven wrapper
+    //     it unwraps.
+    // Therefore byPath non-empty implies at least one transaction. If a future
+    // change ever breaks that pairing, this branch would report Success without
+    // proving FullyReleased or durability, which is exactly the "observed
+    // filesystem state mistaken for a finished rollback" failure the
+    // byPath.empty() branch above guards against.
     if (transactions.empty()) {
         result.kind = SudoScopedDefaultsResultKind::Success;
         result.operation.ok = true;
@@ -1162,14 +1173,55 @@ bool ScopedDefaultsTransaction::compensateToPrevious(
         return false;
     }
 
-    std::vector<OwnedWrapper> inventory;
-    if (!globalInventory(inventory, error)) {
+    // The work inventory is built from the SAME capture-first authority the rest
+    // of this component uses: the current graph UNION every previous/target proof
+    // path. A graph-only inventory would make a target-only wrapper that fell out
+    // of the current include graph invisible, compensation would produce no
+    // work, and recovery would answer Indeterminate forever: a permanent
+    // recoverability wedge, because every retry would reach the same dead end
+    // while the wrapper stays real, journal-known and removable by its proof.
+    std::vector<SudoScopedDefaultsWrapperProof> captureProofs =
+        targetProofs;
+    captureProofs.insert(captureProofs.end(), previousProofs.begin(),
+                         previousProofs.end());
+    ScopedDefaultsCapturedState captured;
+    if (!captureProofAndGraphState(captureProofs, captured, error)) {
         return false;
     }
     std::map<std::filesystem::path, std::vector<SudoDisabledWrapper>> byPath;
-    for (const OwnedWrapper& owned : inventory) {
-        if (owned.wrapper.policy == policyName_) {
-            byPath[owned.path].push_back(owned.wrapper);
+    {
+        std::map<std::string, std::filesystem::path> idOwner;
+        for (const CapturedSudoersDocument& document : captured.documents) {
+            if (document.kind == CapturedPathKind::Absent) {
+                continue;
+            }
+            const std::vector<SudoPhysicalLine> lines =
+                linesOf(document.state.content);
+            std::vector<SudoDisabledWrapper> parsed;
+            std::string parseError;
+            if (parseSudoDisabledWrappers(lines, parsed, parseError) !=
+                SudoWrapperParseStatus::Ok) {
+                error = parseError;
+                return false;
+            }
+            const std::string canonical =
+                canonicalizeSudoProofPath(document.path);
+            for (const SudoDisabledWrapper& wrapper : parsed) {
+                if (wrapper.policy != policyName_) {
+                    continue;
+                }
+                // One id authorizes exactly ONE physical wrapper, globally.
+                const auto seen = idOwner.find(wrapper.mutationId);
+                if (seen != idOwner.end() && seen->second != canonical) {
+                    error = "wrapper id '" + wrapper.mutationId +
+                            "' встречается в двух sudoers-файлах (" +
+                            seen->second.string() + " и " + canonical +
+                            "); глобальная уникальность не доказана";
+                    return false;
+                }
+                idOwner.emplace(wrapper.mutationId, canonical);
+                byPath[document.path].push_back(wrapper);
+            }
         }
     }
 
