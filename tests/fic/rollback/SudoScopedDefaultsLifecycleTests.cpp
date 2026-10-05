@@ -2409,6 +2409,399 @@ void testNewViolationOverBrokenOwnership() {
     require(readAll(fixture.site) == mutated, "FIC must not have written");
 }
 
+
+// ===========================================================================
+// AO/AQ-series: @includedir TOPOLOGY binding.
+//
+// A captured file set alone is not a sufficient security proof: a brand-new
+// @includedir member can appear after load() and carry active scoped Defaults
+// or a copied FIC wrapper that NO capture path knows about.
+//
+// NOTE on eligibility: `ignoredIncludedirName()` ignores any name containing a
+// dot, so an eligible member name must NOT contain '.'. The fixtures below
+// therefore use names like "abase" / "bnew", which is exactly what this
+// configuration really loads.
+// ===========================================================================
+
+struct DropinFixture {
+    // `abaseContent` decides whether the loaded graph has an ACTIVE scoped
+    // Defaults violation. "Defaults:bob ..." IS scoped (the scope character is
+    // mandatory), while a bare "Defaults ..." is a GLOBAL default and therefore
+    // not a violation at all.
+    DropinFixture(TempTree& treeRef, const std::string& abaseContent)
+        : tree(treeRef) {
+        dropins = tree.root / "dropins";
+        std::filesystem::create_directories(dropins);
+        writeFile(dropins / "abase", abaseContent);
+        writeFile(tree.root / "sudoers", "@includedir " + dropins.string() + "\n");
+        options = sudoOptions(tree.root);
+    }
+    TempTree& tree;
+    std::filesystem::path dropins;
+    SudoersConfigurationOptions options;
+};
+
+// --- AO: a new active drop-in before the final commit ---------------------
+
+void testNewDropinBeforeFinalCommit() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    DropinFixture fixture(tree, "Defaults:bob passwd_tries=9\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&fixture]() {
+        // The external process drops a new eligible member with an ACTIVE
+        // violation that this plan never saw.
+        writeFile(fixture.dropins / "bnew", "Defaults:carol passwd_tries=4\n");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!outcome.ok,
+            "a new @includedir member must block the final commit: " + outcome.message);
+    require(activePreparedCount() == 1,
+            "the Prepared record must stay active");
+}
+
+// --- AO-deletion: a deleted member before the final commit ----------------
+
+void testDeletedDropinBeforeFinalCommit() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    DropinFixture fixture(tree, "Defaults:bob passwd_tries=9\n");
+    writeFile(fixture.dropins / "bsecond", "Defaults:carol passwd_tries=4\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&fixture]() {
+        std::filesystem::remove(fixture.dropins / "bsecond");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!outcome.ok,
+            "a DELETED @includedir member must also invalidate the proof");
+    require(activePreparedCount() == 1, "the Prepared record must stay active");
+}
+
+// --- AO-rename: a renamed member before the final commit ------------------
+
+void testRenamedDropinBeforeFinalCommit() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    DropinFixture fixture(tree, "Defaults:bob passwd_tries=9\n");
+    writeFile(fixture.dropins / "bsecond", "Defaults:carol passwd_tries=4\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&fixture]() {
+        std::filesystem::rename(fixture.dropins / "bsecond",
+                                fixture.dropins / "zsecond");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!outcome.ok, "a RENAMED member is a topology change");
+    require(activePreparedCount() == 1, "the Prepared record must stay active");
+}
+
+// --- AO-ignored: an IGNORED member must NOT cause a mismatch --------------
+// "ignored.conf" contains a dot, so this configuration never loads it. Adding
+// it must leave the topology equivalent, which proves the topology verifier
+// shares the parser's eligibility rule instead of re-implementing it.
+
+void testIgnoredDropinDoesNotChangeTopology() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    DropinFixture fixture(tree, "Defaults:bob passwd_tries=9\n");
+    // Also a dotfile and a backup, both ignored by the same rule.
+    writeFile(fixture.dropins / "ignored.conf", "Defaults:bob passwd_tries=9\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&fixture]() {
+        writeFile(fixture.dropins / ".hidden", "Defaults:bob passwd_tries=9\n");
+        writeFile(fixture.dropins / "backup~", "Defaults:bob passwd_tries=9\n");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(outcome.ok,
+            "an ignored member must not invalidate a correct proof: " +
+                outcome.message);
+    require(activePreparedCount() == 0, "the record must be committed");
+}
+
+// --- AO-dir-error: the includedir becomes a regular file ------------------
+
+void testIncludedirBecomesRegularFile() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    DropinFixture fixture(tree, "Defaults:bob passwd_tries=9\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&fixture]() {
+        std::filesystem::remove_all(fixture.dropins);
+        writeFile(fixture.dropins, "not a directory\n");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!outcome.ok,
+            "an includedir that stopped being a directory must fail closed");
+    require(activePreparedCount() == 1, "the Prepared record must stay active");
+}
+
+// --- AO-dir-gone: the includedir disappears ------------------------------
+
+void testIncludedirDisappears() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    DropinFixture fixture(tree, "Defaults:bob passwd_tries=9\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&fixture]() {
+        std::filesystem::remove_all(fixture.dropins);
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!outcome.ok,
+            "a vanished includedir must NOT be read as an empty directory");
+    require(activePreparedCount() == 1, "the Prepared record must stay active");
+}
+
+// --- AU: a new drop-in before a successful no-op ------------------------
+
+void testNewDropinBeforeNoOp() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    // A GLOBAL Defaults is not a scoped violation, so the loaded graph has no
+    // active scoped Defaults and the reconcile would be a no-op.
+    DropinFixture fixture(tree, "Defaults passwd_tries=3\n");
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(configuration.scopedDefaultsViolations().empty(),
+            "the loaded graph must have no active scoped Defaults, otherwise "
+            "this is not a no-op scenario");
+
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeNoOpTopologyGuard = [&fixture]() {
+        writeFile(fixture.dropins / "bnew",
+                  "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!outcome.ok || !outcome.unchanged,
+            "a stale unchanged success must be impossible after a new drop-in");
+    require(!outcome.unchanged,
+            "the no-op must not be reported as unchanged on a stale graph");
+}
+
+// --- AP: a copied wrapper via a new drop-in before rollback resolution ----
+
+void testCopiedWrapperViaNewDropinBeforeRollback() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    DropinFixture fixture(tree, "Defaults:bob passwd_tries=9\n");
+    // Install wrapper A through the drop-in so the journal owns it.
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok,
+            "apply A");
+    const auto owned = activeOwned();
+    require(owned.size() == 1, "the journal must own exactly A");
+    const std::string wrapperBody = readAll(
+        std::filesystem::path(owned[0].canonicalPath));
+
+    SudoersConfiguration rollbackConfiguration(fixture.options);
+    std::string loadError;
+    require(rollbackConfiguration.load(loadError), loadError);
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.sudoersOptions = [fixture]() { return fixture.options; };
+    deps.beforeSudoRollbackTopologyGuard = [&fixture, &wrapperBody]() {
+        // A COPY of wrapper A appears in a brand-new eligible member that no
+        // capture path knows about.
+        writeFile(fixture.dropins / "bnew", wrapperBody);
+    };
+    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        scopedPolicy(), kScopedDefaultsResource, deps);
+
+    require(report.status != fic::rollback::RollbackStatus::Success,
+            "a copied wrapper in a new drop-in must block rollback Success");
+    require(report.status != fic::rollback::RollbackStatus::NothingToDo,
+            "the journal provenance must remain active");
+    require(activeOwned().size() == 1,
+            "the ownership record must still be active");
+}
+
+// --- AT8: ownership preflight from b6dc2b0 still holds under topology -----
+// A wrapper that left the graph but whose proof path is known keeps being
+// inspected, even when an @includedir is present.
+
+void testOwnershipOutsideGraphWithIncludedir() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    DropinFixture fixture(tree, "Defaults:alice exempt_group=wheel\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    require(reconcile(configuration, productionHooks(configuration)).ok,
+            "apply A: " + error);
+    const auto owned = activeOwned();
+    require(owned.size() == 1, "the journal must own exactly A");
+
+    // The @includedir leaves the graph entirely, while the file that carries
+    // wrapper A stays physical at the journal's proof path.
+    writeFile(tree.root / "sudoers", "# no include directives\n");
+    SudoersConfiguration afterDrop(fixture.options);
+    std::string dropError;
+    require(afterDrop.load(dropError), dropError);
+
+    // Drift wrapper A at its proof path. The b6dc2b0 ownership preflight must
+    // still see it and fail closed: the topology guard is NOT what catches this,
+    // so the two mechanisms stay separate.
+    const std::filesystem::path proofPath(owned[0].canonicalPath);
+    std::string drifted = readAll(proofPath);
+    const size_t at = drifted.find("exempt_group=wheel");
+    require(at != std::string::npos, "wrapper A body must be present");
+    drifted.replace(at, std::string("exempt_group=wheel").size(),
+                    "exempt_group=daemon");
+    writeFile(proofPath, drifted);
+
+    ScopedDefaultsTransaction transaction(afterDrop, kPolicyName);
+    require(!transaction.validateCurrentOwnership(owned).empty(),
+            "the ownership preflight must still inspect the proof path of a "
+            "wrapper that left the include graph");
+}
+
+
+// --- AV-topology: a new drop-in before a recovery normalization -----------
+
+void testNewDropinBeforeRecoveryNormalization() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    PartialRefreshFixture fixture(tree);
+    fixture.applyA();
+    // Refreshing an existing owner: previous={A}, and nothing landed on disk, so
+    // the recovery classification is CompletePrevious and the lifecycle reaches
+    // the previous normalization.
+    writeFile(tree.root / "b.conf",
+              "Defaults passwd_tries=3\nDefaults:bob passwd_tries=9\n");
+    {
+        SudoersConfiguration staged(fixture.options);
+        std::string stagedError;
+        require(staged.load(stagedError), stagedError);
+        ScopedDefaultsTransaction planner(staged, kPolicyName);
+        const auto plan = planner.plan(fixture.ownedA);
+        std::vector<SudoScopedDefaultsWrapperProof> fresh;
+        for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+            fresh.push_back(mutation.proof);
+        }
+        require(!fresh.empty(), "a refresh must be planned");
+        stageRefresh(fixture.ownedA, scopedPolicy(), fresh);
+    }
+    // A fresh @includedir whose membership changes during the recovery.
+    std::filesystem::create_directories(tree.root / "dropins");
+    writeFile(tree.root / "dropins" / "abase", "Defaults passwd_tries=3\n");
+    writeFile(tree.root / "sudoers",
+              "@include " + (tree.root / "a.conf").string() + "\n"
+              "@include " + (tree.root / "b.conf").string() + "\n"
+              "@include " + (tree.root / "c.conf").string() + "\n"
+              "@includedir " + (tree.root / "dropins").string() + "\n");
+
+    SudoersConfiguration configuration(fixture.options);
+    std::string error;
+    require(configuration.load(error), error);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(configuration, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&tree]() {
+        writeFile(tree.root / "dropins" / "bnew",
+                  "Defaults passwd_tries=3\nDefaults:carol passwd_tries=4\n");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!outcome.ok,
+            "a topology change must block the previous normalization: " +
+                outcome.message);
+    require(activePreparedCount() == 1,
+            "the Prepared record must remain active");
+}
+
+// --- AW-topology: a new drop-in before a fresh Prepared discard ----------
+
+void testNewDropinBeforeFreshDiscard() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    std::filesystem::create_directories(tree.root / "dropins");
+    writeFile(tree.root / "dropins" / "abase", "Defaults:bob passwd_tries=9\n");
+    writeFile(tree.root / "sudoers",
+              "@includedir " + (tree.root / "dropins").string() + "\n");
+    const SudoersConfigurationOptions options = sudoOptions(tree.root);
+
+    SudoersConfiguration configuration(options);
+    std::string error;
+    require(configuration.load(error), error);
+    // A FRESH Prepared whose target never landed: previous is empty, so the
+    // recovery path is the fresh discard.
+    ScopedDefaultsTransaction planner(configuration, kPolicyName);
+    const auto plan = planner.plan({});
+    std::vector<SudoScopedDefaultsWrapperProof> targets;
+    for (const PlannedScopedDefaultsMutation& mutation : plan.fresh) {
+        targets.push_back(mutation.proof);
+    }
+    require(!targets.empty(), "a target must be planned");
+    MutationId id = 0;
+    UndoAction undo{MutationBackend::Sudo,
+                    UndoReleaseSudoScopedDefaults{kPolicyName, {}, targets}};
+    require(recordPreparedMut(scopedPolicy(), undo, id, error), error);
+    require(activePreparedCount() == 1, "the Prepared record must exist");
+
+    SudoersConfiguration recovery(options);
+    std::string loadError;
+    require(recovery.load(loadError), loadError);
+    fic::sudoers::ScopedDefaultsLifecycleDeps deps =
+        productionDeps(recovery, SudoScopedDefaultsHooks{});
+    deps.journal.beforeFinalTopologyGuard = [&tree]() {
+        writeFile(tree.root / "dropins" / "bnew",
+                  "Defaults passwd_tries=3\nDefaults:dave passwd_tries=5\n");
+    };
+    fic::sudoers::ScopedDefaultsLifecycle lifecycle(std::move(deps));
+    const auto outcome = lifecycle.reconcile(kPolicyName);
+
+    require(!outcome.ok,
+            "a topology change must block a fresh discard: " + outcome.message);
+    require(activePreparedCount() == 1,
+            "the Prepared record must remain active");
+}
+
 // ---------------------------------------------------------------------------
 // Test registry.
 //
@@ -2474,6 +2867,17 @@ const std::vector<LifecycleCase>& lifecycleCases() {
         {"AT6a owned proof path is a directory", testOwnedPathAsDirectory},
         {"AT6b owned proof path is a symlink", testOwnedPathAsSymlink},
         {"AT7 new violation over broken ownership", testNewViolationOverBrokenOwnership},
+        {"AO new drop-in before final commit", testNewDropinBeforeFinalCommit},
+        {"AO-deleted drop-in before final commit", testDeletedDropinBeforeFinalCommit},
+        {"AO-renamed drop-in before final commit", testRenamedDropinBeforeFinalCommit},
+        {"AO-ignored member keeps topology equivalent", testIgnoredDropinDoesNotChangeTopology},
+        {"AO includedir became a regular file", testIncludedirBecomesRegularFile},
+        {"AO includedir disappeared", testIncludedirDisappears},
+        {"AU new drop-in before no-op", testNewDropinBeforeNoOp},
+        {"AP copied wrapper via new drop-in before rollback", testCopiedWrapperViaNewDropinBeforeRollback},
+        {"AT8 ownership outside graph with includedir", testOwnershipOutsideGraphWithIncludedir},
+        {"AV-topology new drop-in before recovery normalization", testNewDropinBeforeRecoveryNormalization},
+        {"AW-topology new drop-in before fresh discard", testNewDropinBeforeFreshDiscard},
     };
     return cases;
 }

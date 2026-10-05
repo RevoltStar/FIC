@@ -51,6 +51,12 @@ struct ScopedDefaultsJournalAccess {
     // Test-only seam between a successful mechanical compensation and the final
     // snapshot-bound previous-resolution proof.
     std::function<void()> afterPreparedCompensation;
+    // Test-only seam immediately BEFORE the final @includedir topology guard of
+    // a journal transition (commit / normalize / discard). Lets a test change
+    // the directory membership in the exact window the guard protects.
+    std::function<void()> beforeFinalTopologyGuard;
+    // Test-only seam immediately BEFORE the no-op topology guard.
+    std::function<void()> beforeNoOpTopologyGuard;
 };
 
 struct ScopedDefaultsLifecycleDeps {
@@ -103,6 +109,12 @@ public:
     // EXACTLY that capture -> discard. Used by every fresh-transition path:
     // CompletePrevious recovery, a failed mutation and a compensation back to
     // the empty previous side.
+    // Re-proves that no @includedir the loaded graph was built from changed its
+    // membership. `stage` names the decision being protected, for the message.
+    // This is NOT a file capture: it closes the window where a brand-new
+    // @includedir member appears that no capture path knows about.
+    bool verifyTopologyUnchanged(const char* stage, std::string& error) const;
+
     bool resolveFreshPreparedToNoOwnership(
         MutationId mutationId,
         const std::vector<SudoScopedDefaultsWrapperProof>& targetProofs,

@@ -599,6 +599,7 @@ void SudoersConfiguration::clear() {
     documents_.clear();
     orderedLines_.clear();
     includedDirectories_.clear();
+    includedDirectoryTopology_.clear();
 }
 
 bool SudoersConfiguration::load(std::string& error) {
@@ -639,6 +640,61 @@ std::optional<size_t> SudoersConfiguration::loadDocument(const std::filesystem::
     }
     documents_.push_back(std::move(document));
     return documents_.size() - 1;
+}
+
+// THE single "@includedir membership" implementation, shared by load() and by
+// verifyIncludedDirectoryTopologyUnchanged(). Existence, directory safety, the
+// eligibility filter and the lexical order are decided here ONCE, so the parser
+// and the security-sensitive topology verifier can never disagree about what
+// "@includedir" means.
+bool SudoersConfiguration::enumerateIncludedirMembers(
+    const std::filesystem::path& directory,
+    std::vector<std::filesystem::path>& entries,
+    bool& exists,
+    std::string& error) const {
+    entries.clear();
+    exists = false;
+    std::error_code directoryError;
+    if (!std::filesystem::exists(directory, directoryError)) {
+        if (directoryError) {
+            error = "Не удалось проверить include-каталог: " + directory.string();
+            return false;
+        }
+        // Parser semantics: a missing @includedir is skipped, not an error.
+        return true;
+    }
+    if (!std::filesystem::is_directory(directory, directoryError) ||
+        directoryError) {
+        error = "Include-путь не является каталогом: " + directory.string();
+        return false;
+    }
+    // Same contract as load(): a symlinked or otherwise unsafe directory is
+    // refused, never silently traversed.
+    if (!checkDirectorySafety(directory, error)) {
+        return false;
+    }
+    exists = true;
+    for (const auto& entry :
+         std::filesystem::directory_iterator(directory, directoryError)) {
+        if (directoryError) {
+            break;
+        }
+        const std::string name = entry.path().filename().string();
+        if (!ignoredIncludedirName(name)) {
+            entries.push_back(entry.path());
+        }
+    }
+    if (directoryError) {
+        error = "Не удалось прочитать include-каталог: " + directory.string();
+        return false;
+    }
+    // The SAME order sudoers itself would apply, so membership identity keeps
+    // the parser meaning.
+    std::sort(entries.begin(), entries.end(),
+              [](const auto& left, const auto& right) {
+                  return left.filename().string() < right.filename().string();
+              });
+    return true;
 }
 
 bool SudoersConfiguration::expandFile(const std::filesystem::path& path,
@@ -724,43 +780,26 @@ bool SudoersConfiguration::expandDocument(size_t documentIndex,
         }
 
         includedDirectories_.push_back(normalizedExistingPath(resolved));
+        // Record the membership that produced THIS graph, so a later
+        // security-sensitive decision can be invalidated if the directory
+        // changes underneath it.
+        std::vector<std::filesystem::path> entries;
+        IncludedDirectoryTopology topology;
+        topology.canonicalPath = normalizedExistingPath(resolved);
         std::error_code directoryError;
-        if (!std::filesystem::exists(resolved, directoryError)) {
-            if (directoryError) {
-                error = "Не удалось проверить include-каталог: " + resolved.string();
-                includeStack.pop_back();
-                return false;
-            }
+        if (!enumerateIncludedirMembers(resolved, entries, topology.existed,
+                                        error)) {
+            includeStack.pop_back();
+            return false;
+        }
+        if (!topology.existed) {
+            includedDirectoryTopology_.push_back(std::move(topology));
             continue;
         }
-        if (!std::filesystem::is_directory(resolved, directoryError) || directoryError) {
-            error = "Include-путь не является каталогом: " + resolved.string();
-            includeStack.pop_back();
-            return false;
+        for (const auto& entry : entries) {
+            topology.eligibleMembers.push_back(entry.filename().string());
         }
-        if (!checkDirectorySafety(resolved, error)) {
-            includeStack.pop_back();
-            return false;
-        }
-
-        std::vector<std::filesystem::path> entries;
-        for (const auto& entry : std::filesystem::directory_iterator(resolved, directoryError)) {
-            if (directoryError) {
-                break;
-            }
-            const std::string name = entry.path().filename().string();
-            if (!ignoredIncludedirName(name)) {
-                entries.push_back(entry.path());
-            }
-        }
-        if (directoryError) {
-            error = "Не удалось прочитать include-каталог: " + resolved.string();
-            includeStack.pop_back();
-            return false;
-        }
-        std::sort(entries.begin(), entries.end(), [](const auto& left, const auto& right) {
-            return left.filename().string() < right.filename().string();
-        });
+        includedDirectoryTopology_.push_back(std::move(topology));
         for (const auto& entry : entries) {
             if (!expandFile(entry, includeStack, depth + 1, error)) {
                 includeStack.pop_back();
@@ -770,6 +809,53 @@ bool SudoersConfiguration::expandDocument(size_t documentIndex,
     }
 
     includeStack.pop_back();
+    return true;
+}
+
+bool SudoersConfiguration::verifyIncludedDirectoryTopologyUnchanged(
+    std::string& error) const {
+    // Re-enumerate with the SAME implementation the parser used. Every failure
+    // mode (not a directory, symlink where forbidden, permission, I/O error)
+    // fails closed here instead of being silently read as "empty".
+    for (const IncludedDirectoryTopology& expected : includedDirectoryTopology_) {
+        std::vector<std::filesystem::path> entries;
+        bool exists = false;
+        if (!enumerateIncludedirMembers(expected.canonicalPath, entries, exists,
+                                        error)) {
+            error = "не удалось перепроверить состав include-каталога " +
+                    expected.canonicalPath.string() + ": " + error;
+            return false;
+        }
+        if (exists != expected.existed) {
+            error = expected.existed
+                        ? "include-каталог исчез после загрузки sudoers: "
+                        : "include-каталог появился после загрузки sudoers: ";
+            error += expected.canonicalPath.string();
+            return false;
+        }
+        std::vector<std::string> members;
+        members.reserve(entries.size());
+        for (const std::filesystem::path& entry : entries) {
+            members.push_back(entry.filename().string());
+        }
+        if (members == expected.eligibleMembers) {
+            continue;
+        }
+        // A single changed name invalidates the proof. Whether it was added,
+        // removed or renamed does not matter: the effective graph FIC planned
+        // and proved against is no longer the graph on disk.
+        error = "состав include-каталога изменился после загрузки sudoers (" +
+                expected.canonicalPath.string() + "): было [";
+        for (const std::string& name : expected.eligibleMembers) {
+            error += name + " ";
+        }
+        error += "], стало [";
+        for (const std::string& name : members) {
+            error += name + " ";
+        }
+        error += "]";
+        return false;
+    }
     return true;
 }
 

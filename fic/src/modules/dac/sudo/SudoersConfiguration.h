@@ -111,6 +111,46 @@ public:
     std::vector<GraphDocument> graphDocuments() const;
     std::vector<GraphEntry> graphEntries() const;
 
+    // The exact @includedir membership the LAST SUCCESSFUL load() used to build
+    // the graph.
+    //
+    // SECURITY ROLE: a captured file set alone is not a sufficient security
+    // proof. If the membership of an @includedir changed after load(), the
+    // effective graph FIC planned and proved against is stale: a brand-new
+    // eligible member may carry active scoped Defaults or a copied FIC wrapper
+    // that no capture path knows about. So membership is part of the proof
+    // state and any change invalidates it.
+    //
+    // Membership identity is deliberately NOT a content identity: the content of
+    // each member is proven separately by the ordinary file capture/proof
+    // layer. This answers exactly one question: "do the same eligible physical
+    // members still constitute this @includedir?".
+    struct IncludedDirectoryTopology {
+        // Canonical path of the directory.
+        std::filesystem::path canonicalPath;
+        // Whether the directory EXISTED at load time. A directory that was
+        // absent then and is absent now is unchanged; a directory that was
+        // known and then disappears is NOT an empty directory.
+        bool existed = false;
+        // Exactly the names the loader itself would expand, in the SAME
+        // lexical order the parser uses. Ignored names are never listed, so an
+        // ignored member can never cause a false mismatch.
+        std::vector<std::string> eligibleMembers;
+    };
+
+    // Topology captured by the last successful load().
+    const std::vector<IncludedDirectoryTopology>& includedDirectoryTopology() const {
+        return includedDirectoryTopology_;
+    }
+
+    // Re-enumerates every @includedir captured by load() and fails closed unless
+    // the membership is still identical: no member added, removed or renamed,
+    // and no directory that became missing / not-a-directory / unreadable.
+    //
+    // The comparison reuses the SAME eligibility rule as the parser, so an
+    // ignored filename cannot produce a false mismatch.
+    bool verifyIncludedDirectoryTopologyUnchanged(std::string& error) const;
+
     // Runs the configured validator (visudo) over the current configuration.
     // Exposed for the scoped-Defaults transaction, which owns the filesystem
     // steps but must not duplicate the sudoers-specific validation logic.
@@ -137,6 +177,18 @@ private:
     std::vector<Document> documents_;
     std::vector<OrderedLine> orderedLines_;
     std::vector<std::filesystem::path> includedDirectories_;
+    std::vector<IncludedDirectoryTopology> includedDirectoryTopology_;
+
+    // THE single implementation of "@includedir membership": existence check,
+    // directory safety, eligibility filter and lexical ordering. Used BOTH by
+    // load() to build the graph AND by verifyIncludedDirectoryTopologyUnchanged()
+    // to re-prove membership, so the parser and the topology verifier can never
+    // drift apart.
+    bool enumerateIncludedirMembers(
+        const std::filesystem::path& directory,
+        std::vector<std::filesystem::path>& entries,
+        bool& exists,
+        std::string& error) const;
 
     bool expandFile(const std::filesystem::path& path,
                     std::vector<std::filesystem::path>& includeStack,

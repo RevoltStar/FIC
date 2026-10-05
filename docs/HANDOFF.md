@@ -11,6 +11,26 @@
 Доработка подсистемы SUDO: provenance-safe обёртки scoped `Defaults`,
 crash-consistent транзакция, snapshot-bound ownership preflight. Выполнено.
 
+## SUDO security proof = files + @includedir topology
+
+* Доказательство состоит из **двух частей**, и изменение любой инвалидирует
+  его: (1) physical file state = `graph documents ∪ journal proof paths`;
+  (2) `@includedir` topology state = exact eligible membership, снятый при
+  успешном `load()`.
+* Новый eligible member, удаление и rename → mismatch. Содержимое member'ов по-прежнему
+  доказывается обычным file capture; membership identity ≠ content identity.
+* **Одна eligibility semantics:** `SudoersConfiguration::enumerateIncludedirMembers()`
+  используется и парсером, и verifier'ом, поэтому ignored-имя не может дать
+  ложный mismatch. Важно: `ignoredIncludedirName()` отбрасывает любое имя с
+  точкой, поэтому eligible-имена точек не содержат.
+* Guards стоят перед: final apply commit, commit существующей Prepared
+  (`CompleteTarget`), fresh Prepared discard, previous normalization, rollback
+  `Success`/`NothingToDo` и **успешным no-op**. Расхождение проваливает текущую
+  попытку; retry loop нет.
+* Различать: обычный `@include` известного файла **≠** membership topology
+  `@includedir`.
+* Атомарный snapshot каталога не заявляется; incoherent enumeration → fail closed.
+
 ## SUDO ownership preflight — physical-path based
 
 * **Current include graph НЕ является authority владения.** Preflight работает

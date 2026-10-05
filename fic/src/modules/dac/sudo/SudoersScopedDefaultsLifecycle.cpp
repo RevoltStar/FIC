@@ -82,6 +82,22 @@ bool ScopedDefaultsLifecycle::proveStrictState(
 }
 
 
+bool ScopedDefaultsLifecycle::verifyTopologyUnchanged(
+    const char* stage, std::string& error) const {
+    if (deps_.configuration == nullptr) {
+        error = "нет конфигурации sudoers";
+        return false;
+    }
+    std::string verifyError;
+    if (!deps_.configuration->verifyIncludedDirectoryTopologyUnchanged(
+            verifyError)) {
+        error = std::string("топология @includedir изменилась (") + stage +
+                "), доказательство недействительно: " + verifyError;
+        return false;
+    }
+    return true;
+}
+
 bool ScopedDefaultsLifecycle::provePreviousResolution(
     const std::string& policyName,
     const std::vector<SudoScopedDefaultsWrapperProof>& previousProofs,
@@ -151,6 +167,17 @@ bool ScopedDefaultsLifecycle::resolveFreshPreparedToNoOwnership(
     if (!ScopedDefaultsTransaction::proveCapturedStateDurable(proof.captured,
                                                                error)) {
         outcome.message = "отсутствие target-владения не durable: " + error;
+        return false;
+    }
+    // Discarding on "the filesystem looks like the previous side" is only valid
+    // for the loaded graph: a new @includedir member could bring a wrapper that
+    // must NOT be released, so membership is re-proved before the transition.
+    if (deps_.journal.beforeFinalTopologyGuard) {
+        deps_.journal.beforeFinalTopologyGuard();
+    }
+    std::string discardTopologyError;
+    if (!verifyTopologyUnchanged("discard", discardTopologyError)) {
+        outcome.message = discardTopologyError;
         return false;
     }
     std::string discardError;
@@ -239,6 +266,14 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
                 strictError;
             return outcome;
         }
+        if (deps_.journal.beforeFinalTopologyGuard) {
+            deps_.journal.beforeFinalTopologyGuard();
+        }
+        std::string recoveryTopologyError;
+        if (!verifyTopologyUnchanged("commit существующей Prepared", recoveryTopologyError)) {
+            outcome.message = recoveryTopologyError;
+            return outcome;
+        }
         std::string commitError;
         if (!deps_.journal.commit(preparedId, commitError)) {
             outcome.result = PreparedRecoveryResult::FailClosed;
@@ -288,6 +323,15 @@ ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
                     strictError;
                 return outcome;
             }
+        }
+        if (deps_.journal.beforeFinalTopologyGuard) {
+            deps_.journal.beforeFinalTopologyGuard();
+        }
+        std::string normalizeTopologyError;
+        if (!verifyTopologyUnchanged("normalize к previous",
+                                     normalizeTopologyError)) {
+            outcome.message = normalizeTopologyError;
+            return outcome;
         }
         std::string normalizeError;
         if (!deps_.journal.normalizePreparedToPrevious(preparedId, previous,
@@ -468,6 +512,19 @@ ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
 
     const ScopedDefaultsPlan plan = transaction.plan(owned);
     if (plan.fresh.empty()) {
+        // A no-op is a SECURITY-SENSITIVE decision: "there is nothing to do" is
+        // only true for the graph that was actually loaded. A new @includedir
+        // member may have appeared meanwhile and brought active scoped Defaults
+        // that this plan never saw, so membership is re-proved before any
+        // success. Fail the call: no internal retry loop.
+        if (deps_.journal.beforeNoOpTopologyGuard) {
+            deps_.journal.beforeNoOpTopologyGuard();
+        }
+        std::string topologyError;
+        if (!verifyTopologyUnchanged("no-op", topologyError)) {
+            outcome.message = topologyError;
+            return outcome;
+        }
         outcome.ok = true;
         outcome.unchanged = true;
         outcome.message = "Активных контекстных Defaults не обнаружено";
@@ -535,6 +592,18 @@ ScopedDefaultsLifecycleOutcome ScopedDefaultsLifecycle::reconcile(
                 "запрещён: " + strictError;
             return outcome;
         }
+    }
+
+    // The strict proof above is bound to the captured files, but a brand-new
+    // @includedir member is invisible to every capture path. Re-prove membership
+    // in the exact window between the proof and the journal transition.
+    if (deps_.journal.beforeFinalTopologyGuard) {
+        deps_.journal.beforeFinalTopologyGuard();
+    }
+    std::string finalTopologyError;
+    if (!verifyTopologyUnchanged("commit", finalTopologyError)) {
+        outcome.message = finalTopologyError;
+        return outcome;
     }
 
     if (!deps_.journal.commit(mutationId, journalError)) {

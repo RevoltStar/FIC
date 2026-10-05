@@ -138,6 +138,68 @@ in-memory копии текущего конфига (`validatePlannedRollbackId
 классифицировать. Валидные сценарии дубликатов (`Port 22/Port 2022`, три
 одинаковых `Port 22`, before/after collision) сохраняются.
 
+### SUDO security proof = files + @includedir topology
+
+Доказательство безопасности SUDO состоит из **двух независимых частей**:
+
+```text
+1. physical file state:
+   graph documents ∪ journal proof canonical paths
+
+2. @includedir topology state:
+   exact eligible membership captured by SudoersConfiguration
+```
+
+Изменение **любого** компонента инвалидирует доказательство.
+
+Файловое capture само по себе недостаточно: новый eligible member каталога может
+появиться после `load()` и нести активный scoped `Defaults` или скопированную
+FIC-обёртку, о которых не знает ни один capture path.
+
+```text
+loaded:   {10-base}
+позже:    {10-base, 20-new}   → topology mismatch
+```
+
+Неважно, успели ли мы узнать содержимое `20-new`. Сам факт нового eligible
+member инвалидирует старый proof. Удаление и rename — тоже изменение: план и
+semantic proof построены по другому effective graph.
+
+**Важно различать:**
+
+```text
+ordinary @include известного файла   !=   @includedir membership topology
+```
+
+Явный `@include /path/file` сам по себе известен graph/capture layer. Этот этап
+касается только каталогов, меняющих membership.
+
+Membership identity — **не** content identity: содержимое каждого member
+проверяется обычным file capture/proof слоем. Topology отвечает ровно на один
+вопрос: «тот же набор eligible physical members всё ещё составляет этот
+`@includedir`?».
+
+Topology записывается при каждом успешном `load()` и пере-проверяется перед
+каждым security-sensitive journal transition: final apply commit, commit
+существующей Prepared (`CompleteTarget`), fresh Prepared discard, previous
+normalization и rollback `Success`/`NothingToDo`, а также перед успешным
+no-op. Расхождение инвалидирует текущую попытку; внутреннего retry loop нет.
+
+**Одна eligibility semantics.** Enumeration каталога (проверка существования,
+directory safety, фильтр игнорируемых имён, лексический порядок) вынесена в
+единственный `enumerateIncludedirMembers()`, который используют и `load()`, и
+verifier. Parser и security-verifier не могут разойтись в трактовке
+`@includedir`: игнорируемое имя никогда не создаёт ложный mismatch.
+
+Ошибки каталога (стал не каталогом, symlink там, где запрещён, permission/I/O,
+исчез) → **fail closed**. Исчезновение ранее известного каталога **не**
+читается как «пустой каталог».
+
+**Не заявляется** атомарный filesystem snapshot каталога: модель защищена от
+реалистичной конкурентной модификации (admin, package manager, configuration
+manager), а не от malicious root. Если во время enumeration coherent-результат
+получить нельзя, enumeration возвращает ошибку и вызывающий код fail closed.
+
 ### SUDO ownership preflight — physical-path based
 
 Ownership preflight для активного SUDO-владения **опирается на physical path, а

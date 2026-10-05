@@ -379,6 +379,23 @@ MutationRollbackOutcome undoSudoScopedDefaults(
     for (const std::string& diagnostic : restoration.operation.diagnostics) {
         outcome.message += ". " + diagnostic;
     }
+    // Success and NothingToDo are security-sensitive RESOLUTIONS, not just
+    // reports: Success marks the journal record resolved, and NothingToDo
+    // proves the wrappers are gone. Both are only valid for the graph that was
+    // actually loaded, so @includedir membership is re-proved before the
+    // status is decided. A brand-new member may carry a copied FIC wrapper
+    // that no capture path knows about.
+    if (deps.beforeSudoRollbackTopologyGuard) {
+        deps.beforeSudoRollbackTopologyGuard();
+    }
+    std::string topologyError;
+    if (!configuration.verifyIncludedDirectoryTopologyUnchanged(topologyError)) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message =
+            "топология @includedir изменилась, rollback не разрешён: " +
+            topologyError;
+        return outcome;
+    }
     if (restoration.operation.conflict) {
         outcome.status = RollbackStatus::Conflict;
     } else if (restoration.ok() && restoration.operation.targetMissing) {

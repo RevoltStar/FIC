@@ -85,6 +85,10 @@ struct RollbackExecutorDeps {
     std::filesystem::path sysctlRuntimeRoot;
     // SUDO backend configuration (managed sudoers etc.).
     std::function<SudoersConfigurationOptions()> sudoersOptions;
+    // Test-only seam immediately BEFORE the final @includedir topology guard of a
+    // SUDO rollback resolution, so a test can change directory membership in
+    // the exact window the guard protects.
+    std::function<void()> beforeSudoRollbackTopologyGuard;
     // SSH backend configuration: shared main sshd_config, service units and
     // the executable resolver used for sshd -T validation and service reload.
     std::function<SshRollbackOptions()> sshOptions;
