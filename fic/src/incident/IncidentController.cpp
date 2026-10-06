@@ -82,12 +82,20 @@ IncidentResult IncidentController::applyContainment(
     runtime_ = RuntimeState::Applying;
 
     ContainmentStatus status;
-    // The PAM gate is not implemented. Severity is intent, not proof that a
-    // login is denied by a working gate.
     status.pamGateActive = false;
     std::vector<std::string> failures;
     if (severity >= IncidentSeverity::Standard) {
-        failures.emplace_back("PAM incident access gate is unavailable");
+        std::string gateDiagnostic;
+        try {
+            status.pamGateActive = accessGateVerifier_ &&
+                accessGateVerifier_(gateDiagnostic);
+        } catch (...) {
+            gateDiagnostic = "PAM gate verifier failed";
+        }
+        if (!status.pamGateActive) {
+            failures.emplace_back("PAM incident access gate is unproven: " +
+                                  gateDiagnostic);
+        }
     }
 
     if (incidentSeverityIsUnlocked(severity)) {
@@ -250,7 +258,8 @@ IncidentResult IncidentController::raise(
         ? raised.effectiveSeverity
         : IncidentSeverity::Isolate;
     result.escalated = raised.escalated;
-    result.brokenState = raised.brokenStatePersisted;
+    result.persistentStateBroken =
+        stateStore_.read().provenance != IncidentStateStore::Provenance::Proven;
     result.detail = raised.detail;
 
     if (!raised.durable) {
@@ -266,7 +275,7 @@ IncidentResult IncidentController::raise(
             "incident state could not be persisted; containing at ISOLATE");
         contained.previousSeverity = result.previousSeverity;
         contained.escalated = result.escalated;
-        contained.brokenState = result.brokenState;
+        contained.persistentStateBroken = result.persistentStateBroken;
         contained.ok = false;
         contained.runtime = RuntimeState::Degraded;
         runtime_ = RuntimeState::Degraded;
@@ -310,7 +319,8 @@ IncidentResult IncidentController::clear(const std::string& actor) {
     const IncidentStateStore::ClearResult cleared = stateStore_.clear();
     result.ok = cleared.ok;
     result.effectiveSeverity = cleared.effectiveSeverity;
-    result.brokenState = cleared.brokenState;
+    result.persistentStateBroken =
+        stateStore_.read().provenance != IncidentStateStore::Provenance::Proven;
     result.detail = cleared.detail;
 
     if (!cleared.ok) {
@@ -362,6 +372,7 @@ IncidentStatus IncidentController::status() {
     const IncidentStateStore::ReadResult read = stateStore_.read();
     IncidentStatus status;
     status.stateProven = read.provenance == IncidentStateStore::Provenance::Proven;
+    status.provenance = read.provenance;
     // Only a positively proven UNLOCKED means "no incident". Everything else -
     // including a missing, corrupt or unprovable state file - is ISOLATE.
     status.severity = status.stateProven
@@ -384,7 +395,7 @@ IncidentResult IncidentController::reconcile() {
             ? read.severity
             : IncidentSeverity::Isolate;
     result.effectiveSeverity = result.previousSeverity;
-    result.brokenState =
+    result.persistentStateBroken =
         read.provenance != IncidentStateStore::Provenance::Proven;
     result.runtime = runtime_;
 
@@ -424,7 +435,7 @@ void IncidentController::recordAudit(
                 {"effective_severity",
                  ::fic::core::incidentSeverityToken(result.effectiveSeverity)},
                 {"escalated", result.escalated},
-                {"broken_state", result.brokenState},
+                {"persistent_state_broken", result.persistentStateBroken},
                 {"runtime_state", runtimeStateToString(result.runtime)},
                 {"source", source.name},
                 {"reason", reason},

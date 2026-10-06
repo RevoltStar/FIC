@@ -6,10 +6,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     dpkg-dev \
+    git \
     file \
     libgl1-mesa-dev \
     libglib2.0-dev \
     libopengl-dev \
+    libpam0g-dev \
     libsqlite3-dev \
     libssl-dev \
     libsystemd-dev \

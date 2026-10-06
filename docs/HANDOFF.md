@@ -2,51 +2,32 @@
 
 ## Current base
 
-* Branch: `main`; task base: `f8bb2919eb780850676fe2cbffeb1031ea632e24`.
+* Branch `main`; parent commit `041854677a6a2c2bb1ca7f4fc4af924756b8eb7d`.
 
 ## Current task
 
-Focused follow-up hardening of the Incident Response core and package lifecycle.
+* Incident Response PAM access gate and daemon readiness stage is implemented in this commit.
 
-## Accepted architecture and invariants
+## Accepted architecture / invariants
 
-* `/opt/fic/lockstatus` and its parent `/opt/fic` form one provenance boundary. Only exact, securely proven severity content is trusted; missing, malformed or unsafe state is effective ISOLATE.
-* Package normalization may change children of `/opt/fic`, but must not repair the parent or `lockstatus` during upgrades or auxiliary package scripts. RPM manifests must not own `/opt/fic`: `%dir` restores its metadata during upgrade. Main package first-install bootstrap may prepare the parent only before `incident-init` when state is absent.
-* Ordinary raise is monotonic and cannot repair malformed state. Administrative clear may replace a proven malformed object using its exact precondition. Clear from absence uses exclusive creation; repeated clear from proven UNLOCKED is a persistent no-op.
-* Successful clear requires durable UNLOCKED. Failed clear may restore the prior severity or encode durable BROKEN/ISOLATE; the controller reports the resulting severity and `brokenState`.
-* Emergency containment precedes persistence-failure audit. Notifications map SOFT/STANDARD to WARN, HARD to ERROR, ISOLATE to FATAL, and a successful transition to UNLOCKED to INFO.
-
-| Observation | Effective state | Ordinary raise | Administrative clear |
-|---|---|---|---|
-| Proven UNLOCKED | UNLOCKED | monotonic | persistent no-op |
-| Proven SOFT/STANDARD/HARD/ISOLATE | proven severity | monotonic max | conditional UNLOCKED |
-| Proven absence | BROKEN/ISOLATE | never lowers | exclusive UNLOCKED create |
-| Malformed, exact object proven | BROKEN/ISOLATE | never repairs | exact conditional UNLOCKED replace |
-| Symlink, unsafe metadata/parent, proof race | BROKEN/ISOLATE | fail closed | refuse |
+* Ordinary account login requires one live daemon reply, readiness `READY`, proven persistent state, and severity `UNLOCKED` or `SOFT`; every other result denies. The same main loop handles IPC and policy apply, so a blocked apply leads to the PAM client's bounded two-second timeout.
+* `pam_fic_access.so` runs only in PAM `account` with `required`; it is neutral for services outside each `PlatformProfile` login list. Trusted local root on `login` and a target-user member of `fic` with securely proven `lock_exempt_fic_members.status=ENABLE` recover before IPC. Broken or missing `GLOBAL.conf` disables group recovery, never local-root recovery.
+* PAM uses the compiled production socket, checks daemon `SO_PEERCRED` UID 0, and validates the full `access_gate_status` reply. `FIC_SOCKET_PATH` cannot redirect it. The daemon proves module loadability and effective account topology before `READY`; the same proof feeds `IncidentController::pamGateActive`.
+* Debian/Ubuntu package lifecycle owns a permanent `pam-auth-update` account profile. ALT attaches a transactional marked rule to `system-auth-common`; erase detaches it only after provider release, while upgrade keeps it. The gate is independent of raise/clear.
+* `IncidentResult::persistentStateBroken` reflects observed persistent provenance independently of containment status. SSH has PAM-side support, but end-to-end SSH gating remains conditional until `ssh_use_pam` and effective `UsePAM` verification exist.
 
 ## Completed
 
-* Excluded `/opt/fic` from generic ownership and mode normalization in Debian and ALT RPM package generators, and from RPM `%files` ownership.
-* Hardened state-store clear, write preconditions, failure reporting, controller audit order and notifications.
-* Added incident and packaging lifecycle regressions.
-
-## Changed areas
-
-* `packaging/deb/`, `packaging/rpm/`, `fic-common/fic-core/src/fs/`, `fic/src/incident/`, `fic/src/main.cpp`, and related tests.
+* Added typed IncidentAccessGate metadata for Debian 12/13, Ubuntu 24.04/26.04, and ALT p11; module, secure recovery reader, target-user NSS membership check, strict client, read-only daemon IPC, readiness transitions, topology verifier, packaging hooks, and focused tests.
+* Controlled services cover `login`, `sshd`, SDDM/LightDM normal and autologin, GDM password/autologin/fingerprint and distro-specific smartcard entry points. Greeters and general PAM consumers remain neutral. Official distro PAM package files were inspected to establish these routes.
 
 ## Validation
 
-* `bash -n` for both package generators: passed.
-* `python3 tests/integration/packaging/IncidentStateLifecycleChecks.py`: passed.
-* `cmake --build build-check --target incident_state_store_tests incident_controller_tests fic -j2`: passed for the affected targets.
-* `ctest --test-dir build-check -R 'incident_(state_store|controller)_tests' --output-on-failure`: 2/2 passed.
-* RED-before packaging fixture from `f8bb2919`: old generic `find` selected `/opt/fic` and ordinary children while excluding only `lockstatus`; the new lifecycle check failed on the base generators.
-* Isolated Debian 12 `dpkg -i` fixture preserved existing `/opt/fic` mode 0777 during upgrade. Isolated ALT RPM fixture changed 0777 to 0755 when `%dir /opt/fic` was listed and preserved 0777 after excluding that manifest entry.
-* Fresh `/tmp/fic-incident-core-20261006-check` configure and full build passed; `ctest -N` registered 125 tests, including all incident tests and lifecycle checks.
-* First sandbox full CTest: 2 failures (`session_agent_static_checks` still expected the old `find`; `session_event_server_tests` could not bind a Unix socket). Updated the static check and passed it separately.
-* Full CTest outside sandbox after that fix: 125/125 passed, with `command_hash_batch_tests` skipped by its own gate.
+* Fresh Debian 12 container: full configure/build passed; `ctest -N` found 132 tests; root CTest excluding `mutation_journal_tests` passed 131/131; that test passed separately under UID 1000. The all-root CTest run failed only its chmod-denial injection because root bypasses mode permissions.
+* Debian 12/13, Ubuntu 24.04/26.04 installed topology checks passed with real display-manager PAM files and generated `common-account`. ALT p11 runtime verifier passed with official `login`, `openssh-server`, `gdm-data`, `sddm`, and `lightdm` RPM PAM files, including `gdm-smartcard` through `system-auth-pkcs11` and `system-auth-common`.
+* Debian and ALT `ldd` showed no missing module dependencies. Debian staged CMake install placed the module under `/lib/x86_64-linux-gnu/security`. Isolated libpam smoke passed local-root recovery, remote-root denial, ordinary/autologin denial, and neutral `sudo` behavior.
+* PAM packaging checks, platform static checks, shell syntax checks, and `git diff --check` passed. Ubuntu 26.04 affected targets/tests passed in the existing builder with temporary PAM headers; rebuilding that builder hit an external Ubuntu `libpng16` mirror error.
 
 ## Remaining
 
-* Actual FIC DEB/RPM install or upgrade was not run; only isolated minimal package fixtures were installed. No host policy apply or PAM/logind/nftables runtime validation was run.
-* Production PAM access gate, session backend, network quarantine, early guard, recovery, greeter/display gate, Device Control integration and GUI remain outside this task. Product default `violation_severity` decisions remain unspecified.
+* Session/network containment, boot guard, display gate, and effective SSH `UsePAM` proof belong to later stages. Full DEB/RPM install, upgrade, and erase were not run; lifecycle scripts have static/fixture coverage. No host PAM files were modified or runtime policy apply performed for this validation.

@@ -837,7 +837,13 @@ if [ "\${1:-}" = "configure" ]; then
         fic-faillock-hook-preauth \
         fic-faillock-hook-authfail \
         fic-faillock-hook-authsucc \
-        fic-faillock-hook-account
+        fic-faillock-hook-account \
+        fic-incident-access
+    if ! fic_prove_permanent_hooks_attached; then
+        echo "FIC: refusing to start daemon: permanent PAM account gate is not proven attached" >&2
+        exit 1
+    fi
+    /opt/fic/bin/fic --maintenance incident-pam-verify
 fi
 
 if command -v systemd-tmpfiles >/dev/null 2>&1; then
@@ -898,12 +904,14 @@ fic_prove_permanent_hooks_attached() {
     grep -q "^Module: fic-faillock-hook-authfail$" /var/lib/pam/auth 2>/dev/null || return 1
     grep -q "^Module: fic-faillock-hook-authsucc$" /var/lib/pam/auth 2>/dev/null || return 1
     grep -q "^Module: fic-faillock-hook-account$" /var/lib/pam/account 2>/dev/null || return 1
+    grep -q "^Module: fic-incident-access$" /var/lib/pam/account 2>/dev/null || return 1
     # Exact physical attachment proof: an active, correctly facilitated
     # include rule with the exact hook target in the generated stack.
     grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-preauth$" /etc/pam.d/common-auth 2>/dev/null || return 1
     grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-authfail$" /etc/pam.d/common-auth 2>/dev/null || return 1
     grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-authsucc$" /etc/pam.d/common-auth 2>/dev/null || return 1
     grep -Eq "^account[[:space:]]+include[[:space:]]+fic-faillock-account$" /etc/pam.d/common-account 2>/dev/null || return 1
+    grep -Eq "^account[[:space:]]+required[[:space:]]+pam_fic_access\.so[[:space:]]*$" /etc/pam.d/common-account 2>/dev/null || return 1
     return 0
 }
 EOF
@@ -1077,6 +1085,7 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-hook-authfail \
         fic-faillock-hook-authsucc \
         fic-faillock-hook-account \
+        fic-incident-access \
         fic-pwquality \
         fic-pwhistory; then
         # Step 7F managed provider configuration release (Stage B), the
@@ -1086,21 +1095,22 @@ if [ "\$1" = "remove" ]; then
         # released before the C2 semantic transition and can abort the
         # removal before the C2 executor mutates anything. The two release
         # domains are sequential and never compensate for each other.
-        if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
-            echo "FIC: the managed PAM provider configuration release failed; the package removal is blocked while all FIC writers remain stopped" >&2
-            exit 1
-        fi
-        # Stage B: the C2 password package release runs while every FIC
-        # writer is proven stopped. The helper exit status alone is never
-        # trusted: it returns 0 only when the final resulting state is
-        # positively proven (no FIC password selection, no FIC generated
-        # include, all three managed slots Neutral, final semantic
-        # topology None/ForeignQuality, foreign producer preserved).
-        if ! /opt/fic/bin/fic --maintenance pam-password-prerm-prepare release; then
-            echo "FIC: the C2 password package release failed; any attempted change is compensated by the C2 executor when provable (see the classified diagnostic above); treating the package removal as failed while all FIC writers remain stopped" >&2
+        if /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
+            # Stage B: the C2 password package release runs while every FIC
+            # writer is proven stopped. Its final state must be proven.
+            if /opt/fic/bin/fic --maintenance pam-password-prerm-prepare release; then
+                fic_pam_remove_failed=0
+            else
+                echo "FIC: the C2 password package release failed; the package removal is blocked while all FIC writers remain stopped" >&2
+            fi
         else
-            fic_pam_remove_failed=0
+            echo "FIC: the managed PAM provider configuration release failed; restoring permanent hooks before aborting removal" >&2
         fi
+    fi
+    if grep -q "^Module: fic-incident-access$" /var/lib/pam/account 2>/dev/null ||
+       grep -Eq '^[[:space:]]*[^#[:space:]]+[[:space:]].*pam_fic_access\.so' \
+           /etc/pam.d/* /usr/lib/pam.d/* /usr/share/pam/pam.d/* 2>/dev/null; then
+        fic_pam_remove_failed=1
     fi
     if [ "\$fic_pam_remove_failed" = "1" ]; then
         echo "FIC: failed to detach permanent PAM hooks; restoring the package PAM hook infrastructure while all FIC writers remain stopped" >&2
@@ -1116,7 +1126,8 @@ if [ "\$1" = "remove" ]; then
             fic-faillock-hook-preauth \
             fic-faillock-hook-authfail \
             fic-faillock-hook-authsucc \
-            fic-faillock-hook-account; then
+            fic-faillock-hook-account \
+            fic-incident-access; then
             if fic_prove_permanent_hooks_attached; then
                 echo "FIC: PAM infrastructure recovery failed: pam-auth-update could not re-enable the permanent hook profiles, but the permanent hooks are proven still attached; the package removal failed" >&2
                 exit 1
@@ -1240,6 +1251,7 @@ install_fic_pam_profiles() {
         fic-faillock-preauth-required fic-faillock-authsucc \
         fic-faillock-hook-preauth fic-faillock-hook-authfail \
         fic-faillock-hook-authsucc fic-faillock-hook-account \
+        fic-incident-access \
         fic-pwquality fic-pwhistory \
         fic-password-quality-hook fic-password-history-hook \
         fic-password-history-initial-hook; do

@@ -726,14 +726,20 @@ EOF
 # managed faillock/pwquality/pwhistory provider state + final proof).
 fic_pam_provider_post_stop_preun_script() {
     cat <<'INNEREOF'
-if [ -x /opt/fic/bin/fic ]; then
-    if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
-        echo "FIC: the managed PAM provider configuration release failed; the package erase is blocked while all FIC writers remain stopped" >&2
+if [ "$1" -eq 0 ]; then
+    if [ -x /opt/fic/bin/fic ]; then
+        if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
+            echo "FIC: the managed PAM provider configuration release failed; the incident gate remains attached and the package erase is blocked" >&2
+            exit 1
+        fi
+        /opt/fic/bin/fic --maintenance incident-pam-alt detach || {
+            echo "FIC: refusing erase because the incident PAM account gate could not be detached" >&2
+            exit 1
+        }
+    else
+        echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the managed PAM provider state cannot be proven released and the erase is refused" >&2
         exit 1
     fi
-else
-    echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the managed PAM provider state cannot be proven released and the erase is refused" >&2
-    exit 1
 fi
 INNEREOF
 }
@@ -751,6 +757,8 @@ EOF
 
 fic_pam_facility_post_script() {
     cat <<'EOF'
+/opt/fic/bin/fic --maintenance incident-pam-alt attach || exit 1
+/opt/fic/bin/fic --maintenance incident-pam-verify || exit 1
 /opt/fic/bin/fic --maintenance pam-alt-pwhistory prepare || exit 1
 if [ "$1" -ge 2 ] && [ -s /var/run/control/fic-pam-faillock ]; then
     /usr/sbin/control-restore fic-pam-faillock || exit 1

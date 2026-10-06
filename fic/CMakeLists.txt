@@ -40,6 +40,7 @@ file(GLOB_RECURSE HDR_FILES
 
 # Исключаем тесты
 list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\][^/\\\\]*[Tt]est[^/\\\\]*\\.cpp$")
+list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\]pam-modules[/\\\\]pam_fic_access\\.cpp$")
 # Distribution profiles export the same factory symbol, so exactly one of them
 # must be selected by FicTargetPlatform.cmake.
 list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\]platform[/\\\\].*\\.cpp$")
@@ -70,6 +71,8 @@ add_library(fic-platform STATIC
     src/platform/PamProviderMetadata.cpp
     ${FIC_TARGET_PLATFORM_PROFILE_SOURCE}
 )
+set_target_properties(fic-ipc fic-core fic-platform PROPERTIES
+    POSITION_INDEPENDENT_CODE ON)
 target_include_directories(fic-platform PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${FIC_GENERATED_INCLUDE_DIR}
@@ -97,6 +100,24 @@ if(FIC_PAM_PASSWORD_TRANSACTION_MODULE)
     target_link_libraries(pam_fic_pwtxn PRIVATE "${FIC_PAM_LIBRARY}")
 endif()
 
+find_path(FIC_ACCESS_PAM_INCLUDE_DIR security/pam_modules.h)
+find_library(FIC_ACCESS_PAM_LIBRARY pam)
+if(NOT FIC_ACCESS_PAM_INCLUDE_DIR OR NOT FIC_ACCESS_PAM_LIBRARY)
+    message(FATAL_ERROR "pam_fic_access requires PAM development files")
+endif()
+add_library(pam_fic_access MODULE
+    src/pam-modules/pam_fic_access.cpp
+    src/incident/IncidentAccessGateCore.cpp
+    src/incident/IncidentAccessClient.cpp
+    src/incident/IncidentRecoveryConfigReader.cpp
+    src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)
+set_target_properties(pam_fic_access PROPERTIES PREFIX "" OUTPUT_NAME "pam_fic_access")
+target_include_directories(pam_fic_access PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src" "${FIC_ACCESS_PAM_INCLUDE_DIR}"
+    "${FIC_GENERATED_INCLUDE_DIR}")
+target_link_libraries(pam_fic_access PRIVATE
+    fic-platform fic-ipc fic-core "${FIC_ACCESS_PAM_LIBRARY}")
+
 # Подключаем заголовки
 target_include_directories(fic PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -110,6 +131,7 @@ target_link_libraries(fic PRIVATE fic-core)
 target_link_libraries(fic PRIVATE fic-policy)
 target_link_libraries(fic PRIVATE fic-platform)
 target_link_libraries(fic PRIVATE PkgConfig::FIC_LIBSYSTEMD)
+target_link_libraries(fic PRIVATE ${CMAKE_DL_LIBS})
 # Canonical trusted location of the fic-xfconf-inspect session helper used by
 # the XFCE typed property backend. Compiled in, never resolved from PATH.
 target_compile_definitions(fic PRIVATE
@@ -151,6 +173,13 @@ configure_file(
     @ONLY)
 
 install(TARGETS fic RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)
+if(FIC_TARGET_PLATFORM STREQUAL "alt-p11")
+    set(FIC_ACCESS_PAM_MODULE_DIR "/lib64/security")
+else()
+    set(FIC_ACCESS_PAM_MODULE_DIR "/lib/${CMAKE_LIBRARY_ARCHITECTURE}/security")
+endif()
+install(TARGETS pam_fic_access LIBRARY DESTINATION
+    "${FIC_ACCESS_PAM_MODULE_DIR}" COMPONENT fic)
 if(FIC_PAM_PASSWORD_TRANSACTION_MODULE)
     install(TARGETS pam_fic_pwtxn LIBRARY DESTINATION "/lib64/security"
             COMPONENT fic)

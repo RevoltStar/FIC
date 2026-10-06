@@ -61,6 +61,9 @@
 #include "session/SessionReadyValidation.h"
 #include "session/SystemGraphicalSessionInventory.h"
 #include "incident/IncidentController.h"
+#include "incident/PamIncidentAccessGateVerifier.h"
+#include "incident/AltIncidentAccessGateTopology.h"
+#include "incident/DaemonReadiness.h"
 #include "incident/IncidentNotificationLevel.h"
 #include "incident/IncidentStateStore.h"
 #include "incident/PolicyIncidentReporter.h"
@@ -167,7 +170,8 @@ bool should_audit_ipc_request(const json& request) {
     }
 
     const std::string command = admin_audit_command(request);
-    return command != "boot_id" && command != "log_records";
+    return command != "boot_id" && command != "log_records" &&
+        command != "access_gate_status";
 }
 
 std::string canonical_module_name(
@@ -352,6 +356,10 @@ fic::incident::IncidentController& incidentController() {
         nullptr,
         std::make_shared<fic::incident::NullIncidentNetworkBackend>());
     static const bool sinksInstalled = [] {
+        controller.setAccessGateVerifier([](std::string& diagnostic) {
+            return fic::incident::PamIncidentAccessGateVerifier::prove(
+                fic::platform::makeBuildPlatformProfile().pam, diagnostic);
+        });
         controller.setAuditSink([](const std::string& line) {
             write_audit_log(json::parse(line));
         });
@@ -368,6 +376,11 @@ fic::incident::IncidentController& incidentController() {
     return controller;
 }
 
+fic::incident::DaemonReadiness& daemonReadiness() {
+    static fic::incident::DaemonReadiness readiness;
+    return readiness;
+}
+
 bool run_daemon_apply_all_pass(
     PolicyRegistry& policyRegistry,
     DesktopGlobalConfigReconciler& desktopGlobalConfig,
@@ -376,6 +389,7 @@ bool run_daemon_apply_all_pass(
     const std::string& reason,
     bool* registryReloadFailed = nullptr
 ) {
+    fic::incident::DaemonReadiness::ScopedApplying applying(daemonReadiness());
     if (registryReloadFailed != nullptr) {
         *registryReloadFailed = false;
     }
@@ -724,6 +738,7 @@ json handle_request(json request,
             return fic::ipc::make_ok_response("config reloaded");
         }
         if (command == "apply_all") {
+            fic::incident::DaemonReadiness::ScopedApplying applying(daemonReadiness());
             if (auto reloadError = reloadRegistryAndGlobalConfig(false)) {
                 return fic::ipc::make_error_response(
                     "policies were not applied because reconciliation failed: " +
@@ -741,6 +756,7 @@ json handle_request(json request,
             );
         }
         if (command == "apply_module") {
+            fic::incident::DaemonReadiness::ScopedApplying applying(daemonReadiness());
             if (module.empty()) {
                 return fic::ipc::make_error_response("module is required");
             }
@@ -761,6 +777,7 @@ json handle_request(json request,
             );
         }
         if (command == "apply_policy") {
+            fic::incident::DaemonReadiness::ScopedApplying applying(daemonReadiness());
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
@@ -811,6 +828,8 @@ json handle_request(json request,
                                                 : "incident state not proven"},
                 {"severity", fic::core::incidentSeverityToken(status.severity)},
                 {"state_proven", status.stateProven},
+                {"persistent_provenance", fic::incident::incidentProvenanceToken(status.provenance)},
+                {"persistent_state_broken", !status.stateProven},
                 {"runtime", fic::incident::runtimeStateToString(status.runtime)},
                 {"runtime_containment", {
                     {"pam_gate_active", status.containment.pamGateActive},
@@ -821,6 +840,20 @@ json handle_request(json request,
                      status.containment.networkQuarantined}
                 }},
                 {"detail", status.detail}
+            };
+        }
+        if (command == "access_gate_status") {
+            const fic::incident::IncidentStatus status = incidentController().status();
+            const auto state = daemonReadiness().state();
+            return json{
+                {"ok", true},
+                {"message", "incident access gate status"},
+                {"daemon_state", fic::incident::daemonReadinessToken(state)},
+                {"severity", fic::core::incidentSeverityToken(status.severity)},
+                {"persistent_state_proven", status.stateProven},
+                {"persistent_provenance", fic::incident::incidentProvenanceToken(status.provenance)},
+                {"ordinary_login_allowed", fic::incident::ordinaryLoginAllowed(
+                    state, status.stateProven, status.severity)}
             };
         }
         if (command == "incident_raise") {
@@ -846,7 +879,7 @@ json handle_request(json request,
                 {"severity",
                  fic::core::incidentSeverityToken(raised.effectiveSeverity)},
                 {"escalated", raised.escalated},
-                {"broken_state", raised.brokenState},
+                {"persistent_state_broken", raised.persistentStateBroken},
                 {"runtime", fic::incident::runtimeStateToString(raised.runtime)}
             };
         }
@@ -903,6 +936,7 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
     const std::string command = request.at("command").get<std::string>();
     if (command == "shutdown" || command == "reload_config" ||
         command == "apply_all" || command == "incident_status" ||
+        command == "access_gate_status" ||
         command == "incident_clear") {
         return fic::ipc::request_has_only_fields(request, {"command"}, error);
     }
@@ -1161,6 +1195,48 @@ int main(int argc, char* argv[]) {
         const std::string command = get_arg_value(argc, argv, 2);
         const auto& paths = fic::core::FicRuntimePaths::get();
         std::string maintenanceError;
+        if (command == "incident-pam-verify") {
+            if (::geteuid() != 0 ||
+                !fic::incident::PamIncidentAccessGateVerifier::prove(
+                    platform.pam, maintenanceError)) {
+                std::cerr << "incident PAM gate topology is not proven: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "incident PAM gate topology proven" << std::endl;
+            return 0;
+        }
+        if (command == "incident-pam-alt") {
+            if (::geteuid() != 0 ||
+                platform.pam.incidentAccessGate.packageTopologyTarget.empty()) {
+                std::cerr << "ALT incident PAM package topology requires root"
+                          << std::endl;
+                return 1;
+            }
+            const auto& target =
+                platform.pam.incidentAccessGate.packageTopologyTarget;
+            const std::string action = get_arg_value(argc, argv, 3);
+            bool ok = false;
+            if (action == "attach") {
+                ok = fic::incident::AltIncidentAccessGateTopology::attach(
+                    target, maintenanceError);
+            } else if (action == "detach") {
+                ok = fic::incident::AltIncidentAccessGateTopology::detach(
+                    target, maintenanceError);
+            } else if (action == "status") {
+                bool attached = false;
+                ok = fic::incident::AltIncidentAccessGateTopology::inspect(
+                    target, attached, maintenanceError);
+                if (ok) std::cout << (attached ? "attached" : "detached") << std::endl;
+            } else {
+                maintenanceError = "unknown ALT incident PAM topology action";
+            }
+            if (!ok) {
+                std::cerr << maintenanceError << std::endl;
+                return 1;
+            }
+            return 0;
+        }
         if (command == "incident-init") {
             // The ONLY sanctioned creator of the initial incident state, and it
             // belongs to the main fic package lifecycle alone.
@@ -1886,6 +1962,18 @@ int main(int argc, char* argv[]) {
                 policyRegistry, desktopGlobalConfig, runtimeInventory, session);
         });
 
+    std::string gateTopologyError;
+    if (!fic::incident::PamIncidentAccessGateVerifier::prove(
+            platform.pam, gateTopologyError)) {
+        std::cerr << "incident PAM access gate topology is not proven: "
+                  << gateTopologyError << std::endl;
+        ::close(serverFd);
+        ::unlink(socketPath.c_str());
+        ::close(sessionEventFd);
+        ::unlink(sessionEventSocketPath.c_str());
+        return 1;
+    }
+    daemonReadiness().set(fic::incident::DaemonReadinessState::Ready);
     (void)::sd_notify(
         0,
         startupApplyOk
@@ -1925,6 +2013,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    daemonReadiness().set(fic::incident::DaemonReadinessState::Stopping);
+    (void)::sd_notify(0, "STOPPING=1\nSTATUS=Stopping");
     ::close(serverFd);
     ::unlink(socketPath.c_str());
     ::close(sessionEventFd);

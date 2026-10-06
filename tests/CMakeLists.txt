@@ -764,6 +764,74 @@ target_include_directories(incident_controller_tests PRIVATE
 target_link_libraries(incident_controller_tests PRIVATE fic-core)
 add_test(NAME incident_controller_tests COMMAND incident_controller_tests)
 
+add_executable(daemon_readiness_tests
+    fic/incident/DaemonReadinessTests.cpp)
+target_include_directories(daemon_readiness_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+target_link_libraries(daemon_readiness_tests PRIVATE fic-core)
+add_test(NAME daemon_readiness_tests COMMAND daemon_readiness_tests)
+
+add_executable(incident_access_gate_core_tests
+    fic/incident/IncidentAccessGateCoreTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentAccessGateCore.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentAccessClient.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)
+target_include_directories(incident_access_gate_core_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+target_link_libraries(incident_access_gate_core_tests PRIVATE
+    fic-core fic-ipc fic-platform)
+add_test(NAME incident_access_gate_core_tests COMMAND incident_access_gate_core_tests)
+
+add_executable(incident_recovery_group_tests
+    fic/incident/IncidentRecoveryGroupTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)
+target_include_directories(incident_recovery_group_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+add_test(NAME incident_recovery_group_tests COMMAND incident_recovery_group_tests)
+
+add_executable(pam_incident_access_gate_verifier_tests
+    fic/incident/PamIncidentAccessGateVerifierTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/PamIncidentAccessGateVerifier.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp)
+target_include_directories(pam_incident_access_gate_verifier_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+target_link_libraries(pam_incident_access_gate_verifier_tests PRIVATE
+    fic-core fic-platform ${CMAKE_DL_LIBS})
+add_test(NAME pam_incident_access_gate_verifier_tests
+    COMMAND pam_incident_access_gate_verifier_tests)
+
+add_executable(incident_access_client_tests
+    fic/incident/IncidentAccessClientTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentAccessClient.cpp)
+target_include_directories(incident_access_client_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src
+    ${PROJECT_SOURCE_DIR}/fic-common/fic-ipc/src)
+target_link_libraries(incident_access_client_tests PRIVATE
+    fic-core fic-ipc Threads::Threads)
+add_test(NAME incident_access_client_tests COMMAND incident_access_client_tests)
+
+add_executable(alt_incident_access_gate_topology_tests
+    fic/incident/AltIncidentAccessGateTopologyTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/AltIncidentAccessGateTopology.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp)
+target_include_directories(alt_incident_access_gate_topology_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+target_link_libraries(alt_incident_access_gate_topology_tests PRIVATE
+    fic-core fic-platform)
+add_test(NAME alt_incident_access_gate_topology_tests
+    COMMAND alt_incident_access_gate_topology_tests)
+
+add_executable(incident_recovery_config_reader_tests
+    fic/incident/IncidentRecoveryConfigReaderTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp)
+target_include_directories(incident_recovery_config_reader_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+target_link_libraries(incident_recovery_config_reader_tests PRIVATE fic-core)
+add_test(NAME incident_recovery_config_reader_tests
+    COMMAND incident_recovery_config_reader_tests)
+
 add_executable(policy_incident_reporter_tests
     fic/incident/PolicyIncidentReporterTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp

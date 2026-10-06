@@ -85,6 +85,16 @@ std::string incidentProvenanceReason(Provenance provenance) {
     return "broken";
 }
 
+const char* incidentProvenanceToken(Provenance provenance) {
+    switch (provenance) {
+        case Provenance::Proven: return "PROVEN";
+        case Provenance::Absent: return "ABSENT";
+        case Provenance::InvalidContent: return "INVALID_CONTENT";
+        case Provenance::Broken: return "BROKEN";
+    }
+    return "BROKEN";
+}
+
 IncidentStateStore::IncidentStateStore()
     : path_(fic::core::FicRuntimePaths::get().lockStatusFile) {
 }

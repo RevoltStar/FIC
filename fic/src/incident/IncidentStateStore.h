@@ -146,6 +146,7 @@ private:
 
 // Human-readable reason a read failed. Shared with audit records.
 std::string incidentProvenanceReason(IncidentStateStore::Provenance provenance);
+const char* incidentProvenanceToken(IncidentStateStore::Provenance provenance);
 
 } // namespace fic::incident
 

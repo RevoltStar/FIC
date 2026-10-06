@@ -443,7 +443,7 @@ void testFailedClearReconcilesNewIsolateState(const TempTree& tree) {
         [](const std::string&) { return false; });
     const auto cleared = harness.controller.clear("admin");
     AtomicFileWriter::setDirectoryFsyncHookForTests({});
-    require(!cleared.ok && cleared.brokenState &&
+    require(!cleared.ok && cleared.persistentStateBroken &&
                 cleared.effectiveSeverity == IncidentSeverity::Isolate &&
                 cleared.runtime == RuntimeState::Degraded,
             "failed clear must not reuse a SOFT runtime proof for ISOLATE");
@@ -622,10 +622,45 @@ void testReconcileTreatsUnprovableStateAsIsolate(const TempTree& tree) {
     const IncidentResult reconciled = harness.controller.reconcile();
     require(reconciled.effectiveSeverity == IncidentSeverity::Isolate,
             "an unprovable state must reconcile as ISOLATE");
-    require(reconciled.brokenState,
+    require(reconciled.persistentStateBroken,
             "an unprovable state must be reported as BROKEN_STATE");
     require(harness.network->quarantineActive,
             "a BROKEN_STATE must reconcile into the ISOLATE quarantine");
+}
+
+void testPamGateRequiresFreshProof(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    int probes = 0;
+    bool available = false;
+    harness.controller.setAccessGateVerifier([&](std::string& diagnostic) {
+        ++probes;
+        diagnostic = available ? "proven" : "missing hook";
+        return available;
+    });
+    const auto failed = harness.controller.raise(
+        IncidentSeverity::Standard, policySource("gate"), "gate test");
+    require(!failed.ok && !harness.controller.status().containment.pamGateActive,
+            "unproven gate must degrade containment");
+    require(probes == 1, "gate verifier must run once per containment pass");
+    available = true;
+    harness.controller.reconcile();
+    require(harness.controller.status().containment.pamGateActive,
+            "reconciliation must record freshly proven PAM gate");
+    require(probes == 2, "reconciliation must re-prove the gate");
+}
+
+void testPersistentBrokenFlagTracksObservation(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    const auto raised = harness.controller.raise(
+        IncidentSeverity::Hard, policySource("broken"), "hard");
+    require(!raised.persistentStateBroken,
+            "failed containment must not mark proven persistent state broken");
+    writeState(tree.statePath, "garbage\n");
+    require(harness.controller.reconcile().persistentStateBroken,
+            "malformed persistent observation must be marked broken");
+    const auto cleared = harness.controller.clear("administrator");
+    require(!cleared.persistentStateBroken,
+            "successful clear must report freshly proven persistent state");
 }
 
 } // namespace
@@ -676,6 +711,9 @@ int main() {
          testReconcileRestoresIsolateContainment},
         {"reconcile_treats_unprovable_state_as_isolate",
          testReconcileTreatsUnprovableStateAsIsolate},
+        {"pam_gate_requires_fresh_proof", testPamGateRequiresFreshProof},
+        {"persistent_broken_flag_tracks_observation",
+         testPersistentBrokenFlagTracksObservation},
     };
 
     for (const Scenario& scenario : scenarios) {

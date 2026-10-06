@@ -1,0 +1,6 @@
+Name: FIC permanent incident access account gate
+Default: no
+Priority: 100001
+Account-Type: Primary
+Account:
+    required                    pam_fic_access.so

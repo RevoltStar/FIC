@@ -47,6 +47,8 @@ struct IncidentStatus {
     // False when the persistent state could not be proven at all, i.e.
     // BROKEN_STATE, whose effective severity is always ISOLATE.
     bool stateProven = false;
+    IncidentStateStore::Provenance provenance =
+        IncidentStateStore::Provenance::Broken;
     RuntimeState runtime = RuntimeState::Inactive;
     ContainmentStatus containment;
     std::string detail;
@@ -73,8 +75,8 @@ struct IncidentResult {
     // same or a lower level leaves it false, which is what keeps desktop
     // notifications from repeating.
     bool escalated = false;
-    // True when the persistent state is durably absent (BROKEN_STATE).
-    bool brokenState = false;
+    // True iff the current persistent observation is not a valid Proven token.
+    bool persistentStateBroken = false;
     RuntimeState runtime = RuntimeState::Inactive;
     std::string detail;
 };
@@ -156,6 +158,13 @@ public:
                                          const std::string&)>;
     void setNotifySink(NotifySink sink) { notifySink_ = std::move(sink); }
 
+    // Read-only infrastructure proof, injected by the daemon. Empty means
+    // the PAM gate is unproven; severity alone never establishes it.
+    using AccessGateVerifier = std::function<bool(std::string& diagnostic)>;
+    void setAccessGateVerifier(AccessGateVerifier verifier) {
+        accessGateVerifier_ = std::move(verifier);
+    }
+
 private:
     IncidentResult applyContainment(
         ::fic::core::IncidentSeverity severity,
@@ -172,6 +181,7 @@ private:
     IncidentStateStore stateStore_;
     std::shared_ptr<session::SessionContainmentBackend> sessions_;
     std::shared_ptr<IncidentNetworkBackend> network_;
+    AccessGateVerifier accessGateVerifier_;
 
     // Incident transitions are serialised: two concurrent raises must not
     // interleave their read/compute/write cycles.

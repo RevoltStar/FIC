@@ -593,6 +593,28 @@ bool validatePamComposition(const PamPlatformConfig& pam,
         error = "PAM scope and capability composition must not be empty";
         return false;
     }
+    const auto& gate = pam.incidentAccessGate;
+    if (gate.capability != PamCapability::IncidentAccessGate ||
+        gate.provider != PamProviderKind::FicIncidentAccess ||
+        gate.recoveryGroup != "fic" ||
+        !validatePamServices(gate.controlledServices,
+                             "incident access gate controlled service", error) ||
+        !validatePamServices(gate.trustedLocalRootServices,
+                             "incident access gate local-root service", error)) {
+        if (error.empty()) error = "invalid incident access gate platform configuration";
+        return false;
+    }
+    for (const auto& service : gate.trustedLocalRootServices) {
+        if (!contains(gate.controlledServices, service)) {
+            error = "local-root recovery service is not controlled by the incident gate";
+            return false;
+        }
+    }
+    if (!gate.packageTopologyTarget.empty() &&
+        gate.packageTopologyTarget != "/etc/pam.d/system-auth-common") {
+        error = "unsupported incident access gate package topology target";
+        return false;
+    }
     std::set<PamScope> scopes;
     for (const auto& scope : pam.scopes) {
         if (!scopes.insert(scope.scope).second) {

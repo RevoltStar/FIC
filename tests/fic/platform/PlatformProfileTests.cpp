@@ -345,6 +345,28 @@ void testSelectedProfile() {
             "PAM configuration directories are missing");
     require(!profile.pam.moduleDirectories.empty(),
             "PAM module directories are missing");
+    const auto& accessGate = profile.pam.incidentAccessGate;
+    std::vector<std::string> expectedAccessServices = {
+        "login", "sshd", "sddm", "sddm-autologin",
+        "gdm-password", "gdm-autologin", "gdm-fingerprint",
+        "gdm-smartcard-pkcs11-exclusive",
+        "gdm-smartcard-sssd-exclusive",
+        "gdm-smartcard-sssd-or-password",
+        "lightdm", "lightdm-autologin"};
+    if (profile.id == "alt-p11")
+        expectedAccessServices.insert(expectedAccessServices.begin() + 7,
+                                      "gdm-smartcard");
+    require(accessGate.capability == fic::platform::PamCapability::IncidentAccessGate &&
+                accessGate.provider == fic::platform::PamProviderKind::FicIncidentAccess &&
+                accessGate.controlledServices == expectedAccessServices &&
+                accessGate.trustedLocalRootServices ==
+                    std::vector<std::string>{"login"} &&
+                accessGate.recoveryGroup == "fic" &&
+                accessGate.packageTopologyTarget ==
+                    (profile.id == "alt-p11"
+                         ? std::filesystem::path("/etc/pam.d/system-auth-common")
+                         : std::filesystem::path()),
+            "incident PAM access gate profile contract is incorrect");
     if (profile.id == "alt-p11") {
         require(profile.pam.trustedServiceAliases.size() == 4 &&
                     profile.pam.trustedServiceAliases.front().aliasPath ==

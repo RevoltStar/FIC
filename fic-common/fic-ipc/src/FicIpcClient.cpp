@@ -208,6 +208,11 @@ Client::Client(std::string socketPath, std::chrono::milliseconds timeout)
           : std::move(socketPath)),
       timeout_(timeout) {}
 
+Client::Client(std::string socketPath, std::chrono::milliseconds timeout,
+               uid_t expectedPeerUid)
+    : socketPath_(std::move(socketPath)), timeout_(timeout),
+      expectedPeerUid_(expectedPeerUid) {}
+
 Client::RequestResult Client::requestWithStatus(const json& payload) const {
     const auto failure = [](std::string error) {
         return RequestResult{false, json(), std::move(error)};
@@ -241,6 +246,14 @@ Client::RequestResult Client::requestWithStatus(const json& payload) const {
     std::string error;
     if (!connectWithDeadline(fd.get(), socketPath_, deadline, error)) {
         return failure("connect(" + socketPath_ + ") failed: " + error);
+    }
+    if (expectedPeerUid_.has_value()) {
+        struct ucred peer {};
+        socklen_t peerSize = sizeof(peer);
+        if (::getsockopt(fd.get(), SOL_SOCKET, SO_PEERCRED, &peer, &peerSize) != 0 ||
+            peerSize != sizeof(peer) || peer.uid != *expectedPeerUid_) {
+            return failure("daemon peer credentials are not trusted");
+        }
     }
     if (!sendPacket(fd.get(), requestText, deadline, error)) {
         return failure("send failed: " + error);

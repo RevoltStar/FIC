@@ -305,9 +305,10 @@ def main():
     ).read_text(encoding="utf-8")
     fic_cmake = (root / "fic/CMakeLists.txt").read_text(encoding="utf-8")
     require(
-        'FIC_TARGET_PLATFORM STREQUAL "alt-p11"' not in fic_cmake
-        and "fic_resolve_pam_policy_defaults" in fic_cmake,
-        "generated PAM defaults are selected by a literal distribution id",
+        'fic_resolve_pam_policy_defaults(\n'
+        '    "${FIC_PAM_PASSWORD_QUALITY_PROVIDER}"\n'
+        '    "${FIC_PAM_PASSWORD_HISTORY_PROVIDER}"' in fic_cmake,
+        "generated PAM defaults must use typed provider inputs",
     )
     generated_defaults = (
         root / "fic/src/platform/generated/PasswordAgingPolicyDefaultsGenerated.h.in"

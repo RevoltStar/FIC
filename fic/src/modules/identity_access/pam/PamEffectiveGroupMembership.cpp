@@ -96,6 +96,7 @@ bool enumerateUserNames(std::set<std::string>& users, std::string& error) {
 bool lookupUser(const std::string& name,
                 gid_t& primaryGroup,
                 std::string& canonicalName,
+                uid_t* uid,
                 std::string& error) {
     std::vector<char> buffer(InitialLookupBytes);
     struct passwd record {};
@@ -118,6 +119,7 @@ bool lookupUser(const std::string& name,
         }
         primaryGroup = record.pw_gid;
         canonicalName = record.pw_name;
+        if (uid != nullptr) *uid = record.pw_uid;
         return true;
     }
 }
@@ -150,6 +152,36 @@ bool getGroupListContains(const std::string& user,
 
 } // namespace
 
+bool resolvePamUserIdentity(const std::string& name,
+                            PamUserIdentity& identity,
+                            std::string& error) {
+    identity = {};
+    return lookupUser(name, identity.primaryGroup, identity.canonicalName,
+                      &identity.uid, error);
+}
+
+bool isPamUserMemberOfGroup(const PamUserIdentity& identity,
+                            const std::string& group,
+                            bool& member,
+                            std::string& error) {
+    member = false;
+    PamEffectiveGroupMembership membership;
+    std::set<std::string> textualMembers;
+    if (!lookupGroup(group, membership, textualMembers, error)) return false;
+    if (!membership.groupExists) {
+        error = "recovery group is unavailable";
+        return false;
+    }
+    if (identity.primaryGroup == membership.groupId ||
+        textualMembers.count(identity.canonicalName) != 0) {
+        member = true;
+        error.clear();
+        return true;
+    }
+    return getGroupListContains(identity.canonicalName, identity.primaryGroup,
+                                membership.groupId, member, error);
+}
+
 bool resolvePamEffectiveGroupMembership(
     const std::string& group,
     PamEffectiveGroupMembership& membership,
@@ -170,7 +202,7 @@ bool resolvePamEffectiveGroupMembership(
         gid_t primaryGroup = 0;
         std::string user;
         if (!lookupUser(
-                enumeratedName, primaryGroup, user, error)) {
+                enumeratedName, primaryGroup, user, nullptr, error)) {
             return false;
         }
         bool effective = primaryGroup == membership.groupId ||

@@ -114,6 +114,17 @@ PlatformProfile makeBuildPlatformProfile() {
         {PamScope::EffectivePasswordStack, {"passwd", "system-auth"}},
         {PamScope::LocalPasswordChange, {"system-auth-local-only"}}
     };
+    profile.pam.incidentAccessGate.controlledServices = {
+        "login", "sshd", "sddm", "sddm-autologin",
+        "gdm-password", "gdm-autologin", "gdm-fingerprint",
+        "gdm-smartcard",
+        "gdm-smartcard-pkcs11-exclusive",
+        "gdm-smartcard-sssd-exclusive",
+        "gdm-smartcard-sssd-or-password",
+        "lightdm", "lightdm-autologin"};
+    profile.pam.incidentAccessGate.trustedLocalRootServices = {"login"};
+    profile.pam.incidentAccessGate.packageTopologyTarget =
+        "/etc/pam.d/system-auth-common";
     profile.pam.trustedAuthenticationBypasses = {
         {"su", "pam_rootok.so",
          PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller},

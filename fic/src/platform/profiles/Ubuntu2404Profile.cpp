@@ -104,6 +104,14 @@ PlatformProfile makeBuildPlatformProfile() {
           "gdm-password", "lightdm"}},
         {PamScope::EffectivePasswordStack, {"passwd", "common-password"}}
     };
+    profile.pam.incidentAccessGate.controlledServices = {
+        "login", "sshd", "sddm", "sddm-autologin",
+        "gdm-password", "gdm-autologin", "gdm-fingerprint",
+        "gdm-smartcard-pkcs11-exclusive",
+        "gdm-smartcard-sssd-exclusive",
+        "gdm-smartcard-sssd-or-password",
+        "lightdm", "lightdm-autologin"};
+    profile.pam.incidentAccessGate.trustedLocalRootServices = {"login"};
     profile.pam.trustedAuthenticationBypasses = {
         {"su", "pam_rootok.so",
          PamTrustedAuthenticationBypassReason::AlreadyPrivilegedCaller},

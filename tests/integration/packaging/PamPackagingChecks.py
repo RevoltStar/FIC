@@ -39,6 +39,7 @@ PERMANENT_HOOKS = (
     "fic-faillock-hook-authfail",
     "fic-faillock-hook-authsucc",
     "fic-faillock-hook-account",
+    "fic-incident-access",
 )
 AUTH_HOOKS = PERMANENT_HOOKS[:3]
 LEGACY_POLICY_PROFILES = (
@@ -61,6 +62,8 @@ PASSWORD_HOOK_TARGETS = ("fic-password-quality", "fic-password-history",
 
 
 def hook_target(hook: str) -> str:
+    if hook == "fic-incident-access":
+        return "pam_fic_access.so"
     return hook.replace("fic-faillock-hook-", "fic-faillock-")
 
 
@@ -81,7 +84,7 @@ def canonical_include(facility: str, target: str) -> str:
 
 def write_attached_pam_state(pam_state: Path, pam_d: Path) -> None:
     """Seed the sandbox with the standard pam-auth-update state of an
-    installed package: all four permanent hook profiles selected and the
+    installed package: all permanent hook profiles selected and the
     common-* stacks regenerated (Module: records plus active, correctly
     facilitated include lines)."""
     pam_state.mkdir(parents=True, exist_ok=True)
@@ -92,14 +95,16 @@ def write_attached_pam_state(pam_state: Path, pam_d: Path) -> None:
         encoding="utf-8")
     (pam_state / "account").write_text(
         f"Module: {PERMANENT_HOOKS[3]}\n"
-        f"include {hook_target(PERMANENT_HOOKS[3])}\n",
+        f"include {hook_target(PERMANENT_HOOKS[3])}\n"
+        "Module: fic-incident-access\n",
         encoding="utf-8")
     (pam_d / "common-auth").write_text(
         "".join(canonical_include("auth", hook_target(hook))
                 for hook in AUTH_HOOKS),
         encoding="utf-8")
     (pam_d / "common-account").write_text(
-        canonical_include("account", hook_target(PERMANENT_HOOKS[3])),
+        canonical_include("account", hook_target(PERMANENT_HOOKS[3])) +
+        "account required pam_fic_access.so\n",
         encoding="utf-8")
 
 
@@ -364,6 +369,10 @@ regen() {
         *"Module: fic-faillock-hook-account"*)
             printf "account\\t\\t\\t\\tinclude\\t\\t\\t\\tfic-faillock-account\\n" >> "$pam_d/common-account.new" ;;
     esac
+    case "$(cat "$state/account" 2>/dev/null)" in
+        *"Module: fic-incident-access"*)
+            printf "account\\t\\t\\t\\trequired\\t\\t\\t\\tpam_fic_access.so\\n" >> "$pam_d/common-account.new" ;;
+    esac
     mv "$pam_d/common-account.new" "$pam_d/common-account"
     : > "$pam_d/common-password.new"
     case "$(cat "$state/password" 2>/dev/null)" in
@@ -451,7 +460,7 @@ case "$1" in
                         1) exit 1 ;;
                     esac
                     add_profile "$state/password" "$p" ;;
-                fic-faillock-hook-account) add_profile "$state/account" "$p" ;;
+                fic-faillock-hook-account|fic-incident-access) add_profile "$state/account" "$p" ;;
                 *) add_profile "$state/auth" "$p" ;;
             esac
         done
@@ -537,11 +546,13 @@ def proof_unit_tests() -> None:
         module_auth = "".join(f"Module: {hook}\ninclude {hook_target(hook)}\n"
                               for hook in AUTH_HOOKS)
         module_account = (f"Module: {PERMANENT_HOOKS[3]}\n"
-                          f"include {hook_target(PERMANENT_HOOKS[3])}\n")
+                          f"include {hook_target(PERMANENT_HOOKS[3])}\n"
+                          "Module: fic-incident-access\n")
         include_auth = "".join(canonical_include("auth", hook_target(hook))
                                for hook in AUTH_HOOKS)
-        include_account = canonical_include(
-            "account", hook_target(PERMANENT_HOOKS[3]))
+        include_account = (canonical_include(
+            "account", hook_target(PERMANENT_HOOKS[3])) +
+            "account required pam_fic_access.so\n")
 
         # G: canonical valid topology — exact Module: records in the correct
         # facility state files plus active, correctly facilitated include
@@ -558,7 +569,8 @@ def proof_unit_tests() -> None:
                 module_auth, module_account,
                 "".join(f"auth include {hook_target(hook)}\n"
                         for hook in AUTH_HOOKS),
-                f"account include {hook_target(PERMANENT_HOOKS[3])}\n"))
+                f"account include {hook_target(PERMANENT_HOOKS[3])}\n"
+                "account required pam_fic_access.so\n"))
 
         # A: commented generated hook line with a correct Module: selection.
         expect_fail(
@@ -687,7 +699,7 @@ def prerm_release_wiring_tests() -> None:
                 for line in maintenance_lines),
             "the Stage A preflight must run through the exact installed "
             "absolute maintenance path: " + repr(maintenance_lines))
-    require(any(line.startswith("if ! " + release_line)
+    require(any(line.startswith("if " + release_line)
                 for line in maintenance_lines),
             "the Stage B release must run through the exact installed "
             "absolute maintenance path: " + repr(maintenance_lines))
@@ -816,6 +828,11 @@ def main() -> int:
             "Name": "FIC permanent pam_faillock account hook",
             "Priority": "100000",
             "rules": ("include                     fic-faillock-account",),
+        },
+        "fic-incident-access": {
+            "Name": "FIC permanent incident access account gate",
+            "Priority": "100001",
+            "rules": ("required                    pam_fic_access.so",),
         },
         "fic-pwquality": {
             "Name": "FIC PAM password quality checking",
@@ -1964,6 +1981,17 @@ def main() -> int:
                     encoding="utf-8") != NEUTRAL_SLOT,
                 "PR5: the compensated quality slot must stay Active")
 
+        # A failed provider release happens after the batch PAM detach.
+        # Removal must restore the permanent incident gate before it aborts.
+        write_attached_pam_state(pam_state, pam_d)
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FIC_FAKE_PROVIDER_MODE": "fail"})
+        require(ran.returncode != 0,
+                "provider release failure must abort package removal")
+        require("restoring permanent hooks" in ran.stderr,
+                "provider failure must enter the PAM recovery path")
+        require_hooks_attached()
+
         # PR6: the helper release fails and the compensation is NOT proven
         # (the fake helper detaches and gives up): the prerm must exit
         # non-zero with a CRITICAL diagnostic, restore the permanent hook
@@ -2038,9 +2066,15 @@ def main() -> int:
                 "generated postinst lost its configure branch")
         configure_tail = postinst_text[configure_start:].replace(
             "/opt/fic/bin/fic-dick", "fic-dick").replace(
-                "/opt/fic/bin/fic", "fic")
+            "/opt/fic/bin/fic", "fic").replace(
+            "command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]",
+            "command -v systemctl >/dev/null 2>&1")
         tail_script = tmp_path / "configure-tail.sh"
-        tail_script.write_text("#!/bin/sh\nset -e\n" + configure_tail,
+        tail_script.write_text(
+            "#!/bin/sh\nset -e\n"
+            "fic_prove_permanent_hooks_attached() { "
+            "printf 'prove-access-hook\\n' >> \"$FAKE_LOG\"; return 0; }\n" +
+            configure_tail,
                                encoding="utf-8")
         tail_script.chmod(0o755)
 
@@ -2616,6 +2650,9 @@ def main() -> int:
     prerm = function_body(deb_builder, "write_system_integration_symlink_prerm")
     provider_preflight_position = prerm.find(
         "pam-provider-prerm-prepare preflight")
+    require("/usr/lib/pam.d/* /usr/share/pam/pam.d/*" in prerm,
+            "DEB erase must reject remaining incident module references "
+            "in secondary PAM service directories")
     provider_release_position = prerm.find(
         "pam-provider-prerm-prepare release")
     c2_preflight_position = prerm.find("pam-password-prerm-prepare preflight")
@@ -2641,6 +2678,21 @@ def main() -> int:
                 f"maintenance binary owns the whole provider decision)")
 
     alt_builder = (root / "packaging/rpm/build-fic-alt-p11-rpm.sh").read_text()
+    alt_post = function_body(alt_builder, "fic_pam_facility_post_script")
+    require("--maintenance incident-pam-alt attach" in alt_post,
+            "ALT package post script must attach the permanent incident gate")
+    require(alt_post.find("--maintenance incident-pam-alt attach") <
+            alt_post.find("--maintenance incident-pam-verify") <
+            alt_post.find("--maintenance pam-alt-pwhistory prepare"),
+            "ALT package must prove incident topology before later PAM setup")
+    alt_post_stop = function_body(
+        alt_builder, "fic_pam_provider_post_stop_preun_script")
+    require('if [ "$1" -eq 0 ]; then' in alt_post_stop and
+            "--maintenance incident-pam-alt detach" in alt_post_stop and
+            alt_post_stop.find("pam-provider-prerm-prepare release") <
+            alt_post_stop.find("--maintenance incident-pam-alt detach"),
+            "ALT erase must release providers before detaching the incident "
+            "gate, so a provider failure leaves the gate attached")
     alt_preun = function_body(alt_builder, "fic_pam_facility_preun_script")
     require('if [ "$1" -eq 0 ]; then' in alt_preun and
             "pam-provider-prerm-prepare preflight" in alt_preun,

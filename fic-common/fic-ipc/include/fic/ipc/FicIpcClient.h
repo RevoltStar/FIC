@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
+#include <optional>
 #include <string>
 #include <stdexcept>
 #include <sys/socket.h>
@@ -211,6 +212,8 @@ public:
     explicit Client(std::string socketPath);
 
     Client(std::string socketPath, std::chrono::milliseconds timeout);
+    Client(std::string socketPath, std::chrono::milliseconds timeout,
+           uid_t expectedPeerUid);
 
     RequestResult requestWithStatus(const json& payload) const;
     json request(const json& payload) const;
@@ -218,6 +221,7 @@ public:
 private:
     std::string socketPath_;
     std::chrono::milliseconds timeout_{DEFAULT_CLIENT_TIMEOUT};
+    std::optional<uid_t> expectedPeerUid_;
 };
 
 } // namespace fic::ipc

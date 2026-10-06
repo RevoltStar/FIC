@@ -134,7 +134,8 @@ struct PamTrustedServiceAlias {
 enum class PamCapability {
     AuthenticationLockout,
     PasswordQuality,
-    PasswordHistory
+    PasswordHistory,
+    IncidentAccessGate
 };
 
 enum class PamProviderKind {
@@ -145,7 +146,8 @@ enum class PamProviderKind {
     PamPasswdqc,
     PamCracklib,
     PamPwhistory,
-    PamUnixHistory
+    PamUnixHistory,
+    FicIncidentAccess
 };
 
 enum class PamScope {
@@ -307,6 +309,15 @@ struct PamCapabilityConfig {
 };
 
 struct PamPlatformConfig {
+    struct IncidentAccessGateConfig {
+        PamCapability capability = PamCapability::IncidentAccessGate;
+        PamProviderKind provider = PamProviderKind::FicIncidentAccess;
+        std::vector<std::string> controlledServices;
+        std::vector<std::string> trustedLocalRootServices;
+        std::string recoveryGroup = "fic";
+        std::filesystem::path packageTopologyTarget;
+    };
+    IncidentAccessGateConfig incidentAccessGate;
     std::vector<std::filesystem::path> configDirectories;
     std::vector<std::filesystem::path> moduleDirectories;
     std::vector<PamScopeConfig> scopes;
