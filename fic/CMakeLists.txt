@@ -197,7 +197,6 @@ install(FILES
         "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
         "${FIC_GENERATED_SCRIPTS_DIR}/config/DAC.conf"
         DESTINATION "${FIC_DEFAULT_CONFIG_DIR}" COMPONENT fic)
-install(DIRECTORY DESTINATION "${FIC_CONFIG_DIR}" COMPONENT fic)
 install(DIRECTORY src/resources/lang/ DESTINATION "${FIC_LANGUAGE_DIR}" COMPONENT fic)
 install(FILES
         "${FIC_GENERATED_SCRIPTS_DIR}/service/fic.service"

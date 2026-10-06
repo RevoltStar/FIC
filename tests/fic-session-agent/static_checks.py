@@ -89,7 +89,7 @@ for builder_name, builder in (
     require('chmod 0755 "$package_root/opt/fic/bin/fic-gui"' not in builder and
             'chmod 0755 "$package_root/opt/fic/bin/fic-gui.real"' not in builder,
             f"{builder_name} packaging makes fic-gui executable by ordinary users")
-    require("find /opt/fic -mindepth 1 -type d -exec chmod 2750" in builder and
+    require("find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750" in builder and
             "chmod 2750 /opt/fic" in builder,
             f"{builder_name} packaging must normalize children and bootstrap the parent privately")
     for forbidden_private_mode in (

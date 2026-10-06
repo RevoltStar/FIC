@@ -844,7 +844,9 @@ def main():
         "install layout has no centralized default configuration directory",
     )
     bootstrap_steps = (
-        "--maintenance ensure-config",
+        "fic_config_command=ensure-config",
+        "fic_config_command=ensure-config-first-install",
+        '--maintenance "\\$fic_config_command"',
         "--maintenance initialize-db",
         "--maintenance check-config",
         "--maintenance check-db",

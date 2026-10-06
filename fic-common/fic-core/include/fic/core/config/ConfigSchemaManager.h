@@ -11,7 +11,8 @@ public:
     static bool ensureConfigs(
         const std::filesystem::path& defaultConfigDirectory,
         const std::filesystem::path& configDirectory,
-        std::string& error);
+        std::string& error,
+        bool allowRecoveryBootstrap = false);
 
     static bool verifyConfigs(const std::filesystem::path& configDirectory,
                               std::string& error);

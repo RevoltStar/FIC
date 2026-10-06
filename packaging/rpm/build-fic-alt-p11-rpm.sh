@@ -299,7 +299,7 @@ write_file_list() {
         [ -n "$path" ] || continue
 
         case "$path" in
-            /opt/fic)
+            /opt/fic|/opt/fic/config)
                 # Security authority: RPM must not restore its metadata on upgrade.
                 ;;
             /opt/fic/*)
@@ -474,7 +474,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
+    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
 
     # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
@@ -491,12 +491,12 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \; || true
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \; || true
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \; || true
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \; || true
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || true
     fi
 fi
 
@@ -514,7 +514,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
+    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
 
     # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
@@ -531,12 +531,12 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \\; || true
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \\; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \\; || true
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \\; || true
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \\; || true
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \\; || true
     fi
 fi
 
@@ -557,7 +557,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
+    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
 
     # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
@@ -574,12 +574,12 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \\; || true
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \\; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \\; || true
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \\; || true
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \\; || true
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \\; || true
     fi
 fi
 
@@ -599,7 +599,16 @@ if [ -d /run/systemd/system ]; then
     done
 fi
 
-/opt/fic/bin/fic --maintenance ensure-config || exit 1
+# Only a virgin first install may create the recovery configuration.
+fic_config_command=ensure-config
+if [ "\${1:-}" -eq 1 ] &&
+   [ ! -e /opt/fic/config ] && [ ! -L /opt/fic/config ] &&
+   [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then
+    chown root:fic /opt/fic || exit 1
+    chmod 2750 /opt/fic || exit 1
+    fic_config_command=ensure-config-first-install
+fi
+/opt/fic/bin/fic --maintenance "\$fic_config_command" || exit 1
 /opt/fic/bin/fic-dick --maintenance initialize-db || exit 1
 /opt/fic/bin/fic --maintenance check-config || exit 1
 /opt/fic/bin/fic-dick --maintenance check-db || exit 1
@@ -611,18 +620,13 @@ fi
 # foreign - state is left strictly untouched and remains BROKEN_STATE
 # (ISOLATE); an upgrade never repairs a missing or corrupt state to UNLOCKED.
 if [ "\${1:-}" -eq 1 ]; then
-    # Only a genuinely absent state permits first-install parent bootstrap.
-    if [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then
-        chown root:fic /opt/fic || exit 1
-        chmod 2750 /opt/fic || exit 1
-    fi
     /opt/fic/bin/fic --maintenance incident-init || exit 1
 fi
 
-find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || exit 1
-find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \; || exit 1
-find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || exit 1
-find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \; || exit 1
+find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || exit 1
+find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \; || exit 1
+find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \; || exit 1
+find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || exit 1
 
 /opt/fic/bin/fic --trust-sync-platform || exit 1
 
@@ -803,12 +807,12 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \; || true
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \; || true
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \; || true
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \; || true
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || true
     fi
 fi
 

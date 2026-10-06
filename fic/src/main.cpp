@@ -1313,10 +1313,12 @@ int main(int argc, char* argv[]) {
             std::cout << "FIC incident state proven UNLOCKED" << std::endl;
             return 0;
         }
-        if (command == "ensure-config") {
+        if (command == "ensure-config" ||
+            command == "ensure-config-first-install") {
             if (!fic::core::ConfigSchemaManager::ensureConfigs(
                     paths.defaultConfigDir, paths.configDir,
-                    maintenanceError)) {
+                    maintenanceError,
+                    command == "ensure-config-first-install")) {
                 std::cerr << "configuration bootstrap failed: "
                           << maintenanceError << std::endl;
                 return 1;

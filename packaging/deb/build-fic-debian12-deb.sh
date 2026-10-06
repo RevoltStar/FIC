@@ -507,7 +507,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
+    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
 
     # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
@@ -524,12 +524,12 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
     fi
 fi
 
@@ -553,7 +553,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
+    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
 
     # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
@@ -570,12 +570,12 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
     fi
 fi
 
@@ -599,7 +599,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
+    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
 
     # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
@@ -616,12 +616,12 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
     fi
 fi
 
@@ -738,7 +738,7 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
+    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
 
     # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
@@ -755,12 +755,12 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
     fi
 fi
 
@@ -775,7 +775,16 @@ if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     done
 fi
 
-/opt/fic/bin/fic --maintenance ensure-config
+# Only a virgin first install may create the recovery configuration.
+fic_config_command=ensure-config
+if [ "\${1:-}" = "configure" ] && [ -z "\${2:-}" ] &&
+   [ ! -e /opt/fic/config ] && [ ! -L /opt/fic/config ] &&
+   [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then
+    chown root:fic /opt/fic
+    chmod 2750 /opt/fic
+    fic_config_command=ensure-config-first-install
+fi
+/opt/fic/bin/fic --maintenance "\$fic_config_command"
 /opt/fic/bin/fic-dick --maintenance initialize-db
 /opt/fic/bin/fic --maintenance check-config
 /opt/fic/bin/fic-dick --maintenance check-db
@@ -788,19 +797,13 @@ fi
 # left strictly untouched and remains BROKEN_STATE (ISOLATE); an upgrade never
 # silently repairs a missing or corrupt state into UNLOCKED.
 if [ "\${1:-}" = "configure" ] && [ -z "\${2:-}" ]; then
-    # Only a genuinely absent state permits first-install parent bootstrap.
-    # Existing state, including a symlink, keeps its parent metadata untouched.
-    if [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then
-        chown root:fic /opt/fic
-        chmod 2750 /opt/fic
-    fi
     /opt/fic/bin/fic --maintenance incident-init
 fi
 
-find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} +
-find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \;
-find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \;
-find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
+find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
+find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
 
 if [ -x /opt/fic/bin/fic ]; then
     /opt/fic/bin/fic --trust-sync-platform
@@ -914,6 +917,10 @@ fic_prove_permanent_hooks_attached() {
     grep -Eq "^account[[:space:]]+required[[:space:]]+pam_fic_access\.so[[:space:]]*$" /etc/pam.d/common-account 2>/dev/null || return 1
     return 0
 }
+fic_prove_incident_gate_attached() {
+    grep -q "^Module: fic-incident-access$" /var/lib/pam/account 2>/dev/null &&
+    grep -Eq "^account[[:space:]]+required[[:space:]]+pam_fic_access\.so[[:space:]]*$" /etc/pam.d/common-account 2>/dev/null
+}
 EOF
 }
 
@@ -930,12 +937,12 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
     fi
 fi
 
@@ -1056,27 +1063,20 @@ if [ "\$1" = "remove" ]; then
             fi
         done
     fi
-    # Only now detach the permanent FIC PAM hook infrastructure. Every FIC
-    # writer is proven inactive at this point, so this is the only safe
-    # window in which a failed detach can be contained: the permanent hook
-    # infrastructure is restored and proven right here while no FIC writer
-    # can interfere, and dpkg's later abort-remove path never has to restart
-    # a writer on top of a partially detached PAM graph.
-    # Three-profile C2 package release contract: the three managed
-    # password hook profiles (fic-password-quality-hook,
-    # fic-password-history-hook, fic-password-history-initial-hook) are
-    # NEVER touched by a batch native mutation here. Their detach is ONE
-    # C2 semantic transition performed by the FIC maintenance helper
-    # through the production transition executor: planner-ordered
-    # detaches (the history variant before its producer), ONE profile per
-    # pam-auth-update invocation, per-action resulting-state proofs,
-    # ownership-aware (selected-but-unowned identities are never
-    # detached), C2 compensation on failure, and an independent final
-    # proof of None/ForeignQuality with all managed slots Neutral. The
-    # pre-removal password selection is never snapshotted or restored in
-    # shell: pam-auth-update stays the owner of the generated stack.
-    fic_pam_remove_failed=1
-    if pam-auth-update --package --remove \
+    # Release every fallible provider and password domain with the incident
+    # gate still attached. A failed release leaves account access fail-closed.
+    if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
+        echo "FIC: managed PAM provider release failed; incident gate remains attached" >&2
+        exit 1
+    fi
+    if ! /opt/fic/bin/fic --maintenance pam-password-prerm-prepare release; then
+        echo "FIC: C2 password release failed; incident gate remains attached" >&2
+        exit 1
+    fi
+
+    # Remove all other package profiles before the incident gate. On a
+    # partial mutation, restore the permanent infrastructure while stopped.
+    if ! pam-auth-update --package --remove \
         fic-faillock-notify \
         fic-faillock-authfail \
         fic-faillock-preauth-required \
@@ -1085,43 +1085,8 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-hook-authfail \
         fic-faillock-hook-authsucc \
         fic-faillock-hook-account \
-        fic-incident-access \
         fic-pwquality \
         fic-pwhistory; then
-        # Step 7F managed provider configuration release (Stage B), the
-        # FIRST release domain of the documented deterministic order:
-        # provider state (the /etc/security/*.conf primaries and the
-        # mutation journal) has no pam-auth-update dependency, so it is
-        # released before the C2 semantic transition and can abort the
-        # removal before the C2 executor mutates anything. The two release
-        # domains are sequential and never compensate for each other.
-        if /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
-            # Stage B: the C2 password package release runs while every FIC
-            # writer is proven stopped. Its final state must be proven.
-            if /opt/fic/bin/fic --maintenance pam-password-prerm-prepare release; then
-                fic_pam_remove_failed=0
-            else
-                echo "FIC: the C2 password package release failed; the package removal is blocked while all FIC writers remain stopped" >&2
-            fi
-        else
-            echo "FIC: the managed PAM provider configuration release failed; restoring permanent hooks before aborting removal" >&2
-        fi
-    fi
-    if grep -q "^Module: fic-incident-access$" /var/lib/pam/account 2>/dev/null ||
-       grep -Eq '^[[:space:]]*[^#[:space:]]+[[:space:]].*pam_fic_access\.so' \
-           /etc/pam.d/* /usr/lib/pam.d/* /usr/share/pam/pam.d/* 2>/dev/null; then
-        fic_pam_remove_failed=1
-    fi
-    if [ "\$fic_pam_remove_failed" = "1" ]; then
-        echo "FIC: failed to detach permanent PAM hooks; restoring the package PAM hook infrastructure while all FIC writers remain stopped" >&2
-        # Only the permanent hook infrastructure is restored here. The legacy
-        # policy-owned selector profiles are deliberately NOT re-enabled:
-        # policy state lives in the managed /etc/pam.d/fic-faillock-* slots,
-        # and the installed package only guarantees the permanent hooks.
-        # A single \`--enable\` is sufficient: it re-selects the four profiles
-        # and regenerates the common-* stacks; a preceding \`--package\` call
-        # would only regenerate from the post-failure selection state and
-        # add nothing.
         if ! pam-auth-update --enable \
             fic-faillock-hook-preauth \
             fic-faillock-hook-authfail \
@@ -1129,29 +1094,50 @@ if [ "\$1" = "remove" ]; then
             fic-faillock-hook-account \
             fic-incident-access; then
             if fic_prove_permanent_hooks_attached; then
-                echo "FIC: PAM infrastructure recovery failed: pam-auth-update could not re-enable the permanent hook profiles, but the permanent hooks are proven still attached; the package removal failed" >&2
+                echo "FIC: PAM infrastructure recovery failed, but permanent hooks are proven still attached; package removal blocked" >&2
                 exit 1
             fi
-            echo "FIC: PAM infrastructure recovery failed: pam-auth-update could not re-enable the permanent hook profiles and the permanent hook state is NOT proven restored; no FIC writer may be restarted" >&2
+            echo "FIC: CRITICAL: permanent PAM infrastructure NOT proven restored; package removal blocked" >&2
             exit 1
         fi
         if ! fic_prove_permanent_hooks_attached; then
-            echo "FIC: PAM infrastructure recovery failed: the re-enabled permanent hook profiles could not be proven attached; the permanent hook state is NOT proven restored and no FIC writer may be restarted" >&2
+            echo "FIC: CRITICAL: permanent PAM infrastructure NOT proven restored; package removal blocked" >&2
             exit 1
         fi
-        # The C2 password topology is NEVER restored by shell selection
-        # snapshots here: a failed password package release is compensated
-        # exclusively by the C2 executor inside the maintenance helper
-        # (proven pre-release topology restoration), or the removal stays
-        # blocked with a CRITICAL diagnostic. The faillock infrastructure
-        # above keeps its stronger always-restore invariant.
-        echo "FIC: permanent PAM hook infrastructure restored and proven attached; the package removal failed" >&2
+        echo "FIC: permanent PAM hook infrastructure restored and proven attached; package removal blocked" >&2
         exit 1
     fi
-fi
 
-if [ "\$1" = "remove" ] && [ -L "/bin/$command_name" ] && [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
-    rm -f "/bin/$command_name"
+    # No fallible package operation may follow a successful gate detach.
+    if [ -L "/bin/$command_name" ] &&
+       [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
+        rm -f "/bin/$command_name"
+    fi
+    if ! fic_prove_incident_gate_attached ||
+       ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
+        if ! pam-auth-update --enable fic-incident-access ||
+           ! fic_prove_incident_gate_attached ||
+           ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
+            echo "FIC: CRITICAL: incident gate NOT proven restored before final detach; package removal blocked and no FIC writer may restart" >&2
+            exit 1
+        fi
+        echo "FIC: incident gate restored before final detach; package removal blocked" >&2
+        exit 1
+    fi
+    if ! pam-auth-update --package --remove fic-incident-access ||
+       grep -q "^Module: fic-incident-access$" /var/lib/pam/account 2>/dev/null ||
+       grep -Eq '^[[:space:]]*[^#[:space:]]+[[:space:]].*pam_fic_access\.so' \
+           /etc/pam.d/* /usr/lib/pam.d/* /usr/share/pam/pam.d/* 2>/dev/null; then
+        # Only the incident gate needs compensation at this final boundary.
+        if ! pam-auth-update --enable fic-incident-access ||
+           ! fic_prove_incident_gate_attached ||
+           ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
+            echo "FIC: CRITICAL: incident gate NOT proven restored; package removal blocked and no FIC writer may restart" >&2
+            exit 1
+        fi
+        echo "FIC: incident gate restored and proven attached; package removal blocked" >&2
+        exit 1
+    fi
 fi
 
 exit 0
@@ -1172,12 +1158,12 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
+    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \;
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
     fi
 fi
 

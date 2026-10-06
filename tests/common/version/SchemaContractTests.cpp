@@ -94,8 +94,33 @@ void testConfigContract(const fs::path& root) {
 
     std::string error;
     assert(fic::core::ConfigSchemaManager::ensureConfigs(
-        defaults, working, error));
+        defaults, working, error, true));
+    struct stat directoryInfo {};
+    assert(::lstat(working.c_str(), &directoryInfo) == 0);
+    assert((directoryInfo.st_mode & 07777) == 02750);
+    assert(directoryInfo.st_uid == ::geteuid());
     assert(fic::core::ConfigSchemaManager::verifyConfigs(working, error));
+    fs::remove(working / "GLOBAL.conf");
+    assert(!fic::core::ConfigSchemaManager::ensureConfigs(
+        defaults, working, error, true));
+    assert(!fs::exists(working / "GLOBAL.conf"));
+    fs::copy_file(defaults / "GLOBAL.conf", working / "GLOBAL.conf");
+    fs::permissions(working, fs::perms::all, fs::perm_options::replace);
+    fs::permissions(working / "GLOBAL.conf", fs::perms::all,
+                    fs::perm_options::replace);
+    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+        defaults, working, error));
+    assert((fs::status(working).permissions() & fs::perms::all) ==
+           fs::perms::all);
+    assert((fs::status(working / "GLOBAL.conf").permissions() & fs::perms::all) ==
+           fs::perms::all);
+    fs::permissions(working, fs::perms::owner_all, fs::perm_options::replace);
+    fs::remove_all(working);
+    assert(!fic::core::ConfigSchemaManager::ensureConfigs(
+        defaults, working, error));
+    assert(!fs::exists(working));
+    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+        defaults, working, error, true));
     for (const char* fileName : CONFIG_FILES) {
         assert(readFile(working / fileName) == readFile(defaults / fileName));
         struct stat info {};
@@ -153,7 +178,7 @@ void testModeAndOwnerFreshInstallConfig(const fs::path& root) {
     }
     std::string error;
     assert(fic::core::ConfigSchemaManager::ensureConfigs(
-        defaults, working, error));
+        defaults, working, error, true));
     const std::string dac = readFile(working / "DAC.conf");
     assert(dac.find("mode_and_owner_profiles.status=DISABLE") !=
            std::string::npos);

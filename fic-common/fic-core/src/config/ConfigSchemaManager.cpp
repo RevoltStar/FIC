@@ -24,25 +24,39 @@ bool validAbsoluteNormalized(const std::filesystem::path& path) {
     return !path.empty() && path.is_absolute() && path.lexically_normal() == path;
 }
 
-bool ensureRealDirectory(const std::filesystem::path& path, std::string& error) {
+bool ensureRealDirectory(const std::filesystem::path& path,
+                         bool allowRecoveryBootstrap,
+                         bool& created,
+                         std::string& error) {
     if (!validAbsoluteNormalized(path)) {
         error = "configuration path must be absolute and normalized: " +
             path.string();
         return false;
     }
-    std::error_code filesystemError;
-    std::filesystem::create_directories(path, filesystemError);
-    if (filesystemError) {
-        error = "could not create directory " + path.string() + ": " +
-            filesystemError.message();
-        return false;
-    }
+    created = false;
     struct stat info {};
-    if (::lstat(path.c_str(), &info) != 0 || !S_ISDIR(info.st_mode)) {
+    if (::lstat(path.c_str(), &info) != 0) {
+        if (errno != ENOENT || !allowRecoveryBootstrap) {
+            error = "configuration directory is missing or cannot be inspected: " +
+                path.string() + ": " + std::strerror(errno);
+            return false;
+        }
+        if (::mkdir(path.c_str(), 02750) != 0) {
+            error = "could not create directory " + path.string() + ": " +
+                std::strerror(errno);
+            return false;
+        }
+        created = true;
+        if (::lstat(path.c_str(), &info) != 0) {
+            error = "could not inspect new configuration directory: " + path.string();
+            return false;
+        }
+    }
+    if (!S_ISDIR(info.st_mode)) {
         error = "configuration path is not a real directory: " + path.string();
         return false;
     }
-    if (::chmod(path.c_str(), 02750) != 0) {
+    if (created && ::chmod(path.c_str(), 02750) != 0) {
         error = "could not set directory permissions for " + path.string() +
             ": " + std::strerror(errno);
         return false;
@@ -173,7 +187,8 @@ bool setManagedFileMetadata(const std::filesystem::path& directory,
 bool ConfigSchemaManager::ensureConfigs(
     const std::filesystem::path& defaultConfigDirectory,
     const std::filesystem::path& configDirectory,
-    std::string& error) {
+    std::string& error,
+    bool allowRecoveryBootstrap) {
     error.clear();
     if (!validAbsoluteNormalized(defaultConfigDirectory) ||
         !validAbsoluteNormalized(configDirectory)) {
@@ -187,7 +202,9 @@ bool ConfigSchemaManager::ensureConfigs(
             defaultConfigDirectory.string();
         return false;
     }
-    if (!ensureRealDirectory(configDirectory, error)) {
+    bool created = false;
+    if (!ensureRealDirectory(configDirectory, allowRecoveryBootstrap,
+                             created, error)) {
         return false;
     }
 
@@ -211,6 +228,11 @@ bool ConfigSchemaManager::ensureConfigs(
         if (errno != ENOENT) {
             error = "could not inspect working configuration " +
                 workingPath.string() + ": " + std::strerror(errno);
+            return false;
+        }
+        if (std::strcmp(fileName, "GLOBAL.conf") == 0 && !created) {
+            error = "recovery configuration is missing and cannot be bootstrapped: " +
+                workingPath.string();
             return false;
         }
 

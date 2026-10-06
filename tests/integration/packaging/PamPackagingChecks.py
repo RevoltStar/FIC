@@ -236,6 +236,11 @@ attach_back() {
     return 0
 }
 case " $* " in
+    *" incident-pam-verify "*)
+        grep -q "^Module: fic-incident-access$" "$FAKE_PAM_STATE/account" &&
+        grep -q "pam_fic_access.so" "$FAKE_PAM_D/common-account"
+        exit $?
+        ;;
     # Step 7F managed provider domain: the read-only preflight is a no-op
     # in the sandbox; the release succeeds unless a provider failure is
     # injected (FIC_FAKE_PROVIDER_MODE=fail).
@@ -399,6 +404,16 @@ regen() {
 }
 case " $* " in
     *" --remove "*)
+        if [ "${FAKE_PAU_GATE_REMOVE_FAILS:-}" = "1" ]; then
+            case " $* " in
+                *" fic-incident-access "*)
+                    if [ "${FAKE_PAU_GATE_PARTIAL:-}" = "1" ]; then
+                        remove_profile "$state/account" fic-incident-access
+                        regen
+                    fi
+                    exit 1 ;;
+            esac
+        fi
         if [ "$FAKE_PAU_REMOVE_FAILS" = "1" ]; then
             if [ "$FAKE_PAU_PARTIAL" = "1" ]; then
                 printf "FAKE-PAU-PARTIAL-MUTATION %s\\n" "$FAKE_PAU_PARTIAL_HOOKS" >> "$FAKE_LOG"
@@ -665,116 +680,25 @@ def proof_unit_tests() -> None:
 
 
 def prerm_release_wiring_tests() -> None:
-    """Static wiring contract of the three-profile C2 prerm redesign: the
-    generated prerm must run ONLY the two narrow package-release
-    maintenance commands (read-only preflight BEFORE any side effect;
-    release transition after the batch remove, with every FIC writer
-    stopped) through the exact installed absolute path, and must contain
-    NO legacy shell password snapshot/restore/proof grammar: the C2
-    maintenance helper owns the whole password topology decision."""
-    builder_path = (Path(__file__).resolve().parents[3] /
-                    "packaging/deb/build-fic-debian12-deb.sh")
-    deb_builder = builder_path.read_text(encoding="utf-8")
-    fic_prerm = function_body(deb_builder,
-                              "write_system_integration_symlink_prerm")
-
-    # The temporary history-initial blocker is retired: the three-profile
-    # C2 release safely detaches ALL THREE identities.
-    require("cannot safely remove or restore" not in fic_prerm,
-            "the retired temporary history-initial prerm blocker text "
-            "must be gone")
-
-    # Exactly the four narrow maintenance commands (C2 password domain +
-    # Step 7F managed provider domain), absolute path only.
-    maintenance_lines = [line.strip() for line in fic_prerm.splitlines()
-                         if "--maintenance" in line]
-    require(len(maintenance_lines) == 4,
-            "the prerm must run exactly the four package-release "
-            "maintenance commands: " + repr(maintenance_lines))
-    preflight_line = ("/opt/fic/bin/fic --maintenance "
-                      "pam-password-prerm-prepare preflight")
-    release_line = ("/opt/fic/bin/fic --maintenance "
-                    "pam-password-prerm-prepare release")
-    require(any(line.startswith("if ! " + preflight_line)
-                for line in maintenance_lines),
-            "the Stage A preflight must run through the exact installed "
-            "absolute maintenance path: " + repr(maintenance_lines))
-    require(any(line.startswith("if " + release_line)
-                for line in maintenance_lines),
-            "the Stage B release must run through the exact installed "
-            "absolute maintenance path: " + repr(maintenance_lines))
-    require(all("pam-password-prerm-prepare" in line or
-                "pam-provider-prerm-prepare" in line
-                for line in maintenance_lines),
-            "no generic or unrelated FIC maintenance command may run in "
-            "the prerm: " + repr(maintenance_lines))
-
-    # Stage A ordering: the read-only preflight runs BEFORE any side
-    # effect — before the service stop and before any pam-auth-update.
-    stop_pos = fic_prerm.find("systemctl disable --now fic-notify.service")
-    require(stop_pos >= 0, "Debian prerm has no service stop block")
-    preflight_pos = fic_prerm.find(preflight_line)
-    require(preflight_pos >= 0 and preflight_pos < stop_pos,
-            "the read-only preflight must run BEFORE the service stop "
-            "(zero side effects on refusal)")
-    first_pam_call = next(
-        (index for index, line in enumerate(fic_prerm.splitlines())
-         if line.strip().startswith("pam-auth-update") or
-         line.strip().startswith("if pam-auth-update") or
-         line.strip().startswith("if ! pam-auth-update")),
-        -1)
-    require(first_pam_call >= 0,
-            "Debian prerm has no pam-auth-update call")
-    require(fic_prerm.splitlines()[first_pam_call].strip().find(
-                "pam-auth-update") > -1 and
-            fic_prerm.find(fic_prerm.splitlines()[first_pam_call]) >
-            preflight_pos,
-            "the read-only preflight must run BEFORE the first "
-            "pam-auth-update call")
-
-    # Stage B ordering: the release transition runs after the batch
-    # remove, while every FIC writer is stopped.
-    remove_pos = fic_prerm.find("pam-auth-update --package --remove")
-    release_pos = fic_prerm.find(release_line)
-    require(release_pos > remove_pos,
-            "the C2 password release must run after the batch remove of "
-            "the permanent hook and legacy policy profiles")
-
-    # The batch remove must NEVER name a managed password hook profile:
-    # all three identities are released by the helper through the C2
-    # transition executor (planner order, ONE profile per invocation).
-    for hook in PASSWORD_HOOKS:
-        require(hook not in fic_prerm[remove_pos:release_pos],
-                f"the batch remove must not name the managed password "
-                f"hook profile {hook}")
-
-    # The legacy two-profile shell password framework must be fully gone:
-    # no selection snapshots, no shell recovery, no shell password proof.
-    for legacy_grammar in ("fic_password_quality_hook_selected",
-                           "fic_password_history_hook_selected",
-                           "fic_password_hook_recovery_failed",
-                           "fic_prove_password_hook_state_restored",
-                           "Module: fic-password-quality-hook",
-                           "Module: fic-password-history-hook"):
-        require(legacy_grammar not in fic_prerm,
-                f"the legacy shell password grammar must be gone from the "
-                f"prerm: {legacy_grammar}")
-    require("write_password_hook_proof_function" not in deb_builder,
-            "the obsolete shell password proof function must be removed "
-            "from the Debian builder")
-
-    # Failure-path diagnostics: the prerm must distinguish the helper
-    # release failure from the faillock infrastructure recovery, and the
-    # faillock recovery keeps its stronger always-restore invariant.
-    for diagnostic in ("the C2 password package release failed",
-                       "restoring the package PAM hook infrastructure",
-                       "PAM infrastructure recovery failed",
-                       "restored and proven attached",
-                       "NOT proven restored"):
-        require(diagnostic in fic_prerm,
-                f"Debian prerm diagnostic missing: {diagnostic}")
-
-    print("prerm C2 release wiring checks passed")
+    builder = (Path(__file__).resolve().parents[3] /
+               "packaging/deb/build-fic-debian12-deb.sh").read_text()
+    prerm = function_body(builder, "write_system_integration_symlink_prerm")
+    stop = prerm.index("systemctl disable --now fic-notify.service")
+    provider = prerm.index("pam-provider-prerm-prepare release")
+    password = prerm.index("pam-password-prerm-prepare release")
+    batch = prerm.index("pam-auth-update --package --remove \\")
+    final_gate = prerm.index("pam-auth-update --package --remove fic-incident-access")
+    require(stop < provider < password < batch < final_gate,
+            "release and hook order must leave incident gate attached until last")
+    require("fic-incident-access" not in prerm[batch:final_gate].split("; then")[0],
+            "batch removal must not detach incident gate")
+    require("pam-auth-update --enable fic-incident-access" in prerm[final_gate:],
+            "failed final detach must compensate the incident gate")
+    require("fic_prove_incident_gate_attached" in prerm[final_gate:],
+            "final detach compensation must prove the restored gate")
+    require("incident-pam-verify" in prerm[final_gate:],
+            "final detach compensation must prove effective PAM topology")
+    print("prerm release wiring checks passed")
 
 
 def main() -> int:
@@ -1189,7 +1113,7 @@ def main() -> int:
     # preflight MUST run before ANY side effect — before the service stop
     # and before the first pam-auth-update call — so a refusal (selected-
     # but-unowned identity, unsupported topology) happens with ZERO side
-    # effects. Stage B (release) must run after the batch remove while
+    # effects. Stage B (release) runs before the batch remove while
     # every FIC writer is proven stopped. Both stages use the exact
     # installed absolute path (no PATH dependency).
     preflight_call = ("/opt/fic/bin/fic --maintenance "
@@ -1206,48 +1130,13 @@ def main() -> int:
             "the read-only preflight must run BEFORE the first "
             "pam-auth-update mutation")
     release_pos = fic_prerm.find(release_call)
-    require(release_pos > remove_pos,
-            "the C2 password package release must run after the batch "
-            "remove, while every FIC writer is stopped")
+    require(stop_pos < release_pos < remove_pos,
+            "the C2 password release must precede hook removal")
 
-    # Lifecycle invariant: a failing `pam-auth-update --remove` must be
-    # contained inside the prerm while every FIC writer is still stopped.
-    # The prerm restores ONLY the permanent hook infrastructure (never the
-    # legacy policy-owned selector profiles), proves the restoration with
-    # the read-only standard-state proof, and always exits non-zero, so
-    # dpkg's later abort-remove path never has to restart a writer on top
-    # of a partially detached PAM graph.
-    require("pam-auth-update --package --remove" in fic_prerm and
-            "fic_pam_remove_failed=1" in fic_prerm and
-            'if [ "\\$fic_pam_remove_failed" = "1" ]; then' in fic_prerm,
-            "Debian prerm does not contain the PAM detach "
-            "failure/recovery branch")
-    enable_pos = fic_prerm.find("pam-auth-update --enable")
-    require(enable_pos > remove_pos,
-            "Debian prerm PAM recovery does not re-enable the permanent "
-            "hooks after the failed detach attempt")
-    recovery_enable_block = fic_prerm[enable_pos:fic_prerm.find(
-        "then", enable_pos)]
-    for hook in ("fic-faillock-hook-preauth", "fic-faillock-hook-authfail",
-                 "fic-faillock-hook-authsucc", "fic-faillock-hook-account"):
-        require(hook in recovery_enable_block,
-                f"Debian prerm PAM recovery does not re-enable {hook}")
-    for legacy_policy_profile in ("fic-faillock-notify",
-                                  "fic-faillock-preauth-required",
-                                  "fic-pwquality", "fic-pwhistory"):
-        require(legacy_policy_profile not in fic_prerm[enable_pos:],
-                f"prerm PAM recovery must not re-activate the legacy "
-                f"policy-owned profile {legacy_policy_profile}")
-    require("fic_prove_permanent_hooks_attached" in fic_prerm[enable_pos:],
-            "Debian prerm PAM recovery does not prove the restored "
-            "permanent hooks")
-    for diagnostic in ("restoring the package PAM hook infrastructure",
-                       "PAM infrastructure recovery failed",
-                       "restored and proven attached",
-                       "NOT proven restored"):
-        require(diagnostic in fic_prerm,
-                f"Debian prerm PAM detach-failure diagnostic missing: "
-                f"{diagnostic}")
+    require("pam-auth-update --enable fic-incident-access" in fic_prerm,
+            "final gate detach requires narrow compensation")
+    require("fic_prove_incident_gate_attached" in fic_prerm,
+            "final gate detach requires attached proof")
 
     pam_proof = function_body(deb_builder, "write_pam_hook_proof_function")
     for state_element in ("/var/lib/pam", "/etc/pam.d/common-auth",
@@ -1458,9 +1347,9 @@ def main() -> int:
             text=True,
             capture_output=True,
             check=False)
-        require(ran.returncode == 0,
-                "generated prerm failed under fake systemctl: " +
-                ran.stderr.strip())
+        require(ran.returncode != 0 and
+                "incident gate NOT proven restored before final detach" in ran.stderr,
+                "missing gate must block removal before final detach")
         calls = log.read_text(encoding="utf-8").splitlines() \
             if log.is_file() else []
         pam_calls = [index for index, line in enumerate(calls)
@@ -1643,7 +1532,7 @@ def main() -> int:
             require(legacy not in enable_calls[0],
                     f"prerm recovery re-activated legacy profile {legacy}")
         require_hooks_attached()
-        require("restoring the package PAM hook infrastructure"
+        require("permanent PAM hook infrastructure restored"
                 in ran.stderr,
                 "prerm detach-failure diagnostic must announce the PAM "
                 "recovery: " + ran.stderr.strip())
@@ -1740,8 +1629,8 @@ def main() -> int:
         # ---- Three-profile C2 package-release behavioral matrix ----
         # The C2 maintenance helper owns the whole password decision; the
         # prerm orchestrates: preflight (before ANY side effect) -> stop
-        # writers -> batch remove (permanent hooks + legacy policy
-        # profiles) -> helper release -> faillock recovery on failure. The
+        # writers -> helper release -> batch remove (permanent hooks + legacy
+        # policy profiles) -> incident gate detach last. The
         # owned fixtures carry REAL provenance elements: canonical Active
         # slot bytes with a marker mutation id, a matching Applied journal
         # record with the role-specific activation identifier and the
@@ -1847,9 +1736,14 @@ def main() -> int:
                     "the preflight must run BEFORE the service stop")
             require(max(preflights) < min(removes),
                     "the preflight must run BEFORE the batch remove")
-            require(min(releases) > max(removes),
-                    "the release must run AFTER the batch remove "
-                    "(writers stopped)")
+            require(max(stops) < min(releases) < min(removes),
+                    "release must run after stopped writers and before hook removal")
+            require(len(removes) == 2 and
+                    calls[removes[-1]] ==
+                    "pam-auth-update --package --remove fic-incident-access" and
+                    not any(line.startswith("fic-maintenance ")
+                            for line in calls[removes[-1] + 1:]),
+                    "incident gate must be the final semantic release step")
 
         # The installed package payload ships all three managed password
         # slots; identities that are not applied rest in the canonical
@@ -1861,7 +1755,7 @@ def main() -> int:
         # PR1: the history-initial identity is selected and OWNED — the
         # temporary blocker semantics are retired: the removal succeeds,
         # the helper is called (preflight before any side effect, release
-        # after the batch remove), the initial identity is detached, its
+        # before the batch remove), the initial identity is detached, its
         # slot is canonical Neutral and no FIC include remains.
         write_attached_pam_state(pam_state, pam_d)
         write_selected_password_hooks(pam_state, pam_d, False, False,
@@ -1966,7 +1860,7 @@ def main() -> int:
         ran = run_prerm({"FIC_FAKE_HELPER_MODE": "fail-compensated"})
         require(ran.returncode != 0,
                 "PR5: the failed helper release must fail the removal")
-        require("the C2 password package release failed" in ran.stderr,
+        require("C2 password release failed" in ran.stderr,
                 "PR5: the release-failure diagnostic must be explicit: " +
                 ran.stderr.strip())
         require("pre-release topology proven restored" in ran.stderr,
@@ -1981,16 +1875,48 @@ def main() -> int:
                     encoding="utf-8") != NEUTRAL_SLOT,
                 "PR5: the compensated quality slot must stay Active")
 
-        # A failed provider release happens after the batch PAM detach.
-        # Removal must restore the permanent incident gate before it aborts.
+        # A failed provider release must leave the incident gate untouched.
         write_attached_pam_state(pam_state, pam_d)
         log.unlink(missing_ok=True)
         ran = run_prerm({"FIC_FAKE_PROVIDER_MODE": "fail"})
         require(ran.returncode != 0,
                 "provider release failure must abort package removal")
-        require("restoring permanent hooks" in ran.stderr,
+        require("incident gate remains attached" in ran.stderr,
                 "provider failure must enter the PAM recovery path")
         require_hooks_attached()
+        require(not any("pam-auth-update --package --remove" in line
+                        for line in read_calls()),
+                "provider failure must leave the incident gate untouched")
+
+        # Final gate detach failure is compensated narrowly, even when
+        # pam-auth-update changed the selection before returning failure.
+        for partial in ("", "1"):
+            write_attached_pam_state(pam_state, pam_d)
+            log.unlink(missing_ok=True)
+            ran = run_prerm({"FAKE_PAU_GATE_REMOVE_FAILS": "1",
+                             "FAKE_PAU_GATE_PARTIAL": partial})
+            require(ran.returncode != 0 and
+                    "incident gate restored and proven attached" in ran.stderr,
+                    "final gate detach failure must restore the gate: " +
+                    ran.stderr.strip())
+            calls = read_calls()
+            require(any(line == "pam-auth-update --enable fic-incident-access"
+                        for line in calls),
+                    "final gate compensation must re-enable only the gate")
+            state, stack = read_pam_state(pam_state, pam_d)
+            require("Module: fic-incident-access" in state and
+                    "pam_fic_access.so" in stack,
+                    "final gate compensation did not restore the gate")
+        write_attached_pam_state(pam_state, pam_d)
+        log.unlink(missing_ok=True)
+        ran = run_prerm({"FAKE_PAU_GATE_REMOVE_FAILS": "1",
+                         "FAKE_PAU_GATE_PARTIAL": "1",
+                         "FAKE_PAU_ENABLE_FAILS": "1"})
+        require(ran.returncode != 0 and "CRITICAL" in ran.stderr and
+                "NOT proven restored" in ran.stderr,
+                "failed gate compensation must remain a critical removal failure")
+        require(not any("systemctl start" in line for line in read_calls()),
+                "prerm must never restart writers after failed gate compensation")
 
         # PR6: the helper release fails and the compensation is NOT proven
         # (the fake helper detaches and gives up): the prerm must exit
