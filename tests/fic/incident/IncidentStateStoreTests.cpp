@@ -46,6 +46,7 @@ public:
     ~TempDir() {
         AtomicFileWriter::setDirectoryFsyncHookForTests({});
         AtomicFileWriter::setRemovePreunlinkHookForTests({});
+        AtomicFileWriter::setPreInstallHookForTests({});
         fic::core::setSecureStatePostReadHookForTests({});
         std::error_code ignored;
         std::filesystem::remove_all(directory, ignored);
@@ -105,7 +106,7 @@ void testMissingStateIsNotProvenUnlocked(const TempDir& temp) {
             "a missing state file must never be reported as proven UNLOCKED");
 }
 
-void testCorruptStateIsBroken(const TempDir& temp) {
+void testCorruptStateRetainsObjectProof(const TempDir& temp) {
     const std::filesystem::path path = statePath(temp);
     IncidentStateStore store(path);
 
@@ -126,8 +127,8 @@ void testCorruptStateIsBroken(const TempDir& temp) {
     };
     for (const std::string& content : corruptions) {
         writeState(path, content);
-        require(store.read().provenance == IncidentStateStore::Provenance::Broken,
-                "malformed content must be Broken: [" + content + "]");
+        require(store.read().provenance == IncidentStateStore::Provenance::InvalidContent,
+                "malformed content must retain proven identity: [" + content + "]");
     }
 
     // The only accepted spellings.
@@ -451,8 +452,8 @@ void testBrokenFallbackRefusesUnprovableObject(const TempDir& temp) {
 }
 
 // ---------------------------------------------------------------------------
-// Invariant 8: clear() NEVER uses an unlink fallback. A clear that cannot be
-// proven durable fails and the previous incident stays active.
+// A clear that cannot prove durable UNLOCKED fails. Compensation may restore
+// the previous severity or leave durable absence as BROKEN/ISOLATE.
 // ---------------------------------------------------------------------------
 
 void testClearRequiresDurableUnlocked(const TempDir& temp) {
@@ -529,6 +530,80 @@ void testClearRefusesUnprovableState(const TempDir& temp) {
             "clear must not touch an unprovable object");
 }
 
+void testAbsentClearCannotOverwriteRacingHard(const TempDir& temp) {
+    const auto path = statePath(temp);
+    IncidentStateStore store(path);
+    AtomicFileWriter::setPreInstallHookForTests([&](const std::string&) {
+        writeState(path, "HARD\n");
+    });
+    const auto cleared = store.clear();
+    AtomicFileWriter::setPreInstallHookForTests({});
+    require(!cleared.ok && cleared.effectiveSeverity == IncidentSeverity::Hard,
+            "racing HARD must be reread and reported");
+    require(store.read().severity == IncidentSeverity::Hard,
+            "exclusive create must preserve racing HARD");
+}
+
+void testAbsentClearCreatesUnlocked(const TempDir& temp) {
+    IncidentStateStore store(statePath(temp));
+    const auto cleared = store.clear();
+    require(cleared.ok && store.read().provenance == IncidentStateStore::Provenance::Proven &&
+            store.read().severity == IncidentSeverity::Unlocked,
+            "administrative clear may exclusively create durable UNLOCKED");
+}
+
+void testMalformedClearAndReplacementGuard(const TempDir& temp) {
+    const auto path = statePath(temp);
+    IncidentStateStore store(path);
+    writeState(path, "BOGUS\n");
+    const auto raised = store.raiseToAtLeast(IncidentSeverity::Soft);
+    require(!raised.durable && raised.effectiveSeverity == IncidentSeverity::Isolate &&
+            store.read().provenance == IncidentStateStore::Provenance::InvalidContent,
+            "ordinary raise must leave malformed state at effective ISOLATE");
+    require(store.clear().ok && store.read().severity == IncidentSeverity::Unlocked,
+            "administrator may clear proven malformed content");
+    writeState(path, "BOGUS\n");
+    AtomicFileWriter::setPreInstallHookForTests([&](const std::string&) {
+        std::filesystem::remove(path);
+        writeState(path, "HARD\n");
+    });
+    const auto cleared = store.clear();
+    AtomicFileWriter::setPreInstallHookForTests({});
+    require(!cleared.ok && store.read().severity == IncidentSeverity::Hard,
+            "clear must refuse a replacement of proven malformed content");
+}
+
+void testUnlockedClearDoesNotWrite(const TempDir& temp) {
+    const auto path = statePath(temp);
+    writeState(path, "UNLOCKED\n");
+    IncidentStateStore store(path);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(fsyncAlwaysFails);
+    const auto cleared = store.clear();
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(cleared.ok && store.read().severity == IncidentSeverity::Unlocked,
+            "repeated clear must be a persistent no-op");
+}
+
+void testUnsafeParentRefusesClear(const TempDir& temp) {
+    const auto path = statePath(temp);
+    writeState(path, "BOGUS\n");
+    ::chmod(temp.directory.c_str(), 0777);
+    IncidentStateStore store(path);
+    const auto cleared = store.clear();
+    require(!cleared.ok && cleared.brokenState &&
+            store.read().provenance == IncidentStateStore::Provenance::Broken,
+            "clear must not repair or trust unsafe parent metadata");
+}
+
+void testWrongModeRefusesClear(const TempDir& temp) {
+    const auto path = statePath(temp);
+    writeState(path, "BOGUS\n");
+    ::chmod(path.c_str(), 0666);
+    IncidentStateStore store(path);
+    require(!store.clear().ok && store.read().provenance == IncidentStateStore::Provenance::Broken,
+            "clear must refuse malformed content with unprovable metadata");
+}
+
 } // namespace
 
 int main() {
@@ -547,7 +622,7 @@ int main() {
          testProvenUnlockedIsTheOnlyUnlockedState},
         {"missing_state_is_not_proven_unlocked",
          testMissingStateIsNotProvenUnlocked},
-        {"corrupt_state_is_broken", testCorruptStateIsBroken},
+        {"corrupt_state_retains_object_proof", testCorruptStateRetainsObjectProof},
         {"symlink_state_is_broken", testSymlinkStateIsBroken},
         {"wrong_metadata_state_is_broken", testWrongMetadataStateIsBroken},
         {"raise_is_monotonic_and_idempotent", testRaiseIsMonotonicAndIdempotent},
@@ -577,6 +652,12 @@ int main() {
         {"clear_fails_closed_when_durability_is_unprovable",
          testClearFailsClosedWhenDurabilityIsUnprovable},
         {"clear_refuses_unprovable_state", testClearRefusesUnprovableState},
+        {"absent_clear_preserves_racing_hard", testAbsentClearCannotOverwriteRacingHard},
+        {"absent_clear_creates_unlocked", testAbsentClearCreatesUnlocked},
+        {"malformed_clear_and_replacement_guard", testMalformedClearAndReplacementGuard},
+        {"unlocked_clear_does_not_write", testUnlockedClearDoesNotWrite},
+        {"unsafe_parent_refuses_clear", testUnsafeParentRefusesClear},
+        {"wrong_mode_refuses_clear", testWrongModeRefusesClear},
     };
 
     for (const Scenario& scenario : scenarios) {

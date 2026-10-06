@@ -3,6 +3,8 @@
 
 from pathlib import Path
 import re
+import subprocess
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[3]
 DEB = ROOT / "packaging/deb/build-fic-debian12-deb.sh"
@@ -30,6 +32,33 @@ def check_generator(path: Path) -> None:
             f"{path}: ownership normalization must exclude lockstatus")
     require("! -path /opt/fic/lockstatus -exec chmod" in source,
             f"{path}: mode normalization must exclude lockstatus")
+    direct_parent_writes = re.findall(r"^\s*(?:chown|chmod)\s+[^\n]*\s/opt/fic(?:\s|$)",
+                                      source, re.MULTILINE)
+    require(len(direct_parent_writes) == 2 and
+            any("chown root:fic /opt/fic" in item for item in direct_parent_writes) and
+            any("chmod 2750 /opt/fic" in item for item in direct_parent_writes),
+            f"{path}: only the two guarded first-install parent writes are allowed")
+    for line in source.splitlines():
+        if "find /opt/fic" not in line or "-exec" not in line:
+            continue
+        if "chown root:fic" not in line and "chmod 2750" not in line:
+            continue
+        require("find /opt/fic -mindepth 1" in line,
+                f"{path}: generic normalization must exclude parent: {line}")
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp) / "fic"
+            parent.mkdir()
+            (parent / "lockstatus").write_text("HARD\n")
+            (parent / "child").mkdir()
+            expression = line.strip().split(" || ")[0].replace("/opt/fic", str(parent))
+            expression = re.sub(r"-exec (?:chown root:fic|chmod 2750) \{\} (?:\+|\\+;)",
+                                "-print", expression)
+            result = subprocess.run(expression.split(),
+                                    capture_output=True, text=True)
+            require(result.returncode == 0, f"{path}: invalid find expression: {line}")
+            selected = result.stdout.splitlines()
+            require(str(parent) not in selected and str(parent / "child") in selected,
+                    f"{path}: parent selected or child skipped: {line}")
 
 
 def main() -> None:
@@ -38,10 +67,36 @@ def main() -> None:
 
     deb = DEB.read_text()
     rpm = RPM.read_text()
-    require('if [ "\\${1:-}" = "configure" ] && [ -z "\\${2:-}" ]; then\n    /opt/fic/bin/fic --maintenance incident-init' in deb,
+    require('if [ "\\${1:-}" = "configure" ] && [ -z "\\${2:-}" ]; then' in deb and
+            'if [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then' in deb,
             "Debian bootstrap must run only on initial configure")
-    require('if [ "\\${1:-}" -eq 1 ]; then\n    /opt/fic/bin/fic --maintenance incident-init' in rpm,
+    require('if [ "\\${1:-}" -eq 1 ]; then' in rpm and
+            'if [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then' in rpm,
             "RPM bootstrap must run only with one installed instance")
+    require(re.search(r'/opt/fic\)\s*#.*RPM must not restore.*?;;\s*/opt/fic/\*\)',
+                      rpm, re.DOTALL),
+            "RPM file manifest must not own /opt/fic itself")
+    manifest_function = re.search(r'^write_file_list\(\) \{.*?^\}',
+                                  rpm, re.MULTILINE | re.DOTALL)
+    require(manifest_function is not None, "RPM manifest generator missing")
+    with tempfile.TemporaryDirectory() as temp:
+        package_root = Path(temp) / "package"
+        (package_root / "opt/fic/bin").mkdir(parents=True)
+        (package_root / "opt/fic/bin/fic").write_text("fixture")
+        manifest = Path(temp) / "manifest"
+        subprocess.run(["bash", "-c", manifest_function.group(0) +
+                        '\nwrite_file_list "$1" "$2"', "bash",
+                        str(package_root), str(manifest)], check=True)
+        listed = manifest.read_text().splitlines()
+        require("%dir /opt/fic" not in listed and
+                "%dir /opt/fic/bin" in listed and "/opt/fic/bin/fic" in listed,
+                "RPM manifest must leave security parent unowned and retain children")
+    for name, source in (("Debian", deb), ("RPM", rpm)):
+        first_install = source.index('if [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then')
+        initialize = source.index('/opt/fic/bin/fic --maintenance incident-init')
+        require(first_install < source.index('chown root:fic /opt/fic', first_install) <
+                source.index('chmod 2750 /opt/fic', first_install) < initialize,
+                f"{name}: parent bootstrap must precede incident-init")
 
     daemon = (ROOT / "fic/src/main.cpp").read_text()
     require('command == "incident-init"' in daemon and

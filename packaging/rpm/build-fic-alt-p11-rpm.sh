@@ -299,7 +299,10 @@ write_file_list() {
         [ -n "$path" ] || continue
 
         case "$path" in
-            /opt/fic|/opt/fic/*)
+            /opt/fic)
+                # Security authority: RPM must not restore its metadata on upgrade.
+                ;;
+            /opt/fic/*)
                 printf '%%dir %s\n' "$path" >> "$file_list"
                 ;;
         esac
@@ -473,7 +476,7 @@ fi
 if [ -d /opt/fic ]; then
     mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
-    # FIC incident state (/opt/fic/lockstatus) is AUTHORITATIVE security state.
+    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
     # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
     # state file: after the incident-state schema change a missing state file
@@ -488,8 +491,8 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
-    find /opt/fic -type d -exec chmod 2750 {} \; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \; || true
     find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || true
 
     if [ -d /opt/fic/bin ]; then
@@ -513,7 +516,7 @@ fi
 if [ -d /opt/fic ]; then
     mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
-    # FIC incident state (/opt/fic/lockstatus) is AUTHORITATIVE security state.
+    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
     # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
     # state file: after the incident-state schema change a missing state file
@@ -528,8 +531,8 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
-    find /opt/fic -type d -exec chmod 2750 {} \\; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \\; || true
     find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \\; || true
 
     if [ -d /opt/fic/bin ]; then
@@ -556,7 +559,7 @@ fi
 if [ -d /opt/fic ]; then
     mkdir -p /opt/fic/config /opt/fic/db /opt/fic/log /opt/fic/notify
 
-    # FIC incident state (/opt/fic/lockstatus) is AUTHORITATIVE security state.
+    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
     #
     # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
     # state file: after the incident-state schema change a missing state file
@@ -571,8 +574,8 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
-    find /opt/fic -type d -exec chmod 2750 {} \\; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \\; || true
     find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \\; || true
 
     if [ -d /opt/fic/bin ]; then
@@ -608,11 +611,16 @@ fi
 # foreign - state is left strictly untouched and remains BROKEN_STATE
 # (ISOLATE); an upgrade never repairs a missing or corrupt state to UNLOCKED.
 if [ "\${1:-}" -eq 1 ]; then
+    # Only a genuinely absent state permits first-install parent bootstrap.
+    if [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then
+        chown root:fic /opt/fic || exit 1
+        chmod 2750 /opt/fic || exit 1
+    fi
     /opt/fic/bin/fic --maintenance incident-init || exit 1
 fi
 
-find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || exit 1
-find /opt/fic -type d -exec chmod 2750 {} \; || exit 1
+find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || exit 1
+find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \; || exit 1
 find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || exit 1
 find /opt/fic/bin -maxdepth 1 -type f -exec chmod 0750 {} \; || exit 1
 
@@ -787,8 +795,8 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    find /opt/fic -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
-    find /opt/fic -type d -exec chmod 2750 {} \; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -type d -exec chmod 2750 {} \; || true
     find /opt/fic -type f ! -path /opt/fic/lockstatus -exec chmod 0640 {} \; || true
 
     if [ -d /opt/fic/bin ]; then

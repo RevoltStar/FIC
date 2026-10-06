@@ -1,6 +1,7 @@
 #include "incident/IncidentController.h"
 
 #include "incident/IncidentStateStore.h"
+#include "incident/IncidentNotificationLevel.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/incident/IncidentSeverity.h>
@@ -25,6 +26,7 @@ using ::fic::incident::IncidentResult;
 using ::fic::incident::IncidentSource;
 using ::fic::incident::IncidentStateStore;
 using ::fic::incident::RuntimeState;
+using ::fic::incident::incidentNotificationLevel;
 using ::fic::session::LoginSession;
 using ::fic::session::LoginUser;
 using ::fic::session::SessionContainmentBackend;
@@ -277,9 +279,48 @@ void testNotificationIsDeduplicatedBySeverity(const TempTree& tree) {
             "the escalation must be recorded");
     harness.controller.clear("admin");
     harness.controller.raise(IncidentSeverity::Standard, source, "new incident");
-    require(notifications.size() == 4 &&
+    require(notifications.size() == 5 &&
+                notifications[3] == IncidentSeverity::Unlocked &&
                 notifications.back() == IncidentSeverity::Standard,
             "successful clear must reset notification deduplication");
+}
+
+void testNotificationLevelsAndRepeatedClear(const TempTree& tree) {
+    require(incidentNotificationLevel(IncidentSeverity::Unlocked) == notifyLevel::INFO &&
+            incidentNotificationLevel(IncidentSeverity::Soft) == notifyLevel::WARN &&
+            incidentNotificationLevel(IncidentSeverity::Standard) == notifyLevel::WARN &&
+            incidentNotificationLevel(IncidentSeverity::Hard) == notifyLevel::ERROR &&
+            incidentNotificationLevel(IncidentSeverity::Isolate) == notifyLevel::FATAL,
+            "incident notification levels must match severity");
+    Harness harness(tree.statePath);
+    std::vector<IncidentSeverity> notifications;
+    harness.controller.setNotifySink([&](IncidentSeverity severity, const std::string&) {
+        notifications.push_back(severity);
+    });
+    harness.controller.raise(IncidentSeverity::Soft, policySource("a"), "soft");
+    require(harness.controller.clear("admin").ok, "first clear must succeed");
+    require(harness.controller.clear("admin").ok, "repeated clear must succeed");
+    require(notifications == std::vector<IncidentSeverity>{
+                IncidentSeverity::Soft, IncidentSeverity::Unlocked},
+            "successful transition to UNLOCKED must notify exactly once");
+}
+
+void testPersistenceFailureAuditsAfterContainment(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    bool audited = false;
+    bool containedAtAudit = false;
+    harness.controller.setAuditSink([&](const std::string& line) {
+        if (line.find("incident_persistence_failed") != std::string::npos) {
+            audited = true;
+            containedAtAudit = harness.sessions->acted("terminate-session:c1");
+        }
+    });
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [](const std::string&) { return false; });
+    harness.controller.raise(IncidentSeverity::Hard, policySource("a"), "hard");
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(audited, "persistence failure must be audited");
+    require(containedAtAudit, "emergency containment must precede persistence audit");
 }
 
 void testUnavailableBackendsRemainUnproven(const TempTree& tree) {
@@ -334,6 +375,10 @@ void testClearCleanupFailureIsDegraded(const TempTree& tree) {
     require(!result.ok && result.runtime == RuntimeState::Degraded &&
                 result.effectiveSeverity == IncidentSeverity::Unlocked,
             "durable clear with failed cleanup must report UNLOCKED/DEGRADED");
+    const auto repeated = harness.controller.clear("admin");
+    require(!repeated.ok && repeated.runtime == RuntimeState::Degraded &&
+                repeated.effectiveSeverity == IncidentSeverity::Unlocked,
+            "proven UNLOCKED must still attempt runtime cleanup");
 }
 
 void testAuditAndNotifyFailuresDoNotCancelContainment(const TempTree& tree) {
@@ -398,7 +443,8 @@ void testFailedClearReconcilesNewIsolateState(const TempTree& tree) {
         [](const std::string&) { return false; });
     const auto cleared = harness.controller.clear("admin");
     AtomicFileWriter::setDirectoryFsyncHookForTests({});
-    require(!cleared.ok && cleared.effectiveSeverity == IncidentSeverity::Isolate &&
+    require(!cleared.ok && cleared.brokenState &&
+                cleared.effectiveSeverity == IncidentSeverity::Isolate &&
                 cleared.runtime == RuntimeState::Degraded,
             "failed clear must not reuse a SOFT runtime proof for ISOLATE");
     require(harness.network->quarantineActive &&
@@ -596,6 +642,8 @@ int main() {
          testRaiseIsMonotonicThroughTheController},
         {"notification_is_deduplicated_by_severity",
          testNotificationIsDeduplicatedBySeverity},
+        {"notification_levels_and_repeated_clear", testNotificationLevelsAndRepeatedClear},
+        {"persistence_failure_audits_after_containment", testPersistenceFailureAuditsAfterContainment},
         {"unavailable_backends_remain_unproven",
          testUnavailableBackendsRemainUnproven},
         {"network_failure_still_attempts_sessions_and_users",

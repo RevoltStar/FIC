@@ -31,6 +31,11 @@ std::function<void(const std::string&)>& testRemovePreunlinkHook() {
     return hook;
 }
 
+std::function<void(const std::string&)>& testPreInstallHook() {
+    static std::function<void(const std::string&)> hook;
+    return hook;
+}
+
 std::string errnoMessage() {
     return std::strerror(errno);
 }
@@ -336,8 +341,24 @@ bool AtomicFileWriter::writeWithResult(
         cleanup(tempFd, tempPath);
         return false;
     }
+    if (testPreInstallHook()) {
+        testPreInstallHook()(targetPath.string());
+    }
+    if (!matchesExpectedTarget(targetPath, options)) {
+        markPreconditionFailure(result);
+        setError(errorMessage,
+                 "target state changed before atomic replacement: " +
+                     targetPath.string());
+        cleanup(tempFd, tempPath);
+        return false;
+    }
     if (!installTempFile(tempPath, targetPath, options.exclusiveCreate)) {
-        setError(errorMessage, "could not replace " + targetPath.string() + ": " + errnoMessage());
+        const int installError = errno;
+        if (options.exclusiveCreate && installError == EEXIST) {
+            markPreconditionFailure(result);
+        }
+        setError(errorMessage, "could not replace " + targetPath.string() + ": " +
+            std::strerror(installError));
         cleanup(tempFd, tempPath);
         return false;
     }
@@ -460,6 +481,11 @@ void AtomicFileWriter::setDirectoryFsyncHookForTests(
 void AtomicFileWriter::setRemovePreunlinkHookForTests(
     std::function<void(const std::string& targetPath)> hook) {
     testRemovePreunlinkHook() = std::move(hook);
+}
+
+void AtomicFileWriter::setPreInstallHookForTests(
+    std::function<void(const std::string& targetPath)> hook) {
+    testPreInstallHook() = std::move(hook);
 }
 
 bool AtomicFileWriter::captureTargetState(const std::string& path,

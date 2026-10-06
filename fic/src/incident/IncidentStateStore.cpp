@@ -77,6 +77,8 @@ std::string incidentProvenanceReason(Provenance provenance) {
             return "proven";
         case Provenance::Absent:
             return "absent";
+        case Provenance::InvalidContent:
+            return "invalid_content";
         case Provenance::Broken:
             break;
     }
@@ -165,9 +167,9 @@ IncidentStateStore::ReadResult IncidentStateStore::read() const {
     ::fic::core::IncidentSeverity severity = ::fic::core::IncidentSeverity::Unlocked;
     std::string reason;
     if (!parseStrictSeverity(secure.content, severity, reason)) {
-        return ReadResult{Provenance::Broken, ::fic::core::IncidentSeverity::Unlocked,
+        return ReadResult{Provenance::InvalidContent, ::fic::core::IncidentSeverity::Unlocked,
                           "malformed incident state: " + reason,
-                          std::nullopt};
+                          secure.targetState};
     }
     return ReadResult{Provenance::Proven, severity, "", secure.targetState};
 }
@@ -181,6 +183,7 @@ IncidentStateStore::RaiseResult IncidentStateStore::writeLocked(
     RaiseResult result;
     AtomicWriteOptions options;
     options.createIfMissing = allowCreate;
+    options.exclusiveCreate = allowCreate;
     options.rejectSymlink = true;
     options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
     options.fileMode = precondition.mode == 0 ? 0640 : precondition.mode;
@@ -282,14 +285,13 @@ IncidentStateStore::RaiseResult IncidentStateStore::raiseToAtLeast(
 
     for (int attempt = 0; attempt < MAX_RAISE_ATTEMPTS; ++attempt) {
         const ReadResult current = read();
-        if (current.provenance == Provenance::Broken) {
-            // FIC cannot prove the object it would have to replace, so it must
-            // never overwrite it: an unproven object could be a symlink, a
-            // hostile replacement, or a foreign file. BROKEN_STATE is itself
-            // the ISOLATE encoding, but only once the absence is durable, which
-            // encodeDurableBrokenStateLocked() proves (or refuses).
+        if (current.provenance == Provenance::Broken ||
+            current.provenance == Provenance::InvalidContent) {
+            // Ordinary raises never repair malformed content or replace an
+            // unprovable object. Both remain effective ISOLATE until an
+            // explicit administrative clear can prove a safe replacement.
             failure.detail = current.detail;
-            return encodeDurableBrokenStateLocked();
+            return failure;
         }
         if (current.provenance == Provenance::Absent) {
             // Absence is already effective ISOLATE. Only bootstrap or an
@@ -369,7 +371,7 @@ IncidentStateStore::encodeDurableBrokenStateLocked(
         result.detail = "incident state is already durably absent";
         return result;
     }
-    if (current.provenance == Provenance::Broken ||
+    if (current.provenance != Provenance::Proven ||
         !current.provenState.has_value()) {
         // The object at the path is not provable, so FIC must not delete it.
         // Leaving it alone keeps it the (fail-closed) BROKEN_STATE witness.
@@ -443,23 +445,30 @@ IncidentStateStore::RaiseResult IncidentStateStore::encodeDurableBrokenState()
 
 // Administrative clear.
 //
-// There is NO unlink fallback here. The only accepted outcome is a durably
-// proven UNLOCKED; if the write or its durability cannot be proven, clear
-// FAILS and the previous incident stays active. Deleting the file instead
-// would leave BROKEN_STATE, which is ISOLATE - the opposite of what the
-// administrator asked for.
+// Only durable UNLOCKED is a successful clear. If a downgrade was published
+// but cannot be made safe, failed clear may encode durable absence as an
+// emergency BROKEN/ISOLATE compensation. Absence never means successful clear.
 IncidentStateStore::ClearResult IncidentStateStore::clear() const {
     ClearResult result;
     const ReadResult current = read();
     if (current.provenance == Provenance::Broken) {
+        result.brokenState = true;
         result.effectiveSeverity = ::fic::core::IncidentSeverity::Isolate;
         result.persistence = PersistenceResult::NotInstalled;
         result.detail = "incident state is not provable: " + current.detail;
         return result;
     }
 
+    if (current.provenance == Provenance::Proven &&
+        current.severity == ::fic::core::IncidentSeverity::Unlocked) {
+        result.ok = true;
+        result.persistence = PersistenceResult::DurableConfirmed;
+        result.effectiveSeverity = ::fic::core::IncidentSeverity::Unlocked;
+        return result;
+    }
+
     AtomicTargetState precondition;
-    if (current.provenance == Provenance::Proven) {
+    if (current.provenState.has_value()) {
         precondition = *current.provenState;
     } else {
         precondition.mode = 0640;
@@ -495,18 +504,24 @@ IncidentStateStore::ClearResult IncidentStateStore::clear() const {
         }
         const RaiseResult broken = encodeDurableBrokenStateLocked(written.installedState);
         result.effectiveSeverity = ::fic::core::IncidentSeverity::Isolate;
+        result.brokenState = true;
         result.persistence = broken.persistence;
         result.detail = "clear failed; " + broken.detail;
         return result;
     }
+    if (!written.durable) {
+        const ReadResult after = read();
+        result.effectiveSeverity = after.provenance == Provenance::Proven
+            ? after.severity : ::fic::core::IncidentSeverity::Isolate;
+        result.brokenState = after.provenance != Provenance::Proven;
+        result.persistence = written.persistence;
+        result.detail = written.detail;
+        return result;
+    }
     result.persistence = written.persistence;
-    result.effectiveSeverity = written.durable
-        ? ::fic::core::IncidentSeverity::Unlocked
-        : (current.provenance == Provenance::Proven
-               ? current.severity
-               : ::fic::core::IncidentSeverity::Isolate);
+    result.effectiveSeverity = ::fic::core::IncidentSeverity::Unlocked;
     result.detail = written.detail;
-    result.ok = written.durable;
+    result.ok = true;
     return result;
 }
 } // namespace fic::incident

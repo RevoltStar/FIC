@@ -61,6 +61,7 @@
 #include "session/SessionReadyValidation.h"
 #include "session/SystemGraphicalSessionInventory.h"
 #include "incident/IncidentController.h"
+#include "incident/IncidentNotificationLevel.h"
 #include "incident/IncidentStateStore.h"
 #include "incident/PolicyIncidentReporter.h"
 #include <fic/core/fs/FileStats.h>
@@ -356,8 +357,7 @@ fic::incident::IncidentController& incidentController() {
         });
         controller.setNotifySink([](fic::core::IncidentSeverity severity,
                                     const std::string& reason) {
-            const notifyLevel level = severity >= fic::core::IncidentSeverity::Hard
-                ? notifyLevel::FATAL : notifyLevel::ERROR;
+            const notifyLevel level = fic::incident::incidentNotificationLevel(severity);
             NotifyUser::notify_user("fic-incident",
                 fic::core::incidentSeverityToken(severity) + ": " + reason,
                 level);

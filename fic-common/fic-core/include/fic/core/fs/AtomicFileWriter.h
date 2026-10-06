@@ -116,6 +116,11 @@ public:
     static void setRemovePreunlinkHookForTests(
         std::function<void(const std::string& targetPath)> hook);
 
+    // Test-only seam immediately before the final install syscall. A test
+    // can create a competing target after the absence proof.
+    static void setPreInstallHookForTests(
+        std::function<void(const std::string& targetPath)> hook);
+
     // Confirms a directory-entry change (including removal) for path.
     // Unlike ensureTargetDurable(), the target need not exist.
     static bool fsyncParentDirectoryForPath(

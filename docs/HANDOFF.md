@@ -2,66 +2,51 @@
 
 ## Current base
 
-* Branch: `main`; task base: `742474baed88632906c72b49b96b0f7d2a7521f1`.
+* Branch: `main`; task base: `f8bb2919eb780850676fe2cbffeb1031ea632e24`.
 
 ## Current task
 
-Focused security hardening of the existing Incident Response core. The PAM gate,
-production logind and nftables backends, early guard, recovery identities,
-greeter/display gate, Device Control integration and GUI are outside this task.
+Focused follow-up hardening of the Incident Response core and package lifecycle.
 
 ## Accepted architecture and invariants
 
-* `/opt/fic/lockstatus` is the only persistent incident severity. Only exact
-  `UNLOCKED\n`, `SOFT\n`, `STANDARD\n`, `HARD\n`, `ISOLATE\n` with proven metadata
-  are trusted. Missing, malformed, raced or otherwise unprovable state means
-  effective ISOLATE. Runtime raise cannot create a weaker file from absence.
-* `IncidentStateStore` owns persistence. Post-rename durability failure triggers
-  exact-state retry, then conditional durable absence fallback. Failed clear
-  compensates a published UNLOCKED by restoring the previous severity durably
-  or encoding BROKEN/ISOLATE. Failure never counts as successful unlock.
-* `IncidentController` owns runtime containment. `ok` requires durable state
-  and all applicable containment proofs. The absent PAM gate and production
-  session/network backends are reported as unavailable, so production
-  STANDARD/HARD/ISOLATE remains DEGRADED even when severity persists.
-  Failed clear reconciles the resulting effective severity, including a new
-  BROKEN/ISOLATE state, instead of reusing the old runtime proof.
-* Policy failures feed `PolicyIncidentReporter` from startup/periodic and the
-  three manual apply entrypoints. Required/Recommended dependency semantics
-  and policy-owned violation severities are unchanged. No product defaults
-  have been assigned where the product has not specified them.
-* Main package `incident-init` runs only on initial Debian/RPM install. Upgrade
-  and auxiliary packages do not create UNLOCKED from missing state. Generic
-  package ownership/mode normalization excludes `lockstatus`.
-* Production state metadata: file root:fic 0640, `/opt/fic` root:fic 2750,
-  regular single-link object. Secure read checks same-size in-place changes.
+* `/opt/fic/lockstatus` and its parent `/opt/fic` form one provenance boundary. Only exact, securely proven severity content is trusted; missing, malformed or unsafe state is effective ISOLATE.
+* Package normalization may change children of `/opt/fic`, but must not repair the parent or `lockstatus` during upgrades or auxiliary package scripts. RPM manifests must not own `/opt/fic`: `%dir` restores its metadata during upgrade. Main package first-install bootstrap may prepare the parent only before `incident-init` when state is absent.
+* Ordinary raise is monotonic and cannot repair malformed state. Administrative clear may replace a proven malformed object using its exact precondition. Clear from absence uses exclusive creation; repeated clear from proven UNLOCKED is a persistent no-op.
+* Successful clear requires durable UNLOCKED. Failed clear may restore the prior severity or encode durable BROKEN/ISOLATE; the controller reports the resulting severity and `brokenState`.
+* Emergency containment precedes persistence-failure audit. Notifications map SOFT/STANDARD to WARN, HARD to ERROR, ISOLATE to FATAL, and a successful transition to UNLOCKED to INFO.
+
+| Observation | Effective state | Ordinary raise | Administrative clear |
+|---|---|---|---|
+| Proven UNLOCKED | UNLOCKED | monotonic | persistent no-op |
+| Proven SOFT/STANDARD/HARD/ISOLATE | proven severity | monotonic max | conditional UNLOCKED |
+| Proven absence | BROKEN/ISOLATE | never lowers | exclusive UNLOCKED create |
+| Malformed, exact object proven | BROKEN/ISOLATE | never repairs | exact conditional UNLOCKED replace |
+| Symlink, unsafe metadata/parent, proof race | BROKEN/ISOLATE | fail closed | refuse |
 
 ## Completed
 
-* Hardened state-store raise, durability fallback and clear compensation.
-* Hardened controller proof, aggregation, notification deduplication and
-  audit/notify wiring; manual apply now reports incidents.
-* Hardened Debian and ALT RPM generated lifecycle scripts and committed
-  dedicated packaging and apply-routing checks.
-* Added incident state, controller, reporter and packaging regressions.
+* Excluded `/opt/fic` from generic ownership and mode normalization in Debian and ALT RPM package generators, and from RPM `%files` ownership.
+* Hardened state-store clear, write preconditions, failure reporting, controller audit order and notifications.
+* Added incident and packaging lifecycle regressions.
+
+## Changed areas
+
+* `packaging/deb/`, `packaging/rpm/`, `fic-common/fic-core/src/fs/`, `fic/src/incident/`, `fic/src/main.cpp`, and related tests.
 
 ## Validation
 
-* Fresh `/tmp/fic-incident-hardening-check` configure for Ubuntu 24.04 and
-  full build passed.
-* Fresh `ctest -N` registered 125 tests, including incident state/controller,
-  policy reporter, apply routing, planner and packaging lifecycle checks.
-* Fresh full CTest outside sandbox: 125/125 passed; one unrelated
-  `command_hash_batch_tests` is marked Skipped by its own test gate.
-* First sandbox CTest had `session_event_server_tests` fail on denied Unix
-  socket `bind`; the same test and full suite passed outside sandbox.
+* `bash -n` for both package generators: passed.
+* `python3 tests/integration/packaging/IncidentStateLifecycleChecks.py`: passed.
+* `cmake --build build-check --target incident_state_store_tests incident_controller_tests fic -j2`: passed for the affected targets.
+* `ctest --test-dir build-check -R 'incident_(state_store|controller)_tests' --output-on-failure`: 2/2 passed.
+* RED-before packaging fixture from `f8bb2919`: old generic `find` selected `/opt/fic` and ordinary children while excluding only `lockstatus`; the new lifecycle check failed on the base generators.
+* Isolated Debian 12 `dpkg -i` fixture preserved existing `/opt/fic` mode 0777 during upgrade. Isolated ALT RPM fixture changed 0777 to 0755 when `%dir /opt/fic` was listed and preserved 0777 after excluding that manifest entry.
+* Fresh `/tmp/fic-incident-core-20261006-check` configure and full build passed; `ctest -N` registered 125 tests, including all incident tests and lifecycle checks.
+* First sandbox full CTest: 2 failures (`session_agent_static_checks` still expected the old `find`; `session_event_server_tests` could not bind a Unix socket). Updated the static check and passed it separately.
+* Full CTest outside sandbox after that fix: 125/125 passed, with `command_hash_batch_tests` skipped by its own gate.
 
 ## Remaining
 
-* No native package install/upgrade smoke was run; lifecycle is checked from
-  generated-script source. No host policy apply, PAM, logind or nftables
-  runtime validation was run.
-* Production PAM access gate, session backend and network quarantine are still
-  absent. A persisted incident therefore does not imply active containment.
-* Per-policy product default `violation_severity` decisions remain unspecified;
-  the base `Policy` default is `None`.
+* Actual FIC DEB/RPM install or upgrade was not run; only isolated minimal package fixtures were installed. No host policy apply or PAM/logind/nftables runtime validation was run.
+* Production PAM access gate, session backend, network quarantine, early guard, recovery, greeter/display gate, Device Control integration and GUI remain outside this task. Product default `violation_severity` decisions remain unspecified.

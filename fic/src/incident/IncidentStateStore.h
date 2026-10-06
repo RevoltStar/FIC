@@ -21,16 +21,18 @@ namespace fic::incident {
 // lives in the security audit trail; this file is a single security decision.
 class IncidentStateStore {
 public:
-    // Provenance of a read. `Broken` means FIC could NOT prove the state and
-    // therefore must treat the system as ISOLATE - never as unlocked.
+    // Provenance of a read. Only Proven carries a usable severity;
+    // Absent, InvalidContent and Broken are effective ISOLATE.
     enum class Provenance {
         // Content positively proven to be exactly one valid severity token.
         Proven,
         // Object positively proven absent (ENOENT through a secure open).
         Absent,
-        // Anything else: unreadable, symlink, non-regular, wrong metadata,
-        // unsafe parent, malformed content, unknown token, oversize, or a
-        // concurrent change detected during the proof.
+        // Object identity/metadata/content are proven, but its token is not a
+        // valid severity. Only an exact administrative clear may replace it.
+        InvalidContent,
+        // Unreadable, symlink, non-regular, wrong metadata, unsafe parent,
+        // oversize, or a concurrent change detected during the proof.
         Broken
     };
 
@@ -40,9 +42,8 @@ public:
         ::fic::core::IncidentSeverity severity = ::fic::core::IncidentSeverity::Unlocked;
         // Why the read is not Proven. Empty when Proven or Absent.
         std::string detail;
-        // The proven identity/metadata/content snapshot, present only for
-        // Proven. Used as the optimistic precondition of the next write and as
-        // the expected state of a conditional remove.
+        // The proven identity/metadata/content snapshot, present for Proven
+        // and InvalidContent. Used as the exact write precondition.
         std::optional<AtomicTargetState> provenState;
     };
 
@@ -84,6 +85,7 @@ public:
 
     struct ClearResult {
         bool ok = false;
+        bool brokenState = false;
         ::fic::core::IncidentSeverity effectiveSeverity = ::fic::core::IncidentSeverity::Standard;
         PersistenceResult persistence = PersistenceResult::Failed;
         std::string detail;
@@ -104,9 +106,9 @@ public:
     // internally, so a concurrent writer cannot cause a lost update.
     RaiseResult raiseToAtLeast(::fic::core::IncidentSeverity requested) const;
 
-    // Administrative clear. Writes UNLOCKED and proves it durable. There is
-    // deliberately NO unlink fallback here: if the durable UNLOCKED cannot be
-    // proven, clear fails and the previous incident stays active.
+    // Administrative clear. A successful clear is only durable UNLOCKED.
+    // Failed compensation may encode durable absence as BROKEN/ISOLATE;
+    // absence is never a successful unlock.
     ClearResult clear() const;
 
     // Durable BROKEN_STATE fallback used when a requested severity cannot be

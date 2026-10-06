@@ -261,7 +261,6 @@ IncidentResult IncidentController::raise(
         // the containment is the recorded one.
         // Audit is a bounded observability concern: a failure to record one
         // must never cancel or delay the containment itself.
-        recordAudit("incident_persistence_failed", result, source, reason);
         IncidentResult contained = applyContainment(
             IncidentSeverity::Isolate,
             "incident state could not be persisted; containing at ISOLATE");
@@ -272,7 +271,9 @@ IncidentResult IncidentController::raise(
         contained.runtime = RuntimeState::Degraded;
         runtime_ = RuntimeState::Degraded;
         contained.effectiveSeverity = IncidentSeverity::Isolate;
+        recordAudit("incident_persistence_failed", contained, source, reason);
         recordAudit("incident_action_failed", contained, source, reason);
+        notifySeverity(IncidentSeverity::Isolate, reason);
         return contained;
     }
 
@@ -309,6 +310,7 @@ IncidentResult IncidentController::clear(const std::string& actor) {
     const IncidentStateStore::ClearResult cleared = stateStore_.clear();
     result.ok = cleared.ok;
     result.effectiveSeverity = cleared.effectiveSeverity;
+    result.brokenState = cleared.brokenState;
     result.detail = cleared.detail;
 
     if (!cleared.ok) {
@@ -344,6 +346,14 @@ IncidentResult IncidentController::clear(const std::string& actor) {
     source.name = "administrator";
     recordAudit("incident_clear", result, source,
                 "cleared by " + actor);
+    if (result.ok && result.previousSeverity != IncidentSeverity::Unlocked &&
+        notifySink_) {
+        try {
+            notifySink_(IncidentSeverity::Unlocked, "incident cleared by " + actor);
+        } catch (...) {
+            // Notification cannot invalidate a completed clear.
+        }
+    }
     return result;
 }
 
