@@ -1206,6 +1206,22 @@ int main(int argc, char* argv[]) {
             std::cout << "incident PAM gate topology proven" << std::endl;
             return 0;
         }
+        if (command == "incident-pam-prove-detached") {
+            if (::geteuid() != 0) {
+                std::cerr << "incident PAM detach proof requires root" << std::endl;
+                return 1;
+            }
+            const auto proof =
+                fic::incident::PamIncidentAccessGateVerifier::proveDetached(
+                    platform.pam, maintenanceError);
+            if (proof != fic::incident::IncidentGateDetachProof::ProvenDetached) {
+                std::cerr << "incident PAM gate is not proven detached: "
+                          << maintenanceError << std::endl;
+                return 1;
+            }
+            std::cout << "incident PAM gate proven detached" << std::endl;
+            return 0;
+        }
         if (command == "incident-pam-alt") {
             if (::geteuid() != 0 ||
                 platform.pam.incidentAccessGate.packageTopologyTarget.empty()) {

@@ -1,33 +1,11 @@
 #include "incident/IncidentRecoveryConfigReader.h"
 
+#include <fic/core/config/ConfigAuthority.h>
 #include <fic/core/runtime/FicPathDefaults.h>
-
-#include <grp.h>
-#include <cerrno>
-#include <unistd.h>
-
-#include <vector>
 
 namespace fic::incident {
 namespace {
 constexpr const char* Key = "lock_exempt_fic_members.status";
-
-bool groupId(gid_t& id) {
-    std::vector<char> buffer(16384);
-    for (unsigned attempt = 0; attempt < 8; ++attempt) {
-        group record{};
-        group* found = nullptr;
-        const int rc = ::getgrnam_r("fic", &record, buffer.data(), buffer.size(), &found);
-        if (rc == ERANGE) {
-            buffer.resize(buffer.size() * 2U);
-            continue;
-        }
-        if (rc != 0 || found == nullptr) return false;
-        id = found->gr_gid;
-        return true;
-    }
-    return false;
-}
 
 std::string trim(const std::string& value) {
     const auto first = value.find_first_not_of(" \t\r");
@@ -38,20 +16,11 @@ std::string trim(const std::string& value) {
 } // namespace
 
 bool IncidentRecoveryConfigReader::ficMemberExemptionEnabled(std::string& diagnostic) {
-    gid_t ficGroup = 0;
-    if (!groupId(ficGroup)) {
-        diagnostic = "fic group cannot be proven";
+    ::fic::core::ConfigAuthorityIdentity identity;
+    if (!::fic::core::productionConfigAuthority(identity, diagnostic)) {
         return false;
     }
-    ::fic::core::SecureStateFileExpectation expectation;
-    expectation.owner = 0;
-    expectation.group = ficGroup;
-    expectation.exactMode = 0640;
-    expectation.maxSize = ::fic::core::SECURE_STATE_READ_HARD_MAX_BYTES;
-    expectation.requireSingleLink = true;
-    expectation.parentOwner = 0;
-    expectation.parentGroup = ficGroup;
-    expectation.exactParentMode = 02750;
+    const auto expectation = ::fic::core::configAuthorityExpectation(identity);
     return read(std::filesystem::path(::fic::core::path_defaults::CONFIG_DIR) / "GLOBAL.conf",
                 expectation, diagnostic);
 }

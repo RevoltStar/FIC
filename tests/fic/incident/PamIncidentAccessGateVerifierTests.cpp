@@ -86,6 +86,44 @@ int main(int argc, char** argv) {
         ::chmod(services.c_str(), 0777);
         require(!prove());
         ::chmod(services.c_str(), 0755);
+
+        const auto stateDir = root / "pam-state";
+        const auto vendor = root / "vendor-pam.d";
+        std::filesystem::create_directory(stateDir);
+        const auto selection = stateDir / "account";
+        write(selection, "Module: pam_unix\n");
+        write(services / "common-account", "account required pam_unix.so\n");
+        config.configDirectories = {services, vendor};
+        auto detached = [&] {
+            return fic::incident::PamIncidentAccessGateVerifier::
+                proveDetachedForTests(config, selection, ::geteuid(),
+                                      diagnostic);
+        };
+        using Proof = fic::incident::IncidentGateDetachProof;
+        require(detached() == Proof::ProvenDetached); // absent optional dir
+        std::filesystem::create_directory(vendor);
+        write(vendor / "vendor-login", "account required pam_unix.so\n");
+        require(detached() == Proof::ProvenDetached);
+        write(services / "common-account",
+              "account required pam_fic_access.so\n");
+        require(detached() == Proof::Referenced);
+        write(services / "common-account", "account required pam_unix.so\n");
+        write(vendor / "vendor-login",
+              "account required pam_fic_access.so\n");
+        require(detached() == Proof::Referenced);
+        write(vendor / "vendor-login", "account required pam_unix.so\n");
+        write(selection, "Module: fic-incident-access\n");
+        require(detached() == Proof::Referenced);
+        write(selection, "Module: pam_unix\n");
+        std::filesystem::create_symlink(
+            vendor / "vendor-login", services / "unprovable-alias");
+        require(detached() == Proof::Unprovable);
+        std::filesystem::remove(services / "unprovable-alias");
+        write(services / "*", "# a literal glob-like service name\n");
+        require(detached() == Proof::ProvenDetached);
+        std::filesystem::remove(vendor / "vendor-login");
+        std::filesystem::remove(vendor);
+        require(detached() == Proof::ProvenDetached);
     } catch (...) {
         std::filesystem::remove_all(root);
         throw;

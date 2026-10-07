@@ -3,10 +3,15 @@
 #include "modules/identity_access/pam/PamConfiguration.h"
 
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <dlfcn.h>
 
 #include <algorithm>
+#include <cerrno>
+#include <cstring>
 #include <filesystem>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -114,6 +119,155 @@ bool proveStack(const ::fic::identity::pam::PamEffectiveStack& stack,
     }
     return true;
 }
+
+bool readProofFile(const std::filesystem::path& path, uid_t expectedOwner,
+                   std::string& content, std::string& diagnostic) {
+    if (!trustedRegularFile(path, expectedOwner, diagnostic)) return false;
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (fd < 0) {
+        diagnostic = "cannot open PAM proof file " + path.string() + ": " +
+            std::strerror(errno);
+        return false;
+    }
+    struct stat before {};
+    if (::fstat(fd, &before) != 0 || !S_ISREG(before.st_mode) ||
+        before.st_uid != expectedOwner || (before.st_mode & 0022) != 0 ||
+        before.st_size > 1024 * 1024) {
+        diagnostic = "PAM proof file metadata is unprovable: " + path.string();
+        ::close(fd);
+        return false;
+    }
+    content.clear();
+    char buffer[8192];
+    bool readFailed = false;
+    for (;;) {
+        const ssize_t count = ::read(fd, buffer, sizeof(buffer));
+        if (count > 0) {
+            content.append(buffer, static_cast<std::size_t>(count));
+            if (content.size() > 1024U * 1024U) break;
+        } else if (count == 0) {
+            break;
+        } else if (errno != EINTR) {
+            readFailed = true;
+            break;
+        } else {
+            continue;
+        }
+    }
+    struct stat after {};
+    const bool stable = !readFailed && content.size() <= 1024U * 1024U &&
+        ::fstat(fd, &after) == 0 &&
+        after.st_dev == before.st_dev && after.st_ino == before.st_ino &&
+        after.st_size == before.st_size &&
+        after.st_mtim.tv_sec == before.st_mtim.tv_sec &&
+        after.st_mtim.tv_nsec == before.st_mtim.tv_nsec &&
+        after.st_ctim.tv_sec == before.st_ctim.tv_sec &&
+        after.st_ctim.tv_nsec == before.st_ctim.tv_nsec &&
+        static_cast<off_t>(content.size()) == before.st_size;
+    ::close(fd);
+    if (!stable) {
+        diagnostic = "PAM proof file changed or could not be read: " +
+            path.string();
+        return false;
+    }
+    return true;
+}
+
+IncidentGateDetachProof proveDetachedImpl(
+    const ::fic::platform::PamPlatformConfig& platform,
+    const std::filesystem::path& selectionPath, uid_t expectedOwner,
+    std::string& diagnostic) {
+    std::string selection;
+    if (!readProofFile(selectionPath, expectedOwner, selection, diagnostic)) {
+        return IncidentGateDetachProof::Unprovable;
+    }
+    std::istringstream state(selection);
+    std::string line;
+    while (std::getline(state, line)) {
+        if (line == "Module: fic-incident-access") {
+            diagnostic = "incident gate remains selected";
+            return IncidentGateDetachProof::Referenced;
+        }
+        if (line.find("fic-incident-access") != std::string::npos) {
+            diagnostic = "incident gate selection state is ambiguous";
+            return IncidentGateDetachProof::Unprovable;
+        }
+    }
+    if (platform.configDirectories.empty()) {
+        diagnostic = "PAM configuration directories are not declared";
+        return IncidentGateDetachProof::Unprovable;
+    }
+    bool requiredDirectorySeen = false;
+    for (std::size_t index = 0; index < platform.configDirectories.size(); ++index) {
+        const auto& directory = platform.configDirectories[index];
+        std::error_code error;
+        const auto status = std::filesystem::symlink_status(directory, error);
+        if (error == std::errc::no_such_file_or_directory) {
+            if (index == 0) {
+                diagnostic = "primary PAM configuration directory is missing";
+                return IncidentGateDetachProof::Unprovable;
+            }
+            continue;
+        }
+        if (error || !std::filesystem::is_directory(status)) {
+            diagnostic = "PAM configuration directory is unprovable: " +
+                directory.string();
+            return IncidentGateDetachProof::Unprovable;
+        }
+        if (index == 0) requiredDirectorySeen = true;
+        struct stat directoryInfo {};
+        if (::lstat(directory.c_str(), &directoryInfo) != 0 ||
+            directoryInfo.st_uid != expectedOwner ||
+            (directoryInfo.st_mode & 0022) != 0) {
+            diagnostic = "PAM configuration directory is untrusted: " +
+                directory.string();
+            return IncidentGateDetachProof::Unprovable;
+        }
+        std::filesystem::directory_iterator entries(directory, error);
+        if (error) {
+            diagnostic = "cannot enumerate PAM directory: " + directory.string();
+            return IncidentGateDetachProof::Unprovable;
+        }
+        const std::filesystem::directory_iterator end;
+        for (; entries != end; entries.increment(error)) {
+            if (error) break;
+            const auto& entry = *entries;
+            const auto fileStatus = entry.symlink_status(error);
+            if (error || !std::filesystem::is_regular_file(fileStatus)) {
+                diagnostic = "PAM service entry is unprovable: " +
+                    entry.path().string();
+                return IncidentGateDetachProof::Unprovable;
+            }
+            std::string content;
+            if (!readProofFile(entry.path(), expectedOwner, content, diagnostic)) {
+                return IncidentGateDetachProof::Unprovable;
+            }
+            std::vector<::fic::identity::pam::PamRule> rules;
+            if (!::fic::identity::pam::PamConfiguration::parseRulesContent(
+                    entry.path(), content, rules, diagnostic)) {
+                return IncidentGateDetachProof::Unprovable;
+            }
+            if (std::any_of(rules.begin(), rules.end(), [](const auto& rule) {
+                    return rule.module == "pam_fic_access.so";
+                })) {
+                diagnostic = "incident PAM module remains referenced: " +
+                    entry.path().string();
+                return IncidentGateDetachProof::Referenced;
+            }
+        }
+        if (error) {
+            diagnostic = "PAM directory changed during enumeration: " +
+                directory.string();
+            return IncidentGateDetachProof::Unprovable;
+        }
+    }
+    if (!requiredDirectorySeen) {
+        diagnostic = "primary PAM configuration directory is unprovable";
+        return IncidentGateDetachProof::Unprovable;
+    }
+    diagnostic = "incident gate is detached";
+    return IncidentGateDetachProof::ProvenDetached;
+}
 } // namespace
 
 bool proveImpl(
@@ -187,6 +341,21 @@ bool PamIncidentAccessGateVerifier::proveForTests(
     const ::fic::platform::PamPlatformConfig& platform,
     uid_t expectedOwner, std::string& diagnostic) {
     return proveImpl(platform, expectedOwner, false, diagnostic);
+}
+
+IncidentGateDetachProof PamIncidentAccessGateVerifier::proveDetached(
+    const ::fic::platform::PamPlatformConfig& platform,
+    std::string& diagnostic) {
+    return proveDetachedImpl(
+        platform, "/var/lib/pam/account", 0, diagnostic);
+}
+
+IncidentGateDetachProof PamIncidentAccessGateVerifier::proveDetachedForTests(
+    const ::fic::platform::PamPlatformConfig& platform,
+    const std::filesystem::path& selectionPath,
+    uid_t expectedOwner, std::string& diagnostic) {
+    return proveDetachedImpl(
+        platform, selectionPath, expectedOwner, diagnostic);
 }
 
 } // namespace fic::incident

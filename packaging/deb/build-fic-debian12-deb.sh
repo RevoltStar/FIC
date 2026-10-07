@@ -524,9 +524,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
@@ -570,9 +570,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
@@ -616,9 +616,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
@@ -755,9 +755,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
@@ -800,9 +800,9 @@ if [ "\${1:-}" = "configure" ] && [ -z "\${2:-}" ]; then
     /opt/fic/bin/fic --maintenance incident-init
 fi
 
-find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
-find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
+find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
+find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
 find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
 
 if [ -x /opt/fic/bin/fic ]; then
@@ -937,9 +937,9 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
@@ -1074,8 +1074,32 @@ if [ "\$1" = "remove" ]; then
         exit 1
     fi
 
-    # Remove all other package profiles before the incident gate. On a
-    # partial mutation, restore the permanent infrastructure while stopped.
+    # The incident gate stays attached until every other release succeeds.
+    # On any partial removal, restore the complete package-owned permanent
+    # infrastructure before dpkg's abort-remove is allowed to restart writers.
+    fic_restore_permanent_hooks() {
+        if ! pam-auth-update --enable \
+            fic-faillock-hook-preauth \
+            fic-faillock-hook-authfail \
+            fic-faillock-hook-authsucc \
+            fic-faillock-hook-account \
+            fic-incident-access; then
+            if fic_prove_permanent_hooks_attached &&
+               /opt/fic/bin/fic --maintenance incident-pam-verify; then
+                echo "FIC: permanent PAM infrastructure remained proven attached; package removal blocked" >&2
+                exit 1
+            fi
+            echo "FIC: CRITICAL: permanent PAM infrastructure NOT proven restored; package removal blocked and writers remain stopped" >&2
+            exit 1
+        fi
+        if ! fic_prove_permanent_hooks_attached ||
+           ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
+            echo "FIC: CRITICAL: permanent PAM infrastructure NOT proven restored; package removal blocked and writers remain stopped" >&2
+            exit 1
+        fi
+        echo "FIC: complete permanent PAM infrastructure restored and proven attached; package removal blocked" >&2
+        exit 1
+    }
     if ! pam-auth-update --package --remove \
         fic-faillock-notify \
         fic-faillock-authfail \
@@ -1087,56 +1111,24 @@ if [ "\$1" = "remove" ]; then
         fic-faillock-hook-account \
         fic-pwquality \
         fic-pwhistory; then
-        if ! pam-auth-update --enable \
-            fic-faillock-hook-preauth \
-            fic-faillock-hook-authfail \
-            fic-faillock-hook-authsucc \
-            fic-faillock-hook-account \
-            fic-incident-access; then
-            if fic_prove_permanent_hooks_attached; then
-                echo "FIC: PAM infrastructure recovery failed, but permanent hooks are proven still attached; package removal blocked" >&2
-                exit 1
-            fi
-            echo "FIC: CRITICAL: permanent PAM infrastructure NOT proven restored; package removal blocked" >&2
-            exit 1
-        fi
-        if ! fic_prove_permanent_hooks_attached; then
-            echo "FIC: CRITICAL: permanent PAM infrastructure NOT proven restored; package removal blocked" >&2
-            exit 1
-        fi
-        echo "FIC: permanent PAM hook infrastructure restored and proven attached; package removal blocked" >&2
-        exit 1
-    fi
-
-    # No fallible package operation may follow a successful gate detach.
-    if [ -L "/bin/$command_name" ] &&
-       [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
-        rm -f "/bin/$command_name"
+        fic_restore_permanent_hooks
     fi
     if ! fic_prove_incident_gate_attached ||
        ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
-        if ! pam-auth-update --enable fic-incident-access ||
-           ! fic_prove_incident_gate_attached ||
-           ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
-            echo "FIC: CRITICAL: incident gate NOT proven restored before final detach; package removal blocked and no FIC writer may restart" >&2
-            exit 1
-        fi
-        echo "FIC: incident gate restored before final detach; package removal blocked" >&2
-        exit 1
+        fic_restore_permanent_hooks
     fi
+    # This is the last semantic release. The typed proof distinguishes a
+    # remaining reference from an unreadable or unprovable PAM topology.
     if ! pam-auth-update --package --remove fic-incident-access ||
-       grep -q "^Module: fic-incident-access$" /var/lib/pam/account 2>/dev/null ||
-       grep -Eq '^[[:space:]]*[^#[:space:]]+[[:space:]].*pam_fic_access\.so' \
-           /etc/pam.d/* /usr/lib/pam.d/* /usr/share/pam/pam.d/* 2>/dev/null; then
-        # Only the incident gate needs compensation at this final boundary.
-        if ! pam-auth-update --enable fic-incident-access ||
-           ! fic_prove_incident_gate_attached ||
-           ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
-            echo "FIC: CRITICAL: incident gate NOT proven restored; package removal blocked and no FIC writer may restart" >&2
-            exit 1
-        fi
-        echo "FIC: incident gate restored and proven attached; package removal blocked" >&2
-        exit 1
+       ! /opt/fic/bin/fic --maintenance incident-pam-prove-detached; then
+        fic_restore_permanent_hooks
+    fi
+    # A failed symlink cleanup must not abort removal after the security gate
+    # has been proven detached. The package binary itself is removed by dpkg.
+    if [ -L "/bin/$command_name" ] &&
+       [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
+        rm -f "/bin/$command_name" ||
+            echo "FIC: could not remove /bin/$command_name symlink" >&2
     fi
 fi
 
@@ -1158,9 +1150,9 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \;
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \;
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;

@@ -80,6 +80,19 @@ void createCurrentDatabase(const DBOptions& options) {
     assert(database.verifyDatabaseSchema(error));
 }
 
+bool ensureTestConfigs(const fs::path& defaults, const fs::path& working,
+                       std::string& error, bool bootstrap = false) {
+    return fic::core::ConfigSchemaManager::ensureConfigs(
+        defaults, working, error, bootstrap,
+        fic::core::ConfigAuthorityIdentity{::geteuid(), ::getegid()});
+}
+
+bool verifyTestConfigs(const fs::path& working, std::string& error) {
+    return fic::core::ConfigSchemaManager::verifyConfigs(
+        working, error,
+        fic::core::ConfigAuthorityIdentity{::geteuid(), ::getegid()});
+}
+
 void testConfigContract(const fs::path& root) {
     const fs::path defaults = root / "default-config";
     const fs::path working = root / "config";
@@ -93,33 +106,34 @@ void testConfigContract(const fs::path& root) {
     }
 
     std::string error;
-    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+    assert(ensureTestConfigs(
         defaults, working, error, true));
     struct stat directoryInfo {};
     assert(::lstat(working.c_str(), &directoryInfo) == 0);
     assert((directoryInfo.st_mode & 07777) == 02750);
     assert(directoryInfo.st_uid == ::geteuid());
-    assert(fic::core::ConfigSchemaManager::verifyConfigs(working, error));
+    assert(verifyTestConfigs(working, error));
     fs::remove(working / "GLOBAL.conf");
-    assert(!fic::core::ConfigSchemaManager::ensureConfigs(
+    assert(!ensureTestConfigs(
         defaults, working, error, true));
     assert(!fs::exists(working / "GLOBAL.conf"));
     fs::copy_file(defaults / "GLOBAL.conf", working / "GLOBAL.conf");
     fs::permissions(working, fs::perms::all, fs::perm_options::replace);
     fs::permissions(working / "GLOBAL.conf", fs::perms::all,
                     fs::perm_options::replace);
-    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+    assert(!ensureTestConfigs(
         defaults, working, error));
+    assert(!verifyTestConfigs(working, error));
     assert((fs::status(working).permissions() & fs::perms::all) ==
            fs::perms::all);
     assert((fs::status(working / "GLOBAL.conf").permissions() & fs::perms::all) ==
            fs::perms::all);
     fs::permissions(working, fs::perms::owner_all, fs::perm_options::replace);
     fs::remove_all(working);
-    assert(!fic::core::ConfigSchemaManager::ensureConfigs(
+    assert(!ensureTestConfigs(
         defaults, working, error));
     assert(!fs::exists(working));
-    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+    assert(ensureTestConfigs(
         defaults, working, error, true));
     for (const char* fileName : CONFIG_FILES) {
         assert(readFile(working / fileName) == readFile(defaults / fileName));
@@ -131,34 +145,34 @@ void testConfigContract(const fs::path& root) {
     const fs::path dac = working / "DAC.conf";
     const std::string custom = "_schema_version=1\ncustom.status=ENABLE\n";
     writeFile(dac, custom);
-    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+    assert(ensureTestConfigs(
         defaults, working, error));
     assert(readFile(dac) == custom);
 
     writeFile(dac, "custom.status=ENABLE\n");
-    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+    assert(ensureTestConfigs(
         defaults, working, error));
     assert(readFile(dac) == "custom.status=ENABLE\n");
-    assert(!fic::core::ConfigSchemaManager::verifyConfigs(working, error));
+    assert(!verifyTestConfigs(working, error));
     assert(error.find("does not declare") != std::string::npos);
 
     writeFile(dac, "_schema_version=0\ncustom.status=ENABLE\n");
-    assert(!fic::core::ConfigSchemaManager::verifyConfigs(working, error));
+    assert(!verifyTestConfigs(working, error));
     assert(error.find("unsupported configuration schema 0") != std::string::npos);
 
     writeFile(dac, "_schema_version=01\ncustom.status=ENABLE\n");
-    assert(!fic::core::ConfigSchemaManager::verifyConfigs(working, error));
+    assert(!verifyTestConfigs(working, error));
     assert(error.find("invalid _schema_version") != std::string::npos);
 
     writeFile(
         dac,
         "_schema_version=" +
             std::to_string(fic::version::CONFIG_SCHEMA_VERSION + 1) + "\n");
-    assert(!fic::core::ConfigSchemaManager::verifyConfigs(working, error));
+    assert(!verifyTestConfigs(working, error));
     assert(error.find("unsupported configuration schema") != std::string::npos);
 
     writeFile(dac, custom);
-    assert(fic::core::ConfigSchemaManager::verifyConfigs(working, error));
+    assert(verifyTestConfigs(working, error));
 }
 
 void testModeAndOwnerFreshInstallConfig(const fs::path& root) {
@@ -177,12 +191,90 @@ void testModeAndOwnerFreshInstallConfig(const fs::path& root) {
         }
     }
     std::string error;
-    assert(fic::core::ConfigSchemaManager::ensureConfigs(
+    assert(ensureTestConfigs(
         defaults, working, error, true));
     const std::string dac = readFile(working / "DAC.conf");
     assert(dac.find("mode_and_owner_profiles.status=DISABLE") !=
            std::string::npos);
     assert(dac.find("mode_and_owner_profiles.value=") == std::string::npos);
+}
+
+void testConfigAuthorityRejection(const fs::path& root) {
+    const fs::path defaults = root / "authority-defaults";
+    const fs::path working = root / "authority-config";
+    fs::create_directories(defaults);
+    for (const char* fileName : CONFIG_FILES) {
+        writeFile(defaults / fileName,
+                  "_schema_version=" +
+                  std::to_string(fic::version::CONFIG_SCHEMA_VERSION) + "\n");
+    }
+    std::string error;
+    assert(ensureTestConfigs(defaults, working, error, true));
+    auto rejected = [&] {
+        assert(!ensureTestConfigs(defaults, working, error));
+        assert(!verifyTestConfigs(working, error));
+    };
+    const fs::path global = working / "GLOBAL.conf";
+    const fs::path ordinary = working / "DAC.conf";
+    fs::permissions(working, static_cast<fs::perms>(0777),
+                    fs::perm_options::replace);
+    rejected();
+    assert((fs::status(working).permissions() & fs::perms::all) ==
+           fs::perms::all);
+    fs::permissions(working, static_cast<fs::perms>(02750),
+                    fs::perm_options::replace);
+
+    for (const fs::path& file : {global, ordinary}) {
+        fs::permissions(file, static_cast<fs::perms>(0666),
+                        fs::perm_options::replace);
+        rejected();
+        assert((fs::status(file).permissions() & fs::perms::all) ==
+               static_cast<fs::perms>(0666));
+        fs::permissions(file, static_cast<fs::perms>(0640),
+                        fs::perm_options::replace);
+        const fs::path saved = file.string() + ".saved";
+        fs::rename(file, saved);
+        fs::create_symlink(saved, file);
+        rejected();
+        fs::remove(file);
+        fs::rename(saved, file);
+        const fs::path alias = file.string() + ".alias";
+        fs::create_hard_link(file, alias);
+        rejected();
+        fs::remove(alias);
+    }
+
+    const fs::path savedDirectory = root / "authority-config-saved";
+    fs::rename(working, savedDirectory);
+    fs::create_directory_symlink(savedDirectory, working);
+    rejected();
+    fs::remove(working);
+    fs::rename(savedDirectory, working);
+
+    if (::geteuid() == 0) {
+        const uid_t wrongOwner = 65534;
+        const gid_t wrongGroup = ::getegid() == 65534 ? 65533 : 65534;
+        assert(::chown(working.c_str(), wrongOwner, ::getegid()) == 0);
+        rejected();
+        assert(::lchown(working.c_str(), ::geteuid(), ::getegid()) == 0);
+        fs::permissions(working, static_cast<fs::perms>(02750),
+                        fs::perm_options::replace);
+        assert(::chown(working.c_str(), ::geteuid(), wrongGroup) == 0);
+        rejected();
+        assert(::lchown(working.c_str(), ::geteuid(), ::getegid()) == 0);
+        fs::permissions(working, static_cast<fs::perms>(02750),
+                        fs::perm_options::replace);
+        assert(::chown(global.c_str(), wrongOwner, ::getegid()) == 0);
+        rejected();
+        assert(::chown(global.c_str(), ::geteuid(), ::getegid()) == 0);
+        assert(::chown(ordinary.c_str(), ::geteuid(), wrongGroup) == 0);
+        rejected();
+        assert(::chown(ordinary.c_str(), ::geteuid(), ::getegid()) == 0);
+    }
+    const auto before = readFile(global);
+    assert(ensureTestConfigs(defaults, working, error));
+    assert(verifyTestConfigs(working, error));
+    assert(readFile(global) == before);
 }
 
 void testDatabaseContract(const fs::path& root) {
@@ -255,6 +347,8 @@ int main() {
         ("fic-schema-contract-test-" + std::to_string(::getpid()));
     fs::remove_all(root);
     fs::create_directories(root);
+    fs::permissions(root, static_cast<fs::perms>(02750),
+                    fs::perm_options::replace);
 
     auto paths = fic::core::FicProductPaths::production();
     paths.privateBinDir = root / "bin";
@@ -277,6 +371,7 @@ int main() {
 
     testConfigContract(root);
     testModeAndOwnerFreshInstallConfig(root);
+    testConfigAuthorityRejection(root);
     testDatabaseContract(root);
 
     fs::remove_all(root);

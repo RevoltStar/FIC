@@ -241,6 +241,14 @@ case " $* " in
         grep -q "pam_fic_access.so" "$FAKE_PAM_D/common-account"
         exit $?
         ;;
+    *" incident-pam-prove-detached "*)
+        [ "${FIC_FAKE_DETACH_PROOF_FAIL:-}" = "1" ] && exit 1
+        grep -q "^Module: fic-incident-access$" "$FAKE_PAM_STATE/account" &&
+            exit 1
+        grep -q "pam_fic_access.so" "$FAKE_PAM_D/common-account" &&
+            exit 1
+        exit 0
+        ;;
     # Step 7F managed provider domain: the read-only preflight is a no-op
     # in the sandbox; the release succeeds unless a provider failure is
     # injected (FIC_FAKE_PROVIDER_MODE=fail).
@@ -692,12 +700,14 @@ def prerm_release_wiring_tests() -> None:
             "release and hook order must leave incident gate attached until last")
     require("fic-incident-access" not in prerm[batch:final_gate].split("; then")[0],
             "batch removal must not detach incident gate")
-    require("pam-auth-update --enable fic-incident-access" in prerm[final_gate:],
-            "failed final detach must compensate the incident gate")
-    require("fic_prove_incident_gate_attached" in prerm[final_gate:],
-            "final detach compensation must prove the restored gate")
-    require("incident-pam-verify" in prerm[final_gate:],
-            "final detach compensation must prove effective PAM topology")
+    require("fic_restore_permanent_hooks" in prerm[final_gate:] and
+            "fic-faillock-hook-preauth" in prerm,
+            "failed final detach must restore all permanent hooks")
+    require("fic_prove_permanent_hooks_attached" in prerm,
+            "final detach compensation must prove complete infrastructure")
+    require("incident-pam-prove-detached" in prerm[final_gate:] and
+            "incident-pam-verify" in prerm,
+            "final detach must use typed proof and effective recovery proof")
     print("prerm release wiring checks passed")
 
 
@@ -1133,8 +1143,8 @@ def main() -> int:
     require(stop_pos < release_pos < remove_pos,
             "the C2 password release must precede hook removal")
 
-    require("pam-auth-update --enable fic-incident-access" in fic_prerm,
-            "final gate detach requires narrow compensation")
+    require("fic_restore_permanent_hooks" in fic_prerm,
+            "final gate detach requires complete compensation")
     require("fic_prove_incident_gate_attached" in fic_prerm,
             "final gate detach requires attached proof")
 
@@ -1348,7 +1358,7 @@ def main() -> int:
             capture_output=True,
             check=False)
         require(ran.returncode != 0 and
-                "incident gate NOT proven restored before final detach" in ran.stderr,
+                "permanent PAM infrastructure NOT proven restored" in ran.stderr,
                 "missing gate must block removal before final detach")
         calls = log.read_text(encoding="utf-8").splitlines() \
             if log.is_file() else []
@@ -1458,6 +1468,9 @@ def main() -> int:
         fake_helper = fake_bin / "fic-maintenance-fake"
         fake_helper.write_text(fake_maintenance_helper(), encoding="utf-8")
         fake_helper.chmod(0o755)
+        sandbox_symlink = tmp_path / "bin-fic"
+        active_units = tmp_path / "active-units"
+        active_units.mkdir()
 
         # detach-failure scenario helpers follow
         def run_prerm(env_extra=None) -> subprocess.CompletedProcess:
@@ -1467,12 +1480,15 @@ def main() -> int:
             # the scenario-driven fake helper.
             sandboxed = sandboxed.replace("/opt/fic/bin/fic",
                                           str(fake_helper))
+            sandboxed = sandboxed.replace('"/bin/fic"',
+                                          f'"{sandbox_symlink}"')
             prerm_script.write_text(sandboxed, encoding="utf-8")
             prerm_script.chmod(0o755)
             env = {"PATH": f"{fake_bin}:/usr/bin:/bin",
                    "FAKE_LOG": str(log),
                    "FAKE_PAM_STATE": str(pam_state),
                    "FAKE_PAM_D": str(pam_d),
+                   "FAKE_SYSTEMD_ACTIVE": str(active_units),
                    "FIC_FAKE_HELPER_MODE": "ok",
                    "FAKE_PAU_REMOVE_FAILS": "", "FAKE_PAU_PARTIAL": "",
                    "FAKE_PAU_PARTIAL_HOOKS": "",
@@ -1532,7 +1548,7 @@ def main() -> int:
             require(legacy not in enable_calls[0],
                     f"prerm recovery re-activated legacy profile {legacy}")
         require_hooks_attached()
-        require("permanent PAM hook infrastructure restored"
+        require("permanent PAM infrastructure restored"
                 in ran.stderr,
                 "prerm detach-failure diagnostic must announce the PAM "
                 "recovery: " + ran.stderr.strip())
@@ -1577,8 +1593,7 @@ def main() -> int:
                          "FAKE_PAU_ENABLE_FAILS": "1"})
         require(ran.returncode != 0,
                 "prerm must fail when the PAM recovery enable fails")
-        require("PAM infrastructure recovery failed" in ran.stderr and
-                "proven still attached" in ran.stderr,
+        require("permanent PAM infrastructure remained proven attached" in ran.stderr,
                 "prerm must distinguish failed recovery with intact hook "
                 "state: " + ran.stderr.strip())
         require_hooks_attached()
@@ -1741,8 +1756,9 @@ def main() -> int:
             require(len(removes) == 2 and
                     calls[removes[-1]] ==
                     "pam-auth-update --package --remove fic-incident-access" and
-                    not any(line.startswith("fic-maintenance ")
-                            for line in calls[removes[-1] + 1:]),
+                    all(line == "fic-maintenance --maintenance incident-pam-prove-detached"
+                        for line in calls[removes[-1] + 1:]
+                        if line.startswith("fic-maintenance ")),
                     "incident gate must be the final semantic release step")
 
         # The installed package payload ships all three managed password
@@ -1762,6 +1778,7 @@ def main() -> int:
                                       initial=True)
         write_owned_fixture(pam_state,
                             {"fic-password-history-initial-hook"})
+        sandbox_symlink.symlink_to(fake_helper)
         log.unlink(missing_ok=True)
         ran = run_prerm()
         require(ran.returncode == 0,
@@ -1769,6 +1786,8 @@ def main() -> int:
                 ran.stderr.strip())
         require_maintenance_ordering(read_calls())
         require_fully_detached()
+        require(not sandbox_symlink.exists() and not sandbox_symlink.is_symlink(),
+                "successful removal must delete the managed /bin/fic symlink")
         state, stack = read_pam_state(pam_state, pam_d)
         for hook in PERMANENT_HOOKS:
             require(f"Module: {hook}" not in state and
@@ -1888,25 +1907,28 @@ def main() -> int:
                         for line in read_calls()),
                 "provider failure must leave the incident gate untouched")
 
-        # Final gate detach failure is compensated narrowly, even when
-        # pam-auth-update changed the selection before returning failure.
+        # Final gate detach failure restores every package-owned permanent
+        # hook, including when PAM already changed the gate selection.
         for partial in ("", "1"):
             write_attached_pam_state(pam_state, pam_d)
+            sandbox_symlink.symlink_to(fake_helper)
             log.unlink(missing_ok=True)
             ran = run_prerm({"FAKE_PAU_GATE_REMOVE_FAILS": "1",
                              "FAKE_PAU_GATE_PARTIAL": partial})
             require(ran.returncode != 0 and
-                    "incident gate restored and proven attached" in ran.stderr,
-                    "final gate detach failure must restore the gate: " +
+                    "complete permanent PAM infrastructure restored and proven attached"
+                    in ran.stderr,
+                    "final gate detach failure must restore all hooks: " +
                     ran.stderr.strip())
             calls = read_calls()
-            require(any(line == "pam-auth-update --enable fic-incident-access"
+            require(any(line.startswith("pam-auth-update --enable") and
+                        all(hook in line for hook in PERMANENT_HOOKS)
                         for line in calls),
-                    "final gate compensation must re-enable only the gate")
-            state, stack = read_pam_state(pam_state, pam_d)
-            require("Module: fic-incident-access" in state and
-                    "pam_fic_access.so" in stack,
-                    "final gate compensation did not restore the gate")
+                    "final gate compensation must re-enable all permanent hooks")
+            require_hooks_attached()
+            require(sandbox_symlink.is_symlink(),
+                    "failed final detach must preserve /bin/fic")
+            sandbox_symlink.unlink()
         write_attached_pam_state(pam_state, pam_d)
         log.unlink(missing_ok=True)
         ran = run_prerm({"FAKE_PAU_GATE_REMOVE_FAILS": "1",
@@ -1939,6 +1961,80 @@ def main() -> int:
                 "PR6: the prerm must not silently restore the unproven "
                 "password state")
 
+        # Chain the actual generated prerm result into postinst abort-remove
+        # with the same PAM selection and stack files.
+        generated_postinst = subprocess.run(
+            ["bash", "-c",
+             'pkg_root="$1"; set -- 0.1.0; '
+             'source "$BUILDER" >/dev/null 2>&1; '
+             'write_system_integration_symlink_postinst "$pkg_root" fic '
+             '"/opt/fic/bin/fic"',
+             "bash", str(package_root)],
+            cwd=root,
+            env={"PATH": "/usr/bin:/bin",
+                 "BUILDER": str(root / "packaging/deb/build-fic-debian12-deb.sh")},
+            text=True, capture_output=True, check=False)
+        require(generated_postinst.returncode == 0,
+                "could not generate chained abort-remove fixture")
+        abort_script = tmp_path / "abort-remove-sandboxed.sh"
+        abort_script.write_text(
+            sandbox_pam_paths(
+                (package_root / "DEBIAN/postinst").read_text(), pam_state, pam_d),
+            encoding="utf-8")
+        abort_script.chmod(0o755)
+        fake_systemctl.write_text(
+            "#!/bin/sh\n"
+            'printf "systemctl %s\\n" "$*" >> "$FAKE_LOG"\n'
+            'case "$1" in\n'
+            '  is-active) [ -f "$FAKE_SYSTEMD_ACTIVE/$3" ] ;;\n'
+            '  start) : > "$FAKE_SYSTEMD_ACTIVE/$2"; exit 0 ;;\n'
+            '  *) exit 0 ;;\n'
+            'esac\n', encoding="utf-8")
+        fake_systemctl.chmod(0o755)
+
+        def run_abort_same_state() -> subprocess.CompletedProcess:
+            return subprocess.run(
+                [str(abort_script), "abort-remove"],
+                env={"PATH": f"{fake_bin}:/usr/bin:/bin",
+                     "FAKE_LOG": str(log),
+                     "FAKE_SYSTEMD_ACTIVE": str(active_units)},
+                text=True, capture_output=True, check=False)
+
+        write_attached_pam_state(pam_state, pam_d)
+        sandbox_symlink.symlink_to(fake_helper)
+        log.unlink(missing_ok=True)
+        failed_remove = run_prerm({
+            "FAKE_PAU_GATE_REMOVE_FAILS": "1",
+            "FAKE_PAU_GATE_PARTIAL": "1"})
+        require(failed_remove.returncode != 0 and sandbox_symlink.is_symlink(),
+                "chained final-gate failure must retain /bin/fic")
+        require_hooks_attached()
+        restored = run_abort_same_state()
+        require(restored.returncode == 0 and
+                all((active_units / unit).is_file() for unit in
+                    ("fic.service", "fic-device.service", "fic-notify.service")),
+                "abort-remove must restart writers after proven full restoration: " +
+                restored.stderr.strip())
+        sandbox_symlink.unlink()
+
+        for unit in active_units.iterdir():
+            unit.unlink()
+        write_attached_pam_state(pam_state, pam_d)
+        log.unlink(missing_ok=True)
+        failed_remove = run_prerm({
+            "FAKE_PAU_GATE_REMOVE_FAILS": "1",
+            "FAKE_PAU_GATE_PARTIAL": "1",
+            "FAKE_PAU_ENABLE_FAILS": "1"})
+        require(failed_remove.returncode != 0 and "CRITICAL" in
+                failed_remove.stderr,
+                "chained failed compensation must remain critical")
+        unproven = run_abort_same_state()
+        require(unproven.returncode != 0 and
+                "not proven attached" in unproven.stderr and
+                not any(line.startswith("systemctl start")
+                        for line in read_calls()),
+                "abort-remove must refuse writer restart on unproven PAM state")
+
     # Behavioral proof of the attach invariant: run the configure tail of the
     # generated postinst with fake binaries and verify the actual order:
     # pre-attach validation → pam-auth-update --package → hook enable →
@@ -1966,6 +2062,14 @@ def main() -> int:
         fake_tool("systemctl", 0)
         fake_tool("fic", 0)
         fake_tool("fic-dick", 0)
+        fic_tool = fake_bin / "fic"
+        fic_tool.write_text(
+            "#!/bin/sh\n"
+            'printf "fic %s\\n" "$*" >> "$FAKE_LOG"\n'
+            'if [ "${FIC_FAKE_UNSAFE_CONFIG:-}" = 1 ] && '
+            '[ "$*" = "--maintenance ensure-config" ]; then exit 1; fi\n'
+            "exit 0\n", encoding="utf-8")
+        fic_tool.chmod(0o755)
 
         generated = subprocess.run(
             ["bash", "-c",
@@ -2003,6 +2107,44 @@ def main() -> int:
             configure_tail,
                                encoding="utf-8")
         tail_script.chmod(0o755)
+
+        # An upgrade with untrusted existing config authority must stop at
+        # ensure-config. The generated package script must not attach PAM
+        # hooks or start a writer after that rejection.
+        unsafe_config = tmp_path / "unsafe-config"
+        unsafe_config.mkdir(mode=0o777)
+        unsafe_config.chmod(0o777)
+        unsafe_mode = unsafe_config.stat().st_mode & 0o7777
+        config_start = postinst_text.find("fic_config_command=ensure-config")
+        config_end = postinst_text.find(
+            "/opt/fic/bin/fic-dick --maintenance check-db", config_start)
+        require(config_start >= 0 and config_end > config_start and
+                config_end < configure_start,
+                "generated postinst config validation order changed")
+        config_end = postinst_text.find("\n", config_end)
+        config_script = tmp_path / "configure-config-gate.sh"
+        config_script.write_text(
+            "#!/bin/sh\nset -e\n" +
+            postinst_text[config_start:config_end].replace(
+                "/opt/fic/bin/fic-dick", "fic-dick").replace(
+                "/opt/fic/bin/fic", "fic"), encoding="utf-8")
+        config_script.chmod(0o755)
+        rejected = subprocess.run(
+            [str(config_script), "configure", "prior-version"],
+            env={"PATH": str(fake_bin), "FAKE_LOG": str(log),
+                 "FIC_FAKE_UNSAFE_CONFIG": "1"},
+            text=True, capture_output=True, check=False)
+        require(rejected.returncode != 0,
+                "unsafe upgrade config did not abort package configure")
+        rejected_calls = log.read_text(encoding="utf-8").splitlines()
+        require(any("--maintenance ensure-config" in call
+                    for call in rejected_calls) and
+                not any("pam-auth-update" in call or "fic.service" in call
+                        for call in rejected_calls),
+                "unsafe config rejection still attached PAM or started daemon")
+        require(unsafe_config.stat().st_mode & 0o7777 == unsafe_mode,
+                "unsafe config metadata was changed by the package script")
+        log.unlink()
 
         # Success path: validation passes → hooks attach → daemon starts.
         ran = subprocess.run(
@@ -2576,9 +2718,9 @@ def main() -> int:
     prerm = function_body(deb_builder, "write_system_integration_symlink_prerm")
     provider_preflight_position = prerm.find(
         "pam-provider-prerm-prepare preflight")
-    require("/usr/lib/pam.d/* /usr/share/pam/pam.d/*" in prerm,
-            "DEB erase must reject remaining incident module references "
-            "in secondary PAM service directories")
+    require("incident-pam-prove-detached" in prerm and
+            "/usr/lib/pam.d/* /usr/share/pam/pam.d/*" not in prerm,
+            "DEB erase must use typed proof instead of fragile shell globs")
     provider_release_position = prerm.find(
         "pam-provider-prerm-prepare release")
     c2_preflight_position = prerm.find("pam-password-prerm-prepare preflight")

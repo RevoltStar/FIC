@@ -16,6 +16,7 @@ find_package(Threads REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 add_library(fic-core STATIC
+    src/config/ConfigAuthority.cpp
     src/config/ConfigFileHandler.cpp
     src/config/ConfigSchemaManager.cpp
     src/config/ModuleConfigFileHandler.cpp

@@ -34,8 +34,8 @@ def check_generator(path: Path) -> None:
             f"{path}: generic file chmod repairs lockstatus")
     require("-path /opt/fic/lockstatus -prune" in source,
             f"{path}: ownership normalization must exclude lockstatus")
-    require("! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod" in source,
-            f"{path}: mode normalization must exclude lockstatus")
+    require("-path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod" in source,
+            f"{path}: mode normalization must exclude the config tree")
     direct_parent_writes = re.findall(r"^\s*(?:chown|chmod)\s+[^\n]*\s/opt/fic(?:\s|$)",
                                       source, re.MULTILINE)
     require(len(direct_parent_writes) == 2 and
@@ -73,7 +73,7 @@ def check_generator(path: Path) -> None:
                     str(parent / "config/GLOBAL.conf") not in selected and
                     str(parent / "global-hardlink") not in selected and
                     str(parent / "global-symlink") not in selected and
-                    ("-type d" in line or str(parent / "config/DAC.conf") in selected),
+                    str(parent / "config/DAC.conf") not in selected,
                     f"{path}: parent selected or child skipped: {line}")
     with tempfile.TemporaryDirectory() as temp:
         parent = Path(temp) / "fic"
@@ -105,11 +105,12 @@ def check_generator(path: Path) -> None:
                 ((parent / "bin/global-hardlink").stat().st_mode & 0o7777) == 0o666 and
                 global_config.read_text() ==
                 "lock_exempt_fic_members.status=ENABLE\n" and
-                (ordinary_config.stat().st_mode & 0o7777) == 0o640,
+                (ordinary_config.stat().st_mode & 0o7777) == 0o666,
                 f"{path}: normalization laundered recovery authority")
         if os.geteuid() == 0:
             os.chown(config, 65534, 65534)
             os.chown(global_config, 65534, 65534)
+            os.chown(ordinary_config, 65534, 65534)
             for line in source.splitlines():
                 if "find /opt/fic -" not in line or "-exec chown" not in line:
                     continue
@@ -124,7 +125,9 @@ def check_generator(path: Path) -> None:
             require(config.stat().st_uid == 65534 and
                     config.stat().st_gid == 65534 and
                     global_config.stat().st_uid == 65534 and
-                    global_config.stat().st_gid == 65534,
+                    global_config.stat().st_gid == 65534 and
+                    ordinary_config.stat().st_uid == 65534 and
+                    ordinary_config.stat().st_gid == 65534,
                     f"{path}: ownership normalization laundered recovery authority")
 
 

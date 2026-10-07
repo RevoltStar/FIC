@@ -31,8 +31,8 @@ pre-release state.
 
 A fresh package installation:
 
-1. copies an immutable default only when the corresponding working config is
-   absent;
+1. bootstraps `/opt/fic/config` and its working configs from immutable defaults
+   only when the configuration directory is genuinely absent;
 2. creates an absent or empty device database directly with the complete schema
    1 layout, `application_id`, `user_version`, indexes, triggers and baseline
    rows;
@@ -43,15 +43,19 @@ A fresh package installation:
 The maintenance commands used by this bootstrap are:
 
 ```bash
-fic --maintenance ensure-config
+fic --maintenance ensure-config-first-install
 fic-dick --maintenance initialize-db
 fic --maintenance check-config
 fic-dick --maintenance check-db
 ```
 
-`ensure-config` never overwrites an existing working configuration. Existing
-configuration files must contain exactly one `_schema_version=1`. A missing,
-invalid, lower or future schema version is rejected.
+Upgrades use `fic --maintenance ensure-config`. An existing `/opt/fic/config`
+must be a real `root:fic` directory with mode `2750`; every working config
+must be a single-link regular `root:fic` file with mode `0640`. Existing
+metadata is never repaired. A missing `GLOBAL.conf` or unsafe configuration
+authority aborts package configuration, and the daemon refuses startup before
+READY. `ensure-config` never overwrites an existing working configuration;
+`check-config` rejects missing, invalid, lower or future schema versions.
 
 `initialize-db` creates schema 1 only when the database is absent or empty. A
 non-empty database is accepted only when its `application_id`, `user_version=1`,

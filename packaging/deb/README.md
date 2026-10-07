@@ -27,7 +27,8 @@ This packaging flow builds five distribution-specific Debian-format packages:
 - `/opt/fic/bin/fic`
 - `/opt/fic/bin/fic-udevadm-trigger`
 - immutable defaults under `/opt/fic/share/default-config/*.conf`
-- the empty working directory `/opt/fic/config` (working files are created by FIC)
+- working `/opt/fic/config` is created by the first-install maintenance command,
+  not carried in the package payload
 - `/opt/fic/db`
 - `/opt/fic/image`
 - `/opt/fic/lang`
@@ -98,15 +99,14 @@ During installation each package:
 
 - creates the system group `fic` if it does not already exist;
 - owns immutable `/opt/fic/share/default-config/*.conf` as ordinary package files;
-- bootstraps missing FIC-owned `/opt/fic/config/*.conf` atomically without
-  replacing existing files;
+- bootstraps the working config tree only on first install when its directory
+  is absent; upgrades preserve existing files and reject missing `GLOBAL.conf`;
 - initializes a missing `/opt/fic/db/devices.db` directly at the current schema
   through the offline maintenance command;
 - creates `/opt/fic/lockstatus` and `/opt/fic/db/commandhash.txt` only when they do not yet exist;
-- applies `root:fic` recursively to `/opt/fic`;
-- applies `2750` to directories under `/opt/fic` so the group is inherited and
-  the tree remains readable and traversable without group write access;
-- applies `0640` to regular files under `/opt/fic`;
+- normalizes ordinary package state while excluding `/opt/fic`,
+  `/opt/fic/config`, `GLOBAL.conf` and their aliases from generic metadata
+  repair;
 - applies `0750` to files in `/opt/fic/bin`.
 
 Members of `fic` mutate configuration and device state through the two
@@ -126,6 +126,11 @@ fatal; optional tmpfiles/udev refreshes remain best-effort.
 
 Existing working configs and a non-empty database are never overwritten or
 converted. Incompatible state makes installation fail with an explicit error.
+The canonical config authority is a real `root:fic` directory with mode `2750`
+and single-link regular `root:fic` files with mode `0640`. Unsafe existing
+metadata is neither repaired nor accepted by package configuration or daemon
+startup. The first-install-only `ensure-config-first-install` command proves
+the metadata of the tree it creates; upgrades use `ensure-config`.
 Normal removal deletes package-owned defaults naturally, but never explicitly
 deletes FIC-owned working configs, the working database or logs. No
 `DEBIAN/conffiles` entry is created for `/opt/fic/config/*.conf`.
@@ -174,16 +179,20 @@ prerm fails (non-zero exit, diagnostic naming the unit) and the hooks stay
 attached — a stop timeout is a package-removal failure, not permission to
 continue.
 
-If the `pam-auth-update --remove` itself fails, the prerm contains the
-damage locally while every FIC writer is still proven stopped: it re-enables
-only the four permanent hook profiles, proves the restoration with a
+If removing any permanent hook fails, the prerm contains the damage locally
+while every FIC writer is still proven stopped: it re-enables all four
+permanent faillock hooks and `fic-incident-access`, proves restoration with a
 read-only standard-state check (`/var/lib/pam` selection records plus the
 generated `/etc/pam.d/common-*` stacks) and always exits non-zero. Legacy
 policy-owned selector profiles are never re-enabled by the recovery, and
 managed slots, the mutation journal and its witness are never touched. If
 the recovery cannot be proven (for example after a partial detach), the
-prerm states explicitly that the permanent hook state is not proven
-restored.
+prerm states explicitly that the permanent hook state is not proven restored.
+The incident gate is detached last. Final detachment succeeds only after a
+read-only typed proof finds neither a selected `fic-incident-access` profile
+nor an active `pam_fic_access.so` reference in the platform PAM directories;
+an unreadable or malformed topology fails removal. `/bin/fic` is removed only
+after that proof succeeds, so failed removal leaves the symlink usable.
 
 Recovery after such a failed removal is dpkg's `postinst abort-remove` path.
 It is an early dedicated branch (not a configure path). A read-only guard

@@ -66,7 +66,9 @@ bool ensureRealDirectory(const std::filesystem::path& path,
 
 bool readRegularFile(const std::filesystem::path& path,
                      std::string& content,
-                     std::string& error) {
+                     std::string& error,
+                     const std::optional<ConfigAuthorityIdentity>& identity =
+                         std::nullopt) {
     const int descriptor = ::open(
         path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
     if (descriptor < 0) {
@@ -77,6 +79,11 @@ bool readRegularFile(const std::filesystem::path& path,
     struct stat info {};
     if (::fstat(descriptor, &info) != 0 || !S_ISREG(info.st_mode)) {
         error = "configuration is not a regular file: " + path.string();
+        ::close(descriptor);
+        return false;
+    }
+    if (identity.has_value() &&
+        !canonicalConfigFileMetadata(info, *identity, path, error)) {
         ::close(descriptor);
         return false;
     }
@@ -92,6 +99,11 @@ bool readRegularFile(const std::filesystem::path& path,
         const ssize_t bytesRead = ::read(descriptor, buffer.data(), buffer.size());
         if (bytesRead > 0) {
             content.append(buffer.data(), static_cast<std::size_t>(bytesRead));
+            if (content.size() > MAX_CONFIG_BYTES) {
+                error = "configuration exceeds the 1 MiB limit: " + path.string();
+                ::close(descriptor);
+                return false;
+            }
             continue;
         }
         if (bytesRead == 0) {
@@ -104,6 +116,32 @@ bool readRegularFile(const std::filesystem::path& path,
             std::strerror(errno);
         ::close(descriptor);
         return false;
+    }
+    struct stat after {};
+    if (::fstat(descriptor, &after) != 0 ||
+        after.st_dev != info.st_dev || after.st_ino != info.st_ino ||
+        after.st_size != info.st_size || after.st_uid != info.st_uid ||
+        after.st_gid != info.st_gid || after.st_mode != info.st_mode ||
+        after.st_nlink != info.st_nlink ||
+        after.st_mtim.tv_sec != info.st_mtim.tv_sec ||
+        after.st_mtim.tv_nsec != info.st_mtim.tv_nsec ||
+        after.st_ctim.tv_sec != info.st_ctim.tv_sec ||
+        after.st_ctim.tv_nsec != info.st_ctim.tv_nsec) {
+        error = "configuration changed during secure read: " + path.string();
+        ::close(descriptor);
+        return false;
+    }
+    if (identity.has_value()) {
+        struct stat named {};
+        if (::lstat(path.c_str(), &named) != 0 ||
+            named.st_dev != info.st_dev || named.st_ino != info.st_ino ||
+            named.st_uid != info.st_uid || named.st_gid != info.st_gid ||
+            named.st_mode != info.st_mode || named.st_nlink != info.st_nlink) {
+            error = "working configuration path changed during proof: " +
+                path.string();
+            ::close(descriptor);
+            return false;
+        }
     }
     if (::close(descriptor) != 0) {
         error = "could not close configuration " + path.string() + ": " +
@@ -188,7 +226,8 @@ bool ConfigSchemaManager::ensureConfigs(
     const std::filesystem::path& defaultConfigDirectory,
     const std::filesystem::path& configDirectory,
     std::string& error,
-    bool allowRecoveryBootstrap) {
+    bool allowRecoveryBootstrap,
+    std::optional<ConfigAuthorityIdentity> testIdentity) {
     error.clear();
     if (!validAbsoluteNormalized(defaultConfigDirectory) ||
         !validAbsoluteNormalized(configDirectory)) {
@@ -202,10 +241,43 @@ bool ConfigSchemaManager::ensureConfigs(
             defaultConfigDirectory.string();
         return false;
     }
+    ConfigAuthorityIdentity identity;
+    if (testIdentity.has_value()) {
+        identity = *testIdentity;
+    } else if (!productionConfigAuthority(identity, error)) {
+        return false;
+    }
     bool created = false;
     if (!ensureRealDirectory(configDirectory, allowRecoveryBootstrap,
                              created, error)) {
         return false;
+    }
+    if (!proveConfigDirectory(configDirectory, identity, error)) {
+        return false;
+    }
+    if (!created) {
+        // Reject unsafe existing authority before creating any ordinary
+        // missing configuration in the same directory.
+        for (const char* fileName : CONFIG_FILES) {
+            const auto workingPath = configDirectory / fileName;
+            struct stat existing {};
+            if (::lstat(workingPath.c_str(), &existing) == 0) {
+                std::string content;
+                if (!readRegularFile(workingPath, content, error, identity)) {
+                    return false;
+                }
+            } else if (errno == ENOENT) {
+                if (std::strcmp(fileName, "GLOBAL.conf") == 0) {
+                    error = "recovery configuration is missing and cannot be bootstrapped: " +
+                        workingPath.string();
+                    return false;
+                }
+            } else {
+                error = "could not inspect working configuration " +
+                    workingPath.string() + ": " + std::strerror(errno);
+                return false;
+            }
+        }
     }
 
     for (const char* fileName : CONFIG_FILES) {
@@ -218,9 +290,8 @@ bool ConfigSchemaManager::ensureConfigs(
         const std::filesystem::path workingPath = configDirectory / fileName;
         struct stat workingInfo {};
         if (::lstat(workingPath.c_str(), &workingInfo) == 0) {
-            if (!S_ISREG(workingInfo.st_mode)) {
-                error = "working configuration is not a regular file: " +
-                    workingPath.string();
+            std::string existingContent;
+            if (!readRegularFile(workingPath, existingContent, error, identity)) {
                 return false;
             }
             continue;
@@ -245,26 +316,40 @@ bool ConfigSchemaManager::ensureConfigs(
                 workingPath.string(), defaultContent, options, &error)) {
             return false;
         }
+        std::string createdContent;
+        if (!readRegularFile(workingPath, createdContent, error, identity)) {
+            return false;
+        }
     }
-    return true;
+    return proveConfigDirectory(configDirectory, identity, error);
 }
 
 bool ConfigSchemaManager::verifyConfigs(
     const std::filesystem::path& configDirectory,
-    std::string& error) {
+    std::string& error,
+    std::optional<ConfigAuthorityIdentity> testIdentity) {
     error.clear();
     if (!validAbsoluteNormalized(configDirectory)) {
         error = "config directory must be absolute and normalized";
         return false;
     }
+    ConfigAuthorityIdentity identity;
+    if (testIdentity.has_value()) {
+        identity = *testIdentity;
+    } else if (!productionConfigAuthority(identity, error)) {
+        return false;
+    }
+    if (!proveConfigDirectory(configDirectory, identity, error)) {
+        return false;
+    }
     for (const char* fileName : CONFIG_FILES) {
         std::string content;
-        if (!readRegularFile(configDirectory / fileName, content, error) ||
+        if (!readRegularFile(configDirectory / fileName, content, error, identity) ||
             !verifyConfigContent(fileName, content, error)) {
             return false;
         }
     }
-    return true;
+    return proveConfigDirectory(configDirectory, identity, error);
 }
 
 } // namespace fic::core

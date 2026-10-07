@@ -170,7 +170,8 @@ settings. It does not expose pwquality-only policies.
 - `/opt/fic/bin/fic`
 - `/opt/fic/bin/fic-udevadm-trigger`
 - immutable defaults under `/opt/fic/share/default-config/*.conf`
-- the empty working directory `/opt/fic/config` (working files are created by FIC)
+- working `/opt/fic/config` is created by the first-install maintenance command,
+  not carried in the package payload
 - `/opt/fic/db`
 - `/opt/fic/image`
 - `/opt/fic/lang`
@@ -227,15 +228,14 @@ During installation each package:
 
 - creates the system group `fic` if it does not already exist;
 - owns immutable `/opt/fic/share/default-config/*.conf` as ordinary package files;
-- bootstraps missing FIC-owned `/opt/fic/config/*.conf` atomically without
-  replacing existing files;
+- bootstraps the working config tree only on first install when its directory
+  is absent; upgrades preserve existing files and reject missing `GLOBAL.conf`;
 - initializes a missing `/opt/fic/db/devices.db` directly at the current schema
   through the offline maintenance command;
 - creates `/opt/fic/lockstatus` and `/opt/fic/db/commandhash.txt` only when they do not yet exist;
-- applies `root:fic` recursively to `/opt/fic`;
-- applies `2750` to directories under `/opt/fic` so the group is inherited and
-  the tree remains readable and traversable without group write access;
-- applies `0640` to regular files under `/opt/fic`;
+- normalizes ordinary package state while excluding `/opt/fic`,
+  `/opt/fic/config`, `GLOBAL.conf` and their aliases from generic metadata
+  repair;
 - applies `0750` to files in `/opt/fic/bin`.
 
 Members of `fic` mutate configuration and device state through the two
@@ -255,6 +255,11 @@ fatal; optional tmpfiles/udev refreshes remain best-effort.
 
 Existing working configs and a non-empty database are never overwritten or
 converted. Incompatible state makes installation fail with an explicit error.
+The canonical config authority is a real `root:fic` directory with mode `2750`
+and single-link regular `root:fic` files with mode `0640`. Unsafe existing
+metadata is neither repaired nor accepted by package configuration or daemon
+startup. The first-install-only `ensure-config-first-install` command proves
+the metadata of the tree it creates; upgrades use `ensure-config`.
 Normal removal deletes package-owned defaults naturally, but never explicitly
 deletes FIC-owned working configs, the working database or logs. Working configs
 are absent from the RPM payload and are not declared with `%config`.

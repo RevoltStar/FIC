@@ -491,9 +491,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \; || true
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \; || true
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \; || true
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || true
@@ -531,9 +531,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \\; || true
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \\; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \\; || true
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \\; || true
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \\; || true
@@ -574,9 +574,9 @@ if [ -d /opt/fic ]; then
         : > /opt/fic/db/commandhash.txt || true
     fi
 
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \\; || true
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \\; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \\; || true
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \\; || true
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \\; || true
@@ -623,9 +623,9 @@ if [ "\${1:-}" -eq 1 ]; then
     /opt/fic/bin/fic --maintenance incident-init || exit 1
 fi
 
-find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || exit 1
-find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \; || exit 1
-find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \; || exit 1
+find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || exit 1
+find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \; || exit 1
+find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \; || exit 1
 find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || exit 1
 
 /opt/fic/bin/fic --trust-sync-platform || exit 1
@@ -807,9 +807,9 @@ if ! getent group fic >/dev/null 2>&1; then
 fi
 
 if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o ! -path /opt/fic/config ! -path /opt/fic/config/GLOBAL.conf ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -type d ! -path /opt/fic/config -exec chmod 2750 {} \; || true
-    find /opt/fic -type f ! -path /opt/fic/lockstatus ! -path /opt/fic/config/GLOBAL.conf ! -links +1 -exec chmod 0640 {} \; || true
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \; || true
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \; || true
 
     if [ -d /opt/fic/bin ]; then
         find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || true
