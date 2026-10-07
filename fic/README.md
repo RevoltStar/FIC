@@ -408,8 +408,9 @@ Daemon собирается ровно для одного дистрибути�
 конфигурационной и SQLite-схем; commit не является частью SemVer.
 
 SSH-секция определяет основной конфигурационный файл, базу относительных
-`Include` и service units; `sshd` и `systemctl` поступают из общего реестра
-`executables`. Один профиль используется редактированием, rollback, `sshd -T`,
+`Include`, service units и тип маршрутизации SSH в PAM; `sshd` и `systemctl`
+поступают из общего реестра `executables`. Один профиль используется
+редактированием, rollback, `sshd -T`,
 include-аудитом и reload.
 
 Команды конкретных desktop environment (`gsettings`, `kwriteconfig`,
@@ -771,12 +772,30 @@ policies: FIC применяет заданные значения без вза
 
 ### Работа с SSH
 
-Модуль включает политики `ssh_port`, `ssh_max_auth_tries`, `ssh_root_login` и
-`ssh_pubkey_auth`. Последняя имеет фиксированное значение `yes`: включенная
-политика обеспечивает `PubkeyAuthentication yes`, но не отключает парольную
+Модуль включает политики `ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
+`ssh_pubkey_auth` и `ssh_use_pam`. `ssh_pubkey_auth` имеет фиксированное
+значение `yes`: включенная политика обеспечивает `PubkeyAuthentication yes`,
+но не отключает парольную
 аутентификацию. Встроенное фиксированное значение используется и при обновлении
 старой установки, в `NET.conf` которой еще нет строки `ssh_pubkey_auth.value`;
 пользовательский конфигурационный файл при этом не переписывается.
+
+`ssh_use_pam` имеет фиксированное значение `yes` и включена в новой
+конфигурации по умолчанию. `UsePAM=yes` включает PAM account и session
+processing для всех способов SSH-аутентификации, включая открытый ключ.
+После startup apply daemon доказывает через `sshd -T` effective `UsePAM=yes`.
+Для OpenSSH с настраиваемым `PAMServiceName` он также требует effective
+`PAMServiceName=sshd` и проверяет все условные `Match`-значения в графе
+`Include`. Для старых OpenSSH, где PAM service берётся из имени процесса,
+read-only проверка unit `ExecStart` требует прямой запуск доверенного
+`sshd` с `argv[0]=sshd`. Этот read-only SSH proof дополняет отдельный proof
+постоянного `pam_fic_access.so` в PAM service topology. При недоказанном мосте daemon не
+объявляет `READY`. Явное отключение `ssh_use_pam` освобождает FIC-owned
+конфигурацию через обычный rollback и означает отказ оператора от гарантии
+покрытия SSH-входов IncidentAccessGate. Локальная PAM gate infrastructure
+при этом проверяется независимо. После административных изменений policy и
+периодического apply daemon повторно проверяет мост и обновляет внутреннее
+состояние готовности.
 
 Политики SSH после атомарной записи перечитывают `sshd_config`, получают все
 эффективные значения через `sshd -T` и перезагружают активный `ssh.service` или

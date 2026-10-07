@@ -669,6 +669,8 @@ bool initPolicyRegistry(
         platform.ssh, executables));
     cafArr.push_back(std::make_unique<NET_ssh_pubkey_auth>(
         platform.ssh, executables));
+    cafArr.push_back(std::make_unique<NET_ssh_use_pam>(
+        platform.ssh, executables));
 
     // Межсетевой экран nftables
     cafArr.push_back(std::make_unique<fic::firewall::BlockRdpPolicy>(executables));

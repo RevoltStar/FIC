@@ -2,34 +2,33 @@
 
 ## Current base
 
-* Branch `main`; follow-up based on `e171cbaac183208ff036a1d2c5730da0fedd6543`.
+* Branch `main`; starting commit `92f9a61d2fd192c962432e8d60953dccfe01f355`.
 
 ## Current task
 
-* Close absolute-path/alias PAM detach-proof and recovery config size gaps.
+* Add `NET/SshEdit/ssh_use_pam` and require a proven SSH→PAM bridge before daemon READY when that policy is enabled.
 
 ## Accepted architecture / invariants
 
-* `/opt/fic/config` and `GLOBAL.conf` are recovery authority. First install may bootstrap an absent tree; existing unsafe authority is never repaired. Existing config directory and every working `.conf` must have canonical `root:fic` metadata; daemon refuses READY if proof fails.
-* Debian removal releases provider and password state before other hooks. The incident gate is detached last. A failed detach restores and proves all five permanent package hooks before `postinst abort-remove` may restart writers; an unproven restoration keeps writers stopped.
-* Final gate detach requires a typed, read-only proof across platform PAM directories. `/bin/fic` cleanup follows successful proof.
-* The shared maximum working-config size is 1 MiB, including `GLOBAL.conf` recovery reads. The small incident-state reader retains its 4096-byte hard cap.
+* `ssh_use_pam` has fixed value `yes`, default `ENABLE`, and uses the existing SSH transaction, mutation journal and ownership-release rollback. Compliant foreign `UsePAM yes` remains unowned.
+* OpenSSH effective values come from the trusted `sshd -T` path. The `PAMServiceName` capability is typed per platform. On configurable profiles, the bridge also audits conditional `Match` values through recursive `Include`. On legacy profiles, upstream OpenSSH derives PAM service from `argv[0]`; a read-only systemd unit `ExecStart` proof requires direct trusted `sshd` launch with `argv[0]=sshd`.
+* SSH bridge proof follows startup apply and is separate from permanent PAM `pam_fic_access.so` topology proof. Admin policy mutations and periodic apply refresh internal readiness against the live bridge. Disabled `ssh_use_pam` is an explicit opt-out from guaranteed SSH coverage; local PAM infrastructure proof remains mandatory.
 
 ## Completed
 
-* Detached proof recognizes bare and absolute module names, rejects ambiguous/symlink paths, and recognizes hardlink aliases to the installed gate inode.
-* Recovery reader uses the same 1 MiB config limit as schema verification through a parameterized secure-read proof. The short state wrapper remains at 4096 bytes. Repeated parent proofs no longer depend on stale diagnostic text.
-* Added boundary/race/repeated-read regressions and a generated Debian `prerm` fixture that calls the production detached-proof implementation on sandbox PAM state.
+* Registered the policy, default config, localization, explicit directive semantics and rollback enrollment.
+* Added read-only SSH bridge verifier, typed platform routing metadata and startup READY gate.
+* Added policy, runtime, platform, rollback, static and readiness decision regressions. Updated SSH and rollback documentation.
 
 ## Changed areas
 
-* `fic-common/fic-core` secure reader/config size; `fic` incident reader/verifier; related C++ and Debian packaging tests, upgrade contract.
+* `fic/src/modules/net/ssh`, `fic/src/incident`, `fic/src/main.cpp`, platform profiles, NET resources, related tests and docs.
 
 ## Validation
 
-* RED-before on `e171cbaa`: both new focused tests failed, one for absolute-path module reference and one for a valid config above 4096 bytes.
-* Targeted incident gate, recovery reader, short state and generated Debian packaging tests passed after the fix. Fresh Debian 12 configure/full build passed; `ctest -N` listed 132 tests; root CTest excluding `mutation_journal_tests` passed 131/131, and that test passed separately under UID 1000. The production detached command passed on clean Debian 12 PAM topology in the container. `git diff --check` passed.
+* Fresh Debian 12 container configure and full build passed. `ctest -N` lists 132 tests. Full root CTest excluding the privilege-sensitive `mutation_journal_tests` passed 131/131 after setting Git `safe.directory=/src` only for that test process; the excluded binary passed separately under UID 1000. Targeted SSH, platform, rollback and static CTest passed 5/5. `git diff --check` passed.
 
 ## Remaining
 
-* Real package install/upgrade/erase and host PAM mutations have not been run.
+* No code work remains in this focused task.
+* Builder images do not contain a runnable `sshd`; real five-distro `sshd -T` and package lifecycle checks have not been run. The ALT p11 builder package index reports OpenSSH `9.6p1-alt7`. The legacy service launch proof covers the declared systemd units; separately launched daemons are outside the proven service contract.

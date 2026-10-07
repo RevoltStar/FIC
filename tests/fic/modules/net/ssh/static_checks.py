@@ -59,6 +59,42 @@ def main():
             f"{language}.lang lacks ssh_pubkey_auth description",
         )
 
+    registration = registry.find("std::make_unique<NET_ssh_use_pam>(")
+    require(registration >= 0, "ssh_use_pam must be registered")
+    require("platform.ssh, executables" in registry[registration:registration + 180],
+            "ssh_use_pam must use the selected SSH profile")
+    require(config.get("ssh_use_pam.status") == "ENABLE",
+            "ssh_use_pam must be enabled by default")
+    require(config.get("ssh_use_pam.value") == "yes",
+            "ssh_use_pam must have fixed yes value")
+    policy = (root / "fic/src/modules/net/ssh/policies/NET_ssh_use_pam.cpp").read_text()
+    require('FixedPolicyTypeValue>("yes")' in policy,
+            "ssh_use_pam must be fixed to yes")
+    semantics = (root / "fic/src/modules/net/ssh/SshManagedBlock.cpp").read_text()
+    require('{"ssh_use_pam", SshDirectiveSemantics::ScalarFirstWins, "UsePAM"}' in semantics,
+            "UsePAM first-value semantics must be explicit")
+    rollback = (root / "fic/src/rollback/RollbackExecutor.cpp").read_text()
+    require('policyName == "ssh_use_pam"' in rollback,
+            "ssh_use_pam must be rollback-enrolled")
+    for language in ("ru", "en"):
+        localization = (root / f"fic/src/resources/lang/{language}.lang").read_text()
+        prefix = "[module:NET][policy:ssh_use_pam]"
+        require("\n" + prefix + "=" in "\n" + localization,
+                f"{language}.lang lacks ssh_use_pam title")
+        require("\n" + prefix + "[description]=" in "\n" + localization,
+                f"{language}.lang lacks ssh_use_pam description")
+    startup = (root / "fic/src/main.cpp").read_text()
+    apply = startup.find("run_daemon_apply_all_pass(", startup.find("int main("))
+    pam = startup.find("PamIncidentAccessGateVerifier::prove(", apply)
+    bridge = startup.find("SshIncidentPamBridgeVerifier::evaluateReadiness(", pam)
+    ready = startup.find("DaemonReadinessState::Ready", bridge)
+    notify = startup.find('"READY=1', ready)
+    require(0 <= apply < pam < bridge < ready < notify,
+            "startup must apply, prove PAM and SSH bridge, then announce READY")
+    require("if (mayChangeSshPamBridge(requestText))" in startup and
+            "refreshSshPamBridgeReadiness(\n                policyRegistry, platform, executables);" in startup,
+            "admin mutation and periodic apply must refresh SSH bridge readiness")
+
     return 0
 
 

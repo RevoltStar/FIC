@@ -292,6 +292,8 @@
 [module:NET][policy:ssh_root_login][description]=Политика входа root-пользователя
 [module:NET][policy:ssh_pubkey_auth]=Аутентификация SSH по открытым ключам
 [module:NET][policy:ssh_pubkey_auth][description]=Обеспечивает глобальное значение PubkeyAuthentication yes и отклоняет условные Match-переопределения, запрещающие аутентификацию по открытым ключам. Не отключает парольную аутентификацию.
+[module:NET][policy:ssh_use_pam]=Использование PAM сервером SSH
+[module:NET][policy:ssh_use_pam][description]=Включает использование PAM сервером OpenSSH. Необходимо для применения FIC IncidentAccessGate к SSH-входам, включая вход по открытому ключу.
 [module:NET][submodule:SshEdit][message:parameter_not_configured_part1]=SSH-параметр не настроен для политики '
 [module:NET][submodule:SshEdit][message:parameter_not_configured_part2]='
 [module:NET][submodule:SshEdit][message:load_failed]=Не удалось загрузить sshd_config

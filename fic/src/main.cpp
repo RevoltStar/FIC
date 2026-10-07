@@ -62,6 +62,7 @@
 #include "session/SystemGraphicalSessionInventory.h"
 #include "incident/IncidentController.h"
 #include "incident/PamIncidentAccessGateVerifier.h"
+#include "incident/SshIncidentPamBridgeVerifier.h"
 #include "incident/AltIncidentAccessGateTopology.h"
 #include "incident/DaemonReadiness.h"
 #include "incident/IncidentNotificationLevel.h"
@@ -379,6 +380,41 @@ fic::incident::IncidentController& incidentController() {
 fic::incident::DaemonReadiness& daemonReadiness() {
     static fic::incident::DaemonReadiness readiness;
     return readiness;
+}
+
+void refreshSshPamBridgeReadiness(
+    const PolicyRegistry& policyRegistry,
+    const fic::platform::PlatformProfile& platform,
+    const fic::platform::PlatformExecutableResolver& executables) {
+    const Policy* policy = policyRegistry.findPolicy(
+        {"NET", "SshEdit", "ssh_use_pam"});
+    if (policy == nullptr) {
+        daemonReadiness().set(fic::incident::DaemonReadinessState::Initializing);
+        std::cerr << "SSH PAM bridge policy is missing from registry" << std::endl;
+        return;
+    }
+    const auto bridge =
+        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
+            policy->isEnabled(), platform.ssh, executables);
+    daemonReadiness().set(bridge.ready
+        ? fic::incident::DaemonReadinessState::Ready
+        : fic::incident::DaemonReadinessState::Initializing);
+    if (!bridge.ready || bridge.optedOut) {
+        std::cerr << bridge.diagnostic << std::endl;
+    }
+}
+
+bool mayChangeSshPamBridge(const std::string& requestText) {
+    const json request = json::parse(requestText, nullptr, false);
+    if (!request.is_object() || !request.contains("command") ||
+        !request["command"].is_string()) {
+        return false;
+    }
+    const std::string command = request["command"].get<std::string>();
+    return command == "enable_policy" || command == "disable_policy" ||
+        command == "reload_config" || command == "apply_all" ||
+        command == "apply_module" || command == "apply_policy" ||
+        command == "set_policy_value";
 }
 
 bool run_daemon_apply_all_pass(
@@ -1991,6 +2027,30 @@ int main(int argc, char* argv[]) {
         ::unlink(sessionEventSocketPath.c_str());
         return 1;
     }
+    const Policy* sshUsePamPolicy = policyRegistry.findPolicy(
+        {"NET", "SshEdit", "ssh_use_pam"});
+    if (sshUsePamPolicy == nullptr) {
+        std::cerr << "SSH PAM bridge policy is missing from registry" << std::endl;
+        ::close(serverFd);
+        ::unlink(socketPath.c_str());
+        ::close(sessionEventFd);
+        ::unlink(sessionEventSocketPath.c_str());
+        return 1;
+    }
+    const auto sshBridge =
+        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
+            sshUsePamPolicy->isEnabled(), platform.ssh, executables);
+    if (!sshBridge.ready) {
+        std::cerr << sshBridge.diagnostic << std::endl;
+        ::close(serverFd);
+        ::unlink(socketPath.c_str());
+        ::close(sessionEventFd);
+        ::unlink(sessionEventSocketPath.c_str());
+        return 1;
+    }
+    if (sshBridge.optedOut) {
+        std::cerr << sshBridge.diagnostic << std::endl;
+    }
     daemonReadiness().set(fic::incident::DaemonReadinessState::Ready);
     (void)::sd_notify(
         0,
@@ -2008,9 +2068,15 @@ int main(int argc, char* argv[]) {
         std::string transportError;
         if (!transport.pollOnce(100,
                 [&](int clientFd, const std::string& requestText) {
-                    return handle_client_packet(clientFd, requestText,
+                    const std::string response = handle_client_packet(
+                        clientFd, requestText,
                         policyRegistry, desktopGlobalConfig, platform,
                         executables, logRecordsReader);
+                    if (mayChangeSshPamBridge(requestText)) {
+                        refreshSshPamBridgeReadiness(
+                            policyRegistry, platform, executables);
+                    }
+                    return response;
                 },
                 transportError)) {
             std::cerr << transportError << std::endl;
@@ -2027,6 +2093,8 @@ int main(int argc, char* argv[]) {
             run_daemon_apply_all_pass(
                 policyRegistry, desktopGlobalConfig, platform, executables,
                 "periodic");
+            refreshSshPamBridgeReadiness(
+                policyRegistry, platform, executables);
             nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
         }
     }

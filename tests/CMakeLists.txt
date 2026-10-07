@@ -2248,6 +2248,7 @@ add_test(
 
 add_executable(ssh_runtime_tests
     fic/modules/net/ssh/SshRuntimeTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/SshIncidentPamBridgeVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp
@@ -2276,6 +2277,7 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_max_auth_tries.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_port.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_pubkey_auth.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_use_pam.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_root_login.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp

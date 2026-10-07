@@ -72,6 +72,7 @@ const PolicySemanticsEntry kSshPolicySemantics[] = {
     {"ssh_root_login", SshDirectiveSemantics::ScalarFirstWins, "PermitRootLogin"},
     {"ssh_pubkey_auth", SshDirectiveSemantics::ScalarFirstWins,
      "PubkeyAuthentication"},
+    {"ssh_use_pam", SshDirectiveSemantics::ScalarFirstWins, "UsePAM"},
     {"ssh_max_auth_tries", SshDirectiveSemantics::ScalarFirstWins,
      "MaxAuthTries"},
     {"ssh_port", SshDirectiveSemantics::MultiValue, "Port"},

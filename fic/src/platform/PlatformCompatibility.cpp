@@ -1120,6 +1120,10 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
         error = "SSH service unit list is empty";
         return false;
     }
+    if (profile.ssh.pamServiceRouting == SshPamServiceRouting::Unknown) {
+        error = "SSH PAM service routing capability is unknown";
+        return false;
+    }
     if (!validatePath(profile.sudo.mainConfigPath, "sudoers main path", error) ||
         !validatePath(profile.sudo.managedConfigPath, "sudoers managed path", error) ||
         !validateSecurePathDefault(profile.sudo.securePathDefault, error) ||

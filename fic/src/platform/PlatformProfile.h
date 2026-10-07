@@ -65,10 +65,17 @@ struct HostCompatibility {
     std::vector<std::string> altBranchIds;
 };
 
+enum class SshPamServiceRouting {
+    Unknown,
+    LegacyExecutableName,
+    ConfigurablePamServiceName
+};
+
 struct SshPlatformConfig {
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
     std::vector<std::string> serviceUnits;
+    SshPamServiceRouting pamServiceRouting = SshPamServiceRouting::Unknown;
 };
 
 struct SudoPlatformConfig {

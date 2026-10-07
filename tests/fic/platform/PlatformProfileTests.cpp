@@ -298,6 +298,9 @@ void testSelectedProfile() {
                 profile.passwordAging.missingKeySemantics.warningDays == -1,
             "password-aging missing-key semantics are incorrect");
     if (profile.id == "alt-p11") {
+        require(profile.ssh.pamServiceRouting ==
+                    fic::platform::SshPamServiceRouting::LegacyExecutableName,
+                "ALT p11 OpenSSH 9.6 derives PAM service from daemon name");
         require(profile.passwordAging.shadowKind ==
                     fic::platform::LocalShadowKind::TcbDirectory &&
                     agingDefaults.minDays == 0 &&
@@ -864,6 +867,9 @@ void testSelectedProfile() {
                     std::vector<std::string>({"-o", "/etc/grub.cfg"}),
                 "ALT p11 grub-mkconfig must write /etc/grub.cfg");
     } else if (profile.id == "debian-12") {
+        require(profile.ssh.pamServiceRouting ==
+                    fic::platform::SshPamServiceRouting::LegacyExecutableName,
+                "Debian 12 OpenSSH 9.2 derives PAM service from daemon name");
         require(tcbObject(profile.dac) == nullptr,
                 "Debian must not enable ALT TCB handling");
         require(profile.packageManager.kind ==
@@ -892,6 +898,9 @@ void testSelectedProfile() {
         require(profile.grub.rebuildArguments.empty(),
                 "Debian 12 update-grub must not receive arguments");
     } else if (profile.id == "debian-13") {
+        require(profile.ssh.pamServiceRouting ==
+                    fic::platform::SshPamServiceRouting::ConfigurablePamServiceName,
+                "Debian 13 OpenSSH 10 supports PAMServiceName");
         require(tcbObject(profile.dac) == nullptr,
                 "Debian must not enable ALT TCB handling");
         require(profile.hostCompatibility.versionIds ==
@@ -940,6 +949,11 @@ void testSelectedProfile() {
                 "NO module-argument evidence");
     } else if (profile.id == "ubuntu-24.04" ||
                profile.id == "ubuntu-26.04") {
+        require(profile.ssh.pamServiceRouting ==
+                    (profile.id == "ubuntu-24.04"
+                         ? fic::platform::SshPamServiceRouting::LegacyExecutableName
+                         : fic::platform::SshPamServiceRouting::ConfigurablePamServiceName),
+                "Ubuntu SSH PAM service routing capability is incorrect");
         require(tcbObject(profile.dac) == nullptr,
                 "Ubuntu must not enable ALT TCB handling");
         require(profile.packageManager.kind ==
@@ -1124,6 +1138,12 @@ void testInvalidProfileIsRejected() {
     std::string error;
     require(!fic::platform::validatePlatformProfile(profile, error),
             "a relative SSH configuration path must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.ssh.pamServiceRouting =
+        fic::platform::SshPamServiceRouting::Unknown;
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "unknown SSH PAM routing must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     auto* activation = pamCapability(

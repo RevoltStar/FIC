@@ -84,7 +84,8 @@ bool isSupportedSshPolicy(const std::string& policyName) {
     return policyName == "ssh_port" ||
            policyName == "ssh_max_auth_tries" ||
            policyName == "ssh_root_login" ||
-           policyName == "ssh_pubkey_auth";
+           policyName == "ssh_pubkey_auth" ||
+           policyName == "ssh_use_pam";
 }
 
 // Explicit whitelist of the currently existing GRUB policies: a new GRUB

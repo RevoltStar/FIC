@@ -352,6 +352,9 @@ void testEnrollmentMatrix() {
     require(rollbackEnrollment({"NET", "SshEdit", "ssh_pubkey_auth"}) ==
                 RollbackEnrollment::Supported,
             "NET/SshEdit ssh_pubkey_auth must be enrolled");
+    require(rollbackEnrollment({"NET", "SshEdit", "ssh_use_pam"}) ==
+                RollbackEnrollment::Supported,
+            "NET/SshEdit ssh_use_pam must be enrolled");
     require(rollbackEnrollment({"NET", "SshEdit", "ssh_future_policy"}) ==
                 RollbackEnrollment::Unsupported,
             "unknown future SSH policy must not be auto-enrolled");

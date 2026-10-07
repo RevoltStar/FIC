@@ -1868,7 +1868,7 @@ no effect on users who are in the group specified by exempt_group».
     `sudo_disable_scoped_defaults` (ownership-release через
     `FIC_SUDO_DISABLED` обёртки, см. раздел «Undo actions»);
   * `NET/SshEdit` (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
-    `ssh_pubkey_auth`);
+    `ssh_pubkey_auth`, `ssh_use_pam`);
   * `FIREWALL/HostFiltering` (`block_ftp`, `block_rdp`, `custom_rules`);
   * `DC/DeviceControl` category features (`block_usb_storage`,
     `block_printers_scanners`, `block_optical_drives`);

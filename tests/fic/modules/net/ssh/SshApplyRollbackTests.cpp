@@ -8,7 +8,10 @@
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/net/ssh/SshRuntime.h"
 #include "modules/net/ssh/policies/NET_ssh_port.h"
+#include "modules/net/ssh/policies/NET_ssh_max_auth_tries.h"
+#include "modules/net/ssh/policies/NET_ssh_pubkey_auth.h"
 #include "modules/net/ssh/policies/NET_ssh_root_login.h"
+#include "modules/net/ssh/policies/NET_ssh_use_pam.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/MutationJournal.h"
 #include "rollback/RollbackExecutor.h"
@@ -131,6 +134,8 @@ std::string fakeEffectiveOutput(const std::string& configContent) {
     std::vector<std::string> ports;
     std::string rootLogin = "prohibit-password";
     bool rootLoginSeen = false;
+    std::string usePam = "no";
+    bool usePamSeen = false;
     while (std::getline(lines, line)) {
         const std::size_t comment = line.find('#');
         const std::string trimmed =
@@ -154,6 +159,9 @@ std::string fakeEffectiveOutput(const std::string& configContent) {
                    !rootLoginSeen) {
             rootLogin = value;
             rootLoginSeen = true;
+        } else if (keyword == "usepam" && !value.empty() && !usePamSeen) {
+            usePam = value;
+            usePamSeen = true;
         }
     }
     std::string output;
@@ -163,6 +171,7 @@ std::string fakeEffectiveOutput(const std::string& configContent) {
     output += "permitrootlogin " + rootLogin + "\n";
     output += "maxauthtries 3\n";
     output += "pubkeyauthentication yes\n";
+    output += "usepam " + usePam + "\n";
     return output;
 }
 
@@ -267,6 +276,8 @@ public:
         value.configPath = configPath();
         value.includeBasePath = tree.root;
         value.serviceUnits = {"ssh.service", "sshd.service"};
+        value.pamServiceRouting =
+            fic::platform::SshPamServiceRouting::LegacyExecutableName;
         return value;
     }
 
@@ -309,6 +320,7 @@ private:
 
 const PolicyRef kSshPortPolicy{"NET", "SshEdit", "ssh_port"};
 const PolicyRef kSshRootLoginPolicy{"NET", "SshEdit", "ssh_root_login"};
+const PolicyRef kSshUsePamPolicy{"NET", "SshEdit", "ssh_use_pam"};
 
 bool fileContains(const std::filesystem::path& path,
                   const std::string& needle) {
@@ -361,6 +373,64 @@ void testCompliantEffectiveStateCausesNoMutation() {
             "no mutation record must exist for a compliant state");
     require(tree.runtime()->reloadCalls == 0,
             "no reload must happen for a compliant state");
+}
+
+void testUsePamApplyAndRollback() {
+    SshApplyTree tree;
+    JournalOverride overrideGuard(tree.journalPath());
+    tree.writePolicyValue("ssh_use_pam", "yes");
+    const std::string original = "# vendor\nUsePAM no\nUsePAM yes\n";
+    tree.writeConfig(original);
+    auto policy = tree.makePolicy<NET_ssh_use_pam>();
+    require(policy->apply(), "UsePAM policy must repair the first effective no");
+    const std::string applied = readFile(tree.configPath());
+    require(applied.find(original) != std::string::npos &&
+                applied.find("UsePAM yes") < applied.find("UsePAM no"),
+            "the owned first value must shadow unchanged foreign sources");
+    require(applied.find("\nUsePAM yes\n") != std::string::npos,
+            "the owned UsePAM yes must be present");
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error), error);
+    require(journal.records().size() == 1 &&
+                journal.records().front().status == MutationStatus::Applied,
+            "UsePAM mutation must commit one journal record");
+    const RollbackReport report = rollbackPolicyBeforeDisable(
+        kSshUsePamPolicy, "UsePAM", tree.rollbackDeps());
+    require(report.status == RollbackStatus::Success, report.message);
+    require(readFile(tree.configPath()) == original,
+            "UsePAM rollback must restore only FIC-owned changes");
+}
+
+void testUsePamAlreadyCompliantIsUnowned() {
+    SshApplyTree tree;
+    JournalOverride overrideGuard(tree.journalPath());
+    tree.writePolicyValue("ssh_use_pam", "yes");
+    const std::string original = "# vendor\nUsePAM yes\n";
+    tree.writeConfig(original);
+    auto policy = tree.makePolicy<NET_ssh_use_pam>();
+    require(policy->apply(), "foreign UsePAM yes must be compliant");
+    require(readFile(tree.configPath()) == original,
+            "compliant foreign UsePAM must stay untouched");
+    MutationJournal journal(tree.journalPath());
+    std::string error;
+    require(journal.load(error) && journal.records().empty(),
+            "compliant foreign UsePAM must not be journaled");
+}
+
+void testUsePamShadowsEarlierIncludeWithoutEditingIt() {
+    SshApplyTree tree;
+    JournalOverride overrideGuard(tree.journalPath());
+    tree.writePolicyValue("ssh_use_pam", "yes");
+    const std::string original = "Include vendor.conf\n# vendor comment\n";
+    tree.writeConfig(original);
+    writeFile(tree.tree.root / "vendor.conf", "UsePAM no\n");
+    auto policy = tree.makePolicy<NET_ssh_use_pam>();
+    require(policy->apply(), "UsePAM must be placed before an earlier Include");
+    const std::string applied = readFile(tree.configPath());
+    require(applied.find("UsePAM yes") < applied.find("Include vendor.conf") &&
+                readFile(tree.tree.root / "vendor.conf") == "UsePAM no\n",
+            "FIC must shadow, not rewrite, the vendor Include");
 }
 
 void testApplyFailsWhenEffectiveStateUnknown() {
@@ -1340,12 +1410,21 @@ void testSshPoliciesAreRollbackWired() {
     SshApplyTree tree;
     const std::vector<std::pair<std::string, std::string>> expected = {
         {"ssh_port", "Port"},
-        {"ssh_root_login", "PermitRootLogin"}};
+        {"ssh_max_auth_tries", "MaxAuthTries"},
+        {"ssh_root_login", "PermitRootLogin"},
+        {"ssh_pubkey_auth", "PubkeyAuthentication"},
+        {"ssh_use_pam", "UsePAM"}};
 
     std::vector<std::unique_ptr<Ssh>> policies;
     policies.push_back(std::make_unique<NET_ssh_port>(
         tree.platformConfig(), tree.executables()));
+    policies.push_back(std::make_unique<NET_ssh_max_auth_tries>(
+        tree.platformConfig(), tree.executables()));
     policies.push_back(std::make_unique<NET_ssh_root_login>(
+        tree.platformConfig(), tree.executables()));
+    policies.push_back(std::make_unique<NET_ssh_pubkey_auth>(
+        tree.platformConfig(), tree.executables()));
+    policies.push_back(std::make_unique<NET_ssh_use_pam>(
         tree.platformConfig(), tree.executables()));
 
     for (std::size_t index = 0; index < policies.size(); ++index) {
@@ -1405,6 +1484,9 @@ int main() {
     } tests[] = {
         {"compliant effective state causes no mutation",
          testCompliantEffectiveStateCausesNoMutation},
+        {"UsePAM apply and rollback", testUsePamApplyAndRollback},
+        {"UsePAM compliant no-op", testUsePamAlreadyCompliantIsUnowned},
+        {"UsePAM shadows earlier Include", testUsePamShadowsEarlierIncludeWithoutEditingIt},
         {"apply fails when effective state is unknown",
          testApplyFailsWhenEffectiveStateUnknown},
         {"unsupported policy semantics is refused",

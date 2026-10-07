@@ -1,6 +1,7 @@
 #include "modules/net/ssh/SshRuntime.h"
 #include "modules/net/ssh/SshConfigFile.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
+#include "incident/SshIncidentPamBridgeVerifier.h"
 
 #include <fic/policy/Policy.h>
 
@@ -684,6 +685,163 @@ void testServiceInspectionFailureIsReported() {
             "systemctl failure must not be treated as an inactive SSH service");
 }
 
+void testSshPamBridge() {
+    TemporaryTree tree;
+    const auto config = tree.write("sshd_config", "UsePAM yes\n");
+    fic::platform::SshPlatformConfig platform;
+    platform.configPath = config;
+    platform.includeBasePath = tree.root;
+    platform.serviceUnits = {"ssh.service"};
+    std::string error;
+    const auto prove = [&](fic::platform::SshPamServiceRouting routing,
+                           const std::string& output) {
+        platform.pamServiceRouting = routing;
+        return fic::incident::SshIncidentPamBridgeVerifier::prove(
+            platform, tree.executables(), error,
+            [&tree, output](const std::string&,
+                            const std::vector<std::string>& arguments,
+                            const ProcessOptions&) {
+                if (!arguments.empty() && arguments.front() == "show") {
+                    const std::string sshd = (tree.root / "sshd").string();
+                    return success("LoadState=loaded\nExecStart={ path=" +
+                                   sshd + " ; argv[]=" + sshd +
+                                   " -D ; ignore_errors=no }\n");
+                }
+                return success(output);
+            });
+    };
+    using Routing = fic::platform::SshPamServiceRouting;
+    platform.pamServiceRouting = Routing::LegacyExecutableName;
+    bool invoked = false;
+    const auto optOut =
+        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
+            false, platform, tree.executables(),
+            [&invoked](const std::string&,
+                       const std::vector<std::string>&,
+                       const ProcessOptions&) {
+                invoked = true;
+                return success();
+            });
+    require(optOut.ready && optOut.optedOut && !invoked &&
+                optOut.diagnostic.find("not guaranteed") != std::string::npos,
+            "disabled ssh_use_pam must explicitly opt out without SSH probing");
+    const auto failedReady =
+        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
+            true, platform, tree.executables(),
+            [](const std::string&, const std::vector<std::string>&,
+               const ProcessOptions&) { return success("usepam no\n"); });
+    require(!failedReady.ready && !failedReady.optedOut,
+            "enabled ssh_use_pam with UsePAM=no must prevent READY");
+    const auto sshdFailure =
+        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
+            true, platform, tree.executables(),
+            [](const std::string&, const std::vector<std::string>&,
+               const ProcessOptions&) {
+                ProcessResult result;
+                result.started = true;
+                result.exitCode = 1;
+                result.standardError = "invalid sshd_config";
+                return result;
+            });
+    require(!sshdFailure.ready &&
+                sshdFailure.diagnostic.find("invalid sshd_config") !=
+                    std::string::npos,
+            "sshd -T failure must prevent READY with a useful diagnostic");
+    const auto provenReady =
+        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
+            true, platform, tree.executables(),
+            [&tree](const std::string&,
+                    const std::vector<std::string>& arguments,
+                    const ProcessOptions&) {
+                if (!arguments.empty() && arguments.front() == "show") {
+                    const std::string sshd = (tree.root / "sshd").string();
+                    return success("LoadState=loaded\nExecStart={ path=" +
+                                   sshd + " ; argv[]=" + sshd +
+                                   " -D ; ignore_errors=no }\n");
+                }
+                return success("usepam yes\n");
+            });
+    require(provenReady.ready && !provenReady.optedOut,
+            "enabled ssh_use_pam with proven bridge must allow READY");
+    require(prove(Routing::LegacyExecutableName, "usepam yes\n"),
+            "legacy service routing must not require PAMServiceName output");
+    require(!prove(Routing::LegacyExecutableName, "usepam no\n"),
+            "UsePAM=no must not prove SSH account processing");
+    require(!prove(Routing::LegacyExecutableName, ""),
+            "missing UsePAM output must fail closed");
+    require(!prove(Routing::LegacyExecutableName, "usepam yes\nusepam no\n"),
+            "multiple UsePAM values must fail closed");
+    require(prove(Routing::LegacyExecutableName, "usepam YES\n"),
+            "sshd boolean output is case insensitive");
+    platform.pamServiceRouting = Routing::LegacyExecutableName;
+    require(!fic::incident::SshIncidentPamBridgeVerifier::prove(
+                platform, tree.executables(), error,
+                [&tree](const std::string&,
+                        const std::vector<std::string>& arguments,
+                        const ProcessOptions&) {
+                    if (!arguments.empty() && arguments.front() == "show") {
+                        const std::string sshd = (tree.root / "sshd").string();
+                        return success("LoadState=loaded\nExecStart={ path=" +
+                                       sshd + " ; argv[]=custom-sshd -D ; "
+                                              "ignore_errors=no }\n");
+                    }
+                    return success("usepam yes\n");
+                }),
+            "legacy OpenSSH with custom argv[0] must not prove PAM service sshd");
+    require(!fic::incident::SshIncidentPamBridgeVerifier::prove(
+                platform, tree.executables(), error,
+                [](const std::string&,
+                   const std::vector<std::string>& arguments,
+                   const ProcessOptions&) {
+                    return success(!arguments.empty() &&
+                                   arguments.front() == "show"
+                        ? "LoadState=not-found\nExecStart=\n"
+                        : "usepam yes\n");
+                }),
+            "legacy OpenSSH without a proven service unit must fail closed");
+    require(prove(Routing::ConfigurablePamServiceName,
+                  "usepam yes\npamservicename sshd\n"),
+            "global sshd PAM service must prove the bridge");
+    require(!prove(Routing::ConfigurablePamServiceName,
+                   "usepam yes\npamservicename custom\n"),
+            "custom global PAM service must fail closed");
+    platform.pamServiceRouting = Routing::ConfigurablePamServiceName;
+    const auto customServiceReady =
+        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
+            true, platform, tree.executables(),
+            [](const std::string&, const std::vector<std::string>&,
+               const ProcessOptions&) {
+                return success("usepam yes\npamservicename custom\n");
+            });
+    require(!customServiceReady.ready,
+            "a custom PAM service must prevent READY");
+
+    tree.write("sshd_config", "UsePAM yes\nMatch User alice\n"
+                              "PAMServiceName custom\n");
+    require(!prove(Routing::ConfigurablePamServiceName,
+                   "usepam yes\npamservicename sshd\n"),
+            "conditional custom PAM service must fail closed");
+    tree.write("sshd_config", "UsePAM yes\nMatch Group admins\n"
+                              "PAMServiceName sshd\n");
+    require(prove(Routing::ConfigurablePamServiceName,
+                  "usepam yes\npamservicename sshd\n"),
+            "conditional sshd PAM service must be accepted");
+    tree.write("sshd_config", "UsePAM yes\nInclude child.conf\n");
+    tree.write("child.conf", "Match User alice\nInclude grandchild.conf\n");
+    tree.write("grandchild.conf", "\"PAMServiceName\"=custom\n");
+    require(!prove(Routing::ConfigurablePamServiceName,
+                   "usepam yes\npamservicename sshd\n"),
+            "nested conditional PAM service must fail closed");
+    tree.write("sshd_config", "UsePAM yes\nInclude recursive.conf\n");
+    tree.write("recursive.conf", "Include recursive.conf\n");
+    require(!prove(Routing::ConfigurablePamServiceName,
+                   "usepam yes\npamservicename sshd\n"),
+            "a recursive include must fail closed");
+    tree.write("sshd_config", "UsePAM yes\nMatch User alice\nUsePAM no\n");
+    require(!prove(Routing::LegacyExecutableName, "usepam yes\n"),
+            "invalid Match UsePAM must not be accepted by the real sshd");
+}
+
 } // namespace
 
 int main() {
@@ -712,7 +870,8 @@ int main() {
         {"inactive service", testInactiveServiceDoesNotRequireReload},
         {"active reload", testActiveServiceIsReloadedAndVerified},
         {"reload failure", testReloadFailureIsReported},
-        {"service inspection failure", testServiceInspectionFailureIsReported}
+        {"service inspection failure", testServiceInspectionFailureIsReported},
+        {"SSH PAM bridge", testSshPamBridge}
     };
 
     std::size_t failures = 0;

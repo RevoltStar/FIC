@@ -106,6 +106,7 @@
 #include "modules/net/ssh/policies/NET_ssh_max_auth_tries.h"
 #include "modules/net/ssh/policies/NET_ssh_root_login.h"
 #include "modules/net/ssh/policies/NET_ssh_pubkey_auth.h"
+#include "modules/net/ssh/policies/NET_ssh_use_pam.h"
 
 // Межсетевой экран nftables
 #include "modules/firewall/FirewallPolicies.h"
