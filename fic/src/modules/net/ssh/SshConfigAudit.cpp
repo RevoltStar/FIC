@@ -1,8 +1,12 @@
 #include "modules/net/ssh/SshConfigAudit.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
+#include "modules/net/ssh/SshInputAuthority.h"
+
+#include <fic/core/fs/TrustedFileReader.h>
 
 #include <fstream>
 #include <set>
+#include <sstream>
 #include <system_error>
 #include <utility>
 
@@ -64,11 +68,27 @@ bool auditConfigFile(const std::filesystem::path& path,
     }
     ActiveFileGuard activeFileGuard(state.activeFiles, identity);
 
-    std::ifstream stream(path);
-    if (!stream.is_open()) {
-        error = "failed to read SSH configuration source " + path.string();
-        return false;
+    std::string trustedContent;
+    if (options.requireTrustedInputs) {
+        if (!fic::ssh::trustedSshInput(path, false, false, error)) return false;
+        fic::core::TrustedFileReadOptions readOptions;
+        readOptions.expectedOwner = ::geteuid();
+        readOptions.forbiddenMode = S_IWGRP | S_IWOTH;
+        if (!fic::core::readTrustedFile(path, readOptions, trustedContent, error))
+            return false;
     }
+    std::ifstream ordinaryStream;
+    if (!options.requireTrustedInputs) {
+        ordinaryStream.open(path);
+        if (!ordinaryStream.is_open()) {
+            error = "failed to read SSH configuration source " + path.string();
+            return false;
+        }
+    }
+    std::istringstream trustedStream(trustedContent);
+    std::istream& stream = options.requireTrustedInputs
+        ? static_cast<std::istream&>(trustedStream)
+        : static_cast<std::istream&>(ordinaryStream);
 
     std::string line;
     std::size_t lineNumber = 0;
@@ -112,6 +132,17 @@ bool auditConfigFile(const std::filesystem::path& path,
                 std::filesystem::path pattern = include;
                 if (!pattern.is_absolute()) {
                     pattern = options.includeBasePath / pattern;
+                }
+                if (options.requireTrustedInputs) {
+                    // Globs in directory names require a separate authority proof.
+                    if (pattern.parent_path().string().find_first_of("*?[") !=
+                        std::string::npos) {
+                        error = "unsupported SSH Include directory glob: " +
+                                pattern.string();
+                        return false;
+                    }
+                    if (!fic::ssh::trustedSshInput(
+                            pattern.parent_path(), true, false, error)) return false;
                 }
 
                 glob_t matches {};

@@ -1,8 +1,11 @@
 #include "incident/SshSystemdActivationVerifier.h"
+#include "modules/net/ssh/SshInputAuthority.h"
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
+#include <fic/core/fs/TrustedFileReader.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <fstream>
 #include <iterator>
@@ -121,18 +124,26 @@ bool words(const std::string& input, std::vector<std::string>& out) {
 bool environmentFile(const std::string& path, bool optional,
                      std::map<std::string, std::string>& values,
                      std::string& error) {
-    struct stat info {};
-    if (::lstat(path.c_str(), &info) != 0) {
-        if (optional) return true;
-        error = "SSH environment file is unavailable: " + path;
+    if (path.find_first_of("*?[%\\") != std::string::npos) {
+        error = "SSH EnvironmentFile wildcard or expansion is unsupported: " + path;
         return false;
     }
-    if (!S_ISREG(info.st_mode) || info.st_uid != 0 ||
-        (info.st_mode & (S_IWGRP | S_IWOTH))) {
-        error = "SSH environment file is not trusted: " + path;
+    if (!ssh::trustedSshInput(path, false, optional, error)) return false;
+    fic::core::TrustedFileReadOptions readOptions;
+    readOptions.expectedOwner = ::geteuid();
+    readOptions.forbiddenMode = S_IWGRP | S_IWOTH;
+    std::string content;
+    int systemError = 0;
+    if (!fic::core::readTrustedFile(path, readOptions, content, error,
+                                    nullptr, {}, &systemError)) {
+        if (optional && systemError == ENOENT &&
+            ssh::trustedSshInput(path, false, true, error)) {
+            error.clear();
+            return true;
+        }
         return false;
     }
-    std::ifstream file(path);
+    std::istringstream file(content);
     std::string line;
     while (std::getline(file, line)) {
         if (line.empty() || line[0] == '#') continue;
@@ -151,7 +162,9 @@ bool environmentFile(const std::string& path, bool optional,
                 return false;
             }
             value = value.substr(1, value.size() - 2);
-        } else if (value.find_first_of(" \t") != std::string::npos) {
+        } else if (!value.empty() &&
+                   (value.front() == ' ' || value.front() == '\t' ||
+                    value.back() == ' ' || value.back() == '\t')) {
             error = "unsupported SSH environment value: " + path;
             return false;
         }
@@ -339,21 +352,22 @@ SshActivationProof SshSystemdActivationVerifier::prove(
         }
         return true;
     };
-    std::set<std::string> activeSocketTargets;
+    std::set<std::string> socketTargets;
     for (const auto& socket : platform.socketUnits) {
         Properties props;
         if (!inspect(socket, props)) return fail(error);
         if (props["LoadState"] == "not-found") continue;
         if (props["LoadState"] != "loaded") return fail("SSH socket is not loaded: " + socket);
-        if (props["ActiveState"] == "active") {
+        if (props["ActiveState"] == "active" ||
+            props["ActiveState"] == "inactive") {
             if (props["Accept"] != "no")
                 return fail("SSH socket Accept setting is not proven safe: " + socket);
             std::istringstream targets(props["Triggers"]);
             std::string target, extra;
             if (!(targets >> target) || targets >> extra)
-                return fail("active SSH socket target is ambiguous: " + socket);
-            activeSocketTargets.insert(target);
-        } else if (props["ActiveState"] != "inactive")
+                return fail("SSH socket target is ambiguous: " + socket);
+            socketTargets.insert(target);
+        } else
             return fail("SSH socket state is unproven: " + socket);
     }
     std::set<std::string> checked;
@@ -409,11 +423,22 @@ SshActivationProof SshSystemdActivationVerifier::prove(
         } else return fail("SSH service state is unproven: " + unit);
         if (!launchArguments(argv, platform, launch, error)) return fail(error);
         proof.launches.push_back(std::move(launch));
+        if (props["ActiveState"] == "active") {
+            std::vector<std::string> futureArgv;
+            std::string executable;
+            if (!expandedArgv(props, futureArgv, executable, error)) return fail(error);
+            if (executable != sshd.string())
+                return fail("SSH service future launch is not the trusted sshd: " + unit);
+            SshLaunchProof future;
+            future.serviceUnit = props["Id"];
+            if (!launchArguments(futureArgv, platform, future, error)) return fail(error);
+            proof.launches.push_back(std::move(future));
+        }
     }
     if (!loaded) return fail("no declared SSH service unit is loaded");
-    for (const auto& target : activeSocketTargets)
+    for (const auto& target : socketTargets)
         if (!trustedNames.count(target))
-            return fail("active SSH socket activates an untrusted service: " + target);
+            return fail("SSH socket activates an untrusted service: " + target);
     proof.status = SshActivationStatus::Proven;
     proof.diagnostic = "declared SSH systemd activation paths are proven";
     return proof;

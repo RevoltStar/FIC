@@ -19,6 +19,7 @@ struct SshRuntimeOptions {
     // When set, test mode follows that launch instead of inventing -f.
     bool useLaunchArguments = false;
     std::vector<std::string> launchArguments;
+    bool requireTrustedInputs = false;
 };
 
 struct SshActivationResult {

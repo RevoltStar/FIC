@@ -2249,6 +2249,7 @@ add_test(
 add_executable(ssh_runtime_tests
     fic/modules/net/ssh/SshRuntimeTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/SshIncidentPamBridgeVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/SshIncidentPamRuntimeReconciler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/SshSystemdActivationVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp

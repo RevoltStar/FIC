@@ -228,6 +228,7 @@ bool SshRuntime::auditConditionalOverrides(const std::string& parameter,
     SshConfigAuditOptions auditOptions;
     auditOptions.configPath = options_.configPath;
     auditOptions.includeBasePath = includeBase.lexically_normal();
+    auditOptions.requireTrustedInputs = options_.requireTrustedInputs;
     SshConfigAudit audit(std::move(auditOptions));
 
     std::vector<SshConditionalOccurrence> occurrences;

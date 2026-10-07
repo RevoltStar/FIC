@@ -794,12 +794,23 @@ processing для всех способов SSH-аутентификации, в
 условные `Match`-значения в графе `Include`. Иначе legacy-маршрут требует
 `argv[0]` с именем `sshd`. Неоднозначные аргументы, переменные и свойства
 systemd оставляют bridge недоказанным. Этот read-only proof дополняет отдельный
-proof постоянного `pam_fic_access.so` в PAM service topology. `READY` требует
-обоих доказательств. Явное отключение `ssh_use_pam` освобождает FIC-owned
+proof постоянного `pam_fic_access.so` в PAM service topology. Для активных
+служб daemon после проверки текущей конфигурации отдельно выполняет reload
+каждого уникального service unit через доверенный `systemctl`, повторно
+доказывает процесс, параметры запуска и bridge и только затем допускает
+`READY`. Compliance no-op политики не создаёт journal или managed block ради
+этого reload. Для неактивной службы reload не нужен. Future `ExecStart`,
+`EnvironmentFile`, основной SSH config и полный граф `Include` проверяются как
+доверенные входы: writable каталоги и файлы, symlink leaf и непроверяемые
+wildcard `EnvironmentFile` оставляют bridge недоказанным. Относительные SSH
+`Include` всегда разрешаются от platform server config directory, в том числе
+для запуска с alternate `-f`. `READY` требует обоих доказательств. Явное
+отключение `ssh_use_pam` освобождает FIC-owned
 конфигурацию через обычный rollback и означает отказ оператора от гарантии
 покрытия SSH-входов IncidentAccessGate. Локальная PAM gate infrastructure
 при этом остаётся обязательной. После административных изменений policy и
-периодического apply daemon повторно проверяет оба условия и обновляет
+периодического apply daemon повторно проверяет оба условия, при активной
+SSH-службе повторяет runtime reconciliation и обновляет
 внутреннее состояние готовности. Отсутствие `READY` само по себе не блокирует
 уже работающий небезопасный SSH endpoint. Вне доказанного контура остаются
 отдельно запущенные вне объявленных systemd units процессы `sshd`.

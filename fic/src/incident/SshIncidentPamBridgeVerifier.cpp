@@ -87,12 +87,11 @@ bool SshIncidentPamBridgeVerifier::prove(
     }
     for (const auto& launch : activation.launches) {
         SshRuntimeOptions options{launch.configPath,
-                                  launch.configPath == platform.configPath
-                                      ? platform.includeBasePath
-                                      : launch.configPath.parent_path(),
+                                  platform.includeBasePath,
                                   platform.serviceUnits};
         options.useLaunchArguments = true;
         options.launchArguments = launch.configurationArguments;
+        options.requireTrustedInputs = true;
         SshRuntime runtime(std::move(options), executables, runner);
         if (!runtime.verifyPolicyValue("UsePAM", "yes", error)) {
             error = "SSH UsePAM=yes is not proven for " + launch.serviceUnit +

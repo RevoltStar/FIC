@@ -18,6 +18,7 @@ struct SshConfigAuditOptions {
     std::filesystem::path includeBasePath;
     std::size_t maximumIncludeDepth = 16;
     std::size_t maximumIncludedFiles = 256;
+    bool requireTrustedInputs = false;
 };
 
 class SshConfigAudit {

@@ -64,6 +64,7 @@
 #include "incident/PamIncidentAccessGateVerifier.h"
 #include "incident/AccessReadinessVerifier.h"
 #include "incident/SshIncidentPamBridgeVerifier.h"
+#include "incident/SshIncidentPamRuntimeReconciler.h"
 #include "incident/AltIncidentAccessGateTopology.h"
 #include "incident/DaemonReadiness.h"
 #include "incident/IncidentNotificationLevel.h"
@@ -399,7 +400,7 @@ fic::incident::AccessReadinessResult recomputeAccessReadiness(
                 return fic::incident::SshPamBridgeReadinessResult{
                     false, false, "SSH PAM bridge policy is missing from registry"};
             }
-            return fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
+            return fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
                 policy->isEnabled(), platform.ssh, executables);
         });
     daemonReadiness().set(result.ready
