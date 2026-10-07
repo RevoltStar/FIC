@@ -37,6 +37,7 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/PamPackagingChecks.py
                 ${CMAKE_SOURCE_DIR}
+                $<TARGET_FILE:pam_incident_access_gate_verifier_tests>
     )
     add_test(
         NAME incident_state_lifecycle_static_checks

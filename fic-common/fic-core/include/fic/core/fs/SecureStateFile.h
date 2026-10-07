@@ -35,8 +35,8 @@ struct SecureStateFileExpectation {
     mode_t exactMode = 0;
     // Permission bits that must NOT be set anywhere in the file mode.
     mode_t forbiddenMode = 0;
-    // Maximum accepted content size in bytes. 0 disables the size check but
-    // then maxBytes below still bounds the read.
+    // Maximum accepted content size in bytes. 0 defers to the reader's
+    // mandatory hard bound.
     std::uintmax_t maxSize = 0;
     // Refuse a file with more than one hard link (no aliasing).
     bool requireSingleLink = false;
@@ -81,6 +81,14 @@ inline constexpr std::uintmax_t SECURE_STATE_READ_HARD_MAX_BYTES = 4096;
 SecureStateReadResult readSecureStateFile(
     const std::filesystem::path& path,
     const SecureStateFileExpectation& expectation);
+
+// Same proof chain with an explicit hard bound for a larger authoritative
+// object. The caller must supply a finite limit; lockstatus keeps using the
+// small readSecureStateFile wrapper above.
+SecureStateReadResult readSecureFileBounded(
+    const std::filesystem::path& path,
+    const SecureStateFileExpectation& expectation,
+    std::uintmax_t hardMaxBytes);
 
 // Test-only seam between the bounded read and its final descriptor proof.
 // Production must never set this hook.

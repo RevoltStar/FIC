@@ -243,11 +243,9 @@ case " $* " in
         ;;
     *" incident-pam-prove-detached "*)
         [ "${FIC_FAKE_DETACH_PROOF_FAIL:-}" = "1" ] && exit 1
-        grep -q "^Module: fic-incident-access$" "$FAKE_PAM_STATE/account" &&
-            exit 1
-        grep -q "pam_fic_access.so" "$FAKE_PAM_D/common-account" &&
-            exit 1
-        exit 0
+        "$FIC_PROOF_BINARY" --detached-fixture \
+            "$FAKE_PAM_STATE/account" "$FAKE_PAM_D"
+        exit $?
         ;;
     # Step 7F managed provider domain: the read-only preflight is a no-op
     # in the sandbox; the release succeeds unless a provider failure is
@@ -713,6 +711,11 @@ def prerm_release_wiring_tests() -> None:
 
 def main() -> int:
     root = Path(sys.argv[1])
+    require(len(sys.argv) == 3,
+            "compiled detached-proof test binary path is required")
+    proof_binary = Path(sys.argv[2])
+    require(proof_binary.is_file(),
+            "compiled production detached-proof fixture binary is missing")
     proof_unit_tests()
     prerm_release_wiring_tests()
     profile_dir = root / "packaging/deb/pam-configs"
@@ -1490,6 +1493,7 @@ def main() -> int:
                    "FAKE_PAM_D": str(pam_d),
                    "FAKE_SYSTEMD_ACTIVE": str(active_units),
                    "FIC_FAKE_HELPER_MODE": "ok",
+                   "FIC_PROOF_BINARY": str(proof_binary),
                    "FAKE_PAU_REMOVE_FAILS": "", "FAKE_PAU_PARTIAL": "",
                    "FAKE_PAU_PARTIAL_HOOKS": "",
                    "FAKE_PAU_ENABLE_FAILS": ""}
@@ -1767,6 +1771,31 @@ def main() -> int:
         for slot in ("fic-password-quality", "fic-password-history",
                      "fic-password-history-initial"):
             (pam_d / slot).write_text(NEUTRAL_SLOT, encoding="utf-8")
+
+        # The generated prerm calls the real C++ detached proof against
+        # the same sandbox PAM files that pam-auth-update mutates. A
+        # custom service retaining an absolute module reference must
+        # force full permanent-hook compensation after standard detach.
+        write_attached_pam_state(pam_state, pam_d)
+        custom_service = pam_d / "custom-fic-account"
+        custom_service.write_text(
+            "account required /lib/security/pam_fic_access.so\n",
+            encoding="utf-8")
+        sandbox_symlink.symlink_to(fake_helper)
+        log.unlink(missing_ok=True)
+        absolute_reference = run_prerm()
+        require(absolute_reference.returncode != 0 and
+                "complete permanent PAM infrastructure restored" in
+                absolute_reference.stderr,
+                "absolute PAM module reference must block generated "
+                "prerm removal and trigger compensation: " +
+                absolute_reference.stderr.strip())
+        require_hooks_attached()
+        require(custom_service.read_text(encoding="utf-8").startswith(
+                    "account required /lib/security/pam_fic_access.so"),
+                "custom PAM service was unexpectedly modified")
+        custom_service.unlink()
+        sandbox_symlink.unlink()
 
         # PR1: the history-initial identity is selected and OWNED — the
         # temporary blocker semantics are retired: the removal succeeds,

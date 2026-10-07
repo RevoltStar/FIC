@@ -14,7 +14,6 @@
 
 namespace fic::core {
 namespace {
-constexpr std::size_t MAX_CONFIG_BYTES = 1024U * 1024U;
 constexpr std::array<const char*, 9> CONFIG_FILES = {
     "AUDIT.conf", "DAC.conf", "DC.conf", "GLOBAL.conf", "IDENTITY_ACCESS.conf",
     "FIREWALL.conf", "NET.conf", "OSS.conf", "SYSCTL.conf"
@@ -87,7 +86,7 @@ bool readRegularFile(const std::filesystem::path& path,
         ::close(descriptor);
         return false;
     }
-    if (static_cast<std::uintmax_t>(info.st_size) > MAX_CONFIG_BYTES) {
+    if (static_cast<std::uintmax_t>(info.st_size) > MAX_WORKING_CONFIG_BYTES) {
         error = "configuration exceeds the 1 MiB limit: " + path.string();
         ::close(descriptor);
         return false;
@@ -99,7 +98,7 @@ bool readRegularFile(const std::filesystem::path& path,
         const ssize_t bytesRead = ::read(descriptor, buffer.data(), buffer.size());
         if (bytesRead > 0) {
             content.append(buffer.data(), static_cast<std::size_t>(bytesRead));
-            if (content.size() > MAX_CONFIG_BYTES) {
+            if (content.size() > MAX_WORKING_CONFIG_BYTES) {
                 error = "configuration exceeds the 1 MiB limit: " + path.string();
                 ::close(descriptor);
                 return false;

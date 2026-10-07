@@ -56,6 +56,9 @@ metadata is never repaired. A missing `GLOBAL.conf` or unsafe configuration
 authority aborts package configuration, and the daemon refuses startup before
 READY. `ensure-config` never overwrites an existing working configuration;
 `check-config` rejects missing, invalid, lower or future schema versions.
+The accepted size of each working config, including recovery authority
+`GLOBAL.conf`, is at most 1 MiB. The separate short `lockstatus` state retains
+its stricter secure-read limit.
 
 `initialize-db` creates schema 1 only when the database is absent or empty. A
 non-empty database is accepted only when its `application_id`, `user_version=1`,

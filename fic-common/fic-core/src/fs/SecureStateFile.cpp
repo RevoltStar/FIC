@@ -32,6 +32,7 @@ bool proveSafeParentDirectory(
     const std::filesystem::path& parent,
     const SecureStateFileExpectation& expectation,
     std::string& detail) {
+    detail.clear();
     if (parent.empty()) {
         detail = "parent path is empty";
         return false;
@@ -68,10 +69,16 @@ bool proveSafeParentDirectory(
     detail.clear();
     return true;
 }
-SecureStateReadResult readSecureStateFile(
+SecureStateReadResult readSecureFileBounded(
     const std::filesystem::path& path,
-    const SecureStateFileExpectation& expectation) {
+    const SecureStateFileExpectation& expectation,
+    std::uintmax_t hardMaxBytes) {
     SecureStateReadResult result;
+
+    if (hardMaxBytes == 0) {
+        result.detail = "secure read requires a nonzero hard size limit";
+        return result;
+    }
 
     if (!proveSafeParentDirectory(
             path.parent_path(), expectation, result.detail)) {
@@ -80,8 +87,8 @@ SecureStateReadResult readSecureStateFile(
 
     const std::uintmax_t acceptedSize = expectation.maxSize != 0
         ? std::min<std::uintmax_t>(
-              expectation.maxSize, SECURE_STATE_READ_HARD_MAX_BYTES)
-        : SECURE_STATE_READ_HARD_MAX_BYTES;
+              expectation.maxSize, hardMaxBytes)
+        : hardMaxBytes;
 
     const int descriptor =
         ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
@@ -148,7 +155,7 @@ SecureStateReadResult readSecureStateFile(
 
     // Bounded read through the SAME descriptor proven above.
     std::string content;
-    char buffer[256];
+    char buffer[8192];
     while (content.size() <= acceptedSize) {
         const ssize_t count = ::read(descriptor, buffer, sizeof(buffer));
         if (count == 0) {
@@ -198,13 +205,26 @@ SecureStateReadResult readSecureStateFile(
         return result;
     }
     // A same-size in-place rewrite can fit within one timestamp tick. Read
-    // the tiny object a second time through the same descriptor as a direct
+    // the bounded object a second time through the same descriptor as a direct
     // byte-level check, then recheck mutation metadata once more.
     std::string second(content.size() + 1, '\0');
-    const ssize_t secondCount = ::pread(
-        descriptor, second.data(), second.size(), 0);
+    std::size_t secondCount = 0;
+    bool secondReadFailed = false;
+    while (secondCount < second.size()) {
+        const ssize_t count = ::pread(
+            descriptor, second.data() + secondCount,
+            second.size() - secondCount,
+            static_cast<off_t>(secondCount));
+        if (count == 0) break;
+        if (count < 0) {
+            if (errno == EINTR) continue;
+            secondReadFailed = true;
+            break;
+        }
+        secondCount += static_cast<std::size_t>(count);
+    }
     struct stat finalInfo {};
-    if (secondCount != static_cast<ssize_t>(content.size()) ||
+    if (secondReadFailed || secondCount != content.size() ||
         second.compare(0, content.size(), content) != 0 ||
         ::fstat(descriptor, &finalInfo) != 0 ||
         finalInfo.st_mtim.tv_sec != after.st_mtim.tv_sec ||
@@ -227,6 +247,13 @@ SecureStateReadResult readSecureStateFile(
     result.targetState.group = before.st_gid;
     result.targetState.content = result.content;
     return result;
+}
+
+SecureStateReadResult readSecureStateFile(
+    const std::filesystem::path& path,
+    const SecureStateFileExpectation& expectation) {
+    return readSecureFileBounded(
+        path, expectation, SECURE_STATE_READ_HARD_MAX_BYTES);
 }
 
 } // namespace fic::core

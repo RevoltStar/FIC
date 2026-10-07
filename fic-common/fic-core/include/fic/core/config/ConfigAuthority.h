@@ -9,6 +9,8 @@
 
 namespace fic::core {
 
+inline constexpr std::uintmax_t MAX_WORKING_CONFIG_BYTES = 1024U * 1024U;
+
 struct ConfigAuthorityIdentity {
     uid_t owner = 0;
     gid_t group = 0;

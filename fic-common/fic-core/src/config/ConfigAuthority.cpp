@@ -36,7 +36,7 @@ SecureStateFileExpectation configAuthorityExpectation(
     expectation.owner = identity.owner;
     expectation.group = identity.group;
     expectation.exactMode = 0640;
-    expectation.maxSize = SECURE_STATE_READ_HARD_MAX_BYTES;
+    expectation.maxSize = MAX_WORKING_CONFIG_BYTES;
     expectation.requireSingleLink = true;
     expectation.parentOwner = identity.owner;
     expectation.parentGroup = identity.group;

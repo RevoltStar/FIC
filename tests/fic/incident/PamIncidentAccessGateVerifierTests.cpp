@@ -23,6 +23,19 @@ void write(const std::filesystem::path& path, const std::string& content) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 4 && std::string(argv[1]) == "--detached-fixture") {
+        fic::platform::PamPlatformConfig config;
+        config.configDirectories = {argv[3]};
+        config.moduleDirectories =
+            fic::platform::makeBuildPlatformProfile().pam.moduleDirectories;
+        std::string diagnostic;
+        const auto proof = fic::incident::PamIncidentAccessGateVerifier::
+            proveDetachedForTests(config, argv[2], ::geteuid(), diagnostic);
+        std::cout << diagnostic << '\n';
+        return proof == fic::incident::IncidentGateDetachProof::ProvenDetached
+            ? 0 : proof == fic::incident::IncidentGateDetachProof::Referenced
+                ? 1 : 2;
+    }
     if (argc == 2 && std::string(argv[1]) == "--installed") {
         std::string diagnostic;
         if (!fic::incident::PamIncidentAccessGateVerifier::prove(
@@ -107,6 +120,37 @@ int main(int argc, char** argv) {
         write(services / "common-account",
               "account required pam_fic_access.so\n");
         require(detached() == Proof::Referenced);
+        write(services / "common-account",
+              "account required /lib/security/pam_fic_access.so\n");
+        require(detached() == Proof::Referenced);
+        write(services / "common-account",
+              "account required /lib/x86_64-linux-gnu/security/pam_fic_access.so\n");
+        require(detached() == Proof::Referenced);
+        write(services / "common-account",
+              "account required /lib/security/pam_unix.so\n");
+        require(detached() == Proof::ProvenDetached);
+        const auto moduleHardlink = modules / "pam_unix_alias.so";
+        std::filesystem::create_hard_link(
+            modules / "pam_fic_access.so", moduleHardlink);
+        write(services / "common-account",
+              "account required pam_unix_alias.so\n");
+        require(detached() == Proof::Referenced);
+        std::filesystem::remove(moduleHardlink);
+        write(services / "common-account",
+              "# account required pam_fic_access.so\n");
+        require(detached() == Proof::ProvenDetached);
+        write(services / "common-account", "account required\n");
+        require(detached() == Proof::Unprovable);
+        write(services / "common-account", "account required pam_unix.so\n");
+        ::chmod((services / "common-account").c_str(), 0666);
+        require(detached() == Proof::Unprovable);
+        ::chmod((services / "common-account").c_str(), 0644);
+        const auto moduleAlias = modules / "pam_unix_alias.so";
+        std::filesystem::create_symlink(modules / "pam_fic_access.so", moduleAlias);
+        write(services / "common-account",
+              "account required " + moduleAlias.string() + "\n");
+        require(detached() == Proof::Unprovable);
+        std::filesystem::remove(moduleAlias);
         write(services / "common-account", "account required pam_unix.so\n");
         write(vendor / "vendor-login",
               "account required pam_fic_access.so\n");

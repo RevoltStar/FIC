@@ -173,6 +173,70 @@ bool readProofFile(const std::filesystem::path& path, uid_t expectedOwner,
     return true;
 }
 
+enum class IncidentModuleReference { Other, Referenced, Unprovable };
+
+IncidentModuleReference incidentModuleReference(
+    const std::string& module,
+    const ::fic::platform::PamPlatformConfig& platform) {
+    if (module.empty()) return IncidentModuleReference::Other; // include rule
+    const std::filesystem::path path(module);
+    if (path.filename() == "pam_fic_access.so") {
+        return IncidentModuleReference::Referenced;
+    }
+    if (module.find('\0') != std::string::npos || path.filename().empty()) {
+        return IncidentModuleReference::Unprovable;
+    }
+    for (const auto& component : path) {
+        if (component == "." || component == "..") {
+            return IncidentModuleReference::Unprovable;
+        }
+    }
+    if (!path.is_absolute() && path.has_parent_path()) {
+        return IncidentModuleReference::Unprovable;
+    }
+    if (platform.moduleDirectories.empty()) {
+        return IncidentModuleReference::Unprovable;
+    }
+    std::vector<std::filesystem::path> candidates;
+    if (path.is_absolute()) {
+        candidates.push_back(path);
+    } else {
+        for (const auto& directory : platform.moduleDirectories) {
+            candidates.push_back(directory / path);
+        }
+    }
+    for (const auto& candidate : candidates) {
+        std::error_code error;
+        const auto status = std::filesystem::symlink_status(candidate, error);
+        if (error == std::errc::no_such_file_or_directory) continue;
+        if (error || std::filesystem::is_symlink(status) ||
+            !std::filesystem::is_regular_file(status)) {
+            return IncidentModuleReference::Unprovable;
+        }
+        struct stat candidateInfo {};
+        if (::stat(candidate.c_str(), &candidateInfo) != 0) {
+            return IncidentModuleReference::Unprovable;
+        }
+        std::vector<std::filesystem::path> gatePaths;
+        gatePaths.push_back(candidate.parent_path() / "pam_fic_access.so");
+        for (const auto& directory : platform.moduleDirectories) {
+            gatePaths.push_back(directory / "pam_fic_access.so");
+        }
+        for (const auto& gatePath : gatePaths) {
+            struct stat gateInfo {};
+            if (::stat(gatePath.c_str(), &gateInfo) != 0) {
+                if (errno != ENOENT) return IncidentModuleReference::Unprovable;
+                continue;
+            }
+            if (candidateInfo.st_dev == gateInfo.st_dev &&
+                candidateInfo.st_ino == gateInfo.st_ino) {
+                return IncidentModuleReference::Referenced;
+            }
+        }
+    }
+    return IncidentModuleReference::Other;
+}
+
 IncidentGateDetachProof proveDetachedImpl(
     const ::fic::platform::PamPlatformConfig& platform,
     const std::filesystem::path& selectionPath, uid_t expectedOwner,
@@ -247,12 +311,18 @@ IncidentGateDetachProof proveDetachedImpl(
                     entry.path(), content, rules, diagnostic)) {
                 return IncidentGateDetachProof::Unprovable;
             }
-            if (std::any_of(rules.begin(), rules.end(), [](const auto& rule) {
-                    return rule.module == "pam_fic_access.so";
-                })) {
-                diagnostic = "incident PAM module remains referenced: " +
-                    entry.path().string();
-                return IncidentGateDetachProof::Referenced;
+            for (const auto& rule : rules) {
+                const auto reference = incidentModuleReference(rule.module, platform);
+                if (reference == IncidentModuleReference::Referenced) {
+                    diagnostic = "incident PAM module remains referenced: " +
+                        entry.path().string();
+                    return IncidentGateDetachProof::Referenced;
+                }
+                if (reference == IncidentModuleReference::Unprovable) {
+                    diagnostic = "PAM module path is unprovable: " +
+                        entry.path().string();
+                    return IncidentGateDetachProof::Unprovable;
+                }
             }
         }
         if (error) {

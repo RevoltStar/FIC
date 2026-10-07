@@ -33,7 +33,8 @@ bool IncidentRecoveryConfigReader::read(
             path.parent_path().parent_path(), expectation, diagnostic)) {
         return false;
     }
-    const auto secure = ::fic::core::readSecureStateFile(path, expectation);
+    const auto secure = ::fic::core::readSecureFileBounded(
+        path, expectation, ::fic::core::MAX_WORKING_CONFIG_BYTES);
     if (secure.status != ::fic::core::SecureStateReadStatus::Proven) {
         diagnostic = secure.detail.empty() ? "GLOBAL.conf is not proven" : secure.detail;
         return false;
