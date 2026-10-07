@@ -128,18 +128,30 @@ bool SshIncidentPamBridgeVerifier::prove(
     if (confirmation.status != SshActivationStatus::Proven ||
         confirmation.trustedDevice != activation.trustedDevice ||
         confirmation.trustedInode != activation.trustedInode ||
+        confirmation.services.size() != activation.services.size() ||
         confirmation.launches.size() != activation.launches.size()) {
         error = "SSH activation changed during bridge verification";
         return false;
+    }
+    for (std::size_t index = 0; index < activation.services.size(); ++index) {
+        if (activation.services[index].unit != confirmation.services[index].unit ||
+            activation.services[index].effectiveIdentity !=
+                confirmation.services[index].effectiveIdentity) {
+            error = "SSH service lifecycle changed during bridge verification";
+            return false;
+        }
     }
     for (std::size_t index = 0; index < activation.launches.size(); ++index) {
         const auto& initial = activation.launches[index];
         const auto& final = confirmation.launches[index];
         if (initial.serviceUnit != final.serviceUnit ||
             initial.argvZero != final.argvZero ||
+            initial.arguments != final.arguments ||
             initial.configurationArguments != final.configurationArguments ||
             initial.configPath != final.configPath ||
-            initial.activeProcess != final.activeProcess) {
+            initial.activeProcess != final.activeProcess ||
+            initial.mainPid != final.mainPid ||
+            initial.startTime != final.startTime) {
             error = "SSH launch changed during bridge verification";
             return false;
         }

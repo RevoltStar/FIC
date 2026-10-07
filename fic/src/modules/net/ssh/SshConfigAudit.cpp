@@ -3,6 +3,7 @@
 #include "modules/net/ssh/SshInputAuthority.h"
 
 #include <fic/core/fs/TrustedFileReader.h>
+#include <fic/core/integrity/ContentDigest.h>
 
 #include <fstream>
 #include <set>
@@ -18,6 +19,8 @@ struct IncludeAuditState {
     std::set<std::filesystem::path> activeFiles;
     std::size_t filesRead = 0;
     std::vector<SshConditionalOccurrence> occurrences;
+    std::string sources;
+    bool collectSources = false;
 };
 
 class ActiveFileGuard {
@@ -86,6 +89,11 @@ bool auditConfigFile(const std::filesystem::path& path,
         }
     }
     std::istringstream trustedStream(trustedContent);
+    if (state.collectSources) {
+        const std::string sourcePath = path.string();
+        state.sources += std::to_string(sourcePath.size()) + ":" + sourcePath +
+            fic::core::ContentDigest::sha256Hex(trustedContent);
+    }
     std::istream& stream = options.requireTrustedInputs
         ? static_cast<std::istream&>(trustedStream)
         : static_cast<std::istream&>(ordinaryStream);
@@ -228,6 +236,22 @@ bool SshConfigAudit::findConditionalOccurrences(
     }
 
     occurrences = std::move(state.occurrences);
+    error.clear();
+    return true;
+}
+
+bool SshConfigAudit::sourceIdentity(std::string& identity, std::string& error) const {
+    identity.clear();
+    if (!options_.requireTrustedInputs || !options_.configPath.is_absolute() ||
+        !options_.includeBasePath.is_absolute()) {
+        error = "trusted absolute SSH configuration sources are required";
+        return false;
+    }
+    IncludeAuditState state;
+    state.collectSources = true;
+    if (!auditConfigFile(options_.configPath, options_, {}, {}, state, error, 0))
+        return false;
+    identity = fic::core::ContentDigest::sha256Hex(state.sources);
     error.clear();
     return true;
 }

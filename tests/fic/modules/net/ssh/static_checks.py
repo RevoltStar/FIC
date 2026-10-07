@@ -90,7 +90,7 @@ def main():
             "access readiness must use one recomputation helper")
     helper = startup[helper_start:helper_end]
     pam = helper.find("PamIncidentAccessGateVerifier::prove(")
-    bridge = helper.find("SshIncidentPamRuntimeReconciler::evaluateReadiness(")
+    bridge = helper.find("reconciler.evaluateReadiness(")
     ready = helper.find("DaemonReadinessState::Ready")
     require(0 <= pam < bridge < ready,
             "READY recomputation must prove PAM before SSH runtime reconciliation")

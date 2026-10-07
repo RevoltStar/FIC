@@ -13,9 +13,21 @@ namespace fic::incident {
 struct SshLaunchProof {
     std::string serviceUnit;
     std::string argvZero;
+    std::vector<std::string> arguments;
     std::vector<std::string> configurationArguments;
     std::filesystem::path configPath;
     bool activeProcess = false;
+    unsigned int mainPid = 0;
+    std::string startTime;
+};
+
+enum class SshRuntimeReconciliationKind { SynchronousReload, RestartRequired };
+
+struct SshServiceLifecycleProof {
+    std::string unit;
+    SshRuntimeReconciliationKind reconciliation = SshRuntimeReconciliationKind::RestartRequired;
+    std::string effectiveIdentity;
+    std::string reloadResult;
 };
 
 struct SshProcessSnapshot {
@@ -32,6 +44,7 @@ struct SshActivationProof {
     std::uint64_t trustedDevice = 0;
     std::uint64_t trustedInode = 0;
     std::vector<SshLaunchProof> launches;
+    std::vector<SshServiceLifecycleProof> services;
     std::string diagnostic;
 };
 

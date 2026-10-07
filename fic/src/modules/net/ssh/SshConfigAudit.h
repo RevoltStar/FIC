@@ -31,6 +31,8 @@ public:
         std::string& error
     ) const;
 
+    bool sourceIdentity(std::string& identity, std::string& error) const;
+
 private:
     SshConfigAuditOptions options_;
 };

@@ -793,13 +793,22 @@ processing для всех способов SSH-аутентификации, в
 директива поддерживается, нужны effective `PAMServiceName=sshd` и безопасные
 условные `Match`-значения в графе `Include`. Иначе legacy-маршрут требует
 `argv[0]` с именем `sshd`. Неоднозначные аргументы, переменные и свойства
-systemd оставляют bridge недоказанным. Этот read-only proof дополняет отдельный
-proof постоянного `pam_fic_access.so` в PAM service topology. Для активных
-служб daemon после проверки текущей конфигурации отдельно выполняет reload
-каждого уникального service unit через доверенный `systemctl`, повторно
-доказывает процесс, параметры запуска и bridge и только затем допускает
-`READY`. Compliance no-op политики не создаёт journal или managed block ради
-этого reload. Для неактивной службы reload не нужен. Future `ExecStart`,
+systemd оставляют bridge недоказанным. Effective `Type`, `ExecCondition`,
+`ExecStartPre`, `ExecStartPost` и `ExecReload` также входят в proof: неизвестные
+pre/post/condition hooks отклоняются; штатная проверка доверенным `sshd -t`
+допускается только для того же config, а ALT `ssh-keygen -A` допускается как
+известное действие создания отсутствующих host keys. Этот read-only proof
+дополняет отдельный proof постоянного `pam_fic_access.so` в PAM service topology.
+Перед первым `READY` для каждого активного service unit daemon требует
+завершённое runtime reconciliation. `systemctl reload` достаточен только для
+доказанного `Type=notify-reload` без `ExecReload`, с `CanReload=yes`,
+`NotifyAccess=main` и
+`ReloadResult=success` после команды; обычный HUP
+асинхронен, поэтому используется `systemctl restart`. После restart требуется
+новая генерация `MainPID`/`/proc` startTime и полный повторный proof процесса,
+запуска, socket topology, `UsePAM=yes` и PAM service. Compliance no-op политики
+не создаёт journal или managed block ради runtime reconciliation. Для
+неактивной службы restart не нужен. Future `ExecStart`,
 `EnvironmentFile`, основной SSH config и полный граф `Include` проверяются как
 доверенные входы: writable каталоги и файлы, symlink leaf и непроверяемые
 wildcard `EnvironmentFile` оставляют bridge недоказанным. Относительные SSH
@@ -809,9 +818,14 @@ wildcard `EnvironmentFile` оставляют bridge недоказанным. �
 конфигурацию через обычный rollback и означает отказ оператора от гарантии
 покрытия SSH-входов IncidentAccessGate. Локальная PAM gate infrastructure
 при этом остаётся обязательной. После административных изменений policy и
-периодического apply daemon повторно проверяет оба условия, при активной
-SSH-службе повторяет runtime reconciliation и обновляет
-внутреннее состояние готовности. Отсутствие `READY` само по себе не блокирует
+периодического apply daemon повторно проверяет оба условия read-only. Повторное
+runtime reconciliation нужно, когда изменились доверенные SSH config sources,
+effective launch/lifecycle, trusted executable или поколение активного процесса;
+неизменный proof привязан к этим данным и не вызывает SSH restart/reload.
+После изменения SSH config транзакция может отправить HUP; её попытка reload
+изменяет внутреннюю activation epoch, поэтому даже восстановление прежних
+байтов config не переиспользует старое подтверждение готовности. Отсутствие
+`READY` само по себе не блокирует
 уже работающий небезопасный SSH endpoint. Вне доказанного контура остаются
 отдельно запущенные вне объявленных systemd units процессы `sshd`.
 

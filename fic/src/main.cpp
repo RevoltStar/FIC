@@ -400,7 +400,8 @@ fic::incident::AccessReadinessResult recomputeAccessReadiness(
                 return fic::incident::SshPamBridgeReadinessResult{
                     false, false, "SSH PAM bridge policy is missing from registry"};
             }
-            return fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
+            static fic::incident::SshIncidentPamRuntimeReconciler reconciler;
+            return reconciler.evaluateReadiness(
                 policy->isEnabled(), platform.ssh, executables);
         });
     daemonReadiness().set(result.ready

@@ -115,6 +115,18 @@ void require(bool condition, const std::string& message) {
 }
 
 ProcessResult success(std::string output = {}) {
+    if (output.find("ExecStart={") != std::string::npos) {
+        for (const char* property : {"Type=simple\n", "ExecCondition=\n",
+                                     "ExecStartPre=\n", "ExecStartPost=\n",
+                                     "ExecReload=\n", "CanReload=no\n",
+                                     "ReloadResult=success\n",
+                                     "NotifyAccess=main\n"}) {
+            const std::string entry(property);
+            const auto equal = entry.find('=');
+            if (output.find(entry.substr(0, equal + 1)) == std::string::npos)
+                output += entry;
+        }
+    }
     ProcessResult result;
     result.started = true;
     result.exitCode = 0;
@@ -1116,6 +1128,7 @@ void testEnvironmentFileAuthorityAndPrecedence() {
 }
 
 void testActiveSshRequiresSuccessfulRuntimeReload() {
+    fic::incident::SshIncidentPamRuntimeReconciler reconciler;
     TemporaryTree tree;
     const auto config = tree.write("sshd_config", "UsePAM yes\n");
     fic::platform::SshPlatformConfig platform;
@@ -1127,24 +1140,24 @@ void testActiveSshRequiresSuccessfulRuntimeReload() {
     (void)tree.executables();
     struct stat info {};
     require(::stat(sshd.c_str(), &info) == 0, "test sshd stat failed");
-    int reloads = 0;
-    bool reloadSucceeds = false;
-    bool diesAfterReload = false;
-    bool untrustedAfterReload = false;
+    int restarts = 0;
+    bool restartSucceeds = false;
+    bool diesAfterRestart = false;
+    bool untrustedAfterRestart = false;
     const auto runner = [&](const std::string&,
                             const std::vector<std::string>& args,
                             const ProcessOptions&) {
-        if (!args.empty() && args.front() == "reload") {
-            ++reloads;
+        if (!args.empty() && args.front() == "restart") {
+            ++restarts;
             auto result = success();
-            result.exitCode = reloadSucceeds ? 0 : 1;
+            result.exitCode = restartSucceeds ? 0 : 1;
             return result;
         }
         if (!args.empty() && args.front() == "show" &&
             args.back() == "ssh.socket") return success("LoadState=not-found\n");
         if (!args.empty() && args.front() == "show")
             return success(std::string("Id=ssh.service\nLoadState=loaded\nActiveState=") +
-                           (diesAfterReload && reloads > 0 ? "inactive" : "active") +
+                           (diesAfterRestart && restarts > 0 ? "inactive" : "active") +
                            "\nMainPID=42\nExecStart={ path=" + sshd +
                            " ; argv[]=" + sshd + " -D ; ignore_errors=no }\n");
         return success("usepam yes\npamservicename sshd\n");
@@ -1155,28 +1168,32 @@ void testActiveSshRequiresSuccessfulRuntimeReload() {
         if (pid != 42) return false;
         snapshot = {static_cast<std::uint64_t>(info.st_dev),
                     static_cast<std::uint64_t>(info.st_ino +
-                        (untrustedAfterReload && reloads > 0 ? 1 : 0)),
-                    "100", {sshd, "-D"}};
+                        (untrustedAfterRestart && restarts > 0 ? 1 : 0)),
+                    std::to_string(100 + restarts), {sshd, "-D"}};
         return true;
     };
-    require(!fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && reloads == 1,
-            "stale active sshd must not allow READY when reload fails");
-    reloadSucceeds = true;
-    require(fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && reloads == 2,
-            "active sshd needs one successful reload and post-reload proof");
-    reloads = 0;
-    diesAfterReload = true;
-    require(!fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && reloads == 1,
-            "service death after reload must prevent READY");
-    diesAfterReload = false;
-    reloads = 0;
-    untrustedAfterReload = true;
-    require(!fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && reloads == 1,
-            "untrusted process after reload must prevent READY");
+    require(!reconciler.evaluateReadiness(
+                true, platform, tree.executables(), runner, reader).ready && restarts == 1,
+            "stale active sshd must not allow READY when restart fails");
+    restartSucceeds = true;
+    require(reconciler.evaluateReadiness(
+                true, platform, tree.executables(), runner, reader).ready && restarts == 2,
+            "active sshd needs one successful restart and post-restart proof");
+    require(reconciler.evaluateReadiness(
+                true, platform, tree.executables(), runner, reader).ready && restarts == 2,
+            "unchanged read-only readiness pass must not restart SSH");
+    (void)reconciler.evaluateReadiness(false, platform, tree.executables());
+    restarts = 0;
+    diesAfterRestart = true;
+    require(!reconciler.evaluateReadiness(
+                true, platform, tree.executables(), runner, reader).ready && restarts == 1,
+            "service death after restart must prevent READY");
+    diesAfterRestart = false;
+    restarts = 0;
+    untrustedAfterRestart = true;
+    require(!reconciler.evaluateReadiness(
+                true, platform, tree.executables(), runner, reader).ready && restarts == 1,
+            "untrusted process after restart must prevent READY");
 }
 
 void testFutureSshConfigAuthority() {
@@ -1215,8 +1232,9 @@ void testFutureSshConfigAuthority() {
     require(!prove(), "inactive socket with untrusted future target must fail closed");
     socketTarget = "ssh.service";
     int reloads = 0;
+    fic::incident::SshIncidentPamRuntimeReconciler reconciler;
     const auto inactiveReady =
-        fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
+        reconciler.evaluateReadiness(
             true, platform, tree.executables(),
             [&tree, &reloads](const std::string&,
                               const std::vector<std::string>& args,
@@ -1261,6 +1279,7 @@ void testFutureSshConfigAuthority() {
 }
 
 void testRuntimeReloadDeduplicatesAliasesAndCoversIndependentServices() {
+    fic::incident::SshIncidentPamRuntimeReconciler reconciler;
     TemporaryTree tree;
     const auto config = tree.write("sshd_config", "UsePAM yes\n");
     fic::platform::SshPlatformConfig platform;
@@ -1273,12 +1292,12 @@ void testRuntimeReloadDeduplicatesAliasesAndCoversIndependentServices() {
     struct stat info {};
     require(::stat(sshd.c_str(), &info) == 0, "test sshd stat failed");
     bool independent = false;
-    int reloads = 0;
+    int restarts = 0;
     const auto runner = [&](const std::string&,
                             const std::vector<std::string>& args,
                             const ProcessOptions&) {
-        if (!args.empty() && args.front() == "reload") {
-            ++reloads;
+        if (!args.empty() && args.front() == "restart") {
+            ++restarts;
             return success();
         }
         if (!args.empty() && args.front() == "show" &&
@@ -1301,19 +1320,177 @@ void testRuntimeReloadDeduplicatesAliasesAndCoversIndependentServices() {
         if (pid != 42 && pid != 43) return false;
         snapshot = {static_cast<std::uint64_t>(info.st_dev),
                     static_cast<std::uint64_t>(info.st_ino),
-                    std::to_string(pid), {sshd, "-D"}};
+                    std::to_string(pid + restarts), {sshd, "-D"}};
         return true;
     };
-    require(fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
+    require(reconciler.evaluateReadiness(
                 true, platform, tree.executables(), runner, reader).ready &&
-                reloads == 1,
-            "two service aliases must request one reload");
+                restarts == 1,
+            "two service aliases must request one restart");
     independent = true;
-    reloads = 0;
-    require(fic::incident::SshIncidentPamRuntimeReconciler::evaluateReadiness(
+    restarts = 0;
+    require(reconciler.evaluateReadiness(
                 true, platform, tree.executables(), runner, reader).ready &&
-                reloads == 2,
-            "independent active SSH services must each be reloaded");
+                restarts == 2,
+            "independent active SSH services must each be restarted");
+}
+
+void testLifecycleAndCompletedReconciliation() {
+    TemporaryTree tree;
+    const auto config = tree.write("sshd_config", "UsePAM yes\n");
+    fic::platform::SshPlatformConfig platform;
+    platform.configPath = config;
+    platform.includeBasePath = tree.root;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    const auto sshd = (tree.root / "sshd").string();
+    (void)tree.executables();
+    struct stat info {};
+    require(::stat(sshd.c_str(), &info) == 0, "test sshd stat failed");
+    std::string type = "notify";
+    std::string notifyAccess = "main";
+    std::string reloadResult = "success";
+    std::string condition, pre, post, reload =
+        "{ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no }";
+    int restarts = 0, reloads = 0;
+    bool changeGeneration = true;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        if (!args.empty() && args.front() == "restart") {
+            ++restarts;
+            return success();
+        }
+        if (!args.empty() && args.front() == "reload") {
+            ++reloads;
+            return success();
+        }
+        if (!args.empty() && args.front() == "show" && args.back() == "ssh.socket")
+            return success("LoadState=not-found\n");
+        if (!args.empty() && args.front() == "show") {
+            std::string effectivePre = pre;
+            if (!effectivePre.empty()) {
+                const auto end = effectivePre.find(" }");
+                effectivePre.replace(end, 2, " ; start_time=[" +
+                    std::to_string(restarts) + "] ; pid=" +
+                    std::to_string(40 + restarts) + " }");
+            }
+            return success("Id=ssh.service\nLoadState=loaded\nActiveState=active\n"
+                           "MainPID=42\nType=" + type + "\nExecCondition=" + condition +
+                           "\nExecStartPre=" + effectivePre + "\nExecStartPost=" + post +
+                           "\nExecReload=" + reload + "\nCanReload=yes\n"
+                           "NotifyAccess=" + notifyAccess + "\n"
+                           "ReloadResult=" + reloadResult + "\nExecStart={ path=" + sshd +
+                           " ; argv[]=" + sshd + " -D ; ignore_errors=no ; "
+                           "start_time=[" + std::to_string(restarts) + "] }\n");
+        }
+        return success("usepam yes\npamservicename sshd\n");
+    };
+    const auto reader = [&](unsigned int pid, fic::incident::SshProcessSnapshot& snapshot,
+                            std::string&) {
+        if (pid != 42) return false;
+        snapshot = {static_cast<std::uint64_t>(info.st_dev),
+                    static_cast<std::uint64_t>(info.st_ino),
+                    std::to_string(100 + (changeGeneration ? restarts : 0)),
+                    {sshd, "-D"}};
+        return true;
+    };
+    const auto prove = [&] {
+        return fic::incident::SshSystemdActivationVerifier::prove(
+            platform, tree.executables(), runner, reader);
+    };
+    const auto command = [](const std::string& path,
+                            const std::string& arguments) {
+        return "{ path=" + path + " ; argv[]=" + arguments +
+               " ; ignore_errors=no }";
+    };
+    pre = command(sshd, sshd + " -t");
+    require(prove().status == fic::incident::SshActivationStatus::Proven,
+            "trusted sshd -t prehook must remain supported");
+    if (std::filesystem::exists("/usr/bin/ssh-keygen")) {
+        pre = command("/usr/bin/ssh-keygen", "/usr/bin/ssh-keygen -A") +
+              " " + command(sshd, sshd + " -t");
+        require(prove().status == fic::incident::SshActivationStatus::Proven,
+                "trusted ALT host-key prehook must remain supported");
+        pre = command(sshd, sshd + " -t");
+    }
+    condition = command("/usr/local/sbin/condition", "/usr/local/sbin/condition");
+    require(prove().status != fic::incident::SshActivationStatus::Proven,
+            "unknown ExecCondition must fail closed");
+    condition.clear();
+    pre = command("/usr/local/sbin/rewrite-ssh-config",
+                  "/usr/local/sbin/rewrite-ssh-config");
+    require(prove().status != fic::incident::SshActivationStatus::Proven,
+            "mutating ExecStartPre must fail closed");
+    pre = command(sshd, sshd + " -t");
+    post = command("/usr/local/sbin/rewrite-ssh-config",
+                   "/usr/local/sbin/rewrite-ssh-config");
+    require(prove().status != fic::incident::SshActivationStatus::Proven,
+            "unknown ExecStartPost must fail closed");
+    post.clear();
+    require(prove().services.front().reconciliation ==
+                fic::incident::SshRuntimeReconciliationKind::RestartRequired,
+            "fake successful ExecReload cannot prove synchronous completion");
+    fic::incident::SshIncidentPamRuntimeReconciler reconciler;
+    require(reconciler.evaluateReadiness(false, platform, tree.executables(),
+                                         runner, reader).ready && restarts == 0 &&
+                reloads == 0,
+            "ssh_use_pam opt-out must not reconcile SSH runtime");
+    require(reconciler.evaluateReadiness(true, platform, tree.executables(),
+                                         runner, reader).ready &&
+                restarts == 1 && reloads == 0,
+            "fake reload must use completed restart");
+    require(reconciler.evaluateReadiness(true, platform, tree.executables(),
+                                         runner, reader).ready && restarts == 1,
+            "unrelated and periodic read-only recomputation must not restart SSH");
+    SshRuntimeOptions transactionOptions;
+    transactionOptions.configPath = config;
+    transactionOptions.includeBasePath = tree.root;
+    transactionOptions.serviceUnits = platform.serviceUnits;
+    SshRuntime transactionRuntime(transactionOptions, tree.executables(), runner);
+    require(transactionRuntime.activateIfRunning().ok && reloads == 1,
+            "transaction fixture must send one asynchronous reload");
+    require(reconciler.evaluateReadiness(true, platform, tree.executables(),
+                                         runner, reader).ready && restarts == 2,
+            "asynchronous transaction reload invalidates cached READY proof");
+    tree.write("sshd_config", "# trusted source changed\nUsePAM yes\n");
+    require(reconciler.evaluateReadiness(true, platform, tree.executables(),
+                                         runner, reader).ready && restarts == 3,
+            "trusted SSH source drift must reconcile runtime again");
+    reload = command(sshd, sshd + " -t") + " " +
+             command("/bin/kill", "/bin/kill -HUP $MAINPID");
+    require(prove().services.front().reconciliation ==
+                fic::incident::SshRuntimeReconciliationKind::RestartRequired,
+            "signal-based HUP is asynchronous");
+    fic::incident::SshIncidentPamRuntimeReconciler hupReconciler;
+    require(hupReconciler.evaluateReadiness(true, platform, tree.executables(),
+                                            runner, reader).ready &&
+                restarts == 4 && reloads == 1,
+            "HUP strategy must use restart rather than accept queued signal");
+    changeGeneration = false;
+    fic::incident::SshIncidentPamRuntimeReconciler unchanged;
+    require(!unchanged.evaluateReadiness(true, platform, tree.executables(),
+                                         runner, reader).ready,
+            "successful restart with unchanged PID and startTime must not prove READY");
+    changeGeneration = true;
+    type = "notify-reload";
+    reload.clear();
+    notifyAccess = "all";
+    require(prove().services.front().reconciliation ==
+                fic::incident::SshRuntimeReconciliationKind::RestartRequired,
+            "notify-reload from non-main senders cannot prove daemon acknowledgement");
+    notifyAccess = "main";
+    require(prove().services.front().reconciliation ==
+                fic::incident::SshRuntimeReconciliationKind::SynchronousReload,
+            "notify-reload without ExecReload has acknowledged completion");
+    fic::incident::SshIncidentPamRuntimeReconciler synchronous;
+    require(synchronous.evaluateReadiness(true, platform, tree.executables(),
+                                           runner, reader).ready && reloads == 2,
+            "acknowledged synchronous reload may prove READY without restart");
+    reloadResult = "failure";
+    fic::incident::SshIncidentPamRuntimeReconciler failedReload;
+    require(!failedReload.evaluateReadiness(true, platform, tree.executables(),
+                                            runner, reader).ready,
+            "failed ReloadResult must not prove synchronous completion");
 }
 
 } // namespace
@@ -1352,7 +1529,8 @@ int main() {
         {"EnvironmentFile authority", testEnvironmentFileAuthorityAndPrecedence},
         {"active runtime reload", testActiveSshRequiresSuccessfulRuntimeReload},
         {"future SSH source authority", testFutureSshConfigAuthority},
-        {"reload service aliases", testRuntimeReloadDeduplicatesAliasesAndCoversIndependentServices}
+        {"reload service aliases", testRuntimeReloadDeduplicatesAliasesAndCoversIndependentServices},
+        {"SSH lifecycle and reconciliation", testLifecycleAndCompletedReconciliation}
     };
 
     std::size_t failures = 0;

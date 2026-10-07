@@ -121,6 +121,142 @@ bool words(const std::string& input, std::vector<std::string>& out) {
     return true;
 }
 
+std::string stableCommandProperty(std::string value) {
+    // systemctl show augments effective commands with execution timestamps,
+    // PIDs and results. These change on restart without changing the recipe.
+    for (const char* field : {"start_time", "stop_time", "pid", "code", "status"}) {
+        const std::string marker = std::string(" ; ") + field + "=";
+        std::size_t at = 0;
+        while ((at = value.find(marker, at)) != std::string::npos) {
+            const auto nextField = value.find(" ; ", at + marker.size());
+            const auto commandEnd = value.find(" }", at + marker.size());
+            if (commandEnd == std::string::npos) break;
+            const auto end = nextField != std::string::npos && nextField < commandEnd
+                ? nextField : commandEnd;
+            value.erase(at, end - at);
+        }
+    }
+    return value;
+}
+
+bool lifecycleHooks(const Properties& props, const std::filesystem::path& sshd,
+                    std::string& error) {
+    for (const char* key : {"ExecCondition", "ExecStartPre", "ExecStartPost"}) {
+        const auto found = props.find(key);
+        if (found == props.end()) {
+            error = std::string("SSH lifecycle property is missing: ") + key;
+            return false;
+        }
+        const std::string& value = found->second;
+        if (value.empty()) continue;
+        // systemctl show serializes each effective command as one brace group.
+        std::size_t offset = 0;
+        while (offset < value.size()) {
+            if (value.compare(offset, 7, "{ path=") != 0) {
+                error = std::string("unsupported SSH ") + key + " format";
+                return false;
+            }
+            const auto end = value.find(" }", offset);
+            const auto argvAt = value.find(" ; argv[]=", offset);
+            const auto flagsAt = value.find(" ; ignore_errors=no", offset);
+            if (end == std::string::npos || argvAt == std::string::npos ||
+                flagsAt == std::string::npos || argvAt >= flagsAt ||
+                flagsAt + sizeof(" ; ignore_errors=no") - 1 > end) {
+                error = std::string("unsupported SSH ") + key + " format";
+                return false;
+            }
+            const std::string path = value.substr(offset + 7, argvAt - offset - 7);
+            const std::string metadata = value.substr(
+                flagsAt + sizeof(" ; ignore_errors=no") - 1,
+                end - flagsAt - (sizeof(" ; ignore_errors=no") - 1));
+            if (!metadata.empty()) {
+                std::size_t field = 0;
+                while (field < metadata.size()) {
+                    if (metadata.compare(field, 3, " ; ") != 0) {
+                        error = std::string("unsupported SSH ") + key + " metadata";
+                        return false;
+                    }
+                    field += 3;
+                    const auto next = metadata.find(" ; ", field);
+                    const std::string item = metadata.substr(field, next - field);
+                    if (item.rfind("start_time=", 0) != 0 &&
+                        item.rfind("stop_time=", 0) != 0 &&
+                        item.rfind("pid=", 0) != 0 &&
+                        item.rfind("code=", 0) != 0 &&
+                        item.rfind("status=", 0) != 0) {
+                        error = std::string("unsupported SSH ") + key + " metadata";
+                        return false;
+                    }
+                    field = next == std::string::npos ? metadata.size() : next;
+                }
+            }
+            std::vector<std::string> args;
+            if (!words(value.substr(argvAt + 10, flagsAt - argvAt - 10), args) ||
+                args.empty() || args.front() != path) {
+                error = std::string("unsupported SSH ") + key + " argv";
+                return false;
+            }
+            const bool validateOnly = std::string(key) == "ExecStartPre" &&
+                path == sshd.string() && args == std::vector<std::string>{path, "-t"};
+            const bool hostKeysOnly = std::string(key) == "ExecStartPre" &&
+                path == "/usr/bin/ssh-keygen" &&
+                args == std::vector<std::string>{path, "-A"} &&
+                ssh::trustedSshInput(path, false, false, error);
+            if (!validateOnly && !hostKeysOnly) {
+                error = std::string("unproven SSH ") + key + " action: " + path;
+                return false;
+            }
+            offset = end + 2;
+            if (offset < value.size()) {
+                if (value[offset] != ' ') {
+                    error = std::string("unsupported SSH ") + key + " separator";
+                    return false;
+                }
+                ++offset;
+            }
+        }
+    }
+    return true;
+}
+
+bool lifecycle(const Properties& props, const std::filesystem::path& sshd,
+               SshServiceLifecycleProof& proof, std::string& error) {
+    for (const char* key : {"Type", "ExecCondition", "ExecStartPre", "ExecStartPost",
+                            "ExecReload"}) {
+        if (!props.count(key)) {
+            error = std::string("SSH lifecycle property is missing: ") + key;
+            return false;
+        }
+        proof.effectiveIdentity += std::string(key) + "=" +
+            stableCommandProperty(props.at(key)) + "\n";
+    }
+    const auto canReload = props.find("CanReload");
+    const auto reloadResult = props.find("ReloadResult");
+    const auto notifyAccess = props.find("NotifyAccess");
+    proof.effectiveIdentity += "CanReload=" +
+        (canReload == props.end() ? std::string{} : canReload->second) + "\n";
+    proof.effectiveIdentity += "NotifyAccess=" +
+        (notifyAccess == props.end() ? std::string{} : notifyAccess->second) + "\n";
+    proof.reloadResult = reloadResult == props.end() ? std::string{} :
+        reloadResult->second;
+    const auto& type = props.at("Type");
+    if (type != "simple" && type != "exec" && type != "notify" &&
+        type != "notify-reload" && type != "forking") {
+        error = "unsupported SSH service Type: " + type;
+        return false;
+    }
+    if (!lifecycleHooks(props, sshd, error)) return false;
+    // notify-reload waits for READY=1 after RELOADING=1. An ExecReload
+    // command is not classified as synchronous merely from its exit status.
+    if (type == "notify-reload" && props.at("ExecReload").empty() &&
+        canReload != props.end() && canReload->second == "yes" &&
+        reloadResult != props.end() && notifyAccess != props.end() &&
+        notifyAccess->second == "main")
+        proof.reconciliation = SshRuntimeReconciliationKind::SynchronousReload;
+    else proof.reconciliation = SshRuntimeReconciliationKind::RestartRequired;
+    return true;
+}
+
 bool environmentFile(const std::string& path, bool optional,
                      std::map<std::string, std::string>& values,
                      std::string& error) {
@@ -272,6 +408,7 @@ bool launchArguments(const std::vector<std::string>& argv,
         error = "SSH argv[0] is unavailable"; return false;
     }
     proof.argvZero = argv.front();
+    proof.arguments = argv;
     proof.configPath = platform.configPath;
     bool explicitConfig = false;
     for (std::size_t i = 1; i < argv.size(); ++i) {
@@ -317,6 +454,7 @@ SshActivationProof SshSystemdActivationVerifier::prove(
     auto fail = [&](const std::string& reason) {
         proof.diagnostic = reason;
         proof.launches.clear();
+        proof.services.clear();
         return proof;
     };
     if (platform.serviceUnits.empty() || platform.socketUnits.empty())
@@ -346,6 +484,10 @@ SshActivationProof SshSystemdActivationVerifier::prove(
              "--property=RootImage", "--property=BindPaths",
              "--property=BindReadOnlyPaths", "--property=TemporaryFileSystem",
              "--property=ExtensionImages", "--property=ExtensionDirectories",
+             "--property=Type", "--property=ExecCondition",
+             "--property=ExecStartPre", "--property=ExecStartPost",
+             "--property=ExecReload", "--property=CanReload",
+             "--property=ReloadResult", "--property=NotifyAccess",
              "--property=Triggers", "--property=Accept", unit}, options);
         if (!result.success() || !parseProperties(result.standardOutput, props)) {
             error = "cannot inspect systemd unit " + unit; return false;
@@ -386,6 +528,15 @@ SshActivationProof SshSystemdActivationVerifier::prove(
         std::string name;
         while (names >> name) trustedNames.insert(name);
         if (!checked.insert(props["Id"]).second) continue;
+        SshServiceLifecycleProof service;
+        service.unit = props["Id"];
+        if (!lifecycle(props, sshd, service, error)) return fail(error);
+        for (const char* key : {"Environment", "EnvironmentFiles",
+                                "UnsetEnvironment", "RootDirectory", "RootImage",
+                                "BindPaths", "BindReadOnlyPaths", "TemporaryFileSystem",
+                                "ExtensionImages", "ExtensionDirectories"})
+            service.effectiveIdentity += std::string(key) + "=" + props[key] + "\n";
+        proof.services.push_back(std::move(service));
         std::vector<std::string> argv;
         SshLaunchProof launch;
         launch.serviceUnit = props["Id"];
@@ -404,6 +555,8 @@ SshActivationProof SshSystemdActivationVerifier::prove(
                 return fail("active SSH process is not the trusted sshd: " + unit);
             argv = std::move(snapshot.arguments);
             launch.activeProcess = true;
+            launch.mainPid = pid;
+            launch.startTime = snapshot.startTime;
             Properties after;
             if (!inspect(unit, after) || after["MainPID"] != value ||
                 after["ActiveState"] != "active")
@@ -432,7 +585,15 @@ SshActivationProof SshSystemdActivationVerifier::prove(
             SshLaunchProof future;
             future.serviceUnit = props["Id"];
             if (!launchArguments(futureArgv, platform, future, error)) return fail(error);
+            if (props["ExecStartPre"].find(sshd.string() + " ; argv[]=" +
+                    sshd.string() + " -t") != std::string::npos &&
+                !future.configurationArguments.empty())
+                return fail("SSH validation hook does not use future launch configuration: " + unit);
             proof.launches.push_back(std::move(future));
+        } else if (props["ExecStartPre"].find(sshd.string() + " ; argv[]=" +
+                       sshd.string() + " -t") != std::string::npos &&
+                   !proof.launches.back().configurationArguments.empty()) {
+            return fail("SSH validation hook does not use future launch configuration: " + unit);
         }
     }
     if (!loaded) return fail("no declared SSH service unit is loaded");
