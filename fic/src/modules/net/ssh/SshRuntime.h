@@ -15,6 +15,10 @@ struct SshRuntimeOptions {
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
     std::vector<std::string> serviceUnits;
+    // Exact configuration-affecting arguments from a proven sshd launch.
+    // When set, test mode follows that launch instead of inventing -f.
+    bool useLaunchArguments = false;
+    std::vector<std::string> launchArguments;
 };
 
 struct SshActivationResult {

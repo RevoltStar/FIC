@@ -2,33 +2,34 @@
 
 ## Current base
 
-* Branch `main`; starting commit `92f9a61d2fd192c962432e8d60953dccfe01f355`.
+* Branch `main`; starting commit `bfda1f47581effad20d3018e5532ea0c84ca73c6`.
 
 ## Current task
 
-* Add `NET/SshEdit/ssh_use_pam` and require a proven SSH→PAM bridge before daemon READY when that policy is enabled.
+* Harden `ssh_use_pam` bridge and daemon READY against distro capability drift, actual systemd launch overrides and PAM topology drift.
 
 ## Accepted architecture / invariants
 
-* `ssh_use_pam` has fixed value `yes`, default `ENABLE`, and uses the existing SSH transaction, mutation journal and ownership-release rollback. Compliant foreign `UsePAM yes` remains unowned.
-* OpenSSH effective values come from the trusted `sshd -T` path. The `PAMServiceName` capability is typed per platform. On configurable profiles, the bridge also audits conditional `Match` values through recursive `Include`. On legacy profiles, upstream OpenSSH derives PAM service from `argv[0]`; a read-only systemd unit `ExecStart` proof requires direct trusted `sshd` launch with `argv[0]=sshd`.
-* SSH bridge proof follows startup apply and is separate from permanent PAM `pam_fic_access.so` topology proof. Admin policy mutations and periodic apply refresh internal readiness against the live bridge. Disabled `ssh_use_pam` is an explicit opt-out from guaranteed SSH coverage; local PAM infrastructure proof remains mandatory.
+* `ssh_use_pam` managed configuration, journal and rollback are unchanged. Its opt-out skips only SSH proof; permanent PAM topology proof is always required.
+* The trusted runtime `sshd` selects modern `PAMServiceName` or legacy argv-name routing. Platform routing metadata is only a package baseline.
+* SSH proof covers declared systemd service/socket units. Active services use trusted `/proc/<MainPID>/exe` and argv; inactive services use effective systemd launch properties and strictly parsed environment files. Test mode reuses proven `-f` and `-o` arguments. Unknown launch semantics fail closed.
+* READY is recomputed from both PAM topology and the optional SSH bridge at startup, after relevant admin commands and after periodic apply. No host SSH state is changed by the proof.
 
 ## Completed
 
-* Registered the policy, default config, localization, explicit directive semantics and rollback enrollment.
-* Added read-only SSH bridge verifier, typed platform routing metadata and startup READY gate.
-* Added policy, runtime, platform, rollback, static and readiness decision regressions. Updated SSH and rollback documentation.
+* Added runtime capability probe, typed systemd/process activation verifier, composite access readiness, and focused regressions for backports, launch overrides, sockets, process drift and PAM drift.
+* Updated the SSH contract in `fic/README.md` and the related static CI check.
 
 ## Changed areas
 
-* `fic/src/modules/net/ssh`, `fic/src/incident`, `fic/src/main.cpp`, platform profiles, NET resources, related tests and docs.
+* `fic/src/incident`, `fic/src/main.cpp`, SSH runtime, platform SSH metadata, focused tests and SSH documentation.
 
 ## Validation
 
-* Fresh Debian 12 container configure and full build passed. `ctest -N` lists 132 tests. Full root CTest excluding the privilege-sensitive `mutation_journal_tests` passed 131/131 after setting Git `safe.directory=/src` only for that test process; the excluded binary passed separately under UID 1000. Targeted SSH, platform, rollback and static CTest passed 5/5. `git diff --check` passed.
+* RED before the fix: Debian 12 baseline plus modern `PAMServiceName custom`, active launch `-o UsePAM=no`, and alternate `-f` regressions failed on `bfda1f4`.
+* Fresh Debian 12 container configure and full build passed; `ctest -N` listed 132 tests. Full root CTest excluding `mutation_journal_tests` passed 131/131 with Git safe-directory scoped to the test process. The excluded binary passed separately under UID 1000.
+* Disposable Debian 12/13, Ubuntu 24.04/26.04 and ALT p11 containers ran real `sshd -T`; their installed SSH units were inspected. No systemd PID 1 end-to-end activation test was run.
 
 ## Remaining
 
-* No code work remains in this focused task.
-* Builder images do not contain a runnable `sshd`; real five-distro `sshd -T` and package lifecycle checks have not been run. The ALT p11 builder package index reports OpenSSH `9.6p1-alt7`. The legacy service launch proof covers the declared systemd units; separately launched daemons are outside the proven service contract.
+* Live systemd/PID 1 activation end-to-end and native package lifecycle were not validated. The systemd property and `/proc` scenarios are covered by injected test fixtures. Separately started `sshd` processes outside declared units remain out of scope.

@@ -84,16 +84,24 @@ def main():
         require("\n" + prefix + "[description]=" in "\n" + localization,
                 f"{language}.lang lacks ssh_use_pam description")
     startup = (root / "fic/src/main.cpp").read_text()
+    helper_start = startup.find("AccessReadinessResult recomputeAccessReadiness(")
+    helper_end = startup.find("bool mayChangeSshPamBridge(", helper_start)
+    require(0 <= helper_start < helper_end,
+            "access readiness must use one recomputation helper")
+    helper = startup[helper_start:helper_end]
+    pam = helper.find("PamIncidentAccessGateVerifier::prove(")
+    bridge = helper.find("SshIncidentPamBridgeVerifier::evaluateReadiness(")
+    ready = helper.find("DaemonReadinessState::Ready")
+    require(0 <= pam < bridge < ready,
+            "READY recomputation must prove PAM before the SSH bridge")
     apply = startup.find("run_daemon_apply_all_pass(", startup.find("int main("))
-    pam = startup.find("PamIncidentAccessGateVerifier::prove(", apply)
-    bridge = startup.find("SshIncidentPamBridgeVerifier::evaluateReadiness(", pam)
-    ready = startup.find("DaemonReadinessState::Ready", bridge)
-    notify = startup.find('"READY=1', ready)
-    require(0 <= apply < pam < bridge < ready < notify,
-            "startup must apply, prove PAM and SSH bridge, then announce READY")
+    startup_recompute = startup.find("recomputeAccessReadiness(", apply)
+    notify = startup.find('"READY=1', startup_recompute)
+    require(0 <= apply < startup_recompute < notify,
+            "startup must apply, recompute both proofs, then announce READY")
     require("if (mayChangeSshPamBridge(requestText))" in startup and
-            "refreshSshPamBridgeReadiness(\n                policyRegistry, platform, executables);" in startup,
-            "admin mutation and periodic apply must refresh SSH bridge readiness")
+            startup.count("recomputeAccessReadiness(") >= 4,
+            "startup, admin mutation and periodic apply must recompute both proofs")
 
     return 0
 

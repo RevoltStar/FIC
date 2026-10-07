@@ -75,6 +75,8 @@ struct SshPlatformConfig {
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
     std::vector<std::string> serviceUnits;
+    std::vector<std::string> socketUnits;
+    // Package baseline only; runtime bridge proof probes the trusted sshd.
     SshPamServiceRouting pamServiceRouting = SshPamServiceRouting::Unknown;
 };
 

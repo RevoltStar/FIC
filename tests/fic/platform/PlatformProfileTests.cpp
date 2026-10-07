@@ -209,6 +209,11 @@ void testSelectedProfile() {
         fic::platform::makeBuildPlatformProfile();
     std::string error;
     require(fic::platform::validatePlatformProfile(profile, error), error);
+    require(profile.ssh.socketUnits ==
+                (profile.id == "alt-p11"
+                     ? std::vector<std::string>{"sshd.socket"}
+                     : std::vector<std::string>{"ssh.socket", "sshd.socket"}),
+            "SSH socket activation topology is incorrect");
     require(profile.sudo.mainConfigPath == "/etc/sudoers",
             "sudoers main configuration path is incorrect");
     require(profile.sudo.managedConfigPath == "/etc/sudoers.d/zzzz-fic",
@@ -1144,6 +1149,11 @@ void testInvalidProfileIsRejected() {
         fic::platform::SshPamServiceRouting::Unknown;
     require(!fic::platform::validatePlatformProfile(profile, error),
             "unknown SSH PAM routing must be rejected");
+
+    profile = fic::platform::makeBuildPlatformProfile();
+    profile.ssh.socketUnits.clear();
+    require(!fic::platform::validatePlatformProfile(profile, error),
+            "undeclared SSH socket activation topology must be rejected");
 
     profile = fic::platform::makeBuildPlatformProfile();
     auto* activation = pamCapability(

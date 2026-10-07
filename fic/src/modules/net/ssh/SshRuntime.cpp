@@ -160,11 +160,14 @@ bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuratio
 
     ProcessOptions processOptions;
     processOptions.clearEnvironment = true;
-    const ProcessResult result = runner_(
-        sshd.string(),
-        {"-T", "-f", options_.configPath.string()},
-        processOptions
-    );
+    std::vector<std::string> arguments{"-T"};
+    if (options_.useLaunchArguments) {
+        arguments.insert(arguments.end(), options_.launchArguments.begin(),
+                         options_.launchArguments.end());
+    } else {
+        arguments.insert(arguments.end(), {"-f", options_.configPath.string()});
+    }
+    const ProcessResult result = runner_(sshd.string(), arguments, processOptions);
     if (!result.success()) {
         error = "sshd effective configuration check failed: " + processFailure(result);
         return false;

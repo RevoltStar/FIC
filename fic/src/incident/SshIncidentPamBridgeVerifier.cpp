@@ -2,92 +2,73 @@
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
+#include <algorithm>
+#include <cctype>
 #include <sstream>
+#include <sys/stat.h>
 #include <utility>
 
 namespace fic::incident {
 namespace {
 
-bool proveLegacyServiceLaunch(
-    const platform::SshPlatformConfig& platform,
+enum class ActualPamRouting { LegacyExecutableName, ConfigurablePamServiceName,
+                              Unproven };
+
+ActualPamRouting classifyPamRouting(
+    const SshLaunchProof& launch,
     const platform::PlatformExecutableResolver& executables,
     const SshCommandRunner& runner,
+    SshRuntime& runtime,
     std::string& error) {
+    std::vector<std::string> values;
+    std::string detail;
+    if (runtime.effectiveValues("PAMServiceName", values, detail)) {
+        if (values.size() == 1 && !values.front().empty())
+            return ActualPamRouting::ConfigurablePamServiceName;
+        error = "ambiguous PAMServiceName in trusted sshd output";
+        return ActualPamRouting::Unproven;
+    }
+    if (detail.find("does not contain parameter PAMServiceName") ==
+            std::string::npos) {
+        error = "trusted sshd capability is inconclusive: " + detail;
+        return ActualPamRouting::Unproven;
+    }
     std::filesystem::path sshd;
-    std::filesystem::path systemctl;
-    if (!executables.resolve(platform::ExecutableId::Sshd, sshd, error) ||
-        !executables.resolve(platform::ExecutableId::Systemctl, systemctl, error)) {
-        error = "legacy SSH PAM service launch proof unavailable: " + error;
-        return false;
-    }
-    if (sshd.filename() != "sshd") {
-        error = "trusted SSH executable is not named sshd";
-        return false;
-    }
-    const SshCommandRunner command = runner ? runner : SshCommandRunner{
-        [](const std::string& executable,
-           const std::vector<std::string>& arguments,
-           const ProcessOptions& options) {
-            return VerifiedProcessExecutor::execute(
-                executable, arguments, options);
-        }};
+    if (!executables.resolve(platform::ExecutableId::Sshd, sshd, error))
+        return ActualPamRouting::Unproven;
     ProcessOptions options;
     options.clearEnvironment = true;
-    bool loaded = false;
-    for (const std::string& unit : platform.serviceUnits) {
-        const ProcessResult result = command(
-            systemctl.string(),
-            {"show", "--property=LoadState", "--property=ExecStart", unit},
-            options);
-        if (!result.success()) {
-            error = "failed to inspect SSH service launch " + unit;
-            return false;
-        }
-        std::string loadState;
-        std::string execStart;
-        std::istringstream lines(result.standardOutput);
+    std::vector<std::string> args{"-T"};
+    args.insert(args.end(), launch.configurationArguments.begin(),
+                launch.configurationArguments.end());
+    args.insert(args.end(), {"-o", "PAMServiceName=fic-capability-probe"});
+    const auto command = runner ? runner : SshCommandRunner{
+        [](const std::string& executable, const std::vector<std::string>& arguments,
+           const ProcessOptions& processOptions) {
+            return VerifiedProcessExecutor::execute(executable, arguments, processOptions);
+        }};
+    const ProcessResult result = command(sshd.string(), args, options);
+    if (result.success()) {
+        std::istringstream output(result.standardOutput);
         std::string line;
-        while (std::getline(lines, line)) {
-            if (line.rfind("LoadState=", 0) == 0) {
-                loadState = line.substr(10);
-            } else if (line.rfind("ExecStart=", 0) == 0) {
-                execStart = line.substr(10);
-            }
+        int matches = 0;
+        while (std::getline(output, line)) {
+            if (line == "pamservicename fic-capability-probe") ++matches;
         }
-        if (loadState == "not-found") {
-            continue;
-        }
-        if (loadState != "loaded") {
-            error = "SSH service " + unit + " is not demonstrably loaded";
-            return false;
-        }
-        loaded = true;
-        const std::string pathToken = "{ path=";
-        const std::string argvToken = " ; argv[]=";
-        const std::size_t pathStart = execStart.find(pathToken);
-        const std::size_t argvStart = execStart.find(argvToken);
-        if (pathStart != 0 || argvStart == std::string::npos ||
-            execStart.find(pathToken, pathToken.size()) != std::string::npos) {
-            error = "SSH service " + unit + " has an unsupported ExecStart";
-            return false;
-        }
-        const std::string path = execStart.substr(
-            pathToken.size(), argvStart - pathToken.size());
-        const std::size_t argStart = argvStart + argvToken.size();
-        const std::size_t argEnd = execStart.find_first_of(" ;", argStart);
-        const std::string argvZero = execStart.substr(
-            argStart, argEnd - argStart);
-        if (path != sshd.string() || argvZero != sshd.string()) {
-            error = "SSH service " + unit +
-                    " does not launch the trusted sshd with argv[0]=sshd";
-            return false;
+        if (matches == 1) return ActualPamRouting::ConfigurablePamServiceName;
+    } else if (result.started && !result.timedOut) {
+        std::string message = result.standardError;
+        std::transform(message.begin(), message.end(), message.begin(),
+                       [](unsigned char c) { return std::tolower(c); });
+        if (message.find("bad configuration option: pamservicename") !=
+                std::string::npos ||
+            message.find("unsupported option pamservicename") !=
+                std::string::npos) {
+            return ActualPamRouting::LegacyExecutableName;
         }
     }
-    if (!loaded) {
-        error = "no declared SSH service unit is loaded";
-        return false;
-    }
-    return true;
+    error = "trusted sshd PAMServiceName capability probe was inconclusive";
+    return ActualPamRouting::Unproven;
 }
 
 } // namespace
@@ -96,30 +77,73 @@ bool SshIncidentPamBridgeVerifier::prove(
     const platform::SshPlatformConfig& platform,
     const platform::PlatformExecutableResolver& executables,
     std::string& error,
-    SshCommandRunner runner) {
-    if (platform.pamServiceRouting ==
-        platform::SshPamServiceRouting::Unknown) {
-        error = "SSH PAM service routing capability is unknown";
+    SshCommandRunner runner,
+    SshProcessReader processReader) {
+    const auto activation = SshSystemdActivationVerifier::prove(
+        platform, executables, runner, processReader);
+    if (activation.status != SshActivationStatus::Proven) {
+        error = "SSH systemd activation is not proven: " + activation.diagnostic;
         return false;
     }
-
-    SshRuntime runtime({platform.configPath, platform.includeBasePath,
-                        platform.serviceUnits}, executables, runner);
-    if (!runtime.verifyPolicyValue("UsePAM", "yes", error)) {
-        error = "SSH UsePAM=yes is not proven: " + error;
+    for (const auto& launch : activation.launches) {
+        SshRuntimeOptions options{launch.configPath,
+                                  launch.configPath == platform.configPath
+                                      ? platform.includeBasePath
+                                      : launch.configPath.parent_path(),
+                                  platform.serviceUnits};
+        options.useLaunchArguments = true;
+        options.launchArguments = launch.configurationArguments;
+        SshRuntime runtime(std::move(options), executables, runner);
+        if (!runtime.verifyPolicyValue("UsePAM", "yes", error)) {
+            error = "SSH UsePAM=yes is not proven for " + launch.serviceUnit +
+                    ": " + error;
+            return false;
+        }
+        const auto routing = classifyPamRouting(
+            launch, executables, runner, runtime, error);
+        if (routing == ActualPamRouting::Unproven) return false;
+        if (routing == ActualPamRouting::ConfigurablePamServiceName) {
+            if (!runtime.verifyPolicyValue("PAMServiceName", "sshd", error)) {
+                error = "SSH PAM service sshd is not proven for " +
+                        launch.serviceUnit + ": " + error;
+                return false;
+            }
+        } else if (std::filesystem::path(launch.argvZero).filename() != "sshd") {
+            error = "legacy SSH PAM service name is not sshd for " +
+                    launch.serviceUnit;
+            return false;
+        }
+    }
+    std::filesystem::path sshd;
+    if (!executables.resolve(platform::ExecutableId::Sshd, sshd, error))
+        return false;
+    struct stat current {};
+    if (::stat(sshd.c_str(), &current) != 0 ||
+        static_cast<std::uint64_t>(current.st_dev) != activation.trustedDevice ||
+        static_cast<std::uint64_t>(current.st_ino) != activation.trustedInode) {
+        error = "trusted sshd changed during bridge verification";
         return false;
     }
-    if (platform.pamServiceRouting ==
-        platform::SshPamServiceRouting::ConfigurablePamServiceName &&
-        !runtime.verifyPolicyValue("PAMServiceName", "sshd", error)) {
-        error = "SSH PAM service sshd is not proven: " + error;
+    const auto confirmation = SshSystemdActivationVerifier::prove(
+        platform, executables, runner, processReader);
+    if (confirmation.status != SshActivationStatus::Proven ||
+        confirmation.trustedDevice != activation.trustedDevice ||
+        confirmation.trustedInode != activation.trustedInode ||
+        confirmation.launches.size() != activation.launches.size()) {
+        error = "SSH activation changed during bridge verification";
         return false;
     }
-    if (platform.pamServiceRouting ==
-            platform::SshPamServiceRouting::LegacyExecutableName &&
-        !proveLegacyServiceLaunch(platform, executables, runner, error)) {
-        error = "SSH PAM service sshd is not proven: " + error;
-        return false;
+    for (std::size_t index = 0; index < activation.launches.size(); ++index) {
+        const auto& initial = activation.launches[index];
+        const auto& final = confirmation.launches[index];
+        if (initial.serviceUnit != final.serviceUnit ||
+            initial.argvZero != final.argvZero ||
+            initial.configurationArguments != final.configurationArguments ||
+            initial.configPath != final.configPath ||
+            initial.activeProcess != final.activeProcess) {
+            error = "SSH launch changed during bridge verification";
+            return false;
+        }
     }
     error.clear();
     return true;
@@ -129,14 +153,16 @@ SshPamBridgeReadinessResult SshIncidentPamBridgeVerifier::evaluateReadiness(
     bool sshUsePamEnabled,
     const platform::SshPlatformConfig& platform,
     const platform::PlatformExecutableResolver& executables,
-    SshCommandRunner runner) {
+    SshCommandRunner runner,
+    SshProcessReader processReader) {
     if (!sshUsePamEnabled) {
         return {true, true,
                 "SSH IncidentAccessGate coverage is not guaranteed: "
                 "ssh_use_pam is disabled"};
     }
     std::string error;
-    if (!prove(platform, executables, error, std::move(runner))) {
+    if (!prove(platform, executables, error,
+               std::move(runner), std::move(processReader))) {
         return {false, false,
                 "SSH IncidentAccessGate bridge is not proven: " + error};
     }

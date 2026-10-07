@@ -408,7 +408,8 @@ Daemon собирается ровно для одного дистрибути�
 конфигурационной и SQLite-схем; commit не является частью SemVer.
 
 SSH-секция определяет основной конфигурационный файл, базу относительных
-`Include`, service units и тип маршрутизации SSH в PAM; `sshd` и `systemctl`
+`Include`, service и socket units и ожидаемый для пакета тип маршрутизации SSH в PAM;
+фактическую capability подтверждает доверенный `sshd`. `sshd` и `systemctl`
 поступают из общего реестра `executables`. Один профиль используется
 редактированием, rollback, `sshd -T`,
 include-аудитом и reload.
@@ -783,19 +784,25 @@ policies: FIC применяет заданные значения без вза
 `ssh_use_pam` имеет фиксированное значение `yes` и включена в новой
 конфигурации по умолчанию. `UsePAM=yes` включает PAM account и session
 processing для всех способов SSH-аутентификации, включая открытый ключ.
-После startup apply daemon доказывает через `sshd -T` effective `UsePAM=yes`.
-Для OpenSSH с настраиваемым `PAMServiceName` он также требует effective
-`PAMServiceName=sshd` и проверяет все условные `Match`-значения в графе
-`Include`. Для старых OpenSSH, где PAM service берётся из имени процесса,
-read-only проверка unit `ExecStart` требует прямой запуск доверенного
-`sshd` с `argv[0]=sshd`. Этот read-only SSH proof дополняет отдельный proof
-постоянного `pam_fic_access.so` в PAM service topology. При недоказанном мосте daemon не
-объявляет `READY`. Явное отключение `ssh_use_pam` освобождает FIC-owned
+После startup apply daemon проверяет объявленные systemd service и socket units.
+Для активного сервиса он сверяет фактический процесс с доверенным `sshd` и
+проверяет его argv; для неактивного использует effective `ExecStart`, включая
+`EnvironmentFile` и `$SSHD_OPTS`. По доказанным параметрам запуска `-f` и `-o`
+выполняется `sshd -T` и требуется `UsePAM=yes`. Поддержку `PAMServiceName`
+определяет фактический доверенный `sshd`, а не профиль дистрибутива. Если
+директива поддерживается, нужны effective `PAMServiceName=sshd` и безопасные
+условные `Match`-значения в графе `Include`. Иначе legacy-маршрут требует
+`argv[0]` с именем `sshd`. Неоднозначные аргументы, переменные и свойства
+systemd оставляют bridge недоказанным. Этот read-only proof дополняет отдельный
+proof постоянного `pam_fic_access.so` в PAM service topology. `READY` требует
+обоих доказательств. Явное отключение `ssh_use_pam` освобождает FIC-owned
 конфигурацию через обычный rollback и означает отказ оператора от гарантии
 покрытия SSH-входов IncidentAccessGate. Локальная PAM gate infrastructure
-при этом проверяется независимо. После административных изменений policy и
-периодического apply daemon повторно проверяет мост и обновляет внутреннее
-состояние готовности.
+при этом остаётся обязательной. После административных изменений policy и
+периодического apply daemon повторно проверяет оба условия и обновляет
+внутреннее состояние готовности. Отсутствие `READY` само по себе не блокирует
+уже работающий небезопасный SSH endpoint. Вне доказанного контура остаются
+отдельно запущенные вне объявленных systemd units процессы `sshd`.
 
 Политики SSH после атомарной записи перечитывают `sshd_config`, получают все
 эффективные значения через `sshd -T` и перезагружают активный `ssh.service` или

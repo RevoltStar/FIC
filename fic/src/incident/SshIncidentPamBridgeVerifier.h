@@ -1,6 +1,7 @@
 #pragma once
 
 #include "modules/net/ssh/SshRuntime.h"
+#include "incident/SshSystemdActivationVerifier.h"
 #include "platform/PlatformProfile.h"
 
 #include <string>
@@ -20,12 +21,14 @@ public:
     static bool prove(const platform::SshPlatformConfig& platform,
                       const platform::PlatformExecutableResolver& executables,
                       std::string& error,
-                      SshCommandRunner runner = {});
+                      SshCommandRunner runner = {},
+                      SshProcessReader processReader = {});
     static SshPamBridgeReadinessResult evaluateReadiness(
         bool sshUsePamEnabled,
         const platform::SshPlatformConfig& platform,
         const platform::PlatformExecutableResolver& executables,
-        SshCommandRunner runner = {});
+        SshCommandRunner runner = {},
+        SshProcessReader processReader = {});
 };
 
 } // namespace fic::incident
