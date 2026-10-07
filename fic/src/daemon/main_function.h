@@ -114,6 +114,7 @@
 //Аудит и глобальные настройки программы
 #include "modules/audit/logging/policies/AUDIT_log_level.h"
 #include "modules/global/system_settings/policies/GLOBAL_lang.h"
+#include "modules/global/lock_settings/GLOBAL_incident_response_mode.h"
 
 //Контроль устройств: общие настройки
 #include "modules/dc/DC.h"

@@ -83,25 +83,42 @@ def main():
                 f"{language}.lang lacks ssh_use_pam title")
         require("\n" + prefix + "[description]=" in "\n" + localization,
                 f"{language}.lang lacks ssh_use_pam description")
+    mode_config = parse_properties(root / "fic/src/resources/config/GLOBAL.conf")
+    require(mode_config.get("incident_response_mode.status") == "ENABLE" and
+            mode_config.get("incident_response_mode.value") == "PASSIVE",
+            "new installations must default to PASSIVE incident response")
+    mode_policy = (root / "fic/src/modules/global/lock_settings/"
+                   "GLOBAL_incident_response_mode.cpp").read_text()
+    require('whenOwnerValueEquals("ACTIVE")' in mode_policy and
+            '"ssh_use_pam"' in mode_policy,
+            "only ACTIVE must require the SSH PAM policy")
+
     startup = (root / "fic/src/main.cpp").read_text()
-    helper_start = startup.find("AccessReadinessResult recomputeAccessReadiness(")
+    helper_start = startup.find("IncidentPrerequisiteResult recomputeAccessReadiness(")
     helper_end = startup.find("bool mayChangeSshPamBridge(", helper_start)
     require(0 <= helper_start < helper_end,
-            "access readiness must use one recomputation helper")
+            "incident readiness must use one recomputation helper")
     helper = startup[helper_start:helper_end]
+    nonactive = helper.find("mode.mode != fic::incident::IncidentResponseMode::Active")
     pam = helper.find("PamIncidentAccessGateVerifier::prove(")
-    bridge = helper.find("reconciler.evaluateReadiness(")
-    ready = helper.find("DaemonReadinessState::Ready")
-    require(0 <= pam < bridge < ready,
-            "READY recomputation must prove PAM before SSH runtime reconciliation")
+    bridge = helper.find("SshIncidentPamBridgeVerifier::")
+    blocked = helper.find("sshGuard.block(")
+    degraded = helper.find("DaemonReadinessState::Degraded", blocked)
+    require(0 <= nonactive < pam < bridge < blocked < degraded,
+            "only ACTIVE must prove PAM and SSH, then block on proof failure")
     apply = startup.find("run_daemon_apply_all_pass(", startup.find("int main("))
     startup_recompute = startup.find("recomputeAccessReadiness(", apply)
     notify = startup.find('"READY=1', startup_recompute)
     require(0 <= apply < startup_recompute < notify,
-            "startup must apply, recompute both proofs, then announce READY")
+            "startup must apply, prove prerequisites and then announce readiness")
     require("if (mayChangeSshPamBridge(requestText))" in startup and
-            startup.count("recomputeAccessReadiness(") >= 4,
-            "startup, admin mutation and periodic apply must recompute both proofs")
+            startup.count("recomputeAccessReadiness(") >= 4 and
+            "std::chrono::seconds(30)" in startup,
+            "admin changes and short periodic drift checks must recompute ACTIVE proof")
+    bridge_source = (root / "fic/src/incident/SshIncidentPamBridgeVerifier.cpp").read_text()
+    require("/proc/" in bridge_source and "/exe" in bridge_source and
+            "/cmdline" not in bridge_source and "/environ" not in bridge_source,
+            "SSH proof may use trusted exe but never historical argv/environment")
 
     return 0
 

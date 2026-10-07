@@ -4,7 +4,6 @@
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <charconv>
 #include <set>
@@ -14,7 +13,6 @@
 
 namespace {
 
-std::atomic<std::uint64_t> sshActivationEpoch{0};
 
 std::string trimCopy(std::string value) {
     value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
@@ -416,7 +414,6 @@ SshActivationResult SshRuntime::activateIfRunning() const {
     }
 
     activation.serviceActive = true;
-    sshActivationEpoch.fetch_add(1, std::memory_order_acq_rel);
     const ProcessResult reload = runner_(
         systemctl.string(),
         {"reload", activeUnit},
@@ -443,8 +440,4 @@ SshActivationResult SshRuntime::activateIfRunning() const {
     activation.reloaded = true;
     activation.message = activeUnit + " reloaded successfully";
     return activation;
-}
-
-std::uint64_t SshRuntime::activationEpoch() {
-    return sshActivationEpoch.load(std::memory_order_acquire);
 }

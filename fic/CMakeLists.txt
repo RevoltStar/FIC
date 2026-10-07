@@ -110,6 +110,7 @@ add_library(pam_fic_access MODULE
     src/incident/IncidentAccessGateCore.cpp
     src/incident/IncidentAccessClient.cpp
     src/incident/IncidentRecoveryConfigReader.cpp
+    src/incident/IncidentResponseMode.cpp
     src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)
 set_target_properties(pam_fic_access PROPERTIES PREFIX "" OUTPUT_NAME "pam_fic_access")
 target_include_directories(pam_fic_access PRIVATE

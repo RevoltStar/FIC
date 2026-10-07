@@ -2,6 +2,7 @@
 #define FIC_INCIDENT_INCIDENT_CONTROLLER_H
 
 #include "incident/IncidentStateStore.h"
+#include "incident/IncidentResponseMode.h"
 #include "session/SessionContainmentBackend.h"
 
 #include <fic/core/incident/IncidentSeverity.h>
@@ -42,6 +43,7 @@ struct ContainmentStatus {
 };
 
 struct IncidentStatus {
+    IncidentResponseModeResult responseMode;
     ::fic::core::IncidentSeverity severity =
         ::fic::core::IncidentSeverity::Isolate;
     // False when the persistent state could not be proven at all, i.e.
@@ -69,6 +71,7 @@ struct IncidentSource {
 
 struct IncidentResult {
     bool ok = false;
+    bool ignoredByMode = false;
     ::fic::core::IncidentSeverity previousSeverity = ::fic::core::IncidentSeverity::Unlocked;
     ::fic::core::IncidentSeverity effectiveSeverity = ::fic::core::IncidentSeverity::Isolate;
     // True only when this call raised the persistent severity. A repeat of the
@@ -165,7 +168,15 @@ public:
         accessGateVerifier_ = std::move(verifier);
     }
 
+    using ModeResolver = std::function<IncidentResponseModeResult()>;
+    void setModeResolver(ModeResolver resolver) {
+        modeResolver_ = std::move(resolver);
+    }
+
 private:
+    IncidentResponseModeResult resolveMode() const;
+    IncidentResult settleNonActiveMode(IncidentResponseMode mode,
+                                      ::fic::core::IncidentSeverity severity);
     IncidentResult applyContainment(
         ::fic::core::IncidentSeverity severity,
         const std::string& reason);
@@ -182,6 +193,7 @@ private:
     std::shared_ptr<session::SessionContainmentBackend> sessions_;
     std::shared_ptr<IncidentNetworkBackend> network_;
     AccessGateVerifier accessGateVerifier_;
+    ModeResolver modeResolver_ = IncidentResponseModeResolver::production;
 
     // Incident transitions are serialised: two concurrent raises must not
     // interleave their read/compute/write cycles.
@@ -195,6 +207,7 @@ private:
     mutable RuntimeState runtime_ = RuntimeState::Inactive;
     mutable ContainmentStatus containment_;
     mutable std::string lastDetail_;
+    std::optional<IncidentResponseMode> lastMode_;
 };
 
 } // namespace fic::incident

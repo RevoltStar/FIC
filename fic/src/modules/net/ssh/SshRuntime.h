@@ -6,7 +6,6 @@
 #include <fic/core/process/ProcessExecutor.h>
 
 #include <filesystem>
-#include <cstdint>
 #include <functional>
 #include <map>
 #include <string>
@@ -72,9 +71,6 @@ public:
     // semantically accepted by sshd.
     bool validateConfiguration(std::string& error) const;
     SshActivationResult activateIfRunning() const;
-    // Changes whenever FIC attempts to reload an active SSH service through
-    // the config transaction path. An async HUP cannot reuse a READY proof.
-    static std::uint64_t activationEpoch();
 
 private:
     using EffectiveConfiguration = std::map<std::string, std::vector<std::string>>;

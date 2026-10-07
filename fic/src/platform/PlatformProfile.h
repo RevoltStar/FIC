@@ -76,6 +76,10 @@ struct SshPlatformConfig {
     std::filesystem::path includeBasePath;
     std::vector<std::string> serviceUnits;
     std::vector<std::string> socketUnits;
+    // Stock package launch contract. ACTIVE rejects custom sshd arguments.
+    std::string optionVariable;
+    std::filesystem::path optionFile;
+    bool optionFileOptional = true;
     // Package baseline only; runtime bridge proof probes the trusted sshd.
     SshPamServiceRouting pamServiceRouting = SshPamServiceRouting::Unknown;
 };

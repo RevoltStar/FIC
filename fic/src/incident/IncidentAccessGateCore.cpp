@@ -15,6 +15,11 @@ AccessGateDecision decideIncidentAccess(
     const PamAccessContext& context,
     const ::fic::platform::PamPlatformConfig::IncidentAccessGateConfig& config,
     const AccessGateDependencies& dependencies) {
+    const auto mode = dependencies.resolveMode
+        ? dependencies.resolveMode()
+        : IncidentResponseModeResult{};
+    if (mode.mode != IncidentResponseMode::Active)
+        return {AccessGateDisposition::Neutral, mode.diagnostic};
     if (!contains(config.controlledServices, context.service)) {
         return {AccessGateDisposition::Neutral, "service is not controlled"};
     }
@@ -39,12 +44,19 @@ AccessGateDecision decideIncidentAccess(
 }
 
 AccessGateDecision decideProductionIncidentAccess(const PamAccessContext& context) {
+    return decideProductionIncidentAccess(
+        context, IncidentResponseModeResolver::production());
+}
+
+AccessGateDecision decideProductionIncidentAccess(
+    const PamAccessContext& context, IncidentResponseModeResult mode) {
     const auto profile = ::fic::platform::makeBuildPlatformProfile();
     const AccessGateDependencies dependencies{
         ::fic::identity::pam::resolvePamUserIdentity,
         IncidentRecoveryConfigReader::ficMemberExemptionEnabled,
         ::fic::identity::pam::isPamUserMemberOfGroup,
-        IncidentAccessClient::query
+        IncidentAccessClient::query,
+        [mode = std::move(mode)] { return mode; }
     };
     return decideIncidentAccess(context, profile.pam.incidentAccessGate,
                                 dependencies);

@@ -1,12 +1,16 @@
 #pragma once
 
 #include "modules/net/ssh/SshRuntime.h"
-#include "incident/SshSystemdActivationVerifier.h"
 #include "platform/PlatformProfile.h"
 
 #include <string>
+#include <vector>
+#include <functional>
 
 namespace fic::incident {
+
+using SshMainProcessVerifier = std::function<bool(
+    unsigned int, const std::filesystem::path&, std::string&)>;
 
 struct SshPamBridgeReadinessResult {
     bool ready = false;
@@ -14,21 +18,29 @@ struct SshPamBridgeReadinessResult {
     std::string diagnostic;
 };
 
-// Proves only the OpenSSH side of the bridge. The PAM account stack is
-// independently verified by PamIncidentAccessGateVerifier.
+// ACTIVE supports only the package-declared systemd OpenSSH launch topology.
+// It proves the future recipe and effective configuration; it never treats
+// /proc/PID/cmdline or /proc/PID/environ as historical execve evidence.
 class SshIncidentPamBridgeVerifier {
 public:
-    static bool prove(const platform::SshPlatformConfig& platform,
-                      const platform::PlatformExecutableResolver& executables,
-                      std::string& error,
-                      SshCommandRunner runner = {},
-                      SshProcessReader processReader = {});
-    static SshPamBridgeReadinessResult evaluateReadiness(
-        bool sshUsePamEnabled,
+    static bool proveFuture(
         const platform::SshPlatformConfig& platform,
         const platform::PlatformExecutableResolver& executables,
-        SshCommandRunner runner = {},
-        SshProcessReader processReader = {});
+        std::string& error, SshCommandRunner runner = {});
+
+    static bool proveCurrent(
+        const platform::SshPlatformConfig& platform,
+        const platform::PlatformExecutableResolver& executables,
+        std::string& error, SshCommandRunner runner = {},
+        SshMainProcessVerifier processVerifier = {});
+
+    // After proving the future recipe, restart only already-active canonical
+    // services and verify the resulting active executable and configuration.
+    static bool activate(
+        const platform::SshPlatformConfig& platform,
+        const platform::PlatformExecutableResolver& executables,
+        std::string& error, SshCommandRunner runner = {},
+        SshMainProcessVerifier processVerifier = {});
 };
 
 } // namespace fic::incident

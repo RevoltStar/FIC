@@ -1,6 +1,7 @@
 #pragma once
 
 #include "incident/IncidentAccessClient.h"
+#include "incident/IncidentResponseMode.h"
 #include "modules/identity_access/pam/PamEffectiveGroupMembership.h"
 #include "platform/PlatformProfile.h"
 
@@ -30,6 +31,7 @@ struct AccessGateDependencies {
     std::function<bool(const ::fic::identity::pam::PamUserIdentity&,
                        const std::string&, bool&, std::string&)> groupMembership;
     std::function<IncidentAccessReply()> requestDaemon;
+    std::function<IncidentResponseModeResult()> resolveMode;
 };
 
 AccessGateDecision decideIncidentAccess(
@@ -38,6 +40,8 @@ AccessGateDecision decideIncidentAccess(
     const AccessGateDependencies& dependencies);
 
 AccessGateDecision decideProductionIncidentAccess(const PamAccessContext& context);
+AccessGateDecision decideProductionIncidentAccess(
+    const PamAccessContext& context, IncidentResponseModeResult mode);
 bool isProductionControlledIncidentService(const std::string& service);
 
 } // namespace fic::incident

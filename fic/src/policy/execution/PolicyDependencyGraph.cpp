@@ -88,7 +88,8 @@ std::vector<PolicyRef> enabledRequiredDependents(
         bool requires = false;
         for (const PolicyDependency& declared : policy->dependencies()) {
             if (declared.policy == dependency &&
-                declared.strength == PolicyDependencyStrength::Required) {
+                declared.strength == PolicyDependencyStrength::Required &&
+                dependencyConditionMatches(*policy, declared.condition)) {
                 requires = true;
                 break;
             }

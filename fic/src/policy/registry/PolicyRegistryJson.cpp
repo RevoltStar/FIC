@@ -1,6 +1,7 @@
 #include "policy/registry/PolicyRegistryJson.h"
 
 #include <fic/core/incident/IncidentSeverity.h>
+#include <fic/policy/PolicyDependencyConditionEvaluator.h>
 
 using ::fic::core::violationSeverityToken;
 
@@ -81,6 +82,21 @@ nlohmann::json policyToJson(const std::string& module,
         violationSeverities.push_back(violationSeverityToken(severity));
     }
     item["violation_severity_values"] = std::move(violationSeverities);
+
+    nlohmann::json required = nlohmann::json::array();
+    if (policyClass.isEnabled()) {
+        for (const auto& dependency : policyClass.dependencies()) {
+            if (dependency.strength == PolicyDependencyStrength::Required &&
+                dependencyConditionMatches(policyClass, dependency.condition)) {
+                required.push_back({
+                    {"module", dependency.policy.moduleName},
+                    {"submodule", dependency.policy.submoduleName},
+                    {"policy", dependency.policy.policyName}
+                });
+            }
+        }
+    }
+    item["required_dependencies"] = std::move(required);
 
     if (editorSpec.min.has_value()) {
         item["min"] = *editorSpec.min;

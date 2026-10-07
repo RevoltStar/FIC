@@ -1,5 +1,4 @@
 #include "incident/DaemonReadiness.h"
-#include "incident/AccessReadinessVerifier.h"
 
 #include <stdexcept>
 
@@ -48,28 +47,14 @@ int main() {
     }
     require(readiness.state() == DaemonReadinessState::Ready);
 
-    bool pamProven = true;
-    bool sshProven = true;
-    bool sshEnabled = true;
-    const auto recompute = [&] {
-        return fic::incident::AccessReadinessVerifier::evaluate(
-            [&](std::string& error) {
-                error = pamProven ? "" : "PAM topology drift";
-                return pamProven;
-            },
-            [&] {
-                return fic::incident::SshPamBridgeReadinessResult{
-                    !sshEnabled || sshProven, !sshEnabled, "SSH bridge result"};
-            });
-    };
-    require(recompute().ready);
-    pamProven = false;
-    require(!recompute().ready);
-    sshEnabled = false;
-    require(!recompute().ready);
-    pamProven = true;
-    require(recompute().ready && recompute().sshOptedOut);
-    sshEnabled = true;
-    sshProven = false;
-    require(!recompute().ready);
+    for (const auto mode : {fic::incident::IncidentResponseMode::Off,
+                            fic::incident::IncidentResponseMode::Passive}) {
+        require(ordinaryLoginAllowed(DaemonReadinessState::Stopping, false,
+                                     IncidentSeverity::Isolate, mode));
+        require(ordinaryLoginAllowed(DaemonReadinessState::Degraded, false,
+                                     IncidentSeverity::Hard, mode));
+    }
+    require(!ordinaryLoginAllowed(DaemonReadinessState::Degraded, true,
+                                  IncidentSeverity::Unlocked,
+                                  fic::incident::IncidentResponseMode::Active));
 }

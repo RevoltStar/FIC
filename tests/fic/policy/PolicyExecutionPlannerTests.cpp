@@ -3,6 +3,8 @@
 #include "policy/execution/PolicyDependencyGraph.h"
 #include "policy/execution/PolicyApplication.h"
 #include "policy/execution/PolicyExecutionPlanner.h"
+#include "modules/global/lock_settings/GLOBAL_incident_response_mode.h"
+#include "policy/registry/PolicyRegistryJson.h"
 #include "policy/registry/PolicyRegistryInitialization.h"
 
 #include <algorithm>
@@ -1204,6 +1206,46 @@ void testDisabledPolicyDoesNotRaise() {
             "only the enabled failing policy may raise, using its own severity");
 }
 
+void testIncidentModeDependency(const std::filesystem::path& root) {
+    const PolicyRef mode{"GLOBAL", "lock_settings", "incident_response_mode"};
+    const PolicyRef ssh{"NET", "SshEdit", "ssh_use_pam"};
+    const auto scenario = [&](const std::string& status, const std::string& value,
+                              bool sshEnabled, bool required) {
+        std::ofstream(root / "config/GLOBAL.conf", std::ios::trunc)
+            << "_schema_version=1\nincident_response_mode.status=" << status
+            << "\nincident_response_mode.value=" << value << "\n";
+        std::ofstream(root / "config/NET.conf", std::ios::trunc)
+            << "_schema_version=1\nssh_use_pam.status="
+            << (sshEnabled ? "ENABLE" : "DISABLE")
+            << "\nssh_use_pam.value=1\n";
+        PolicyBehavior sshBehavior;
+        std::vector<std::string> order;
+        PolicyList policies;
+        policies.push_back(std::make_unique<TestPolicy>(ssh, sshBehavior, order));
+        policies.push_back(std::make_unique<GLOBAL_incident_response_mode>());
+        PolicyRegistry registry = buildRegistry(std::move(policies));
+        const auto dependents = enabledRequiredDependents(registry, ssh);
+        require((!dependents.empty()) == required,
+                "response mode conditional Required dependency is wrong");
+        const auto json = policyToJson("GLOBAL", "lock_settings",
+            "incident_response_mode", *registry.findPolicy(mode));
+        require((json.at("required_dependencies").size() == 1) == required,
+                "response mode API dependency diagnostics are wrong");
+        PolicyExecutionRequest request;
+        request.requestedRoots.push_back(mode);
+        const auto summary = PolicyExecutionPlanner(registry).execute(request);
+        require((sshBehavior.calls == 1) == (required && sshEnabled),
+                "response mode dependency apply ordering is wrong");
+        if (required && !sshEnabled)
+            require(result(summary, mode).status == PolicyApplyStatus::Failed,
+                    "ACTIVE must fail when ssh_use_pam is disabled");
+    };
+    scenario("DISABLE", "ACTIVE", true, false);
+    scenario("ENABLE", "PASSIVE", true, false);
+    scenario("ENABLE", "ACTIVE", true, true);
+    scenario("ENABLE", "ACTIVE", false, true);
+}
+
 int main() {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() /
@@ -1237,6 +1279,7 @@ int main() {
         testNoneSeverityNeverRaises();
         testFullRequiredDependencyMatrix();
         testDisabledPolicyDoesNotRaise();
+        testIncidentModeDependency(root);
     } catch (...) {
         fs::remove_all(root);
         throw;

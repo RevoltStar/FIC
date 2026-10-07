@@ -58,6 +58,7 @@
 [module:FIREWALL][policy:exclusive_firewall_control]=Exclusive host filtering control
 [module:FIREWALL][policy:exclusive_firewall_control][description]=Flushes and recreates with policy accept only foreign inet/ip/ip6 filter/route base chains hooked at input/output. Tables, NAT, FORWARD, bridge, and netdev are unchanged. Removed foreign rules are not restored when this policy is disabled.
 [module:GLOBAL][submodule:system_settings]=General settings
+[module:GLOBAL][submodule:lock_settings]=Incident response settings
 [module:DC][submodule:DeviceControl]=General device control rules
 [module:DC][policy:block_usb_storage]=Block USB storage
 [module:DC][policy:block_printers_scanners]=Block printers and scanners
@@ -388,6 +389,8 @@ Where possible, a lock against modification is applied
 [logs:ui][category_unclassified]=Unclassified
 [module:GLOBAL][policy:lang]=Application language
 [module:GLOBAL][policy:lang][description]=Application language. If language files are missing or corrupted, Russian is used.
+[module:GLOBAL][policy:incident_response_mode]=Incident response mode
+[module:GLOBAL][policy:incident_response_mode][description]=PASSIVE records incidents and notifies without containment; ACTIVE enables containment. Disabling the policy turns incident response off.
 
 
 [devices:class][subsystem:pci][class:00|00|00]=[Не классифицировано] [Несовместимое с VGA неклассифицированное устройство]

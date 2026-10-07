@@ -58,6 +58,7 @@
 [module:FIREWALL][policy:exclusive_firewall_control]=Исключительный контроль фильтрации узла
 [module:FIREWALL][policy:exclusive_firewall_control][description]=Очищает и пересоздаёт с policy accept только сторонние base chains семейств inet/ip/ip6 типов filter/route с hooks input/output. Таблицы, NAT, FORWARD, bridge и netdev не изменяются. Удалённые сторонние правила автоматически не восстанавливаются после отключения политики.
 [module:GLOBAL][submodule:system_settings]=Общие настройки
+[module:GLOBAL][submodule:lock_settings]=Настройки реагирования
 [module:DC][submodule:DeviceControl]=Общие правила контроля устройств
 [module:DC][policy:block_usb_storage]=Запретить USB-накопители
 [module:DC][policy:block_printers_scanners]=Запретить принтеры и сканеры
@@ -388,6 +389,8 @@
 [logs:ui][category_unclassified]=Неклассифицированные
 [module:GLOBAL][policy:lang]=Язык приложения
 [module:GLOBAL][policy:lang][description]=Язык приложения. Если файлы языка отсутствуют или повреждены, то используется русский.
+[module:GLOBAL][policy:incident_response_mode]=Режим реагирования на инциденты
+[module:GLOBAL][policy:incident_response_mode][description]=PASSIVE сохраняет инциденты и уведомляет без блокировки; ACTIVE включает защитные действия. Отключение политики выключает реагирование.
 
 
 [devices:class][subsystem:pci][class:00|00|00]=[Не классифицировано] [Несовместимое с VGA неклассифицированное устройство]

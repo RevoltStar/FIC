@@ -21,6 +21,7 @@ int main() {
     bool member = false;
     bool identityProven = true;
     bool daemonAllows = false;
+    IncidentResponseMode mode = IncidentResponseMode::Active;
     AccessGateDependencies dependencies{
         [&](const std::string& name, PamUserIdentity& identity, std::string&) {
             if (!identityProven) return false;
@@ -36,7 +37,8 @@ int main() {
             result = member;
             return true;
         },
-        [&] { ++requests; return IncidentAccessReply{daemonAllows, "daemon"}; }
+        [&] { ++requests; return IncidentAccessReply{daemonAllows, "daemon"}; },
+        [&] { return IncidentResponseModeResult{mode, true, "test mode"}; }
     };
 
     require(decideIncidentAccess({"ordinary", "sudo", ""}, config,
@@ -92,4 +94,23 @@ int main() {
                                  dependencies).disposition ==
             AccessGateDisposition::Deny);
     require(requests == 7);
+    mode = IncidentResponseMode::Passive;
+    require(decideIncidentAccess({"ordinary", "login", ""}, config,
+                                 dependencies).disposition ==
+            AccessGateDisposition::Neutral);
+    require(requests == 7);
+    mode = IncidentResponseMode::Off;
+    require(decideIncidentAccess({"ordinary", "sshd", ""}, config,
+                                 dependencies).disposition ==
+            AccessGateDisposition::Neutral);
+    require(requests == 7);
+    mode = IncidentResponseMode::Active;
+    dependencies.resolveMode = [] {
+        return IncidentResponseModeResult{IncidentResponseMode::Active, false,
+                                          "fallback ACTIVE: unproven config"};
+    };
+    require(decideIncidentAccess({"ordinary", "login", ""}, config,
+                                 dependencies).disposition ==
+            AccessGateDisposition::Deny);
+    require(requests == 8);
 }

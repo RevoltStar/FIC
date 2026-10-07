@@ -25,6 +25,8 @@ using ::fic::incident::IncidentController;
 using ::fic::incident::IncidentResult;
 using ::fic::incident::IncidentSource;
 using ::fic::incident::IncidentStateStore;
+using ::fic::incident::IncidentResponseMode;
+using ::fic::incident::IncidentResponseModeResult;
 using ::fic::incident::RuntimeState;
 using ::fic::incident::incidentNotificationLevel;
 using ::fic::session::LoginSession;
@@ -206,6 +208,55 @@ struct Harness {
         }
     }
 };
+
+IncidentSource policySource(const std::string& name);
+
+void testResponseModes(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    IncidentResponseMode mode = IncidentResponseMode::Off;
+    harness.controller.setModeResolver([&] {
+        return IncidentResponseModeResult{mode, true, "test"};
+    });
+    int audits = 0, notifications = 0;
+    harness.controller.setAuditSink([&](const std::string&) { ++audits; });
+    harness.controller.setNotifySink([&](IncidentSeverity, const std::string&) {
+        ++notifications;
+    });
+    const auto source = policySource("mode-test");
+    const auto off = harness.controller.raise(IncidentSeverity::Hard, source, "off");
+    require(off.ignoredByMode && off.ok, "OFF must report ignored incident");
+    require(harness.controller.status().severity == IncidentSeverity::Unlocked,
+            "OFF must preserve lockstatus");
+    require(audits == 0 && notifications == 0 && harness.sessions->actions.empty() &&
+            harness.network->applications == 0, "OFF must have no response effects");
+
+    mode = IncidentResponseMode::Passive;
+    const auto passive = harness.controller.raise(IncidentSeverity::Hard, source, "passive");
+    require(passive.ok && harness.controller.status().severity == IncidentSeverity::Hard,
+            "PASSIVE must persist HARD");
+    require(audits == 1 && notifications == 1 && harness.sessions->actions.empty() &&
+            harness.network->applications == 0, "PASSIVE must audit and notify without containment");
+
+    mode = IncidentResponseMode::Active;
+    const auto active = harness.controller.reconcile();
+    require(!active.ok && active.runtime == RuntimeState::Degraded &&
+            !harness.sessions->actions.empty(),
+            "ACTIVE must immediately reconcile retained HARD");
+    mode = IncidentResponseMode::Passive;
+    harness.controller.reconcile();
+    require(harness.controller.status().severity == IncidentSeverity::Hard &&
+            harness.controller.status().runtime == RuntimeState::Inactive,
+            "ACTIVE to PASSIVE must retain HARD and remove runtime containment");
+    mode = IncidentResponseMode::Off;
+    require(harness.controller.clear("admin").ok &&
+            harness.controller.status().severity == IncidentSeverity::Unlocked,
+            "OFF must allow explicit clear");
+    writeState(tree.statePath, "BROKEN STATE\n");
+    const auto brokenOff = harness.controller.reconcile();
+    require(brokenOff.ok && brokenOff.persistentStateBroken &&
+            brokenOff.runtime == RuntimeState::Inactive,
+            "OFF must stay neutral even when historical lockstatus is broken");
+}
 
 IncidentSource policySource(const std::string& name) {
     IncidentSource source;
@@ -714,6 +765,7 @@ int main() {
         {"pam_gate_requires_fresh_proof", testPamGateRequiresFreshProof},
         {"persistent_broken_flag_tracks_observation",
          testPersistentBrokenFlagTracksObservation},
+        {"response_modes", testResponseModes},
     };
 
     for (const Scenario& scenario : scenarios) {

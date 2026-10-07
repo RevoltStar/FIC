@@ -62,9 +62,8 @@
 #include "session/SystemGraphicalSessionInventory.h"
 #include "incident/IncidentController.h"
 #include "incident/PamIncidentAccessGateVerifier.h"
-#include "incident/AccessReadinessVerifier.h"
 #include "incident/SshIncidentPamBridgeVerifier.h"
-#include "incident/SshIncidentPamRuntimeReconciler.h"
+#include "incident/SshAccessContainmentBackend.h"
 #include "incident/AltIncidentAccessGateTopology.h"
 #include "incident/DaemonReadiness.h"
 #include "incident/IncidentNotificationLevel.h"
@@ -384,33 +383,98 @@ fic::incident::DaemonReadiness& daemonReadiness() {
     return readiness;
 }
 
-fic::incident::AccessReadinessResult recomputeAccessReadiness(
-    const PolicyRegistry& policyRegistry,
+struct IncidentPrerequisiteResult {
+    bool ready = false;
+    std::string diagnostic;
+};
+
+IncidentPrerequisiteResult recomputeAccessReadiness(
+    PolicyRegistry& policyRegistry,
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables) {
-    const auto result = fic::incident::AccessReadinessVerifier::evaluate(
-        [&platform](std::string& error) {
-            return fic::incident::PamIncidentAccessGateVerifier::prove(
-                platform.pam, error);
-        },
-        [&policyRegistry, &platform, &executables]() {
-            const Policy* policy = policyRegistry.findPolicy(
-                {"NET", "SshEdit", "ssh_use_pam"});
-            if (policy == nullptr) {
-                return fic::incident::SshPamBridgeReadinessResult{
-                    false, false, "SSH PAM bridge policy is missing from registry"};
-            }
-            static fic::incident::SshIncidentPamRuntimeReconciler reconciler;
-            return reconciler.evaluateReadiness(
-                policy->isEnabled(), platform.ssh, executables);
-        });
-    daemonReadiness().set(result.ready
-        ? fic::incident::DaemonReadinessState::Ready
-        : fic::incident::DaemonReadinessState::Initializing);
-    if (!result.ready || result.sshOptedOut) {
-        std::cerr << result.diagnostic << std::endl;
+    static fic::incident::SshAccessContainmentBackend sshGuard;
+    static bool activeEstablished = false;
+    static std::string lastFailure;
+    const auto mode = fic::incident::IncidentResponseModeResolver::production();
+    if (mode.mode != fic::incident::IncidentResponseMode::Active) {
+        activeEstablished = false;
+        std::string error;
+        if (sshGuard.ownsBlock() &&
+            !sshGuard.restore(platform.ssh, executables, error)) {
+            daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
+            return {false, "FIC SSH block cleanup failed: " + error};
+        }
+        const auto reconciled = incidentController().reconcile();
+        if (!reconciled.ok) {
+            daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
+            return {false, "incident cleanup failed: " + reconciled.detail};
+        }
+        lastFailure.clear();
+        daemonReadiness().set(fic::incident::DaemonReadinessState::Ready);
+        return {true, mode.diagnostic};
     }
-    return result;
+
+    std::string error;
+    const Policy* sshPolicy = policyRegistry.findPolicy(
+        {"NET", "SshEdit", "ssh_use_pam"});
+    bool proven = sshPolicy != nullptr && sshPolicy->isEnabled();
+    if (!proven) error = "ACTIVE requires enabled ssh_use_pam";
+    if (proven && !activeEstablished) {
+        const PolicyApplySummary summary = applyPolicy(
+            policyRegistry, "GLOBAL", "incident_response_mode");
+        proven = isPolicyApplySuccessful(
+            summary, "GLOBAL", "incident_response_mode");
+        if (!proven) error = "ACTIVE mode or required ssh_use_pam apply failed";
+    }
+    if (proven) proven = fic::incident::PamIncidentAccessGateVerifier::prove(
+        platform.pam, error);
+    if (proven && sshGuard.ownsBlock()) {
+        // A stopped service cannot provide a MainPID. Prove the future recipe
+        // before restoring only the units that this guard stopped.
+        proven = fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                     platform.ssh, executables, error) &&
+                 sshGuard.restore(platform.ssh, executables, error);
+    }
+    if (proven) {
+        proven = activeEstablished && !sshGuard.ownsBlock()
+            ? fic::incident::SshIncidentPamBridgeVerifier::proveCurrent(
+                  platform.ssh, executables, error)
+            : fic::incident::SshIncidentPamBridgeVerifier::activate(
+                  platform.ssh, executables, error);
+    }
+    if (!proven) {
+        activeEstablished = false;
+        std::string blockError;
+        const bool blocked = sshGuard.block(
+            platform.ssh, executables, blockError);
+        daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
+        const std::string diagnostic = "ACTIVE SSH prerequisite unproven: " +
+            error + (blocked ? "" : "; SSH block failed: " + blockError);
+        if (diagnostic != lastFailure) {
+            lastFailure = diagnostic;
+            write_audit_log(fic::core::security_audit::makeEvent("fic", {
+                {"event", "ssh_bridge_degraded"},
+                {"message", diagnostic},
+                {"ssh_blocked", blocked}
+            }));
+            NotifyUser::notify_user("fic-incident", diagnostic,
+                                    notifyLevel::ERROR);
+        }
+        return {false, diagnostic};
+    }
+    const bool needsContainment = !activeEstablished ||
+        daemonReadiness().state() == fic::incident::DaemonReadinessState::Degraded;
+    activeEstablished = true;
+    if (needsContainment) {
+        const auto reconciled = incidentController().reconcile();
+        if (!reconciled.ok) {
+            daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
+            return {false, "ACTIVE containment unproven: " + reconciled.detail};
+        }
+    }
+    lastFailure.clear();
+    daemonReadiness().set(fic::incident::DaemonReadinessState::Ready);
+    return {true, "ACTIVE SSH and PAM prerequisites proven"};
 }
 
 bool mayChangeSshPamBridge(const std::string& requestText) {
@@ -876,6 +940,10 @@ json handle_request(json request,
                 {"persistent_provenance", fic::incident::incidentProvenanceToken(status.provenance)},
                 {"persistent_state_broken", !status.stateProven},
                 {"runtime", fic::incident::runtimeStateToString(status.runtime)},
+                {"response_mode", fic::incident::incidentResponseModeToken(
+                    status.responseMode.mode)},
+                {"response_mode_proven", status.responseMode.proven},
+                {"response_mode_diagnostic", status.responseMode.diagnostic},
                 {"runtime_containment", {
                     {"pam_gate_active", status.containment.pamGateActive},
                     {"sessions_contained", status.containment.sessionsContained},
@@ -894,11 +962,15 @@ json handle_request(json request,
                 {"ok", true},
                 {"message", "incident access gate status"},
                 {"daemon_state", fic::incident::daemonReadinessToken(state)},
+                {"response_mode", fic::incident::incidentResponseModeToken(
+                    status.responseMode.mode)},
+                {"response_mode_proven", status.responseMode.proven},
                 {"severity", fic::core::incidentSeverityToken(status.severity)},
                 {"persistent_state_proven", status.stateProven},
                 {"persistent_provenance", fic::incident::incidentProvenanceToken(status.provenance)},
                 {"ordinary_login_allowed", fic::incident::ordinaryLoginAllowed(
-                    state, status.stateProven, status.severity)}
+                    state, status.stateProven, status.severity,
+                    status.responseMode.mode)}
             };
         }
         if (command == "incident_raise") {
@@ -1175,6 +1247,26 @@ void reconcile_session_ready(
         }
     }
 }
+// Registry initialization must still fail closed. When the effective mode is
+// ACTIVE, stop the declared SSH entry point before exiting without IPC.
+void blockSshBeforeStartupFailure(
+    const fic::platform::PlatformProfile& platform,
+    const std::string& failure) {
+    if (fic::incident::IncidentResponseModeResolver::production().mode !=
+        fic::incident::IncidentResponseMode::Active) return;
+    const fic::platform::PlatformExecutableResolver executables(
+        platform.executables);
+    fic::incident::SshAccessContainmentBackend guard;
+    std::string error;
+    if (!guard.block(platform.ssh, executables, error))
+        std::cerr << "ACTIVE startup failure: " << failure
+                  << "; SSH blocking failed: " << error << std::endl;
+    else
+        std::cerr << "ACTIVE startup failure: " << failure
+                  << "; SSH entry point blocked (local recovery required)"
+                  << std::endl;
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1875,6 +1967,7 @@ int main(int argc, char* argv[]) {
                 fic::core::FicRuntimePaths::get().configDir, configError)) {
             std::cerr << "refusing to start with incompatible configuration: "
                       << configError << std::endl;
+            blockSshBeforeStartupFailure(platform, configError);
             return 1;
         }
     }
@@ -1922,6 +2015,7 @@ int main(int argc, char* argv[]) {
             platform, executables, policyRegistry, registryError)) {
         std::cerr << "failed to initialize PolicyRegistry: "
                   << registryError << std::endl;
+        blockSshBeforeStartupFailure(platform, registryError);
         return 1;
     }
 
@@ -1952,6 +2046,7 @@ int main(int argc, char* argv[]) {
     if (startupRegistryReloadFailed) {
         std::cerr << "fic daemon startup aborted because PolicyRegistry reload failed"
                   << std::endl;
+        blockSshBeforeStartupFailure(platform, "PolicyRegistry reload failed");
         return 1;
     }
     if (!startupApplyOk) {
@@ -2028,15 +2123,13 @@ int main(int argc, char* argv[]) {
     const auto accessReadiness = recomputeAccessReadiness(
         policyRegistry, platform, executables);
     if (!accessReadiness.ready) {
-        ::close(serverFd);
-        ::unlink(socketPath.c_str());
-        ::close(sessionEventFd);
-        ::unlink(sessionEventSocketPath.c_str());
-        return 1;
+        std::cerr << accessReadiness.diagnostic << std::endl;
     }
     (void)::sd_notify(
         0,
-        startupApplyOk
+        !accessReadiness.ready
+            ? "READY=1\nSTATUS=Running in degraded incident response mode"
+        : startupApplyOk
             ? "READY=1\nSTATUS=Running"
             : "READY=1\nSTATUS=Running; startup policy apply completed with errors");
 
@@ -2045,6 +2138,7 @@ int main(int argc, char* argv[]) {
               << ", target-platform=" << platform.id << std::endl;
 
     auto nextPeriodicApply = std::chrono::steady_clock::now() + std::chrono::seconds(intervalSeconds);
+    auto nextSshCheck = std::chrono::steady_clock::now() + std::chrono::seconds(30);
 
     while (!g_stop) {
         std::string transportError;
@@ -2078,6 +2172,10 @@ int main(int argc, char* argv[]) {
             recomputeAccessReadiness(
                 policyRegistry, platform, executables);
             nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
+        }
+        if (now >= nextSshCheck) {
+            recomputeAccessReadiness(policyRegistry, platform, executables);
+            nextSshCheck = now + std::chrono::seconds(30);
         }
     }
 

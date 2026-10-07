@@ -687,6 +687,7 @@ bool initPolicyRegistry(
     //Глобальные настройки программы
     cafArr.push_back(std::make_unique<AUDIT_log_level>());
     cafArr.push_back(std::make_unique<GLOBAL_lang>());
+    cafArr.push_back(std::make_unique<GLOBAL_incident_response_mode>());
     //Для удобства отсортируем в массив вида "модуль->подмодуль->политика->класс,представляющий политику для данного модуля"
     for (auto& policyClass : cafArr) {
         if (auto* sysctlPolicy = dynamic_cast<Sysctl*>(policyClass.get())) {

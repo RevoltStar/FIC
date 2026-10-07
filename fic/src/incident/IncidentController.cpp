@@ -62,6 +62,35 @@ IncidentController::IncidentController(
                    : std::make_shared<NullIncidentNetworkBackend>()) {
 }
 
+IncidentResponseModeResult IncidentController::resolveMode() const {
+    try {
+        return modeResolver_ ? modeResolver_() : IncidentResponseModeResult{};
+    } catch (...) {
+        return {IncidentResponseMode::Active, false,
+                "fallback ACTIVE: mode resolver failed"};
+    }
+}
+
+IncidentResult IncidentController::settleNonActiveMode(
+    IncidentResponseMode mode, IncidentSeverity severity) {
+    IncidentResult result;
+    result.ok = true;
+    result.effectiveSeverity = severity;
+    if (lastMode_ == IncidentResponseMode::Active ||
+        containment_.networkQuarantined) {
+        std::string error;
+        if (!network_->applyQuarantine(false, error)) {
+            result.ok = false;
+            result.detail = "reversible containment cleanup failed: " + error;
+        }
+    }
+    containment_ = {};
+    runtime_ = result.ok ? RuntimeState::Inactive : RuntimeState::Degraded;
+    result.runtime = runtime_;
+    lastMode_ = mode;
+    return result;
+}
+
 // The containment flow. Severity determines WHICH actions are performed; the
 // runtime state records whether they were PROVEN.
 //
@@ -244,6 +273,20 @@ IncidentResult IncidentController::raise(
     // their read/compute/write cycles.
     std::lock_guard<std::mutex> guard(transitionMutex_);
 
+    const auto mode = resolveMode();
+    if (mode.mode == IncidentResponseMode::Off) {
+        const auto current = stateStore_.read();
+        IncidentResult ignored = settleNonActiveMode(
+            mode.mode, current.provenance == IncidentStateStore::Provenance::Proven
+                           ? current.severity : IncidentSeverity::Isolate);
+        ignored.previousSeverity = ignored.effectiveSeverity;
+        ignored.persistentStateBroken =
+            current.provenance != IncidentStateStore::Provenance::Proven;
+        ignored.ignoredByMode = true;
+        ignored.detail = "incident ignored in OFF mode";
+        return ignored;
+    }
+
     const IncidentStateStore::ReadResult before = stateStore_.read();
     IncidentResult result;
     result.previousSeverity =
@@ -263,6 +306,17 @@ IncidentResult IncidentController::raise(
     result.detail = raised.detail;
 
     if (!raised.durable) {
+        if (mode.mode == IncidentResponseMode::Passive) {
+            IncidentResult passive = settleNonActiveMode(mode.mode, IncidentSeverity::Isolate);
+            passive.ok = false;
+            passive.previousSeverity = result.previousSeverity;
+            passive.escalated = result.escalated;
+            passive.persistentStateBroken = true;
+            passive.detail = "incident state could not be persisted in PASSIVE mode";
+            recordAudit("incident_persistence_failed", passive, source, reason);
+            notifySeverity(IncidentSeverity::Isolate, reason);
+            return passive;
+        }
         // Neither the requested severity nor a durable absence could be
         // established. The persistent witness may still claim a lower severity,
         // so the runtime containment is escalated to ISOLATE and the runtime
@@ -286,6 +340,17 @@ IncidentResult IncidentController::raise(
         return contained;
     }
 
+    if (mode.mode == IncidentResponseMode::Passive) {
+        IncidentResult passive = settleNonActiveMode(mode.mode, result.effectiveSeverity);
+        result.ok = result.ok && passive.ok;
+        result.runtime = passive.runtime;
+        result.detail = passive.detail.empty() ? raised.detail : passive.detail;
+        recordAudit("incident_raise", result, source, reason);
+        if (result.escalated) notifySeverity(result.effectiveSeverity, reason);
+        return result;
+    }
+    lastMode_ = IncidentResponseMode::Active;
+
     const IncidentResult contained = applyContainment(
         result.effectiveSeverity, reason);
     result.runtime = contained.runtime;
@@ -307,6 +372,7 @@ IncidentResult IncidentController::raise(
 
 IncidentResult IncidentController::clear(const std::string& actor) {
     std::lock_guard<std::mutex> guard(transitionMutex_);
+    const auto mode = resolveMode();
     runtime_ = RuntimeState::Clearing;
 
     const IncidentStateStore::ReadResult before = stateStore_.read();
@@ -327,8 +393,9 @@ IncidentResult IncidentController::clear(const std::string& actor) {
         // Compensation may have replaced the previous incident with
         // BROKEN/ISOLATE. Reconcile that effective severity instead of
         // preserving an obsolete runtime proof from before the clear.
-        const IncidentResult contained = applyContainment(
-            cleared.effectiveSeverity, "failed administrative clear");
+        const IncidentResult contained = mode.mode == IncidentResponseMode::Active
+            ? applyContainment(cleared.effectiveSeverity, "failed administrative clear")
+            : settleNonActiveMode(mode.mode, cleared.effectiveSeverity);
         result.runtime = contained.runtime;
         if (cleared.persistence !=
             IncidentStateStore::PersistenceResult::DurableConfirmed) {
@@ -345,8 +412,9 @@ IncidentResult IncidentController::clear(const std::string& actor) {
 
     // The persistent state is now a durably proven UNLOCKED, so the reversible
     // containment state is removed. No desktop session is unlocked.
-    const IncidentResult contained = applyContainment(
-        IncidentSeverity::Unlocked, "incident cleared by " + actor);
+    const IncidentResult contained = mode.mode == IncidentResponseMode::Active
+        ? applyContainment(IncidentSeverity::Unlocked, "incident cleared by " + actor)
+        : settleNonActiveMode(mode.mode, IncidentSeverity::Unlocked);
     result.runtime = contained.runtime;
     result.detail = contained.detail;
     result.ok = result.ok && contained.ok;
@@ -371,6 +439,7 @@ IncidentStatus IncidentController::status() {
     std::lock_guard<std::mutex> guard(transitionMutex_);
     const IncidentStateStore::ReadResult read = stateStore_.read();
     IncidentStatus status;
+    status.responseMode = resolveMode();
     status.stateProven = read.provenance == IncidentStateStore::Provenance::Proven;
     status.provenance = read.provenance;
     // Only a positively proven UNLOCKED means "no incident". Everything else -
@@ -401,11 +470,16 @@ IncidentResult IncidentController::reconcile() {
 
     // Reconciliation NEVER changes the severity: it only re-proves the
     // containment that the persisted severity requires.
-    const IncidentResult contained =
-        applyContainment(result.effectiveSeverity, "startup reconciliation");
+    const auto mode = resolveMode();
+    const IncidentResult contained = mode.mode == IncidentResponseMode::Active
+        ? applyContainment(result.effectiveSeverity, "startup reconciliation")
+        : settleNonActiveMode(mode.mode, result.effectiveSeverity);
+    if (mode.mode == IncidentResponseMode::Active)
+        lastMode_ = IncidentResponseMode::Active;
     result.runtime = contained.runtime;
     result.ok = contained.ok &&
-        read.provenance == IncidentStateStore::Provenance::Proven;
+        (mode.mode == IncidentResponseMode::Off ||
+         read.provenance == IncidentStateStore::Provenance::Proven);
     if (!result.ok) {
         runtime_ = RuntimeState::Degraded;
         result.runtime = runtime_;

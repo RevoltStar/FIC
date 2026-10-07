@@ -89,6 +89,9 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.ssh.includeBasePath = "/etc/openssh";
     profile.ssh.serviceUnits = {"sshd.service"};
     profile.ssh.socketUnits = {"sshd.socket"};
+    profile.ssh.optionVariable = "EXTRAOPTIONS";
+    profile.ssh.optionFile = "/etc/sysconfig/sshd";
+    profile.ssh.optionFileOptional = false;
     profile.ssh.pamServiceRouting = SshPamServiceRouting::LegacyExecutableName;
     profile.sudo.mainConfigPath = "/etc/sudoers";
     profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";

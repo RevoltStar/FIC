@@ -771,63 +771,61 @@ policies: FIC применяет заданные значения без вза
 `N` — как `-N`; тем самым bonus и обязательный минимум соответствующего
 класса при нуле отключены.
 
+### Реагирование на инциденты
+
+Политика `GLOBAL/lock_settings/incident_response_mode` задаёт способ реакции
+независимо от сохранённого `/opt/fic/lockstatus`. При `DISABLE` режим `OFF`:
+новые события не повышают severity, не создают incident audit/notification и
+не запускают containment. При `ENABLE` и значении `PASSIVE` (заводской default)
+severity сохраняется, SecurityAudit и уведомления выполняются, но входы,
+сессии, пользовательские процессы и сеть не блокируются. При значении
+`ACTIVE` к тем же действиям добавляется containment по severity. Сохранённый
+`HARD` остаётся `HARD` при переходе в `PASSIVE`/`OFF`; обратимые блокировки
+FIC снимаются, а ранее завершённые процессы и сессии не восстанавливаются.
+Переход обратно в `ACTIVE` применяет containment к уже сохранённой severity.
+Административный `incident clear` доступен в любом режиме.
+
+`pam_fic_access.so` установлен постоянно. В `OFF`/`PASSIVE` он нейтрален и
+не требует работающего daemon. Только в `ACTIVE` обычный контролируемый вход
+зависит от daemon и fail-closed при недоступности, `DEGRADED` или severity
+`STANDARD` и выше; локальный root recovery и существующая recovery-group
+семантика сохраняются. Единый доверенный resolver читает `GLOBAL.conf` как
+security authority. Отсутствующий, повреждённый или недоверенный файл означает
+fallback `ACTIVE`, а не автоматическое смягчение режима. Только `ACTIVE`
+условно требует `NET/SshEdit/ssh_use_pam`; эта Required dependency участвует
+в планировании применения и диагностике policy API.
+
 ### Работа с SSH
 
 Модуль включает политики `ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
 `ssh_pubkey_auth` и `ssh_use_pam`. `ssh_pubkey_auth` имеет фиксированное
 значение `yes`: включенная политика обеспечивает `PubkeyAuthentication yes`,
-но не отключает парольную
-аутентификацию. Встроенное фиксированное значение используется и при обновлении
-старой установки, в `NET.conf` которой еще нет строки `ssh_pubkey_auth.value`;
-пользовательский конфигурационный файл при этом не переписывается.
+но не отключает парольную аутентификацию. `ssh_use_pam` также имеет
+фиксированное значение `yes` и включена в новой конфигурации по умолчанию.
 
-`ssh_use_pam` имеет фиксированное значение `yes` и включена в новой
-конфигурации по умолчанию. `UsePAM=yes` включает PAM account и session
-processing для всех способов SSH-аутентификации, включая открытый ключ.
-После startup apply daemon проверяет объявленные systemd service и socket units.
-Для активного сервиса он сверяет фактический процесс с доверенным `sshd` и
-проверяет его argv; для неактивного использует effective `ExecStart`, включая
-`EnvironmentFile` и `$SSHD_OPTS`. По доказанным параметрам запуска `-f` и `-o`
-выполняется `sshd -T` и требуется `UsePAM=yes`. Поддержку `PAMServiceName`
-определяет фактический доверенный `sshd`, а не профиль дистрибутива. Если
-директива поддерживается, нужны effective `PAMServiceName=sshd` и безопасные
-условные `Match`-значения в графе `Include`. Иначе legacy-маршрут требует
-`argv[0]` с именем `sshd`. Неоднозначные аргументы, переменные и свойства
-systemd оставляют bridge недоказанным. Effective `Type`, `ExecCondition`,
-`ExecStartPre`, `ExecStartPost` и `ExecReload` также входят в proof: неизвестные
-pre/post/condition hooks отклоняются; штатная проверка доверенным `sshd -t`
-допускается только для того же config, а ALT `ssh-keygen -A` допускается как
-известное действие создания отсутствующих host keys. Этот read-only proof
-дополняет отдельный proof постоянного `pam_fic_access.so` в PAM service topology.
-Перед первым `READY` для каждого активного service unit daemon требует
-завершённое runtime reconciliation. `systemctl reload` достаточен только для
-доказанного `Type=notify-reload` без `ExecReload`, с `CanReload=yes`,
-`NotifyAccess=main` и
-`ReloadResult=success` после команды; обычный HUP
-асинхронен, поэтому используется `systemctl restart`. После restart требуется
-новая генерация `MainPID`/`/proc` startTime и полный повторный proof процесса,
-запуска, socket topology, `UsePAM=yes` и PAM service. Compliance no-op политики
-не создаёт journal или managed block ради runtime reconciliation. Для
-неактивной службы restart не нужен. Future `ExecStart`,
-`EnvironmentFile`, основной SSH config и полный граф `Include` проверяются как
-доверенные входы: writable каталоги и файлы, symlink leaf и непроверяемые
-wildcard `EnvironmentFile` оставляют bridge недоказанным. Относительные SSH
-`Include` всегда разрешаются от platform server config directory, в том числе
-для запуска с alternate `-f`. `READY` требует обоих доказательств. Явное
-отключение `ssh_use_pam` освобождает FIC-owned
-конфигурацию через обычный rollback и означает отказ оператора от гарантии
-покрытия SSH-входов IncidentAccessGate. Локальная PAM gate infrastructure
-при этом остаётся обязательной. После административных изменений policy и
-периодического apply daemon повторно проверяет оба условия read-only. Повторное
-runtime reconciliation нужно, когда изменились доверенные SSH config sources,
-effective launch/lifecycle, trusted executable или поколение активного процесса;
-неизменный proof привязан к этим данным и не вызывает SSH restart/reload.
-После изменения SSH config транзакция может отправить HUP; её попытка reload
-изменяет внутреннюю activation epoch, поэтому даже восстановление прежних
-байтов config не переиспользует старое подтверждение готовности. Отсутствие
-`READY` само по себе не блокирует
-уже работающий небезопасный SSH endpoint. Вне доказанного контура остаются
-отдельно запущенные вне объявленных systemd units процессы `sshd`.
+При входе в `ACTIVE` FIC применяет Required `ssh_use_pam`, доказывает
+`UsePAM=yes` через доверенный `sshd -T`, проверяет `PAMServiceName=sshd`
+на поддерживающих его OpenSSH и постоянную topology `pam_fic_access.so`.
+Поддерживается узкая штатная service/socket topology из `PlatformProfile`:
+доверенный `/usr/sbin/sshd`, стандартный `ExecStart` и пустые дополнительные
+параметры в доверенном package option file. Неизвестное явное окружение,
+`PassEnvironment`, custom `-f`/`-o`, executable или socket target оставляют
+ACTIVE prerequisite недоказанным. Активный штатный service управляемо
+перезапускается; неактивный не запускается ради доказательства. После restart
+проверяются активность service, `MainPID`, доверенный `/proc/MainPID/exe`,
+эффективный SSH config и PAM topology.
+
+FIC не восстанавливает исторические argv/environment работающего OpenSSH master
+по `/proc/PID/cmdline` или `/proc/PID/environ`: OpenSSH перезаписывает их при
+`setproctitle`. В `ACTIVE` отдельная проверка каждые 30 секунд повторно
+проверяет простой текущий invariant без restart при здоровом состоянии. Если
+он недоказан, daemon остаётся доступен для администратора в `DEGRADED`,
+контролируемые PAM-входы fail-closed, а FIC останавливает объявленные SSH
+service/socket units, пишет security audit и уведомляет. После восстановления
+prerequisite FIC включает только те listeners, которые остановил сам в этом
+процессе. `PASSIVE`/`OFF` не выполняют SSH guard и снимают его собственную
+блокировку. Отдельно запущенные вне объявленных units процессы `sshd` не
+входят в этот контракт.
 
 Политики SSH после атомарной записи перечитывают `sshd_config`, получают все
 эффективные значения через `sshd -T` и перезагружают активный `ssh.service` или

@@ -2,7 +2,7 @@
 #include "modules/net/ssh/SshConfigFile.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
 #include "incident/SshIncidentPamBridgeVerifier.h"
-#include "incident/SshIncidentPamRuntimeReconciler.h"
+#include "incident/SshAccessContainmentBackend.h"
 
 #include <fic/policy/Policy.h>
 
@@ -699,798 +699,130 @@ void testServiceInspectionFailureIsReported() {
             "systemctl failure must not be treated as an inactive SSH service");
 }
 
-void testSshPamBridge() {
-    TemporaryTree tree;
-    const auto config = tree.write("sshd_config", "UsePAM yes\n");
-    fic::platform::SshPlatformConfig platform;
-    platform.configPath = config;
-    platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service"};
-    platform.socketUnits = {"ssh.socket"};
-    std::string error;
-    const auto prove = [&](fic::platform::SshPamServiceRouting routing,
-                           const std::string& output) {
-        platform.pamServiceRouting = routing;
-        return fic::incident::SshIncidentPamBridgeVerifier::prove(
-            platform, tree.executables(), error,
-            [&tree, output](const std::string&,
-                            const std::vector<std::string>& arguments,
-                            const ProcessOptions&) {
-                if (!arguments.empty() && arguments.front() == "show" &&
-                    arguments.back() == "ssh.socket") {
-                    return success("LoadState=not-found\n");
-                }
-                if (!arguments.empty() && arguments.front() == "show") {
-                    const std::string sshd = (tree.root / "sshd").string();
-                    return success("Id=ssh.service\nLoadState=loaded\n"
-                                   "ActiveState=inactive\nExecStart={ path=" +
-                                   sshd + " ; argv[]=" + sshd +
-                                   " -D ; ignore_errors=no }\n");
-                }
-                if (std::find(arguments.begin(), arguments.end(),
-                              "PAMServiceName=fic-capability-probe") !=
-                    arguments.end()) {
-                    ProcessResult result;
-                    result.started = true;
-                    result.exitCode = 1;
-                    result.standardError = "Bad configuration option: PAMServiceName";
-                    return result;
-                }
-                return success(output);
-            });
-    };
-    using Routing = fic::platform::SshPamServiceRouting;
-    platform.pamServiceRouting = Routing::LegacyExecutableName;
-    bool invoked = false;
-    const auto optOut =
-        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
-            false, platform, tree.executables(),
-            [&invoked](const std::string&,
-                       const std::vector<std::string>&,
-                       const ProcessOptions&) {
-                invoked = true;
-                return success();
-            });
-    require(optOut.ready && optOut.optedOut && !invoked &&
-                optOut.diagnostic.find("not guaranteed") != std::string::npos,
-            "disabled ssh_use_pam must explicitly opt out without SSH probing");
-    const auto failedReady =
-        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
-            true, platform, tree.executables(),
-            [](const std::string&, const std::vector<std::string>&,
-               const ProcessOptions&) { return success("usepam no\n"); });
-    require(!failedReady.ready && !failedReady.optedOut,
-            "enabled ssh_use_pam with UsePAM=no must prevent READY");
-    const auto sshdFailure =
-        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
-            true, platform, tree.executables(),
-            [](const std::string&, const std::vector<std::string>&,
-               const ProcessOptions&) {
-                ProcessResult result;
-                result.started = true;
-                result.exitCode = 1;
-                result.standardError = "invalid sshd_config";
-                return result;
-            });
-    require(!sshdFailure.ready && !sshdFailure.diagnostic.empty(),
-            "inspection failure must prevent READY with a useful diagnostic");
-    const auto provenReady =
-        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
-            true, platform, tree.executables(),
-            [&tree](const std::string&,
-                    const std::vector<std::string>& arguments,
-                    const ProcessOptions&) {
-                if (!arguments.empty() && arguments.front() == "show" &&
-                    arguments.back() == "ssh.socket") {
-                    return success("LoadState=not-found\n");
-                }
-                if (!arguments.empty() && arguments.front() == "show") {
-                    const std::string sshd = (tree.root / "sshd").string();
-                    return success("Id=ssh.service\nLoadState=loaded\n"
-                                   "ActiveState=inactive\nExecStart={ path=" +
-                                   sshd + " ; argv[]=" + sshd +
-                                   " -D ; ignore_errors=no }\n");
-                }
-                if (std::find(arguments.begin(), arguments.end(),
-                              "PAMServiceName=fic-capability-probe") !=
-                    arguments.end()) {
-                    ProcessResult result;
-                    result.started = true;
-                    result.exitCode = 1;
-                    result.standardError = "Bad configuration option: PAMServiceName";
-                    return result;
-                }
-                return success("usepam yes\n");
-            });
-    require(provenReady.ready && !provenReady.optedOut,
-            "enabled ssh_use_pam with proven bridge must allow READY");
-    require(prove(Routing::LegacyExecutableName, "usepam yes\n"),
-            "legacy service routing must not require PAMServiceName output");
-    require(prove(Routing::ConfigurablePamServiceName, "usepam yes\n"),
-            "actual legacy sshd must use legacy routing on a modern baseline");
-    require(!prove(Routing::LegacyExecutableName, "usepam no\n"),
-            "UsePAM=no must not prove SSH account processing");
-    require(!prove(Routing::LegacyExecutableName, ""),
-            "missing UsePAM output must fail closed");
-    require(!prove(Routing::LegacyExecutableName, "usepam yes\nusepam no\n"),
-            "multiple UsePAM values must fail closed");
-    require(prove(Routing::LegacyExecutableName, "usepam YES\n"),
-            "sshd boolean output is case insensitive");
-    require(!prove(Routing::LegacyExecutableName,
-                   "usepam yes\npamservicename custom\n"),
-            "a modern trusted sshd must not bypass PAMServiceName on a legacy distro profile");
-    platform.pamServiceRouting = Routing::LegacyExecutableName;
-    require(!fic::incident::SshIncidentPamBridgeVerifier::prove(
-                platform, tree.executables(), error,
-                [&tree](const std::string&,
-                        const std::vector<std::string>& arguments,
-                        const ProcessOptions&) {
-                    if (!arguments.empty() && arguments.front() == "show") {
-                        const std::string sshd = (tree.root / "sshd").string();
-                        return success("LoadState=loaded\nExecStart={ path=" +
-                                       sshd + " ; argv[]=custom-sshd -D ; "
-                                              "ignore_errors=no }\n");
-                    }
-                    return success("usepam yes\n");
-                }),
-            "legacy OpenSSH with custom argv[0] must not prove PAM service sshd");
-    require(!fic::incident::SshIncidentPamBridgeVerifier::prove(
-                platform, tree.executables(), error,
-                [](const std::string&,
-                   const std::vector<std::string>& arguments,
-                   const ProcessOptions&) {
-                    return success(!arguments.empty() &&
-                                   arguments.front() == "show"
-                        ? "LoadState=not-found\nExecStart=\n"
-                        : "usepam yes\n");
-                }),
-            "legacy OpenSSH without a proven service unit must fail closed");
-    require(prove(Routing::ConfigurablePamServiceName,
-                  "usepam yes\npamservicename sshd\n"),
-            "global sshd PAM service must prove the bridge");
-    require(!prove(Routing::ConfigurablePamServiceName,
-                   "usepam yes\npamservicename custom\n"),
-            "custom global PAM service must fail closed");
-    platform.pamServiceRouting = Routing::ConfigurablePamServiceName;
-    const auto customServiceReady =
-        fic::incident::SshIncidentPamBridgeVerifier::evaluateReadiness(
-            true, platform, tree.executables(),
-            [](const std::string&, const std::vector<std::string>&,
-               const ProcessOptions&) {
-                return success("usepam yes\npamservicename custom\n");
-            });
-    require(!customServiceReady.ready,
-            "a custom PAM service must prevent READY");
-
-    tree.write("sshd_config", "UsePAM yes\nMatch User alice\n"
-                              "PAMServiceName custom\n");
-    require(!prove(Routing::ConfigurablePamServiceName,
-                   "usepam yes\npamservicename sshd\n"),
-            "conditional custom PAM service must fail closed");
-    tree.write("sshd_config", "UsePAM yes\nMatch Group admins\n"
-                              "PAMServiceName sshd\n");
-    require(prove(Routing::ConfigurablePamServiceName,
-                  "usepam yes\npamservicename sshd\n"),
-            "conditional sshd PAM service must be accepted");
-    tree.write("sshd_config", "UsePAM yes\nInclude child.conf\n");
-    tree.write("child.conf", "Match User alice\nInclude grandchild.conf\n");
-    tree.write("grandchild.conf", "\"PAMServiceName\"=custom\n");
-    require(!prove(Routing::ConfigurablePamServiceName,
-                   "usepam yes\npamservicename sshd\n"),
-            "nested conditional PAM service must fail closed");
-    tree.write("sshd_config", "UsePAM yes\nInclude recursive.conf\n");
-    tree.write("recursive.conf", "Include recursive.conf\n");
-    require(!prove(Routing::ConfigurablePamServiceName,
-                   "usepam yes\npamservicename sshd\n"),
-            "a recursive include must fail closed");
-    tree.write("sshd_config", "UsePAM yes\nMatch User alice\nUsePAM no\n");
-    require(!prove(Routing::LegacyExecutableName, "usepam yes\n"),
-            "invalid Match UsePAM must not be accepted by the real sshd");
-}
-
-void testSshActualActivationArguments() {
+void testNarrowIncidentSshBridge() {
     TemporaryTree tree;
     const auto config = tree.write("sshd_config", "UsePAM yes\nPAMServiceName sshd\n");
-    const auto alternate = tree.write("alternate", "UsePAM no\n");
+    const auto options = tree.write("default/ssh", "SSHD_OPTS=\n");
     fic::platform::SshPlatformConfig platform;
     platform.configPath = config;
     platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service", "sshd.service"};
+    platform.serviceUnits = {"ssh.service"};
     platform.socketUnits = {"ssh.socket"};
-    platform.pamServiceRouting = fic::platform::SshPamServiceRouting::LegacyExecutableName;
-    const std::string sshd = (tree.root / "sshd").string();
+    platform.optionVariable = "SSHD_OPTS";
+    platform.optionFile = options;
+    const auto sshd = (tree.root / "sshd").string();
     (void)tree.executables();
+    int restarts = 0;
+    bool active = true;
     std::string environment;
-    std::string rootDirectory;
-    std::string unsetEnvironment;
-    bool identityMismatch = false;
-    bool pidDrift = false;
-    bool startTimeDrift = false;
-    bool secondService = false;
-    const auto check = [&](const std::string& launchArgs,
-                           const std::string& socketTarget,
-                           const std::vector<std::string>& activeArgv,
-                           bool expected) {
-        std::string error;
-        struct stat info {};
-        require(::stat(sshd.c_str(), &info) == 0, "test sshd stat failed");
-        int serviceShows = 0;
-        int processReads = 0;
-        const auto runner = [&](const std::string&,
-                                const std::vector<std::string>& args,
-                                const ProcessOptions&) {
-            if (!args.empty() && args.front() == "show") {
-                const std::string& unit = args.back();
-                if (unit == "ssh.socket") {
-                    return success("LoadState=loaded\nActiveState=active\n"
-                                   "Accept=no\nTriggers=" + socketTarget + "\n");
-                }
-                if (unit == "sshd.service") {
-                    if (!secondService) return success("LoadState=not-found\n");
-                    return success("Id=sshd.service\nLoadState=loaded\n"
-                                   "ActiveState=inactive\nExecStart={ path=" + sshd +
-                                   " ; argv[]=" + sshd +
-                                   " -D -o UsePAM=no ; ignore_errors=no }\n");
-                }
-                ++serviceShows;
-                return success("Id=ssh.service\nNames=ssh.service sshd.service\n"
-                               "LoadState=loaded\nActiveState=" +
-                               std::string(activeArgv.empty() ? "inactive" : "active") +
-                               "\nMainPID=" +
-                               std::string(activeArgv.empty() ? "0" :
-                                   (pidDrift && serviceShows > 1 ? "43" : "42")) +
-                               "\nEnvironment=" + environment +
-                               "\nRootDirectory=" + rootDirectory +
-                               "\nUnsetEnvironment=" + unsetEnvironment +
-                               "\nExecStart={ path=" + sshd + " ; argv[]=" +
-                               sshd + launchArgs + " ; ignore_errors=no }\n");
-            }
-            const auto has = [&](const std::string& value) {
-                return std::find(args.begin(), args.end(), value) != args.end();
-            };
-            if (has("UsePAM=no") || has(alternate.string()))
-                return success("usepam no\npamservicename sshd\n");
-            if (has("PAMServiceName=custom"))
-                return success("usepam yes\npamservicename custom\n");
-            return success("usepam yes\npamservicename sshd\n");
-        };
-        const auto reader = [&](unsigned int pid,
-                                fic::incident::SshProcessSnapshot& snapshot,
-                                std::string&) {
-            if (pid != 42 || activeArgv.empty()) return false;
-            snapshot.device = info.st_dev;
-            snapshot.inode = info.st_ino + (identityMismatch ? 1 : 0);
-            snapshot.startTime = ++processReads > 1 && startTimeDrift ? "101" : "100";
-            snapshot.arguments = activeArgv;
-            return true;
-        };
-        const bool actual = fic::incident::SshIncidentPamBridgeVerifier::prove(
-            platform, tree.executables(), error, runner, reader);
-        require(actual == expected, "activation proof mismatch: " + error);
-    };
-    check(" -D", "ssh.service", {}, true);
-    check(" -D -o UsePAM=no", "ssh.service", {}, false);
-    check(" -D -f " + alternate.string(), "ssh.service", {}, false);
-    check(" -D -o PAMServiceName=custom", "ssh.service", {}, false);
-    check(" -D -Z", "ssh.service", {}, false);
-    environment = "SSHD_OPTS=\"-o UsePAM=no\"";
-    check(" -D $SSHD_OPTS", "ssh.service", {}, false);
-    environment = "EXTRAOPTIONS=\"-o UsePAM=no\"";
-    check(" -D $EXTRAOPTIONS", "ssh.service", {}, false);
-    environment.clear();
-    check(" -D $SSHD_OPTS", "ssh.service", {}, false);
-    rootDirectory = "/alternate-root";
-    check(" -D", "ssh.service", {}, false);
-    rootDirectory.clear();
-    unsetEnvironment = "SSHD_OPTS";
-    check(" -D", "ssh.service", {}, false);
-    unsetEnvironment.clear();
-    check(" -D", "custom.service", {}, false);
-    secondService = true;
-    check(" -D", "ssh.service", {}, false);
-    secondService = false;
-    check(" -D", "ssh.service", {sshd, "-D", "-o", "UsePAM=no"}, false);
-    check(" -D -o UsePAM=no", "ssh.service", {sshd, "-D"}, false);
-    identityMismatch = true;
-    check(" -D", "ssh.service", {sshd, "-D"}, false);
-    identityMismatch = false;
-    pidDrift = true;
-    check(" -D", "ssh.service", {sshd, "-D"}, false);
-    pidDrift = false;
-    startTimeDrift = true;
-    check(" -D", "ssh.service", {sshd, "-D"}, false);
-}
-
-void testAlternateConfigUsesServerIncludeBase() {
-    TemporaryTree tree;
-    const auto config = tree.write("sshd_config", "UsePAM yes\n");
-    const auto alternate = tree.write("elsewhere/alternate",
-                                      "UsePAM yes\nInclude child.conf\n");
-    tree.write("child.conf", "Match User alice\nPAMServiceName custom\n");
-    fic::platform::SshPlatformConfig platform;
-    platform.configPath = config;
-    platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service"};
-    platform.socketUnits = {"ssh.socket"};
-    std::string error;
-    const auto prove = [&] { return fic::incident::SshIncidentPamBridgeVerifier::prove(
-        platform, tree.executables(), error,
-        [&tree, &alternate](const std::string&,
-                            const std::vector<std::string>& args,
-                            const ProcessOptions&) {
-            if (!args.empty() && args.front() == "show" &&
-                args.back() == "ssh.socket") return success("LoadState=not-found\n");
-            if (!args.empty() && args.front() == "show") {
-                const auto sshd = (tree.root / "sshd").string();
-                return success("Id=ssh.service\nLoadState=loaded\nActiveState=inactive\n"
-                               "ExecStart={ path=" + sshd + " ; argv[]=" + sshd +
-                               " -D -f " + alternate.string() +
-                               " ; ignore_errors=no }\n");
-            }
-            return success("usepam yes\npamservicename sshd\n");
-        }); };
-    require(!prove() && error.find("child.conf") != std::string::npos,
-            "alternate -f must audit relative Include under the server include base: " + error);
-    const auto absolute = tree.write("elsewhere/safe.conf",
-                                     "Match User alice\nPAMServiceName sshd\n");
-    tree.write("elsewhere/alternate", "UsePAM yes\nInclude " +
-                                      absolute.string() + "\n");
-    require(prove(), "absolute Include must be resolved without the server base: " + error);
-}
-
-void testEnvironmentFileWildcardFailsClosed() {
-    TemporaryTree tree;
-    const auto config = tree.write("sshd_config", "UsePAM yes\n");
-    fic::platform::SshPlatformConfig platform;
-    platform.configPath = config;
-    platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service"};
-    platform.socketUnits = {"ssh.socket"};
-    std::string error;
-    const bool proven = fic::incident::SshIncidentPamBridgeVerifier::prove(
-        platform, tree.executables(), error,
-        [&tree](const std::string&, const std::vector<std::string>& args,
-                const ProcessOptions&) {
-            if (!args.empty() && args.front() == "show" &&
-                args.back() == "ssh.socket") return success("LoadState=not-found\n");
-            if (!args.empty() && args.front() == "show") {
-                const auto sshd = (tree.root / "sshd").string();
-                return success("Id=ssh.service\nLoadState=loaded\nActiveState=inactive\n"
-                               "Environment=SSHD_OPTS=\"-o UsePAM=yes\"\n"
-                               "EnvironmentFiles=" +
-                               (tree.root / "env/*.conf").string() +
-                               " (ignore_errors=yes)\n"
-                               "ExecStart={ path=" + sshd + " ; argv[]=" + sshd +
-                               " -D $SSHD_OPTS ; ignore_errors=no }\n");
-            }
-            return success("usepam yes\npamservicename sshd\n");
-        });
-    require(!proven && error.find("wildcard") != std::string::npos,
-            "optional EnvironmentFile wildcard must not hide a later override");
-}
-
-void testEnvironmentFileAuthorityAndPrecedence() {
-    TemporaryTree tree;
-    const auto config = tree.write("sshd_config", "UsePAM yes\n");
-    fic::platform::SshPlatformConfig platform;
-    platform.configPath = config;
-    platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service"};
-    platform.socketUnits = {"ssh.socket"};
-    const auto env = tree.write("env/ssh", "SSHD_OPTS=-o UsePAM=no\n");
-    std::string path = env.string();
-    const auto prove = [&] {
-        std::string error;
-        return fic::incident::SshIncidentPamBridgeVerifier::prove(
-            platform, tree.executables(), error,
-            [&tree, &path](const std::string&,
-                           const std::vector<std::string>& args,
-                           const ProcessOptions&) {
-                if (!args.empty() && args.front() == "show" &&
-                    args.back() == "ssh.socket") return success("LoadState=not-found\n");
-                if (!args.empty() && args.front() == "show") {
-                    const auto sshd = (tree.root / "sshd").string();
-                    return success("Id=ssh.service\nLoadState=loaded\n"
-                                   "ActiveState=inactive\n"
-                                   "Environment=SSHD_OPTS=\"-o UsePAM=yes\"\n"
-                                   "EnvironmentFiles=" + path +
-                                   " (ignore_errors=yes)\n"
-                                   "ExecStart={ path=" + sshd +
-                                   " ; argv[]=" + sshd +
-                                   " -D $SSHD_OPTS ; ignore_errors=no }\n");
-                }
-                if (std::find(args.begin(), args.end(), "UsePAM=no") != args.end())
-                    return success("usepam no\npamservicename sshd\n");
-                return success("usepam yes\npamservicename sshd\n");
-            });
-    };
-    require(!prove(), "EnvironmentFile must override Environment value");
-    tree.write("env/ssh", "SSHD_OPTS=-o UsePAM=yes\n");
-    require(prove(), "trusted direct EnvironmentFile must be accepted");
-    require(::chmod((tree.root / "env").c_str(), 0777) == 0,
-            "test chmod failed");
-    require(!prove(), "writable EnvironmentFile parent must fail closed");
-    require(::chmod((tree.root / "env").c_str(), 0755) == 0,
-            "test chmod restore failed");
-    require(::chmod(env.c_str(), 0666) == 0, "test chmod file failed");
-    require(!prove(), "writable EnvironmentFile leaf must fail closed");
-    require(::chmod(env.c_str(), 0644) == 0, "test chmod restore failed");
-    path = (tree.root / "env/missing").string();
-    require(prove(), "missing optional EnvironmentFile under trusted parent is safe");
-    require(::chmod((tree.root / "env").c_str(), 0777) == 0,
-            "test chmod failed");
-    require(!prove(), "missing optional EnvironmentFile under writable parent is unsafe");
-    require(::chmod((tree.root / "env").c_str(), 0755) == 0,
-            "test chmod restore failed");
-    path = (tree.root / "env/link").string();
-    require(::symlink(env.c_str(), path.c_str()) == 0, "test symlink failed");
-    require(!prove(), "symlink EnvironmentFile must fail closed");
-}
-
-void testActiveSshRequiresSuccessfulRuntimeReload() {
-    fic::incident::SshIncidentPamRuntimeReconciler reconciler;
-    TemporaryTree tree;
-    const auto config = tree.write("sshd_config", "UsePAM yes\n");
-    fic::platform::SshPlatformConfig platform;
-    platform.configPath = config;
-    platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service"};
-    platform.socketUnits = {"ssh.socket"};
-    const auto sshd = (tree.root / "sshd").string();
-    (void)tree.executables();
-    struct stat info {};
-    require(::stat(sshd.c_str(), &info) == 0, "test sshd stat failed");
-    int restarts = 0;
-    bool restartSucceeds = false;
-    bool diesAfterRestart = false;
-    bool untrustedAfterRestart = false;
-    const auto runner = [&](const std::string&,
-                            const std::vector<std::string>& args,
-                            const ProcessOptions&) {
-        if (!args.empty() && args.front() == "restart") {
-            ++restarts;
-            auto result = success();
-            result.exitCode = restartSucceeds ? 0 : 1;
-            return result;
-        }
-        if (!args.empty() && args.front() == "show" &&
-            args.back() == "ssh.socket") return success("LoadState=not-found\n");
-        if (!args.empty() && args.front() == "show")
-            return success(std::string("Id=ssh.service\nLoadState=loaded\nActiveState=") +
-                           (diesAfterRestart && restarts > 0 ? "inactive" : "active") +
-                           "\nMainPID=42\nExecStart={ path=" + sshd +
-                           " ; argv[]=" + sshd + " -D ; ignore_errors=no }\n");
-        return success("usepam yes\npamservicename sshd\n");
-    };
-    const auto reader = [&](unsigned int pid,
-                            fic::incident::SshProcessSnapshot& snapshot,
-                            std::string&) {
-        if (pid != 42) return false;
-        snapshot = {static_cast<std::uint64_t>(info.st_dev),
-                    static_cast<std::uint64_t>(info.st_ino +
-                        (untrustedAfterRestart && restarts > 0 ? 1 : 0)),
-                    std::to_string(100 + restarts), {sshd, "-D"}};
-        return true;
-    };
-    require(!reconciler.evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && restarts == 1,
-            "stale active sshd must not allow READY when restart fails");
-    restartSucceeds = true;
-    require(reconciler.evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && restarts == 2,
-            "active sshd needs one successful restart and post-restart proof");
-    require(reconciler.evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && restarts == 2,
-            "unchanged read-only readiness pass must not restart SSH");
-    (void)reconciler.evaluateReadiness(false, platform, tree.executables());
-    restarts = 0;
-    diesAfterRestart = true;
-    require(!reconciler.evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && restarts == 1,
-            "service death after restart must prevent READY");
-    diesAfterRestart = false;
-    restarts = 0;
-    untrustedAfterRestart = true;
-    require(!reconciler.evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready && restarts == 1,
-            "untrusted process after restart must prevent READY");
-}
-
-void testFutureSshConfigAuthority() {
-    TemporaryTree tree;
-    const auto config = tree.write("sshd_config",
-                                   "UsePAM yes\nInclude future/*.conf\n");
-    std::filesystem::create_directories(tree.root / "future");
-    fic::platform::SshPlatformConfig platform;
-    platform.configPath = config;
-    platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service"};
-    platform.socketUnits = {"ssh.socket"};
-    std::string socketTarget = "ssh.service";
-    const auto prove = [&] {
-        std::string error;
-        return fic::incident::SshIncidentPamBridgeVerifier::prove(
-            platform, tree.executables(), error,
-            [&tree, &socketTarget](const std::string&, const std::vector<std::string>& args,
-                    const ProcessOptions&) {
-                if (!args.empty() && args.front() == "show" &&
-                    args.back() == "ssh.socket")
-                    return success("LoadState=loaded\nActiveState=inactive\n"
-                                   "Accept=no\nTriggers=" + socketTarget + "\n");
-                if (!args.empty() && args.front() == "show") {
-                    const auto sshd = (tree.root / "sshd").string();
-                    return success("Id=ssh.service\nLoadState=loaded\n"
-                                   "ActiveState=inactive\nExecStart={ path=" +
-                                   sshd + " ; argv[]=" + sshd +
-                                   " -D ; ignore_errors=no }\n");
-                }
-                return success("usepam yes\npamservicename sshd\n");
-            });
-    };
-    require(prove(), "trusted inactive socket target and config must be accepted");
-    socketTarget = "custom.service";
-    require(!prove(), "inactive socket with untrusted future target must fail closed");
-    socketTarget = "ssh.service";
-    int reloads = 0;
-    fic::incident::SshIncidentPamRuntimeReconciler reconciler;
-    const auto inactiveReady =
-        reconciler.evaluateReadiness(
-            true, platform, tree.executables(),
-            [&tree, &reloads](const std::string&,
-                              const std::vector<std::string>& args,
-                              const ProcessOptions&) {
-                if (!args.empty() && args.front() == "reload") {
-                    ++reloads;
-                    return success();
-                }
-                if (!args.empty() && args.front() == "show" &&
-                    args.back() == "ssh.socket")
-                    return success("LoadState=loaded\nActiveState=inactive\n"
-                                   "Accept=no\nTriggers=ssh.service\n");
-                if (!args.empty() && args.front() == "show") {
-                    const auto sshd = (tree.root / "sshd").string();
-                    return success("Id=ssh.service\nLoadState=loaded\n"
-                                   "ActiveState=inactive\nExecStart={ path=" +
-                                   sshd + " ; argv[]=" + sshd +
-                                   " -D ; ignore_errors=no }\n");
-                }
-                return success("usepam yes\npamservicename sshd\n");
-            });
-    require(inactiveReady.ready && reloads == 0,
-            "inactive SSH service must not request a reload");
-    require(::chmod((tree.root / "future").c_str(), 0777) == 0,
-            "test chmod include directory failed");
-    require(!prove(), "writable Include glob directory must fail closed");
-    require(::chmod((tree.root / "future").c_str(), 0755) == 0,
-            "test chmod restore failed");
-    const auto include = tree.write("future/one.conf", "Match User alice\n"
-                                                    "PAMServiceName sshd\n");
-    require(prove(), "trusted included file must be accepted");
-    require(::chmod(include.c_str(), 0664) == 0, "test chmod include failed");
-    require(!prove(), "writable Include file must fail closed");
-    require(::chmod(include.c_str(), 0644) == 0, "test chmod restore failed");
-    require(::chmod(tree.root.c_str(), 0777) == 0,
-            "test chmod config parent failed");
-    require(!prove(), "writable config parent must fail closed");
-    require(::chmod(tree.root.c_str(), 0700) == 0,
-            "test chmod restore failed");
-    require(::chmod(config.c_str(), 0666) == 0, "test chmod config failed");
-    require(!prove(), "writable future config must fail closed");
-}
-
-void testRuntimeReloadDeduplicatesAliasesAndCoversIndependentServices() {
-    fic::incident::SshIncidentPamRuntimeReconciler reconciler;
-    TemporaryTree tree;
-    const auto config = tree.write("sshd_config", "UsePAM yes\n");
-    fic::platform::SshPlatformConfig platform;
-    platform.configPath = config;
-    platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service", "sshd.service"};
-    platform.socketUnits = {"ssh.socket"};
-    const auto sshd = (tree.root / "sshd").string();
-    (void)tree.executables();
-    struct stat info {};
-    require(::stat(sshd.c_str(), &info) == 0, "test sshd stat failed");
-    bool independent = false;
-    int restarts = 0;
-    const auto runner = [&](const std::string&,
-                            const std::vector<std::string>& args,
-                            const ProcessOptions&) {
-        if (!args.empty() && args.front() == "restart") {
-            ++restarts;
-            return success();
-        }
-        if (!args.empty() && args.front() == "show" &&
-            args.back() == "ssh.socket") return success("LoadState=not-found\n");
-        if (!args.empty() && args.front() == "show") {
-            const bool second = args.back() == "sshd.service";
-            const std::string unit = second && independent
-                ? "sshd.service" : "ssh.service";
-            return success("Id=" + unit + "\nNames=ssh.service sshd.service\n"
-                           "LoadState=loaded\nActiveState=active\nMainPID=" +
-                           (second && independent ? "43" : "42") +
-                           "\nExecStart={ path=" + sshd + " ; argv[]=" + sshd +
-                           " -D ; ignore_errors=no }\n");
-        }
-        return success("usepam yes\npamservicename sshd\n");
-    };
-    const auto reader = [&](unsigned int pid,
-                            fic::incident::SshProcessSnapshot& snapshot,
-                            std::string&) {
-        if (pid != 42 && pid != 43) return false;
-        snapshot = {static_cast<std::uint64_t>(info.st_dev),
-                    static_cast<std::uint64_t>(info.st_ino),
-                    std::to_string(pid + restarts), {sshd, "-D"}};
-        return true;
-    };
-    require(reconciler.evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready &&
-                restarts == 1,
-            "two service aliases must request one restart");
-    independent = true;
-    restarts = 0;
-    require(reconciler.evaluateReadiness(
-                true, platform, tree.executables(), runner, reader).ready &&
-                restarts == 2,
-            "independent active SSH services must each be restarted");
-}
-
-void testLifecycleAndCompletedReconciliation() {
-    TemporaryTree tree;
-    const auto config = tree.write("sshd_config", "UsePAM yes\n");
-    fic::platform::SshPlatformConfig platform;
-    platform.configPath = config;
-    platform.includeBasePath = tree.root;
-    platform.serviceUnits = {"ssh.service"};
-    platform.socketUnits = {"ssh.socket"};
-    const auto sshd = (tree.root / "sshd").string();
-    (void)tree.executables();
-    struct stat info {};
-    require(::stat(sshd.c_str(), &info) == 0, "test sshd stat failed");
-    std::string type = "notify";
-    std::string notifyAccess = "main";
-    std::string reloadResult = "success";
-    std::string condition, pre, post, reload =
-        "{ path=/bin/true ; argv[]=/bin/true ; ignore_errors=no }";
-    int restarts = 0, reloads = 0;
-    bool changeGeneration = true;
+    std::string execArgs = " -D $SSHD_OPTS";
+    std::string effective = "usepam yes\npamservicename sshd\n";
     const auto runner = [&](const std::string&, const std::vector<std::string>& args,
                             const ProcessOptions&) {
         if (!args.empty() && args.front() == "restart") {
             ++restarts;
             return success();
         }
-        if (!args.empty() && args.front() == "reload") {
-            ++reloads;
-            return success();
-        }
-        if (!args.empty() && args.front() == "show" && args.back() == "ssh.socket")
-            return success("LoadState=not-found\n");
         if (!args.empty() && args.front() == "show") {
-            std::string effectivePre = pre;
-            if (!effectivePre.empty()) {
-                const auto end = effectivePre.find(" }");
-                effectivePre.replace(end, 2, " ; start_time=[" +
-                    std::to_string(restarts) + "] ; pid=" +
-                    std::to_string(40 + restarts) + " }");
-            }
-            return success("Id=ssh.service\nLoadState=loaded\nActiveState=active\n"
-                           "MainPID=42\nType=" + type + "\nExecCondition=" + condition +
-                           "\nExecStartPre=" + effectivePre + "\nExecStartPost=" + post +
-                           "\nExecReload=" + reload + "\nCanReload=yes\n"
-                           "NotifyAccess=" + notifyAccess + "\n"
-                           "ReloadResult=" + reloadResult + "\nExecStart={ path=" + sshd +
-                           " ; argv[]=" + sshd + " -D ; ignore_errors=no ; "
-                           "start_time=[" + std::to_string(restarts) + "] }\n");
+            if (args.back() == "ssh.socket")
+                return success("LoadState=loaded\nActiveState=active\n"
+                               "Accept=no\nTriggers=ssh.service\n");
+            return success("Id=ssh.service\nLoadState=loaded\n"
+                           "ActiveState=" + std::string(active ? "active" : "inactive") +
+                           "\nMainPID=42\nType=notify\nDynamicUser=no\n"
+                           "NoNewPrivileges=no\nEnvironment=" + environment +
+                           "\nPassEnvironment=\nEnvironmentFiles=" +
+                           options.string() + " (ignore_errors=yes)\n"
+                           "ExecStart={ path=" + sshd + " ; argv[]=" + sshd +
+                           execArgs + " ; ignore_errors=no }\n");
         }
-        return success("usepam yes\npamservicename sshd\n");
+        return success(effective);
     };
-    const auto reader = [&](unsigned int pid, fic::incident::SshProcessSnapshot& snapshot,
-                            std::string&) {
-        if (pid != 42) return false;
-        snapshot = {static_cast<std::uint64_t>(info.st_dev),
-                    static_cast<std::uint64_t>(info.st_ino),
-                    std::to_string(100 + (changeGeneration ? restarts : 0)),
-                    {sshd, "-D"}};
-        return true;
+    const auto process = [&](unsigned int pid, const std::filesystem::path& path,
+                             std::string&) { return pid == 42 && path == sshd; };
+    std::string error;
+    require(fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "stock future SSH proof failed: " + error);
+    require(fic::incident::SshIncidentPamBridgeVerifier::activate(
+                platform, tree.executables(), error, runner, process) && restarts == 1,
+            "ACTIVE must restart stock active SSH once: " + error);
+    require(fic::incident::SshIncidentPamBridgeVerifier::proveCurrent(
+                platform, tree.executables(), error, runner, process) && restarts == 1,
+            "healthy drift check must not restart SSH");
+    environment = "LD_PRELOAD=/tmp/x.so";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "loader environment must fail closed");
+    environment.clear();
+    execArgs = " -D -o UsePAM=no";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "custom SSH options must fail closed");
+    execArgs = " -D $SSHD_OPTS";
+    effective = "usepam no\npamservicename sshd\n";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "UsePAM=no must fail closed");
+    effective = "usepam yes\npamservicename sshd\n";
+    active = false;
+    restarts = 0;
+    require(fic::incident::SshIncidentPamBridgeVerifier::activate(
+                platform, tree.executables(), error, runner, process) && restarts == 0,
+            "inactive SSH must not be started for proof");
+}
+
+void testSshAccessContainmentOwnership() {
+    TemporaryTree tree;
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    bool serviceActive = true, socketActive = true;
+    int stops = 0, starts = 0;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        const bool socket = args.back() == "ssh.socket";
+        bool& state = socket ? socketActive : serviceActive;
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (state ? "active\n" : "inactive\n"));
+        if (args.front() == "stop") { ++stops; state = false; return success(); }
+        if (args.front() == "start") { ++starts; state = true; return success(); }
+        return success();
     };
-    const auto prove = [&] {
-        return fic::incident::SshSystemdActivationVerifier::prove(
-            platform, tree.executables(), runner, reader);
+    fic::incident::SshAccessContainmentBackend guard;
+    std::string error;
+    require(guard.block(platform, tree.executables(), error, runner) &&
+            !serviceActive && !socketActive && stops == 2 && guard.ownsBlock(),
+            "SSH guard must stop the declared active listener: " + error);
+    require(guard.block(platform, tree.executables(), error, runner) && stops == 2,
+            "repeated block must not claim extra actions");
+    require(guard.restore(platform, tree.executables(), error, runner) &&
+            serviceActive && socketActive && starts == 2 && !guard.ownsBlock(),
+            "SSH guard must restore only its own stops: " + error);
+    serviceActive = false;
+    socketActive = false;
+    require(guard.block(platform, tree.executables(), error, runner) &&
+            !guard.ownsBlock() && stops == 2,
+            "already stopped listener must not become FIC-owned");
+    require(guard.restore(platform, tree.executables(), error, runner) &&
+            starts == 2, "pre-disabled SSH must remain stopped");
+
+    // An activating listener can still accept connections. Stop it and prove
+    // the final inactive state rather than treating the transition as safe.
+    auto transitionalRunner = [&](const std::string&,
+                                    const std::vector<std::string>& args,
+                                    const ProcessOptions&) {
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (serviceActive ? "activating\n" : "inactive\n"));
+        if (args.front() == "stop") { ++stops; serviceActive = false; }
+        return success();
     };
-    const auto command = [](const std::string& path,
-                            const std::string& arguments) {
-        return "{ path=" + path + " ; argv[]=" + arguments +
-               " ; ignore_errors=no }";
-    };
-    pre = command(sshd, sshd + " -t");
-    require(prove().status == fic::incident::SshActivationStatus::Proven,
-            "trusted sshd -t prehook must remain supported");
-    if (std::filesystem::exists("/usr/bin/ssh-keygen")) {
-        pre = command("/usr/bin/ssh-keygen", "/usr/bin/ssh-keygen -A") +
-              " " + command(sshd, sshd + " -t");
-        require(prove().status == fic::incident::SshActivationStatus::Proven,
-                "trusted ALT host-key prehook must remain supported");
-        pre = command(sshd, sshd + " -t");
-    }
-    condition = command("/usr/local/sbin/condition", "/usr/local/sbin/condition");
-    require(prove().status != fic::incident::SshActivationStatus::Proven,
-            "unknown ExecCondition must fail closed");
-    condition.clear();
-    pre = command("/usr/local/sbin/rewrite-ssh-config",
-                  "/usr/local/sbin/rewrite-ssh-config");
-    require(prove().status != fic::incident::SshActivationStatus::Proven,
-            "mutating ExecStartPre must fail closed");
-    pre = command(sshd, sshd + " -t");
-    post = command("/usr/local/sbin/rewrite-ssh-config",
-                   "/usr/local/sbin/rewrite-ssh-config");
-    require(prove().status != fic::incident::SshActivationStatus::Proven,
-            "unknown ExecStartPost must fail closed");
-    post.clear();
-    require(prove().services.front().reconciliation ==
-                fic::incident::SshRuntimeReconciliationKind::RestartRequired,
-            "fake successful ExecReload cannot prove synchronous completion");
-    fic::incident::SshIncidentPamRuntimeReconciler reconciler;
-    require(reconciler.evaluateReadiness(false, platform, tree.executables(),
-                                         runner, reader).ready && restarts == 0 &&
-                reloads == 0,
-            "ssh_use_pam opt-out must not reconcile SSH runtime");
-    require(reconciler.evaluateReadiness(true, platform, tree.executables(),
-                                         runner, reader).ready &&
-                restarts == 1 && reloads == 0,
-            "fake reload must use completed restart");
-    require(reconciler.evaluateReadiness(true, platform, tree.executables(),
-                                         runner, reader).ready && restarts == 1,
-            "unrelated and periodic read-only recomputation must not restart SSH");
-    SshRuntimeOptions transactionOptions;
-    transactionOptions.configPath = config;
-    transactionOptions.includeBasePath = tree.root;
-    transactionOptions.serviceUnits = platform.serviceUnits;
-    SshRuntime transactionRuntime(transactionOptions, tree.executables(), runner);
-    require(transactionRuntime.activateIfRunning().ok && reloads == 1,
-            "transaction fixture must send one asynchronous reload");
-    require(reconciler.evaluateReadiness(true, platform, tree.executables(),
-                                         runner, reader).ready && restarts == 2,
-            "asynchronous transaction reload invalidates cached READY proof");
-    tree.write("sshd_config", "# trusted source changed\nUsePAM yes\n");
-    require(reconciler.evaluateReadiness(true, platform, tree.executables(),
-                                         runner, reader).ready && restarts == 3,
-            "trusted SSH source drift must reconcile runtime again");
-    reload = command(sshd, sshd + " -t") + " " +
-             command("/bin/kill", "/bin/kill -HUP $MAINPID");
-    require(prove().services.front().reconciliation ==
-                fic::incident::SshRuntimeReconciliationKind::RestartRequired,
-            "signal-based HUP is asynchronous");
-    fic::incident::SshIncidentPamRuntimeReconciler hupReconciler;
-    require(hupReconciler.evaluateReadiness(true, platform, tree.executables(),
-                                            runner, reader).ready &&
-                restarts == 4 && reloads == 1,
-            "HUP strategy must use restart rather than accept queued signal");
-    changeGeneration = false;
-    fic::incident::SshIncidentPamRuntimeReconciler unchanged;
-    require(!unchanged.evaluateReadiness(true, platform, tree.executables(),
-                                         runner, reader).ready,
-            "successful restart with unchanged PID and startTime must not prove READY");
-    changeGeneration = true;
-    type = "notify-reload";
-    reload.clear();
-    notifyAccess = "all";
-    require(prove().services.front().reconciliation ==
-                fic::incident::SshRuntimeReconciliationKind::RestartRequired,
-            "notify-reload from non-main senders cannot prove daemon acknowledgement");
-    notifyAccess = "main";
-    require(prove().services.front().reconciliation ==
-                fic::incident::SshRuntimeReconciliationKind::SynchronousReload,
-            "notify-reload without ExecReload has acknowledged completion");
-    fic::incident::SshIncidentPamRuntimeReconciler synchronous;
-    require(synchronous.evaluateReadiness(true, platform, tree.executables(),
-                                           runner, reader).ready && reloads == 2,
-            "acknowledged synchronous reload may prove READY without restart");
-    reloadResult = "failure";
-    fic::incident::SshIncidentPamRuntimeReconciler failedReload;
-    require(!failedReload.evaluateReadiness(true, platform, tree.executables(),
-                                            runner, reader).ready,
-            "failed ReloadResult must not prove synchronous completion");
+    serviceActive = true;
+    require(guard.block(platform, tree.executables(), error, transitionalRunner) &&
+            !serviceActive && stops == 3 && guard.ownsBlock(),
+            "transitional SSH listener must be stopped: " + error);
 }
 
 } // namespace
@@ -1522,15 +854,8 @@ int main() {
         {"active reload", testActiveServiceIsReloadedAndVerified},
         {"reload failure", testReloadFailureIsReported},
         {"service inspection failure", testServiceInspectionFailureIsReported},
-        {"SSH PAM bridge", testSshPamBridge},
-        {"SSH actual activation arguments", testSshActualActivationArguments},
-        {"alternate Include base", testAlternateConfigUsesServerIncludeBase},
-        {"EnvironmentFile wildcard", testEnvironmentFileWildcardFailsClosed},
-        {"EnvironmentFile authority", testEnvironmentFileAuthorityAndPrecedence},
-        {"active runtime reload", testActiveSshRequiresSuccessfulRuntimeReload},
-        {"future SSH source authority", testFutureSshConfigAuthority},
-        {"reload service aliases", testRuntimeReloadDeduplicatesAliasesAndCoversIndependentServices},
-        {"SSH lifecycle and reconciliation", testLifecycleAndCompletedReconciliation}
+        {"narrow incident SSH bridge", testNarrowIncidentSshBridge},
+        {"SSH block ownership", testSshAccessContainmentOwnership}
     };
 
     std::size_t failures = 0;

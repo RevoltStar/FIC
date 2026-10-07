@@ -1,16 +1,18 @@
 #pragma once
 
 #include <fic/core/incident/IncidentSeverity.h>
+#include "incident/IncidentResponseMode.h"
 
 namespace fic::incident {
 
-enum class DaemonReadinessState { Initializing, Applying, Ready, Stopping };
+enum class DaemonReadinessState { Initializing, Applying, Ready, Degraded, Stopping };
 
 inline const char* daemonReadinessToken(DaemonReadinessState state) {
     switch (state) {
         case DaemonReadinessState::Initializing: return "INITIALIZING";
         case DaemonReadinessState::Applying: return "APPLYING";
         case DaemonReadinessState::Ready: return "READY";
+        case DaemonReadinessState::Degraded: return "DEGRADED";
         case DaemonReadinessState::Stopping: return "STOPPING";
     }
     return "STOPPING";
@@ -18,7 +20,9 @@ inline const char* daemonReadinessToken(DaemonReadinessState state) {
 
 inline bool ordinaryLoginAllowed(DaemonReadinessState state,
                                  bool persistentStateProven,
-                                 ::fic::core::IncidentSeverity severity) {
+                                 ::fic::core::IncidentSeverity severity,
+                                 IncidentResponseMode mode = IncidentResponseMode::Active) {
+    if (mode != IncidentResponseMode::Active) return true;
     return state == DaemonReadinessState::Ready && persistentStateProven &&
         (severity == ::fic::core::IncidentSeverity::Unlocked ||
          severity == ::fic::core::IncidentSeverity::Soft);

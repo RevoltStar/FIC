@@ -129,6 +129,9 @@ add_executable(policy_execution_planner_tests
     ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyDependencyGraph.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyExecutionPlanner.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryInitialization.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/GLOBAL.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/lock_settings/GLOBAL_incident_response_mode.cpp
 )
 target_include_directories(policy_execution_planner_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -758,6 +761,7 @@ add_executable(incident_controller_tests
     fic/incident/IncidentControllerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
 target_include_directories(incident_controller_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -777,12 +781,21 @@ add_executable(incident_access_gate_core_tests
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentAccessGateCore.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentAccessClient.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)
 target_include_directories(incident_access_gate_core_tests PRIVATE
     ${PROJECT_SOURCE_DIR}/fic/src)
 target_link_libraries(incident_access_gate_core_tests PRIVATE
     fic-core fic-ipc fic-platform)
 add_test(NAME incident_access_gate_core_tests COMMAND incident_access_gate_core_tests)
+
+add_executable(incident_response_mode_tests
+    fic/incident/IncidentResponseModeTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp)
+target_include_directories(incident_response_mode_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+target_link_libraries(incident_response_mode_tests PRIVATE fic-core)
+add_test(NAME incident_response_mode_tests COMMAND incident_response_mode_tests)
 
 add_executable(incident_recovery_group_tests
     fic/incident/IncidentRecoveryGroupTests.cpp
@@ -837,6 +850,7 @@ add_executable(policy_incident_reporter_tests
     fic/incident/PolicyIncidentReporterTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/PolicyIncidentReporter.cpp
 )
 target_include_directories(policy_incident_reporter_tests PRIVATE
@@ -2249,8 +2263,7 @@ add_test(
 add_executable(ssh_runtime_tests
     fic/modules/net/ssh/SshRuntimeTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/SshIncidentPamBridgeVerifier.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/incident/SshIncidentPamRuntimeReconciler.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/incident/SshSystemdActivationVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/SshAccessContainmentBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp

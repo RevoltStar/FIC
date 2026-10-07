@@ -18,6 +18,9 @@ extern "C" int pam_sm_acct_mgmt(pam_handle_t* pamh, int,
         const auto* serviceName = static_cast<const char*>(service);
         if (!fic::incident::isProductionControlledIncidentService(serviceName))
             return PAM_IGNORE;
+        const auto mode = fic::incident::IncidentResponseModeResolver::production();
+        if (mode.mode != fic::incident::IncidentResponseMode::Active)
+            return PAM_IGNORE;
         const char* user = nullptr;
         const void* remoteHost = nullptr;
         if (pam_get_user(pamh, &user, nullptr) != PAM_SUCCESS ||
@@ -28,7 +31,7 @@ extern "C" int pam_sm_acct_mgmt(pam_handle_t* pamh, int,
         const fic::incident::PamAccessContext context{
             user, serviceName,
             remoteHost == nullptr ? "" : static_cast<const char*>(remoteHost)};
-        const auto decision = fic::incident::decideProductionIncidentAccess(context);
+        const auto decision = fic::incident::decideProductionIncidentAccess(context, mode);
         if (decision.disposition == fic::incident::AccessGateDisposition::Neutral)
             return PAM_IGNORE;
         if (decision.disposition == fic::incident::AccessGateDisposition::Pass)
