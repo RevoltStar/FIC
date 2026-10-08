@@ -760,6 +760,7 @@ add_test(NAME incident_state_store_tests COMMAND incident_state_store_tests)
 add_executable(incident_controller_tests
     fic/incident/IncidentControllerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
@@ -775,6 +776,7 @@ add_executable(logind_session_containment_backend_tests
     ${PROJECT_SOURCE_DIR}/fic/src/session/SystemLogindClient.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)
@@ -874,6 +876,7 @@ add_executable(policy_incident_reporter_tests
     fic/incident/PolicyIncidentReporterTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/PolicyIncidentReporter.cpp
 )
@@ -2529,6 +2532,7 @@ add_executable(permanent_device_incident_integration_tests
     ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/PermanentDeviceIncident.cpp
     ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src/FicIpcClient.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
@@ -2564,6 +2568,7 @@ add_executable(device_incident_response_compat_tests
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/DeviceIncidentEvent.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/PermanentDeviceIncident.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
     ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/src/Policy.cpp

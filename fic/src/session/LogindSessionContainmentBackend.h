@@ -31,6 +31,10 @@ struct LogindUserRecord {
 };
 
 enum class LogindLookup { Found, Missing, Error };
+// Model A identity decision. Service is retained for API compatibility but is
+// NEVER produced any more: an account's login shell is not an account-purpose
+// authority, and target selection is derived from proven logind login
+// sessions, not from /etc/passwd fields.
 enum class ContainmentIdentity { Ordinary, Recovery, Service, Unknown };
 
 struct ContainmentIdentityEvidence {
@@ -90,6 +94,8 @@ public:
     bool verifySessionsGone(const std::vector<LoginSession>&,
                             std::string&) override;
     bool verifyUserRuntimeGone(const LoginUser&, std::string&) override;
+    RegisteredUserLookup lookupProvenUser(
+        uid_t uid, const std::string& expectedCanonicalName) override;
 
 private:
     std::shared_ptr<LogindClient> client_;

@@ -2,6 +2,7 @@
 #define FIC_INCIDENT_INCIDENT_CONTROLLER_H
 
 #include "incident/IncidentStateStore.h"
+#include "incident/IncidentSessionTargetStore.h"
 #include "incident/IncidentResponseMode.h"
 #include "session/SessionContainmentBackend.h"
 
@@ -130,6 +131,16 @@ public:
         std::shared_ptr<session::SessionContainmentBackend> sessions,
         std::shared_ptr<IncidentNetworkBackend> network);
 
+    // Model A wiring: the durable session-target store belongs to the
+    // controller's containment lifecycle. The default constructor derives the
+    // store path from the production lockstatus location; tests inject the
+    // state store path so both files share one temporary directory.
+    IncidentController(
+        IncidentStateStore stateStore,
+        IncidentSessionTargetStore targetStore,
+        std::shared_ptr<session::SessionContainmentBackend> sessions,
+        std::shared_ptr<IncidentNetworkBackend> network);
+
     IncidentController();
 
     // Monotonic raise. `requested` is the detector's severity; the persisted
@@ -185,9 +196,35 @@ private:
     IncidentResponseModeResult resolveMode() const;
     IncidentResult settleNonActiveMode(IncidentResponseMode mode,
                                       ::fic::core::IncidentSeverity severity);
+    // `newIncident` marks a raise that started a NEW incident (previous
+    // severity was a durably proven UNLOCKED): the target store is then
+    // REPLACED with generation+1 and only this incident's targets, so a stale
+    // record of a previous incident can never authorize actions.
     IncidentResult applyContainment(
         ::fic::core::IncidentSeverity severity,
-        const std::string& reason);
+        const std::string& reason,
+        bool newIncident = false);
+
+    // Model A durable registration of session-derived targets.
+    //
+    // Merges `newTargets` into the store: previously selected targets of the
+    // current incident are preserved (a target never disappears just because
+    // its login session was already terminated), duplicates are idempotent.
+    // ok=true means the merged set was DURABLY confirmed and destructive
+    // session actions may proceed; ok=false forbids them. When the store
+    // carries a DIFFERENT boot id, the previous boot's runtime obligations
+    // are resolved (processes cannot survive a kernel reboot) and the store
+    // is re-based onto the current boot before the merge.
+    struct TargetRegistration {
+        bool ok = false;
+        std::string detail;
+    };
+    TargetRegistration registerSessionTargets(
+        std::vector<IncidentSessionTarget> newTargets, bool newIncident);
+
+    // Proven kernel boot id; empty when unprovable, which disables every
+    // durable target operation (fail-closed).
+    static std::string currentIncidentBootId();
 
     void recordAudit(const std::string& event,
                      const IncidentResult& result,
@@ -198,8 +235,13 @@ private:
                         const std::string& reason) const;
 
     IncidentStateStore stateStore_;
+    IncidentSessionTargetStore targetStore_;
     std::shared_ptr<session::SessionContainmentBackend> sessions_;
     std::shared_ptr<IncidentNetworkBackend> network_;
+    // Model A: generation of the incident whose targets are in the store.
+    // Unknown after restart until the first store use adopts it; known after
+    // a new-incident reset, which lets a stale record be refused.
+    std::optional<std::uint64_t> incidentGeneration_;
     AccessGateVerifier accessGateVerifier_;
     ModeResolver modeResolver_ = IncidentResponseModeResolver::production;
 

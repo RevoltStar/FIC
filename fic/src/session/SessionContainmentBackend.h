@@ -125,6 +125,28 @@ public:
                                    std::string& diagnostic) = 0;
     virtual bool verifyUserRuntimeGone(const LoginUser& user,
                                        std::string& diagnostic) = 0;
+
+    // Model A support: look up ONE logind user by UID and prove its identity
+    // against the canonical name recorded when the user was durably selected.
+    // This lets the controller operate on an ALREADY-SELECTED target whose
+    // login session is gone, without ever treating ListUsers as a source of
+    // new targets.
+    //
+    //   Found    — logind returned this UID, the reply is proven, NSS confirms
+    //              uid<->name consistency and the recorded canonical name, and
+    //              the identity is not a protected recovery identity;
+    //   Absent   — logind positively proves no such user object (its runtime
+    //              may still need manager verification);
+    //   Unproven — logind failed, the UID maps to a different identity (UID
+    //              reuse), or any proof failed. NEVER a permission to act.
+    struct RegisteredUserLookup {
+        enum class Status { Found, Absent, Unproven };
+        Status status = Status::Unproven;
+        LoginUser user;
+        std::string diagnostic;
+    };
+    virtual RegisteredUserLookup lookupProvenUser(
+        uid_t uid, const std::string& expectedCanonicalName) = 0;
 };
 
 } // namespace fic::session

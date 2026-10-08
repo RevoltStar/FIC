@@ -1,6 +1,7 @@
 #include "incident/IncidentController.h"
 
 #include "incident/IncidentStateStore.h"
+#include "incident/IncidentSessionTargetStore.h"
 #include "incident/IncidentNotificationLevel.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
@@ -25,6 +26,7 @@ using ::fic::incident::IncidentController;
 using ::fic::incident::IncidentResult;
 using ::fic::incident::IncidentSource;
 using ::fic::incident::IncidentStateStore;
+using ::fic::incident::IncidentSessionTargetStore;
 using ::fic::incident::IncidentResponseMode;
 using ::fic::incident::IncidentResponseModeResult;
 using ::fic::incident::RuntimeState;
@@ -76,9 +78,12 @@ void writeState(const std::filesystem::path& path, const std::string& content) {
 class FakeSessions final : public SessionContainmentBackend {
 public:
     std::vector<LoginSession> sessions{
-        {"c1", 1000, "user1", "x11", SessionKind::Graphical, false},
-        {"c2", 1000, "user1", "tty", SessionKind::Terminal, false},
-        {"c3", 0, "root", "tty", SessionKind::Terminal, true},
+        {"c1", 1000, "user1", "x11", SessionKind::Graphical, false,
+         "user", "active", false, false, false, "", "", 12345},
+        {"c2", 1000, "user1", "tty", SessionKind::Terminal, false,
+         "user", "active", false, false, false, "", "", 12346},
+        {"c3", 0, "root", "tty", SessionKind::Terminal, true,
+         "user", "active", false, false, false, "", "", 12347},
     };
     std::vector<LoginUser> users{
         {1000, "user1", false, false, true},
@@ -190,6 +195,32 @@ public:
                                std::string& diagnostic) override {
         actions.push_back("verify-user-runtime:" + std::to_string(user.uid));
         return true;
+    }
+
+    // Model A seam: the controller looks up only ALREADY-REGISTERED target
+    // UIDs. The fake proves the recorded canonical name against the user
+    // inventory and reports Absent once the runtime is gone.
+    RegisteredUserLookup lookupProvenUser(
+        uid_t uid, const std::string& expectedCanonicalName) override {
+        RegisteredUserLookup result;
+        const auto it = std::find_if(
+            users.begin(), users.end(),
+            [&](const LoginUser& candidate) { return candidate.uid == uid; });
+        if (!usersProven) {
+            result.diagnostic = "logind unavailable";
+            return result;
+        }
+        if (it == users.end()) {
+            result.status = RegisteredUserLookup::Status::Absent;
+            return result;
+        }
+        if (it->name != expectedCanonicalName) {
+            result.diagnostic = "registered UID now maps to a different account";
+            return result;
+        }
+        result.status = RegisteredUserLookup::Status::Found;
+        result.user = *it;
+        return result;
     }
 
     bool acted(const std::string& action) const {
@@ -384,8 +415,13 @@ void testPersistenceFailureAuditsAfterContainment(const TempTree& tree) {
             containedAtAudit = harness.sessions->acted("terminate-session:c1");
         }
     });
+    // Break ONLY the lockstatus durability: the Model A target store must
+    // keep working, because without a durably proven target set FIC would
+    // (correctly) refuse to destroy the proving login sessions.
     AtomicFileWriter::setDirectoryFsyncHookForTests(
-        [](const std::string&) { return false; });
+        [](const std::string& target) {
+            return target.find("lockstatus") == std::string::npos;
+        });
     harness.controller.raise(IncidentSeverity::Hard, policySource("a"), "hard");
     AtomicFileWriter::setDirectoryFsyncHookForTests({});
     require(audited, "persistence failure must be audited");
@@ -524,9 +560,20 @@ void testPersistenceFailureNeverReturnsOk(const TempTree& tree) {
     require(!raised.ok && raised.runtime == RuntimeState::Degraded &&
                 raised.effectiveSeverity == IncidentSeverity::Isolate,
             "unproven persistence must override successful runtime actions");
-    require(harness.sessions->acted("terminate-session:c1") &&
-                harness.sessions->acted("terminate-user:1000"),
-            "ISOLATE containment must still be attempted");
+    // Model A: without a durably proven target set FIC must not destroy the
+    // proving login sessions (a failed durable registration forbids the
+    // destructive action). Containment is still attempted and stays DEGRADED.
+    // TerminateSession is withheld: destroying the login session would erase
+    // the only evidence that selected the user, and its durable registration
+    // just failed.
+    require(!harness.sessions->acted("terminate-session:c1"),
+            "a failed durable target registration must withhold session "
+            "termination");
+    // The user-runtime obligation comes from the PREVIOUS incident's store,
+    // so its containment runs independently; its own discharge could not be
+    // made durable, so the obligation stays pending and everything degrades.
+    require(!raised.ok && raised.runtime == RuntimeState::Degraded,
+            "the unproven store state must keep containment degraded");
 }
 
 void testFailedClearReconcilesNewIsolateState(const TempTree& tree) {
@@ -542,9 +589,13 @@ void testFailedClearReconcilesNewIsolateState(const TempTree& tree) {
                 cleared.effectiveSeverity == IncidentSeverity::Isolate &&
                 cleared.runtime == RuntimeState::Degraded,
             "failed clear must not reuse a SOFT runtime proof for ISOLATE");
-    require(harness.network->quarantineActive &&
-                harness.sessions->acted("terminate-session:c1"),
+    require(harness.network->quarantineActive,
             "failed clear must attempt containment for its new severity");
+    // Model A: the fsync failure also broke the durable target registration,
+    // so FIC must withhold the destructive session termination that would
+    // erase the proving login session.
+    require(!harness.sessions->acted("terminate-session:c1"),
+            "a broken target store must withhold destructive session actions");
 }
 
 // ---------------------------------------------------------------------------
@@ -762,6 +813,8 @@ void testPersistentBrokenFlagTracksObservation(const TempTree& tree) {
 
 int main() {
     IncidentStateStore::setOwnershipExpectationForTests(::geteuid(), ::geteuid());
+    IncidentSessionTargetStore::setOwnershipExpectationForTests(
+        ::geteuid(), ::geteuid());
 
     struct Scenario {
         const char* name;

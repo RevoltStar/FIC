@@ -1,9 +1,11 @@
 #include "session/LogindSessionContainmentBackend.h"
 #include "incident/IncidentController.h"
+#include "incident/IncidentSessionTargetStore.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -54,7 +56,14 @@ public:
         const auto it = std::find_if(users.begin(), users.end(),
             [&](const auto& u) { return u.uid == expected.uid; });
         if (it == users.end()) return LogindLookup::Missing;
-        if (it->owner != expected.owner) { error = "owner changed"; return LogindLookup::Error; }
+        // A Model A target lookup probes by UID with no pinned D-Bus owner
+        // (the owner recorded at selection time is dead after a logind
+        // restart). The EMPTY owner means "fresh lookup": the CURRENT owner
+        // is returned and later verified before any action.
+        if (!expected.owner.empty() && it->owner != expected.owner) {
+            error = "owner changed";
+            return LogindLookup::Error;
+        }
         out = *it; return LogindLookup::Found;
     }
     bool lockSession(const LogindSessionRecord&, std::string& error) override {
@@ -143,10 +152,14 @@ int main() {
         evidence = {uid, name, "/usr/sbin/nologin", false, false};
         return true;
     };
+    // Model A: the login shell is NOT an account-purpose authority. A proven
+    // non-recovery identity is eligible; whether it becomes a target is
+    // decided by its logind sessions (a genuine login session makes even a
+    // nologin-shell account a target; a lingering-only runtime does not).
     require(classifyProductionContainmentIdentity(
                 200000, "svc", serviceEvidence, highUidDiagnostic) ==
-                ContainmentIdentity::Service,
-            "proved non-login shell protects service identity");
+                ContainmentIdentity::Ordinary,
+            "Model A must not classify by login shell");
     const ContainmentIdentityEvidenceReader mismatchEvidence = [](
         uid_t, const std::string&,
         ContainmentIdentityEvidence& evidence, std::string&) {
@@ -167,16 +180,8 @@ int main() {
                 200000, "alice", failedEvidence, highUidDiagnostic) ==
                 ContainmentIdentity::Unknown,
             "failed NSS proof is Unknown, never Service");
-    const ContainmentIdentityEvidenceReader missingShell = [](
-        uid_t uid, const std::string& name,
-        ContainmentIdentityEvidence& evidence, std::string&) {
-        evidence = {uid, name, "", false, false};
-        return true;
-    };
-    require(classifyProductionContainmentIdentity(
-                200000, "alice", missingShell, highUidDiagnostic) ==
-                ContainmentIdentity::Unknown,
-            "missing shell proof is Unknown, never Service");
+    // Model A: the login shell is not consulted at all, so a missing shell
+    // field no longer changes the decision for a proven identity.
     std::string nssDiagnostic;
     require(classifyProductionContainmentIdentity(0, "root", nssDiagnostic) ==
                 ContainmentIdentity::Recovery,
@@ -307,6 +312,8 @@ int main() {
     // persistence stay in the real orchestration path.
     fic::incident::IncidentStateStore::setOwnershipExpectationForTests(
         ::geteuid(), ::geteuid());
+    fic::incident::IncidentSessionTargetStore::setOwnershipExpectationForTests(
+        ::geteuid(), ::geteuid());
     char pattern[] = "/tmp/fic-logind-containment-XXXXXX";
     char* root = ::mkdtemp(pattern);
     require(root != nullptr, "test directory creation failed");
@@ -336,7 +343,10 @@ int main() {
         auto production = std::make_shared<LogindSessionContainmentBackend>(
             client, classify);
         fic::incident::IncidentController controller(
-            fic::incident::IncidentStateStore(state), production,
+            fic::incident::IncidentStateStore(state),
+            fic::incident::IncidentSessionTargetStore(state.parent_path() /
+                "incident_session_targets"),
+            production,
             std::make_shared<fic::incident::NullIncidentNetworkBackend>());
         controller.setModeResolver([mode] {
             return fic::incident::IncidentResponseModeResult{mode, true, "test"};
@@ -383,11 +393,13 @@ int main() {
     client->keepSession = false;
     client->users = {user()};
     client->managerStopped = true;
+    client->keepSession = false;
     const auto isolated = runController(fic::incident::IncidentResponseMode::Active,
                                          IncidentSeverity::Isolate, "tty", true);
     require(!isolated.ok && client->terminatedSessions == 1 &&
             client->terminatedUsers == 1,
             "ISOLATE must contain session and user despite missing network backend");
+
     const auto failed = runController(fic::incident::IncidentResponseMode::Active,
                                       IncidentSeverity::Standard, "wayland", false);
     require(!failed.ok && failed.runtime == fic::incident::RuntimeState::Degraded &&
@@ -434,10 +446,39 @@ int main() {
         return classifyProductionContainmentIdentity(
             uid, name, serviceEvidence, diagnostic);
     };
+    // Model A R7: a service identity with a GENUINE ordinary login session is
+    // a conscious target.
     runController(fic::incident::IncidentResponseMode::Active,
         IncidentSeverity::Isolate, "wayland", true, 200000, serviceClassifier);
-    require(client->terminatedSessions == 0 && client->terminatedUsers == 0,
-            "proved service identity must survive ISOLATE");
+    require(client->terminatedSessions == 1 && client->terminatedUsers == 1,
+            "Model A: a service identity with a genuine login session is a "
+            "target");
+    // Model A R6: the same identity with ONLY a manager session (no ordinary
+    // login session) is never selected.
+    {
+        client->sessions = {session("svc-runtime", 200000, "svc",
+                                    "unspecified", "manager")};
+        client->users = {user(200000, "svc")};
+        client->terminatedSessions = client->terminatedUsers = 0;
+        auto production = std::make_shared<LogindSessionContainmentBackend>(
+            client, serviceClassifier);
+        fic::incident::IncidentController controller(
+            fic::incident::IncidentStateStore(state),
+            fic::incident::IncidentSessionTargetStore(state.parent_path() /
+                "incident_session_targets"),
+            production,
+            std::make_shared<fic::incident::NullIncidentNetworkBackend>());
+        controller.setModeResolver([] {
+            return fic::incident::IncidentResponseModeResult{
+                fic::incident::IncidentResponseMode::Active, true, "test"};
+        });
+        controller.setAccessGateVerifier([](std::string&) { return true; });
+        const auto result = controller.raise(
+            IncidentSeverity::Isolate, {"test"}, "lingering only");
+        require(client->terminatedSessions == 0 && client->terminatedUsers == 0,
+                "Model A: a manager-only runtime is never a target");
+        (void)result;
+    }
     for (const char* className : {"manager", "background", "background-light"}) {
         const auto withRuntime = runController(
             fic::incident::IncidentResponseMode::Active, IncidentSeverity::Isolate,

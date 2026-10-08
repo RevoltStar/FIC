@@ -110,18 +110,13 @@ static ContainmentIdentity classifyContainmentIdentityWithEvidence(
     }
     if (evidence.recoveryExemptionEnabled && evidence.recoveryMember)
         return ContainmentIdentity::Recovery;
-    const std::string& shell = evidence.shell;
-    if (shell.empty() || shell.front() != '/') {
-        diagnostic = "NSS login shell is not proven";
-        return ContainmentIdentity::Unknown;
-    }
-    const std::string shellName = shell.substr(shell.find_last_of('/') + 1);
-    if (shellName.empty()) {
-        diagnostic = "NSS login shell is not proven";
-        return ContainmentIdentity::Unknown;
-    }
-    if (shellName == "nologin" || shellName == "false" || shellName == "true")
-        return ContainmentIdentity::Service;
+    // Model A: the login shell is NOT an account-purpose authority. Target
+    // selection is derived from PROVEN ordinary logind login sessions; NSS
+    // here only proves that the identity (uid <-> canonical name) is
+    // consistent and whether the account is a protected recovery identity.
+    // A proven, non-recovery identity is eligible for session-derived
+    // containment; whether it becomes a target is decided by its SESSIONS,
+    // never by /etc/passwd fields or UID ranges.
     return ContainmentIdentity::Ordinary;
 }
 
@@ -460,6 +455,66 @@ bool LogindSessionContainmentBackend::verifyUserRuntimeGone(
         if (attempt == 0) std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
     return true;
+}
+
+// Model A: prove ONE already-registered UID. The expected canonical name comes
+// from the durable target record, never from current ListUsers output, so a
+// UID reused by a different account cannot silently inherit the old
+// authority. The identity is re-proven against NSS right here, and protected
+// classes still refuse.
+SessionContainmentBackend::RegisteredUserLookup
+LogindSessionContainmentBackend::lookupProvenUser(
+    uid_t uid, const std::string& expectedCanonicalName) {
+    RegisteredUserLookup result;
+    if (expectedCanonicalName.empty()) {
+        result.diagnostic = "registered target has no canonical name";
+        return result;
+    }
+    userDeadline_ = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+    LogindUserRecord current;
+    LogindUserRecord probe;
+    probe.uid = uid;
+    probe.name = expectedCanonicalName;
+    std::string lookupDiagnostic;
+    const auto status = client_->getUser(probe, current, lookupDiagnostic);
+    if (status == LogindLookup::Error) {
+        result.diagnostic = lookupDiagnostic.empty()
+            ? "logind lookup of the registered target failed"
+            : lookupDiagnostic;
+        return result;
+    }
+    if (status == LogindLookup::Missing) {
+        result.status = RegisteredUserLookup::Status::Absent;
+        return result;
+    }
+    if (current.uid != uid || current.name.empty() || current.path.empty() ||
+        current.owner.empty() || !knownUserState(current.state)) {
+        result.diagnostic = "registered target logind identity is incomplete";
+        return result;
+    }
+    // Identity re-proof: the logind name must still resolve, through NSS, to
+    // the SAME uid and canonical name that were durably recorded.
+    std::string identityDiagnostic;
+    const auto identity = classify_(current.uid, current.name, identityDiagnostic);
+    if (identity == ContainmentIdentity::Recovery) {
+        result.diagnostic = "registered target became a protected recovery identity";
+        return result;
+    }
+    if (identity != ContainmentIdentity::Ordinary ||
+        current.name != expectedCanonicalName) {
+        result.diagnostic = identity == ContainmentIdentity::Ordinary
+            ? "registered UID now maps to a different account (identity reuse)"
+            : "registered target identity is unproven: " + identityDiagnostic;
+        return result;
+    }
+    result.status = RegisteredUserLookup::Status::Found;
+    result.user.uid = current.uid;
+    result.user.name = current.name;
+    result.user.objectPath = current.path;
+    result.user.logindOwner = current.owner;
+    result.user.userManagerRunning = current.state != "offline";
+    result.user.ordinary = true;
+    return result;
 }
 
 } // namespace fic::session

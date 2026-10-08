@@ -131,6 +131,12 @@ public:
         diagnostic = "test backend never proves termination";
         return false;
     }
+    RegisteredUserLookup lookupProvenUser(
+        uid_t, const std::string&) override {
+        RegisteredUserLookup result;
+        result.diagnostic = "test backend never proves identity";
+        return result;
+    }
 };
 
 DeviceMissingReaction reactionOf(DeviceMissingReactionKind kind) {
