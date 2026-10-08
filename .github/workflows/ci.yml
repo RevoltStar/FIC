@@ -31,6 +31,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential \
             cmake \
+            libpam0g-dev \
             dpkg-dev \
             file \
             libgl1-mesa-dev \
@@ -72,7 +73,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake libgl1-mesa-dev libopengl-dev \
+            build-essential cmake libpam0g-dev libgl1-mesa-dev libopengl-dev \
             libsqlite3-dev libssl-dev libglib2.0-dev libsystemd-dev libxkbcommon-dev \
             nlohmann-json3-dev pkg-config python3 qt6-base-dev \
             qt6-base-dev-tools qt6-qpa-plugins
@@ -101,7 +102,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake libgl1-mesa-dev libopengl-dev \
+            build-essential cmake libpam0g-dev libgl1-mesa-dev libopengl-dev \
             libsqlite3-dev libssl-dev libglib2.0-dev libsystemd-dev libxkbcommon-dev \
             nlohmann-json3-dev pkg-config python3 qt6-base-dev \
             qt6-base-dev-tools qt6-qpa-plugins
