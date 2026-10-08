@@ -234,16 +234,40 @@ OFF/PASSIVE/ACTIVE containment semantics. Восстановление устр�
 перезапуске device daemon'а проверка восстанавливается через startup
 reconciliation.
 
-Retry-обязательство глобальное и очищается **только** полной проверкой,
-завершившейся **доказанно успешным** чтением inventory: ошибка SQLite
-(`sqlite3_prepare_v2`), ошибка `sqlite3_step` до `SQLITE_DONE` или ошибка
-инициализации БД означают, что inventory **недоказан** — пустой или частичный
-список никогда не трактуется как «all permanent devices are connected», и
-существующий retry сохраняется (`DB::getAllDevicesChecked()`,
-`updatePermanentIncidentRetry()`). Успешная проверка подмножества устройств
-(например, после udev remove) или успешная доставка частичного batch также не
-доказывает отсутствие недоставленных нарушений в остальной БД, поэтому
-глобальный retry сохраняется.
+Retry-обязательство глобальное. Точная семантика переходов
+(`updatePermanentIncidentRetry()` — единая production-функция):
+
+```text
+Partial check:
+  failed delivery -> retry=true (обязательство создаётся даже из false)
+  otherwise       -> retry сохраняется
+
+Full proven check:
+  all delivered / no violations -> retry=false
+  failed delivery               -> retry=true
+
+Unproven scan (ошибка SQLite prepare/step/init):
+  retry сохраняется, ошибка сообщается
+```
+
+Таким образом, частичная проверка может **создать** retry-обязательство при
+доказанной неудачной доставке (временная недоступность основного daemon не
+теряет продолжающееся нарушение), но не может **снять** уже существующее
+глобальное обязательство. Ошибка SQLite (`sqlite3_prepare_v2`), ошибка
+`sqlite3_step` до `SQLITE_DONE` или ошибка инициализации БД означают, что
+inventory **недоказан** — пустой или частичный список никогда не трактуется
+как «all permanent devices are connected» (`DB::getAllDevicesChecked()`).
+Успешная проверка подмножества устройств (например, после udev remove) или
+успешная доставка частичного batch не доказывает отсутствие недоставленных
+нарушений в остальной БД, поэтому глобальный retry сохраняется.
+
+Неуспешный permanent-check делает **общую reconciliation неуспешной**
+(`deviceReconciliationSucceeded()`): `DeviceEventQueue` не снимает требование
+reconciliation после такого отказа, и неуспешная reconciliation повторяется с
+тем же bounded 5-секундным интервалом, что и retry доставки (без 250 ms
+busy-loop); новые udev-события при этом продолжают обрабатываться независимо.
+После восстановления БД или основного daemon следующая reconciliation
+завершается успешно и снимает обязательство.
 
 Событие считается доставленным (acknowledged) только при явном подтверждении
 основного daemon'а. Ответ должен называть команду `incident_device_missing`,

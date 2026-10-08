@@ -2585,6 +2585,15 @@ target_include_directories(permanent_device_retry_tests PRIVATE
 add_test(NAME permanent_device_retry_tests
          COMMAND permanent_device_retry_tests)
 
+add_executable(reconciliation_outcome_tests
+    fic-dick/daemon/ReconciliationOutcomeTests.cpp
+)
+target_include_directories(reconciliation_outcome_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+add_test(NAME reconciliation_outcome_tests
+         COMMAND reconciliation_outcome_tests)
+
 add_executable(calc_hash_command_tests
     fic/daemon/CalcHashCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/CalcHashCommand.cpp

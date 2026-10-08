@@ -2,6 +2,7 @@
 #include "daemon/DeviceAudit.h"
 #include "daemon/PermanentDeviceIncident.h"
 #include "daemon/PermanentDeviceRetry.h"
+#include "daemon/ReconciliationOutcome.h"
 #include "device/DeviceLifecycle.h"
 #include "device/DevicePaths.h"
 #include "device/DeviceTreeSnapshot.h"
@@ -67,9 +68,11 @@ std::atomic_bool g_stop{false};
 // database instead of replaying a fixed payload.
 // The retry obligation and its transition authority live in
 // daemon/PermanentDeviceRetry.h: updatePermanentIncidentRetry is the SAME
-// production function the tests exercise. Only the throttling timestamp is
-// local to the daemon loop.
+// production function the tests exercise. Only the throttling timestamps are
+// local to the daemon loop. A failed reconciliation pass is retried with the
+// same bounded interval, so a persistent failure cannot become a busy loop.
 std::chrono::steady_clock::time_point g_nextPermanentIncidentRetry{};
+std::chrono::steady_clock::time_point g_nextReconciliationAttempt{};
 
 struct EffectivePolicy {
     std::string level = "allowed";
@@ -1946,13 +1949,19 @@ bool run_device_reconciliation(const std::string& reason) {
     }
 
     json permanentCheck = check_permanent_devices(db);
-    if (!permanentCheck.value("ok", true)) {
+    const bool permanentCheckOk = permanentCheck.value("ok", true);
+    if (!permanentCheckOk) {
         log_device("device reconciliation permanent check failed: " +
                    permanentCheck.value("message", "unknown error"), logLevel::ERROR);
     }
     log_device("device reconciliation completed: processed=" + std::to_string(processed) +
                " removed=" + std::to_string(removed), logLevel::INFO);
-    return reconciliationOk;
+    // The permanent check is a MANDATORY stage: an unreadable inventory, a
+    // failed delivery or an unverifiable main-daemon response fails the whole
+    // pass, so the reconciliation obligation survives and is retried instead
+    // of the system falsely believing the inventory is reconciled.
+    return fic::device_control::deviceReconciliationSucceeded(
+        reconciliationOk, permanentCheckOk);
 }
 
 } // namespace
@@ -2046,12 +2055,23 @@ int run_daemon(const std::string& socketPathArg) {
                     logLevel::WARN);
             }
         }
-        if (eventQueue.reconciliationRequired()) {
+        if (eventQueue.reconciliationRequired() &&
+            std::chrono::steady_clock::now() >= g_nextReconciliationAttempt) {
+            // The first attempt is immediate (the timestamp starts at epoch);
+            // a FAILED pass is retried with the same bounded interval the
+            // permanent-incident retry uses, so a persistently unavailable
+            // main daemon or database cannot turn the failure into a 250 ms
+            // full-reconciliation busy loop. New udev events keep flowing:
+            // the poll/pump below is independent of this throttle.
+            g_nextReconciliationAttempt =
+                std::chrono::steady_clock::now() +
+                fic::device_control::PERMANENT_INCIDENT_RETRY_INTERVAL;
             if (run_device_reconciliation("event ingestion recovery")) {
                 eventQueue.clearReconciliationRequired();
             } else {
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(250));
+                log_device(
+                    "device reconciliation will be retried",
+                    logLevel::WARN);
             }
         }
         for (int i = 0; i < 8; ++i) {

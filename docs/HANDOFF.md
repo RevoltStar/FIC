@@ -45,14 +45,21 @@ Device Control → Incident Response integration. Выполнено.
   `retry_required` и периодически (5s, без busy-loop) перечитывает нарушения из
   авторитетной БД и повторяет доставку; restart device daemon восстанавливает
   проверку через startup reconciliation. State в памяти, без persistent queue.
-  Retry-обязательство **глобальное** и очищается только полной проверкой с
-  **доказанно успешным** чтением inventory (`DB::getAllDevicesChecked()`:
-  prepare OK, step до `SQLITE_DONE`, finalize OK): ошибка prepare/step/init БД
-  означает недоказанный inventory — «all connected» не объявляется, retry
-  сохраняется (`updatePermanentIncidentRetry()` в
-  `daemon/PermanentDeviceRetry.h` — единая production-функция перехода).
-  Пустая частичная проверка или успешная доставка частичного batch retry не
-  меняет. Ошибка чтения БД не позволяет объявить «all connected».
+  Retry-обязательство **глобальное**; точная семантика переходов
+  (`updatePermanentIncidentRetry()` в `daemon/PermanentDeviceRetry.h` —
+  единая production-функция): частичная проверка при **доказанной неудачной
+  доставке** создаёт обязательство (даже из false — временная недоступность
+  main daemon не теряет продолжающееся нарушение), иначе — сохраняет его;
+  полная proven-проверка (all delivered / no violations) — очищает, failed
+  delivery — устанавливает; недоказанный scan (SQLite prepare/step/init
+  failure, `DB::getAllDevicesChecked()`) — никогда не трогает обязательство
+  и сообщает ошибку. Ошибка чтения БД не позволяет объявить «all connected».
+  Проверка `check_permanent_devices` — обязательный этап reconciliation:
+  её неуспех (`deviceReconciliationSucceeded()`) делает общую
+  reconciliation неуспешной, `DeviceEventQueue` не снимает требование
+  reconciliation, а повторные попытки ограничены тем же bounded 5s
+  интервалом (без 250 ms busy-loop); новые udev-события обрабатываются
+  независимо от throttle.
 * **Acknowledgement vs containment:** единая ACK-матрица sender/receiver
   (`make_device_incident_ack_response` ↔ `parse_device_incident_acknowledgement`,
   контракт закреплён `device_incident_response_compat_tests`):

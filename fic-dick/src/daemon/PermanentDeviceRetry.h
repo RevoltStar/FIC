@@ -40,8 +40,11 @@ inline void setPermanentIncidentRetryRequired(bool required) {
 // Semantics:
 //   unproven scan            -> never touch the obligation: a failed read is
 //                               not a proof of absence;
-//   partial pass             -> never touch the obligation: the subset proves
-//                               nothing about the rest of the database;
+//   partial pass             -> may CREATE the obligation on a proven failed
+//                               delivery (a real violation exists and was not
+//                               delivered), but must NEVER discharge the
+//                               global obligation: the subset proves nothing
+//                               about the rest of the database;
 //   full proven empty        -> the obligation clears;
 //   full proven, all delivered -> the obligation clears;
 //   full proven, delivery failed -> the obligation is set.
@@ -50,9 +53,20 @@ inline void updatePermanentIncidentRetry(
     bool fullCheck,
     bool violationsEmpty,
     bool delivered) {
-    if (!scanOk || !fullCheck) {
+    if (!scanOk) {
         // Preserve the current obligation: nothing was proven that would
         // either create or discharge it.
+        return;
+    }
+    if (!fullCheck) {
+        // A partial check only sees an affected subtree. It can prove that a
+        // REAL violation was not delivered (arming the retry so a temporary
+        // main-daemon outage cannot lose the incident), but it can never
+        // prove the absence of violations elsewhere, so it must not clear
+        // the global obligation.
+        if (!violationsEmpty && !delivered) {
+            setPermanentIncidentRetryRequired(true);
+        }
         return;
     }
     if (violationsEmpty || delivered) {
