@@ -33,6 +33,16 @@ struct LogindUserRecord {
 enum class LogindLookup { Found, Missing, Error };
 enum class ContainmentIdentity { Ordinary, Recovery, Service, Unknown };
 
+struct ContainmentIdentityEvidence {
+    uid_t uid = 0;
+    std::string canonicalName;
+    std::string shell;
+    bool recoveryExemptionEnabled = false;
+    bool recoveryMember = false;
+};
+using ContainmentIdentityEvidenceReader = std::function<bool(
+    uid_t, const std::string&, ContainmentIdentityEvidence&, std::string&)>;
+
 // A deliberately small transport seam. Implementations must pin every
 // operation to the unique bus owner recorded in the inventory snapshot.
 class LogindClient {
@@ -55,6 +65,12 @@ public:
 std::shared_ptr<LogindClient> makeSystemLogindClient();
 ContainmentIdentity classifyProductionContainmentIdentity(
     uid_t uid, const std::string& name, std::string& diagnostic);
+// The same production decision path with an injectable raw NSS/recovery
+// evidence reader for deterministic tests. Unknown evidence fails closed.
+ContainmentIdentity classifyProductionContainmentIdentity(
+    uid_t uid, const std::string& name,
+    const ContainmentIdentityEvidenceReader& readEvidence,
+    std::string& diagnostic);
 
 class LogindSessionContainmentBackend final : public SessionContainmentBackend {
 public:

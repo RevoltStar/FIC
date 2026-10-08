@@ -830,13 +830,21 @@ systemd-logind через системный D-Bus. Доказанно пуст�
 termination используются только обычные logind login sessions и user runtime
 с подтверждённой NSS identity; root, члены recovery-группы при включённом
 `lock_exempt_fic_members`, greeter и service identities защищены. Недоказанная
-identity также не становится целью. Признак обычного пользователя требует
-согласованного UID/имени в NSS и logind, login shell, платформенного диапазона
-обычных UID и
-обычного logind `Class`; один UID-порог сам по себе не даёт разрешения на
-termination. `HARD` завершает обычные сессии, а
-`ISOLATE` дополнительно запрашивает `TerminateUser` и проверяет исчезновение
-logind user и остановку `user@UID.service`; сетевой карантин остаётся отдельной
+identity также не становится целью: при недоказанной identity результат
+`DEGRADED`. Классификация проверяет согласованность UID/имени в NSS и logind,
+recovery status и login shell. `Service` означает доказанный non-login shell,
+`Recovery` — root или подтверждённого участника recovery-группы; отсутствие
+доказательств означает `Unknown`. Диапазон UID политики password aging не
+определяет тип пользователя: обычный LDAP/AD/SSSD пользователь может иметь
+UID выше 60000. Для `TerminateSession` требуются обычная identity и login
+session класса `user`, `user-early`, `user-light` либо `user-early-light`.
+`manager`, `background` и `background-light` не завершаются по отдельности,
+но допустимы внутри доказанного обычного user runtime при `ISOLATE`:
+`TerminateUser` завершает runtime целиком. `manager-early`, `greeter`,
+`lock-screen` и неизвестные классы не разрешают такое действие без
+дополнительных доказательств. `HARD` завершает обычные login sessions, а `ISOLATE`
+дополнительно запрашивает `TerminateUser` и проверяет исчезновение logind user
+и остановку `user@UID.service`; сетевой карантин остаётся отдельной
 незавершённой частью `ISOLATE`.
 
 В `STANDARD` графическая сессия получает `LockSession`, но ответ logind и

@@ -18,7 +18,19 @@ namespace fic::session {
 namespace {
 
 bool ordinaryClass(const std::string& name) {
-    return name == "user" || name == "user-early" || name == "user-light";
+    return name == "user" || name == "user-early" ||
+           name == "user-light" || name == "user-early-light";
+}
+
+bool userRuntimeClass(const std::string& name) {
+    return ordinaryClass(name) || name == "manager" ||
+           name == "background" || name == "background-light";
+}
+
+bool protectedSessionClass(const std::string& name) {
+    return name == "greeter" || name == "lock-screen" ||
+           name == "manager" || name == "manager-early" ||
+           name == "background" || name == "background-light";
 }
 
 bool knownSessionState(const std::string& state) {
@@ -43,30 +55,27 @@ bool sameUser(const LogindUserRecord& a, const LogindUserRecord& b) {
 
 } // namespace
 
-ContainmentIdentity classifyProductionContainmentIdentitySync(
-    uid_t uid, const std::string& name, std::string& diagnostic) {
-    if (uid == 0) return ContainmentIdentity::Recovery;
+bool readProductionIdentityEvidence(
+    uid_t uid, const std::string& name,
+    ContainmentIdentityEvidence& evidence, std::string& diagnostic) {
     ::fic::identity::pam::PamUserIdentity identity;
     if (name.empty() ||
         !::fic::identity::pam::resolvePamUserIdentity(name, identity, diagnostic) ||
         identity.uid != uid || identity.canonicalName != name) {
         if (diagnostic.empty()) diagnostic = "NSS identity does not match logind";
-        return ContainmentIdentity::Unknown;
+        return false;
     }
     const auto profile = ::fic::platform::makeBuildPlatformProfile();
     const auto exemption =
         ::fic::incident::IncidentRecoveryConfigReader::ficMemberExemptionStatus(diagnostic);
-    if (!exemption) return ContainmentIdentity::Unknown;
+    if (!exemption) return false;
+    bool member = false;
     if (*exemption) {
-        bool member = false;
         if (!::fic::identity::pam::isPamUserMemberOfGroup(
                 identity, profile.pam.incidentAccessGate.recoveryGroup,
                 member, diagnostic))
-            return ContainmentIdentity::Unknown;
-        if (member) return ContainmentIdentity::Recovery;
+            return false;
     }
-    // A system UID or a non-login shell is not an ordinary interactive
-    // target. The logind session class is checked separately by the caller.
     std::vector<char> buffer(16384);
     struct passwd record {};
     struct passwd* found = nullptr;
@@ -79,21 +88,61 @@ ContainmentIdentity classifyProductionContainmentIdentitySync(
         else break;
     } while (true);
     if (lookup != 0 || found == nullptr || found->pw_uid != uid ||
+        found->pw_name == nullptr || name != found->pw_name ||
         found->pw_shell == nullptr) {
         diagnostic = "NSS login account proof failed";
+        return false;
+    }
+    evidence = {uid, identity.canonicalName, found->pw_shell, *exemption, member};
+    return true;
+}
+
+static ContainmentIdentity classifyContainmentIdentityWithEvidence(
+    uid_t uid, const std::string& name,
+    const ContainmentIdentityEvidenceReader& readEvidence,
+    std::string& diagnostic) {
+    if (uid == 0) return ContainmentIdentity::Recovery;
+    ContainmentIdentityEvidence evidence;
+    if (!readEvidence(uid, name, evidence, diagnostic) ||
+        evidence.uid != uid || evidence.canonicalName != name) {
+        if (diagnostic.empty()) diagnostic = "NSS identity does not match logind";
         return ContainmentIdentity::Unknown;
     }
-    const std::string shell(found->pw_shell);
-    if (shell.empty() || shell.find("nologin") != std::string::npos ||
-        shell == "/bin/false" || shell == "/usr/bin/false" ||
-        uid < profile.passwordAging.policyDefaults.uidMin ||
-        uid > profile.passwordAging.policyDefaults.uidMax)
+    if (evidence.recoveryExemptionEnabled && evidence.recoveryMember)
+        return ContainmentIdentity::Recovery;
+    const std::string& shell = evidence.shell;
+    if (shell.empty() || shell.front() != '/') {
+        diagnostic = "NSS login shell is not proven";
+        return ContainmentIdentity::Unknown;
+    }
+    const std::string shellName = shell.substr(shell.find_last_of('/') + 1);
+    if (shellName.empty()) {
+        diagnostic = "NSS login shell is not proven";
+        return ContainmentIdentity::Unknown;
+    }
+    if (shellName == "nologin" || shellName == "false" || shellName == "true")
         return ContainmentIdentity::Service;
     return ContainmentIdentity::Ordinary;
 }
 
+static ContainmentIdentity classifyProductionContainmentIdentitySync(
+    uid_t uid, const std::string& name,
+    const ContainmentIdentityEvidenceReader& readEvidence,
+    std::string& diagnostic) {
+    return classifyContainmentIdentityWithEvidence(
+        uid, name, readEvidence, diagnostic);
+}
+
 ContainmentIdentity classifyProductionContainmentIdentity(
     uid_t uid, const std::string& name, std::string& diagnostic) {
+    return classifyProductionContainmentIdentity(
+        uid, name, readProductionIdentityEvidence, diagnostic);
+}
+
+ContainmentIdentity classifyProductionContainmentIdentity(
+    uid_t uid, const std::string& name,
+    const ContainmentIdentityEvidenceReader& readEvidence,
+    std::string& diagnostic) {
     struct Answer {
         ContainmentIdentity identity = ContainmentIdentity::Unknown;
         std::string diagnostic;
@@ -109,11 +158,11 @@ ContainmentIdentity classifyProductionContainmentIdentity(
     auto promise = std::make_shared<std::promise<Answer>>();
     auto result = promise->get_future();
     try {
-        std::thread([uid, name, promise] {
+        std::thread([uid, name, readEvidence, promise] {
             Answer answer;
             try {
                 answer.identity = classifyProductionContainmentIdentitySync(
-                    uid, name, answer.diagnostic);
+                    uid, name, readEvidence, answer.diagnostic);
             } catch (...) {
                 answer.diagnostic = "identity verifier failed";
             }
@@ -136,7 +185,9 @@ ContainmentIdentity classifyProductionContainmentIdentity(
 
 LogindSessionContainmentBackend::LogindSessionContainmentBackend()
     : LogindSessionContainmentBackend(makeSystemLogindClient(),
-                                      classifyProductionContainmentIdentity) {}
+        [](uid_t uid, const std::string& name, std::string& diagnostic) {
+            return classifyProductionContainmentIdentity(uid, name, diagnostic);
+        }) {}
 
 LogindSessionContainmentBackend::LogindSessionContainmentBackend(
     std::shared_ptr<LogindClient> client, IdentityClassifier classify)
@@ -179,12 +230,10 @@ SessionInventoryResult LogindSessionContainmentBackend::listSessions() {
         s.ordinary = identity == ContainmentIdentity::Ordinary &&
                      ordinaryClass(r.className);
         s.serviceAccount = identity == ContainmentIdentity::Service ||
-            r.className == "greeter" || r.className == "background" ||
-            r.className == "manager";
+            protectedSessionClass(r.className);
         if (identity == ContainmentIdentity::Unknown ||
-            (identity == ContainmentIdentity::Ordinary &&
-             !ordinaryClass(r.className) && r.className != "greeter" &&
-             r.className != "background" && r.className != "manager")) {
+            (!ordinaryClass(r.className) &&
+             !protectedSessionClass(r.className))) {
             result.proven = false;
             result.diagnostic = "session identity/classification is unproven: " + r.id;
         }
@@ -282,12 +331,27 @@ bool LogindSessionContainmentBackend::safeUser(
     if (!client_->listSessions(sessions, diagnostic)) return false;
     for (const auto& s : sessions) {
         if (s.uid != user.uid) continue;
-        if (s.owner != user.logindOwner ||
+        if (s.owner != user.logindOwner || s.name != user.name ||
+            s.id.empty() || s.path.empty() || s.timestamp == 0 ||
+            !knownSessionState(s.state) ||
             classify_(s.uid, s.name, diagnostic) !=
-                ContainmentIdentity::Ordinary || !ordinaryClass(s.className)) {
+                ContainmentIdentity::Ordinary ||
+            !userRuntimeClass(s.className)) {
             diagnostic = "user runtime includes an unproven or protected session";
             return false;
         }
+    }
+    if (std::chrono::steady_clock::now() >= userDeadline_) {
+        diagnostic = "user containment deadline exceeded";
+        return false;
+    }
+    LogindUserRecord refreshed;
+    if (client_->getUser(expected, refreshed, diagnostic) != LogindLookup::Found ||
+        !sameUser(expected, refreshed) ||
+        classify_(refreshed.uid, refreshed.name, diagnostic) !=
+            ContainmentIdentity::Ordinary) {
+        diagnostic = "user identity changed before termination";
+        return false;
     }
     return true;
 }

@@ -74,8 +74,12 @@ public:
                        std::string& error) override {
         ++terminatedUsers;
         if (!acceptTermination) { error = "terminate rejected"; return false; }
-        if (!keepUser) users.erase(std::remove_if(users.begin(), users.end(),
-            [&](const auto& current) { return current.uid == u.uid; }), users.end());
+        if (!keepUser) {
+            users.erase(std::remove_if(users.begin(), users.end(),
+                [&](const auto& current) { return current.uid == u.uid; }), users.end());
+            sessions.erase(std::remove_if(sessions.begin(), sessions.end(),
+                [&](const auto& current) { return current.uid == u.uid; }), sessions.end());
+        }
         return true;
     }
     bool userManagerStopped(uid_t, bool& stopped, std::string&) override {
@@ -103,6 +107,76 @@ ContainmentIdentity identity(uid_t uid, const std::string&, std::string&) {
 }
 
 int main() {
+    const ContainmentIdentityEvidenceReader highUidEvidence = [](
+        uid_t uid, const std::string& name,
+        ContainmentIdentityEvidence& evidence, std::string&) {
+        evidence = {uid, name, "/bin/bash", false, false};
+        return true;
+    };
+    std::string highUidDiagnostic;
+    require(classifyProductionContainmentIdentity(
+                200000, "alice", highUidEvidence, highUidDiagnostic) ==
+                ContainmentIdentity::Ordinary,
+            "proven high-UID login identity must be ordinary");
+    require(classifyProductionContainmentIdentity(
+                100001, "alice", highUidEvidence, highUidDiagnostic) ==
+                ContainmentIdentity::Ordinary,
+            "ordinary account classification must not have a UID ceiling");
+    const auto evidenceClassifier = [&](uid_t uid, const std::string& name,
+                                        std::string& diagnostic) {
+        return classifyProductionContainmentIdentity(
+            uid, name, highUidEvidence, diagnostic);
+    };
+    const ContainmentIdentityEvidenceReader recoveryEvidence = [](
+        uid_t uid, const std::string& name,
+        ContainmentIdentityEvidence& evidence, std::string&) {
+        evidence = {uid, name, "/bin/bash", true, true};
+        return true;
+    };
+    require(classifyProductionContainmentIdentity(
+                200000, "rescue", recoveryEvidence, highUidDiagnostic) ==
+                ContainmentIdentity::Recovery,
+            "proved recovery membership protects high-UID users");
+    const ContainmentIdentityEvidenceReader serviceEvidence = [](
+        uid_t uid, const std::string& name,
+        ContainmentIdentityEvidence& evidence, std::string&) {
+        evidence = {uid, name, "/usr/sbin/nologin", false, false};
+        return true;
+    };
+    require(classifyProductionContainmentIdentity(
+                200000, "svc", serviceEvidence, highUidDiagnostic) ==
+                ContainmentIdentity::Service,
+            "proved non-login shell protects service identity");
+    const ContainmentIdentityEvidenceReader mismatchEvidence = [](
+        uid_t, const std::string&,
+        ContainmentIdentityEvidence& evidence, std::string&) {
+        evidence = {200001, "alice", "/bin/bash", false, false};
+        return true;
+    };
+    require(classifyProductionContainmentIdentity(
+                200000, "alice", mismatchEvidence, highUidDiagnostic) ==
+                ContainmentIdentity::Unknown,
+            "NSS UID mismatch is Unknown, never Service");
+    const ContainmentIdentityEvidenceReader failedEvidence = [](
+        uid_t, const std::string&,
+        ContainmentIdentityEvidence&, std::string& diagnostic) {
+        diagnostic = "NSS unavailable";
+        return false;
+    };
+    require(classifyProductionContainmentIdentity(
+                200000, "alice", failedEvidence, highUidDiagnostic) ==
+                ContainmentIdentity::Unknown,
+            "failed NSS proof is Unknown, never Service");
+    const ContainmentIdentityEvidenceReader missingShell = [](
+        uid_t uid, const std::string& name,
+        ContainmentIdentityEvidence& evidence, std::string&) {
+        evidence = {uid, name, "", false, false};
+        return true;
+    };
+    require(classifyProductionContainmentIdentity(
+                200000, "alice", missingShell, highUidDiagnostic) ==
+                ContainmentIdentity::Unknown,
+            "missing shell proof is Unknown, never Service");
     std::string nssDiagnostic;
     require(classifyProductionContainmentIdentity(0, "root", nssDiagnostic) ==
                 ContainmentIdentity::Recovery,
@@ -184,6 +258,9 @@ int main() {
     client->sessions = {session("dup"), session("dup")};
     require(!backend.listSessions().proven,
             "duplicate session IDs must invalidate inventory");
+    client->sessions = {session("light", 1000, "alice", "tty", "user-early-light")};
+    require(backend.listSessions().proven && backend.listSessions().sessions[0].ordinary,
+            "known user-early-light class is an ordinary login session");
     client->sessions.clear();
 
     client->users = {user(), user(0, "root"), user(1001, "rescue"),
@@ -194,9 +271,21 @@ int main() {
         require(!backend.terminateUser(users.users[i]).performed,
                 "protected user must never terminate");
     require(client->terminatedUsers == 0, "protected user reached logind action");
+    client->users[0].name = "intruder";
+    require(!backend.terminateUser(users.users[0]).performed,
+            "changed user identity must block TerminateUser");
+    client->users[0] = user();
     client->sessions = {session("x1", 1000, "alice", "tty", "greeter")};
     require(!backend.terminateUser(users.users[0]).performed,
             "protected same-UID session blocks TerminateUser");
+    for (const char* className : {"manager", "background", "background-light"}) {
+        client->sessions = {session("runtime", 1000, "alice", "unspecified", className)};
+        client->keepUser = true;
+        const int before = client->terminatedUsers;
+        require(backend.terminateUser(users.users[0]).performed &&
+                client->terminatedUsers == before + 1,
+                "ordinary user runtime class must permit TerminateUser");
+    }
     client->sessions.clear();
     client->keepUser = true;
     client->acceptTermination = false;
@@ -228,16 +317,24 @@ int main() {
         out.close();
         ::chmod(state.c_str(), 0640);
     };
+    fic::incident::ContainmentStatus lastContainment;
     const auto runController = [&](fic::incident::IncidentResponseMode mode,
                                    fic::core::IncidentSeverity severity,
                                    const std::string& type,
-                                   bool inventoryOk) {
+                                   bool inventoryOk,
+                                   uid_t targetUid = 1000,
+                                   LogindSessionContainmentBackend::IdentityClassifier
+                                       classify = identity,
+                                   std::vector<LogindSessionRecord> extraSessions = {}) {
         resetState();
-        client->sessions = {session("c1", 1000, "alice", type)};
+        client->sessions = {session("c1", targetUid, "alice", type)};
+        client->sessions.insert(client->sessions.end(),
+                                extraSessions.begin(), extraSessions.end());
+        client->users = {user(targetUid)};
         client->listSessionsOk = inventoryOk;
         client->locks = client->terminatedSessions = client->terminatedUsers = 0;
         auto production = std::make_shared<LogindSessionContainmentBackend>(
-            client, identity);
+            client, classify);
         fic::incident::IncidentController controller(
             fic::incident::IncidentStateStore(state), production,
             std::make_shared<fic::incident::NullIncidentNetworkBackend>());
@@ -245,8 +342,10 @@ int main() {
             return fic::incident::IncidentResponseModeResult{mode, true, "test"};
         });
         controller.setAccessGateVerifier([](std::string&) { return true; });
-        return controller.raise(severity,
-                                {"test"}, "session containment");
+        const auto result = controller.raise(
+            severity, {"test"}, "session containment");
+        lastContainment = controller.status().containment;
+        return result;
     };
     using fic::core::IncidentSeverity;
     runController(fic::incident::IncidentResponseMode::Off,
@@ -294,5 +393,86 @@ int main() {
     require(!failed.ok && failed.runtime == fic::incident::RuntimeState::Degraded &&
             client->terminatedSessions == 0,
             "failed logind inventory must degrade without mutation");
+    const auto highHard = runController(fic::incident::IncidentResponseMode::Active,
+        IncidentSeverity::Hard, "wayland", true, 200000, evidenceClassifier);
+    require(highHard.ok && client->terminatedSessions == 1 &&
+            client->terminatedUsers == 0,
+            "HARD must terminate and verify high-UID ordinary login session");
+    const auto highTty = runController(fic::incident::IncidentResponseMode::Active,
+        IncidentSeverity::Hard, "tty", true, 100001, evidenceClassifier);
+    require(highTty.ok && client->terminatedSessions == 1,
+            "HARD must terminate high-UID terminal login session");
+    const auto highIsolate = runController(fic::incident::IncidentResponseMode::Active,
+        IncidentSeverity::Isolate, "wayland", true, 200000, evidenceClassifier);
+    require(!highIsolate.ok && client->terminatedSessions == 1 &&
+            client->terminatedUsers == 1 &&
+            lastContainment.userRuntimeContained,
+            "ISOLATE must terminate and verify high-UID ordinary user runtime");
+    const auto unavailableClassifier = [&](uid_t uid, const std::string& name,
+                                           std::string& diagnostic) {
+        return classifyProductionContainmentIdentity(
+            uid, name, failedEvidence, diagnostic);
+    };
+    const auto unknownIdentity = runController(
+        fic::incident::IncidentResponseMode::Active,
+        IncidentSeverity::Hard, "wayland", true, 200000, unavailableClassifier);
+    require(!unknownIdentity.ok && unknownIdentity.runtime ==
+                fic::incident::RuntimeState::Degraded &&
+            client->terminatedSessions == 0,
+            "failed production identity proof must not produce false ACTIVE");
+    const auto recoveryClassifier = [&](uid_t uid, const std::string& name,
+                                        std::string& diagnostic) {
+        return classifyProductionContainmentIdentity(
+            uid, name, recoveryEvidence, diagnostic);
+    };
+    runController(fic::incident::IncidentResponseMode::Active,
+        IncidentSeverity::Isolate, "wayland", true, 200000, recoveryClassifier);
+    require(client->terminatedSessions == 0 && client->terminatedUsers == 0,
+            "proved recovery member must survive ISOLATE");
+    const auto serviceClassifier = [&](uid_t uid, const std::string& name,
+                                       std::string& diagnostic) {
+        return classifyProductionContainmentIdentity(
+            uid, name, serviceEvidence, diagnostic);
+    };
+    runController(fic::incident::IncidentResponseMode::Active,
+        IncidentSeverity::Isolate, "wayland", true, 200000, serviceClassifier);
+    require(client->terminatedSessions == 0 && client->terminatedUsers == 0,
+            "proved service identity must survive ISOLATE");
+    for (const char* className : {"manager", "background", "background-light"}) {
+        const auto withRuntime = runController(
+            fic::incident::IncidentResponseMode::Active, IncidentSeverity::Isolate,
+            "wayland", true, 1000, evidenceClassifier,
+            {session("runtime", 1000, "alice", "unspecified", className)});
+        require(!withRuntime.ok && client->terminatedSessions == 1 &&
+                client->terminatedUsers == 1 &&
+                lastContainment.userRuntimeContained,
+                "ISOLATE must terminate ordinary runtime with manager/background");
+    }
+    const auto withGreeter = runController(
+        fic::incident::IncidentResponseMode::Active, IncidentSeverity::Isolate,
+        "wayland", true, 1000, evidenceClassifier,
+        {session("greeter", 1000, "alice", "wayland", "greeter")});
+    require(!withGreeter.ok && client->terminatedUsers == 0,
+            "ISOLATE must preserve same-UID greeter");
+    const auto withLockScreen = runController(
+        fic::incident::IncidentResponseMode::Active, IncidentSeverity::Isolate,
+        "wayland", true, 1000, evidenceClassifier,
+        {session("lock", 1000, "alice", "wayland", "lock-screen")});
+    require(!withLockScreen.ok && client->terminatedUsers == 0,
+            "ISOLATE must preserve same-UID lock-screen");
+    const auto withManagerEarly = runController(
+        fic::incident::IncidentResponseMode::Active, IncidentSeverity::Isolate,
+        "wayland", true, 1000, evidenceClassifier,
+        {session("early", 1000, "alice", "unspecified", "manager-early")});
+    require(!withManagerEarly.ok && client->terminatedUsers == 0,
+            "root-oriented manager-early must not authorize ordinary user termination");
+    const auto withUnknownClass = runController(
+        fic::incident::IncidentResponseMode::Active, IncidentSeverity::Isolate,
+        "wayland", true, 1000, evidenceClassifier,
+        {session("unknown", 1000, "alice", "unspecified", "future-class")});
+    require(!withUnknownClass.ok && withUnknownClass.runtime ==
+                fic::incident::RuntimeState::Degraded &&
+            client->terminatedSessions == 0 && client->terminatedUsers == 0,
+            "unknown logind class must fail closed without false ACTIVE");
     std::filesystem::remove_all(root);
 }
