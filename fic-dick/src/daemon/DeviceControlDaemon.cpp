@@ -448,12 +448,17 @@ bool deny_enforcement_observed(const DeviceInfo& device, std::string& details) {
 // IncidentController, so a compromised or misconfigured device daemon can
 // never choose the host's containment level.
 struct DeviceIncidentDelivery {
+    // True only when the main daemon ACKNOWLEDGED the event: it processed a
+    // valid event and durably recorded the required severity, or intentionally
+    // ignored it (OFF/NONE/DISABLE). A DEGRADED containment does NOT un-
+    // acknowledge a durably persisted severity.
     bool delivered = false;
     bool escalated = false;
     bool ignored = false;
     std::string mode;
     std::string requestedSeverity;
     std::string effectiveSeverity;
+    std::string runtime;
     std::string message;
 };
 
@@ -477,29 +482,24 @@ DeviceIncidentDelivery call_fic_device_incident(
             : result.error;
         return delivery;
     }
-    const json& response = result.response;
-    if (!response.is_object()) {
-        delivery.message = "main fic daemon returned a malformed response";
+    // STRICT acknowledgement validation: the response must name THIS command,
+    // be well-typed and carry a consistent acknowledged/persistence pair. A
+    // response from an old daemon, a wrong command or a malformed shape is a
+    // delivery failure, never a success.
+    const DeviceIncidentAcknowledgement acknowledgement =
+        parse_device_incident_acknowledgement(result.response);
+    if (!acknowledgement.valid) {
+        delivery.message = acknowledgement.error;
         return delivery;
     }
-    // An unknown command answer from an OLD main daemon must never be read as
-    // a success: ok is taken from the response only with a known shape.
-    const std::string command = response.value("command", "");
-    const bool recognizedShape = response.contains("command") &&
-        response.contains("escalated") && response.contains("response_mode");
-    if (!recognizedShape) {
-        delivery.message = "main fic daemon did not process the device incident: " +
-            response.value("message", "unknown response");
-        return delivery;
-    }
-    (void)command;
-    delivery.delivered = response.value("ok", false);
-    delivery.escalated = response.value("escalated", false);
-    delivery.ignored = response.value("ignored", false);
-    delivery.mode = response.value("response_mode", "");
-    delivery.requestedSeverity = response.value("requested_severity", "");
-    delivery.effectiveSeverity = response.value("effective_severity", "");
-    delivery.message = response.value("message", "unknown fic daemon response");
+    delivery.delivered = acknowledgement.acknowledged;
+    delivery.escalated = acknowledgement.escalated;
+    delivery.ignored = acknowledgement.ignored;
+    delivery.mode = acknowledgement.mode;
+    delivery.requestedSeverity = acknowledgement.requestedSeverity;
+    delivery.effectiveSeverity = acknowledgement.effectiveSeverity;
+    delivery.runtime = acknowledgement.runtime;
+    delivery.message = acknowledgement.message;
     return delivery;
 }
 
@@ -692,13 +692,27 @@ json missing_permanent_to_json(const std::vector<PermanentViolation>& violations
 }
 
 json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& candidateIds = std::nullopt) {
-    const std::vector<PermanentViolation> violations = collect_missing_permanent_devices(db, candidateIds);
+    // A PARTIAL check only sees the affected subtree: proving THAT subset has
+    // no violations proves nothing about the rest of the database, so it must
+    // never clear the global retry obligation for an undelivered violation
+    // elsewhere. Only a FULL check of every permanent obligation may do that,
+    // and only after the database itself was proven readable.
+    const bool fullCheck = !candidateIds.has_value();
+    const std::vector<PermanentViolation> violations =
+        collect_missing_permanent_devices(db, candidateIds);
 
     if (violations.empty()) {
-        // A later successful check clears the retry obligation: the violation is
-        // no longer present, so nothing must be re-reported.
-        setPermanentIncidentRetryRequired(false);
-        return fic::ipc::make_ok_response("all permanent devices are connected");
+        if (fullCheck) {
+            // A later successful FULL check clears the retry obligation: every
+            // permanent obligation was re-derived from the authoritative
+            // database and none is violated any more, so nothing must be
+            // re-reported.
+            setPermanentIncidentRetryRequired(false);
+            return fic::ipc::make_ok_response("all permanent devices are connected");
+        }
+        // Partial empty: the global retry obligation, if any, stays untouched.
+        return fic::ipc::make_ok_response(
+            "affected permanent devices are connected");
     }
 
     // ONE aggregated detector event per pass: the main daemon resolves the
@@ -710,14 +724,19 @@ json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& cand
         // daemon becomes reachable again. The recheck itself re-derives the
         // violations from the authoritative database and observed presence.
         setPermanentIncidentRetryRequired(true);
-    } else {
+    } else if (fullCheck) {
+        // Only a FULL successful delivery proves that no undelivered violation
+        // remains anywhere in the database.
         setPermanentIncidentRetryRequired(false);
     }
+    // A successful PARTIAL delivery keeps an existing global retry: other
+    // undelivered violations may still exist outside this subset.
 
     // Device-local audit records the FACT of the violation and the delivery
     // result. It is independent of the incident response mode: even OFF must be
     // visible here, while incident audit/notifications stay owned by the main
-    // daemon.
+    // daemon. The containment runtime is reported but is NOT the delivery
+    // criterion.
     for (const PermanentViolation& violation : violations) {
         add_event(db,
                   violation.deviceId,
@@ -729,6 +748,7 @@ json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& cand
                       "; requested=" + delivery.requestedSeverity +
                       "; effective=" + delivery.effectiveSeverity +
                       "; escalated=" + (delivery.escalated ? "true" : "false") +
+                      "; runtime=" + delivery.runtime +
                       "; detail=" + delivery.message);
     }
 

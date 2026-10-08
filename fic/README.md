@@ -792,9 +792,18 @@ Device-detector события идут по той же единой подси
 `DC/DeviceControl/permanent_device_missing_severity` (NONE/SOFT/STANDARD/HARD/
 ISOLATE; заводской default STANDARD) и вызывает `IncidentController.raise()`.
 `NONE` и `DISABLE` не создают incident state; `OFF` не выполняет audit/
-notification/containment. Восстановление устройства не снижает severity и не
-вызывает автоматический clear. Ответ `ok=true` означает обработку события, а не
-физическую блокировку.
+notification/containment. Недоказуемая настройка (политика отсутствует,
+статус не ENABLE/DISABLE, значение отсутствует или не распознано) является
+fail-closed: реакция `ISOLATE` через `IncidentController.raise()`, а не
+намеренное игнорирование. Восстановление устройства не снижает severity и не
+вызывает автоматический clear. Ответ distinguishes `acknowledged` (событие
+обработано и severity длительно записана — из `IncidentResult.
+persistenceConfirmed`, т.е. фактического результата
+`IncidentStateStore::raiseToAtLeast()`) от `ok`/containment-результата:
+`acknowledged=true` не доказывает успешный containment, и `DEGRADED`-
+containment при подтверждённой персистенции не является ошибкой доставки —
+повторная доставка не выполняется, за containment отвечает сам
+IncidentController.
 
 `pam_fic_access.so` установлен постоянно. В `OFF`/`PASSIVE` он нейтрален и
 не требует работающего daemon. Только в `ACTIVE` обычный контролируемый вход

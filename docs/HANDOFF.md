@@ -26,7 +26,13 @@ Device Control → Incident Response integration. Выполнено.
   Это НЕ `Policy::violation_severity`: реакция на runtime-факт отсутствия
   устройства, а не на apply failure. У самой policy `violation_severity=NONE`,
   чтобы её собственная ошибка применения не породила самостоятельный incident.
-  Неверное значение fail-closed (не интерпретируется как NONE/STANDARD).
+  **Недоказуемая настройка — fail-closed ISOLATE:** резолвер
+  (`fic::daemon::resolve_device_missing_severity`, `fic/src/daemon/
+  DeviceIncidentEvent.{h,cpp}`) различает доказанный DISABLE и доказанный
+  NONE (намеренное игнорирование) от UNPROVEN (политика отсутствует, статус
+  не ENABLE/DISABLE, значение отсутствует или не распознано): UNPROVEN даёт
+  fail-closed реакцию ISOLATE через `IncidentController.raise()`, а не
+  молчаливое подавление инцидента.
 * **Режимы:** OFF — не изменяет lockstatus, не создаёт incident audit/
   notification; PASSIVE — persistent severity + audit + notification, без
   containment; ACTIVE — плюс существующий containment. NONE/DISABLE —
@@ -39,6 +45,19 @@ Device Control → Incident Response integration. Выполнено.
   `retry_required` и периодически (5s, без busy-loop) перечитывает нарушения из
   авторитетной БД и повторяет доставку; restart device daemon восстанавливает
   проверку через startup reconciliation. State в памяти, без persistent queue.
+  Retry-обязательство **глобальное** и очищается только полной проверкой:
+  пустая частичная проверка или успешная доставка частичного batch не очищает
+  глобальный retry — недоставленные нарушения в остальной БД остаются
+  обязательством. Ошибка чтения БД не позволяет объявить «all connected».
+* **Acknowledgement vs containment:** `IncidentResult.persistenceConfirmed`
+  отражает фактический результат `IncidentStateStore::raiseToAtLeast()`
+  (durable запись), независимо от containment-результата. IPC-ответ несёт
+  `acknowledged`/`persistence_confirmed` отдельно от `ok`; fic-dick принимает
+  строго типизированный ответ (имя команды, типы полей, согласованность
+  acknowledged/persistence/response_mode); `acknowledged=true` НЕ доказывает
+  containment, `DEGRADED`-containment при подтверждённой персистенции не
+  запускает повторную доставку — за containment отвечает сам
+  IncidentController.
 * **Deadlock:** `device_regenerate_policy` handler fic-dick НЕ вызывает
   `check_permanent_devices`, поэтому цепочка fic→fic-dick→fic не существует.
 * **Ответ:** `ok=true` = событие обработано, НЕ «компьютер заблокирован»;

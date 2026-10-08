@@ -284,6 +284,10 @@ IncidentResult IncidentController::raise(
             current.provenance != IncidentStateStore::Provenance::Proven;
         ignored.ignoredByMode = true;
         ignored.detail = "incident ignored in OFF mode";
+        // OFF acknowledges the event without any write: the current proven
+        // state is unchanged, so there is no persistence to confirm.
+        ignored.persistenceConfirmed =
+            current.provenance == IncidentStateStore::Provenance::Proven;
         return ignored;
     }
 
@@ -301,6 +305,9 @@ IncidentResult IncidentController::raise(
         ? raised.effectiveSeverity
         : IncidentSeverity::Isolate;
     result.escalated = raised.escalated;
+    // The persistence acknowledgement comes from the ACTUAL store outcome, not
+    // from containment or from a severity comparison.
+    result.persistenceConfirmed = raised.durable;
     result.persistentStateBroken =
         stateStore_.read().provenance != IncidentStateStore::Provenance::Proven;
     result.detail = raised.detail;

@@ -42,6 +42,33 @@ nlohmann::json permanent_device_incident_request(
 bool is_valid_permanent_device_incident_request(
     const nlohmann::json& request, std::string& error);
 
+// The acknowledgement the main daemon must return for a detector event.
+//
+// acknowledged and containment are deliberately SEPARATE: a durably persisted
+// severity with a DEGRADED containment is STILL an acknowledged event, because
+// the incident state owns the containment retry lifecycle; re-delivering it
+// would only re-run actions that already failed.
+struct DeviceIncidentAcknowledgement {
+    bool valid = false;
+    bool acknowledged = false;
+    bool persistenceConfirmed = false;
+    bool ignored = false;
+    bool escalated = false;
+    std::string mode;
+    std::string requestedSeverity;
+    std::string effectiveSeverity;
+    std::string runtime;
+    std::string message;
+    std::string error;
+};
+
+// STRICT acknowledgement validation: the response must name THIS command, be
+// well-typed, and carry a consistent acknowledged/persistence pair. A response
+// from an old daemon, a wrong command, or a malformed shape is a delivery
+// failure, never a success.
+DeviceIncidentAcknowledgement parse_device_incident_acknowledgement(
+    const nlohmann::json& response);
+
 } // namespace fic::device_control
 
 #endif // FIC_DICK_DAEMON_PERMANENT_DEVICE_INCIDENT_H

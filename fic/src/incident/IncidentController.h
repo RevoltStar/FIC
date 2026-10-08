@@ -78,6 +78,14 @@ struct IncidentResult {
     // same or a lower level leaves it false, which is what keeps desktop
     // notifications from repeating.
     bool escalated = false;
+    // True iff the requested severity is DURABLY in the persistent incident
+    // state after this call (including the idempotent "already at least this
+    // high" case). This is the delivery acknowledgement a detector may rely
+    // on, and it is deliberately INDEPENDENT of the containment result: a
+    // DEGRADED containment does not un-deliver an event whose severity is
+    // durably recorded, and a proven containment never proves persistence by
+    // itself.
+    bool persistenceConfirmed = false;
     // True iff the current persistent observation is not a valid Proven token.
     bool persistentStateBroken = false;
     RuntimeState runtime = RuntimeState::Inactive;

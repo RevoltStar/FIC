@@ -31,6 +31,7 @@
 #include "daemon/AdminAudit.h"
 #include "daemon/CalcHashCommand.h"
 #include "daemon/LogRecordsReader.h"
+#include "daemon/DeviceIncidentEvent.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "modules/identity_access/pam/PamManagedPasswordSlotBootstrap.h"
@@ -710,42 +711,10 @@ bool validate_device_missing_event(
     return true;
 }
 
-// The authoritative detector reaction, resolved from the trusted main-daemon
-// configuration. nullopt means "the detector does not escalate": either the
-// policy is DISABLE, or the configured value is NONE.
-std::optional<fic::core::IncidentSeverity> resolve_device_missing_severity(
-    PolicyRegistry& policyRegistry, std::string& diagnostic) {
-    Policy* policy =
-        getPolicyClass(policyRegistry, "DC", "permanent_device_missing_severity");
-    if (policy == nullptr) {
-        diagnostic = "permanent_device_missing_severity policy is not registered";
-        return std::nullopt;
-    }
-    if (!policy->isEnabled()) {
-        diagnostic = "permanent_device_missing_severity is DISABLE";
-        return std::nullopt;
-    }
-    const std::optional<std::string> value = policy->getValue();
-    if (!value.has_value()) {
-        // Fail closed, never silently NONE: an unparsable security-critical
-        // value must not degrade the reaction.
-        diagnostic =
-            "permanent_device_missing_severity has an invalid configured value";
-        return std::nullopt;
-    }
-    const auto severity = fic::core::parseIncidentSeverityToken(value.value());
-    if (!severity.has_value()) {
-        diagnostic =
-            "permanent_device_missing_severity has an invalid configured value";
-        return std::nullopt;
-    }
-    if (*severity == fic::core::IncidentSeverity::Unlocked) {
-        diagnostic = "permanent_device_missing_severity is NONE";
-        return std::nullopt;
-    }
-    diagnostic = "configured " + value.value();
-    return severity;
-}
+// The authoritative detector reaction for a permanent-device-missing event is
+// resolved by fic::daemon::resolve_device_missing_severity() (see
+// daemon/DeviceIncidentEvent.h): the typed outcome separates an INTENTIONAL
+// ignore from an UNPROVEN configuration, which fails closed to ISOLATE.
 
 json handle_request(json request,
                     const PeerCredentials& peer,
@@ -1164,22 +1133,31 @@ json handle_request(json request,
                 return fic::ipc::make_error_response(eventError);
             }
             // 3. The authoritative reaction is resolved HERE, from the trusted
-            //    configuration; the detector never chooses it.
-            std::string severityDiagnostic;
-            const std::optional<fic::core::IncidentSeverity> configured =
-                resolve_device_missing_severity(policyRegistry, severityDiagnostic);
+            //    configuration; the detector never chooses it. The typed
+            //    outcome separates an INTENTIONAL ignore from an UNPROVEN
+            //    configuration, which must fail closed to ISOLATE.
+            Policy* detectorPolicy = getPolicyClass(
+                policyRegistry, "DC", "permanent_device_missing_severity");
+            const fic::daemon::DeviceMissingReaction reaction =
+                detectorPolicy == nullptr
+                    ? fic::daemon::DeviceMissingReaction{}
+                    : fic::daemon::resolve_device_missing_severity(*detectorPolicy);
             const fic::incident::IncidentResponseModeResult mode =
                 fic::incident::IncidentResponseModeResolver::production();
 
-            // 4. Mode/NONE semantics. OFF or NONE must be distinguishable from
-            //    an IPC error, and neither must write incident state.
-            if (!configured.has_value()) {
+            // 4. An INTENTIONAL ignore (proven DISABLE or proven NONE). The
+            //    event is acknowledged without any incident write, and the
+            //    response is distinguishable from an IPC error.
+            if (reaction.kind == fic::daemon::DeviceMissingReactionKind::Disabled ||
+                reaction.kind == fic::daemon::DeviceMissingReactionKind::None) {
                 return json{
                     {"ok", true},
                     {"message", "device incident processed"},
                     {"command", command},
+                    {"acknowledged", true},
+                    {"persistence_confirmed", true},
                     {"escalated", false},
-                    {"reason", severityDiagnostic},
+                    {"reason", reaction.diagnostic},
                     {"response_mode", fic::incident::incidentResponseModeToken(mode.mode)},
                     {"requested_severity", "NONE"},
                     {"effective_severity",
@@ -1193,7 +1171,8 @@ json handle_request(json request,
 
             // 5. ONE raise per detector batch: the controller is monotonic, so
             //    an aggregated event is enough and keeps the audit/notification
-            //    deduplication meaningful.
+            //    deduplication meaningful. An UNPROVEN configuration raises the
+            //    fail-closed ISOLATE instead of suppressing the incident.
             fic::incident::IncidentSource source;
             source.name = "device";
             std::string reason = "PERMANENT_DEVICE_MISSING:";
@@ -1201,22 +1180,28 @@ json handle_request(json request,
                 reason += " device_id=" + std::to_string(deviceId);
             }
             const fic::incident::IncidentResult raised =
-                incidentController().raise(*configured, source, reason);
+                incidentController().raise(reaction.severity, source, reason);
 
-            // 6. An explicit result: ok=true means the EVENT was processed, not
-            //    that the host was contained. PASSIVE with a proven persistence
-            //    is a success with no containment.
+            // 6. An explicit result. acknowledged=true means the EVENT was
+            //    processed and its severity is durably recorded; it does NOT
+            //    mean the host is contained. persistence_confirmed reflects the
+            //    actual store outcome, independent of the containment result.
             return json{
                 {"ok", raised.ok},
-                {"message", raised.detail.empty()
-                                 ? "device incident processed"
-                                 : raised.detail},
+                {"message", raised.ok
+                    ? (raised.runtime == fic::incident::RuntimeState::Degraded
+                           ? "device incident recorded; containment degraded"
+                           : "device incident processed")
+                    : "device incident could not be recorded"},
                 {"command", command},
+                {"acknowledged", raised.persistenceConfirmed},
+                {"persistence_confirmed", raised.persistenceConfirmed},
+                {"incident_ok", raised.ok},
                 {"escalated", raised.escalated},
-                {"reason", severityDiagnostic},
+                {"reason", reaction.diagnostic},
                 {"response_mode", fic::incident::incidentResponseModeToken(mode.mode)},
                 {"requested_severity",
-                 fic::core::incidentSeverityToken(*configured)},
+                 fic::core::incidentSeverityToken(reaction.severity)},
                 {"effective_severity",
                  fic::core::incidentSeverityToken(raised.effectiveSeverity)},
                 {"ignored", raised.ignoredByMode},

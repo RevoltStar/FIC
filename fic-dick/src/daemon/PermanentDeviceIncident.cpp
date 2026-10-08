@@ -90,4 +90,80 @@ bool is_valid_permanent_device_incident_request(
     return true;
 }
 
+DeviceIncidentAcknowledgement parse_device_incident_acknowledgement(
+    const json& response) {
+    DeviceIncidentAcknowledgement acknowledgement;
+    if (!response.is_object()) {
+        acknowledgement.error = "main fic daemon returned a malformed response";
+        return acknowledgement;
+    }
+    // An old main daemon answers "unknown command" or an unrelated shape; that
+    // is a delivery failure, never an acknowledgement.
+    const auto command = response.find("command");
+    if (command == response.end() || !command->is_string() ||
+        command->get<std::string>() != "incident_device_missing") {
+        acknowledgement.error =
+            "main fic daemon did not process the device incident: " +
+            response.value("message", "unknown response");
+        return acknowledgement;
+    }
+    // Required, strictly typed fields.
+    for (const char* field : {"acknowledged", "persistence_confirmed",
+                              "ignored", "response_mode"}) {
+        const auto item = response.find(field);
+        if (item == response.end()) {
+            acknowledgement.error = std::string("response.") + field +
+                                     " is required";
+            return acknowledgement;
+        }
+        const bool isBool = field == std::string("response_mode")
+            ? item->is_string()
+            : item->is_boolean();
+        if (!isBool) {
+            acknowledgement.error = std::string("response.") + field +
+                                     " has an invalid type";
+            return acknowledgement;
+        }
+    }
+    acknowledgement.acknowledged = response.value("acknowledged", false);
+    acknowledgement.persistenceConfirmed =
+        response.value("persistence_confirmed", false);
+    acknowledgement.ignored = response.value("ignored", false);
+    acknowledgement.escalated = response.value("escalated", false);
+    acknowledgement.mode = response.value("response_mode", "");
+    acknowledgement.requestedSeverity =
+        response.value("requested_severity", "");
+    acknowledgement.effectiveSeverity =
+        response.value("effective_severity", "");
+    acknowledgement.runtime = response.value("runtime", "");
+    acknowledgement.message = response.value("message", "");
+
+    // The mode token must be a known response mode.
+    if (acknowledgement.mode != "OFF" && acknowledgement.mode != "PASSIVE" &&
+        acknowledgement.mode != "ACTIVE") {
+        acknowledgement.error = "response.response_mode is unknown: " +
+                                acknowledgement.mode;
+        return acknowledgement;
+    }
+    // Consistency: an ignored event is acknowledged without persistence, and a
+    // non-ignored event needs a confirmed persistence to be acknowledged.
+    if (acknowledgement.ignored) {
+        if (acknowledgement.persistenceConfirmed) {
+            acknowledgement.error =
+                "an intentionally ignored event must not claim persistence";
+            return acknowledgement;
+        }
+        acknowledgement.acknowledged = true;
+    } else if (acknowledgement.acknowledged !=
+               acknowledgement.persistenceConfirmed) {
+        acknowledgement.error =
+            "a non-ignored event must acknowledge exactly a confirmed "
+            "persistence";
+        return acknowledgement;
+    }
+    acknowledgement.valid = true;
+    acknowledgement.error.clear();
+    return acknowledgement;
+}
+
 } // namespace fic::device_control

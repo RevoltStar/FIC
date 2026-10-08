@@ -2526,6 +2526,21 @@ target_link_libraries(permanent_device_incident_integration_tests PRIVATE
 add_test(NAME permanent_device_incident_integration_tests
          COMMAND permanent_device_incident_integration_tests)
 
+add_executable(device_incident_event_tests
+    fic/daemon/DeviceIncidentEventTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DeviceIncidentEvent.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dc/DC.cpp
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/src/Policy.cpp
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/src/PolicyTypeValue.cpp
+)
+target_include_directories(device_incident_event_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/include
+)
+target_link_libraries(device_incident_event_tests PRIVATE
+    fic-core Threads::Threads)
+add_test(NAME device_incident_event_tests COMMAND device_incident_event_tests)
+
 add_executable(calc_hash_command_tests
     fic/daemon/CalcHashCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/CalcHashCommand.cpp

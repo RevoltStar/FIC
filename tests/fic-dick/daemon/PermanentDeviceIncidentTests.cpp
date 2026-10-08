@@ -109,6 +109,110 @@ int main() {
                 error),
             "a non-integer id must be rejected");
 
-    std::cout << "Permanent-device incident detector contract proven\\n";
+
+    // ---- Acknowledgement validation (P2) --------------------------------
+    using fic::device_control::DeviceIncidentAcknowledgement;
+    using fic::device_control::parse_device_incident_acknowledgement;
+
+    // A durably persisted severity with a DEGRADED containment is STILL an
+    // acknowledged event: containment owns its own retry lifecycle (R3).
+    {
+        const auto ack = parse_device_incident_acknowledgement(nlohmann::json{
+            {"ok", false},
+            {"message", "device incident recorded; containment degraded"},
+            {"command", "incident_device_missing"},
+            {"acknowledged", true},
+            {"persistence_confirmed", true},
+            {"escalated", true},
+            {"reason", "configured STANDARD"},
+            {"response_mode", "ACTIVE"},
+            {"requested_severity", "STANDARD"},
+            {"effective_severity", "STANDARD"},
+            {"ignored", false},
+            {"runtime", "degraded"},
+            {"api_version", 1}});
+        require(ack.valid, "degraded containment must not break the ack: " + ack.error);
+        require(ack.acknowledged && ack.persistenceConfirmed,
+                "the acknowledged event must carry the confirmed persistence");
+    }
+
+    // A persistence failure is NOT an acknowledgement (G17).
+    {
+        const auto ack = parse_device_incident_acknowledgement(nlohmann::json{
+            {"ok", false},
+            {"message", "device incident could not be recorded"},
+            {"command", "incident_device_missing"},
+            {"acknowledged", false},
+            {"persistence_confirmed", false},
+            {"escalated", false},
+            {"response_mode", "ACTIVE"},
+            {"requested_severity", "STANDARD"},
+            {"effective_severity", "ISOLATE"},
+            {"ignored", false},
+            {"runtime", "degraded"},
+            {"api_version", 1}});
+        require(ack.valid && !ack.acknowledged && !ack.persistenceConfirmed,
+                "a persistence failure must be a non-acknowledgement");
+    }
+
+    // A wrong command is never an acknowledgement (G19).
+    {
+        const auto ack = parse_device_incident_acknowledgement(nlohmann::json{
+            {"ok", true},
+            {"message", "ok"},
+            {"command", "something_else"},
+            {"acknowledged", true},
+            {"persistence_confirmed", true},
+            {"escalated", true},
+            {"response_mode", "ACTIVE"},
+            {"ignored", false},
+            {"api_version", 1}});
+        require(!ack.valid,
+                "a response naming a different command must be rejected");
+    }
+
+    // A missing strict field is rejected (G18).
+    {
+        const auto ack = parse_device_incident_acknowledgement(nlohmann::json{
+            {"ok", true},
+            {"command", "incident_device_missing"},
+            {"escalated", true},
+            {"response_mode", "ACTIVE"},
+            {"acknowledged", true},
+            {"api_version", 1}});
+        require(!ack.valid,
+                "a response without persistence_confirmed must be rejected");
+    }
+
+    // An ignored event must NOT claim persistence.
+    {
+        const auto ack = parse_device_incident_acknowledgement(nlohmann::json{
+            {"ok", true},
+            {"command", "incident_device_missing"},
+            {"acknowledged", true},
+            {"persistence_confirmed", true},
+            {"ignored", true},
+            {"response_mode", "OFF"},
+            {"api_version", 1}});
+        require(!ack.valid,
+                "an ignored event claiming persistence must be rejected");
+    }
+
+    // A consistent OFF/NONE acknowledgement is valid.
+    {
+        const auto ack = parse_device_incident_acknowledgement(nlohmann::json{
+            {"ok", true},
+            {"command", "incident_device_missing"},
+            {"acknowledged", true},
+            {"persistence_confirmed", false},
+            {"ignored", true},
+            {"response_mode", "OFF"},
+            {"requested_severity", "NONE"},
+            {"api_version", 1}});
+        require(ack.valid && ack.ignored && !ack.persistenceConfirmed,
+                "an intentional OFF/NONE ignore is a valid acknowledgement");
+    }
+
+    std::cout << "Permanent-device incident detector contract proven\n";
     return 0;
 }
