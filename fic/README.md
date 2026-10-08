@@ -824,40 +824,75 @@ fallback `ACTIVE`, а не автоматическое смягчение ре�
 условно требует `NET/SshEdit/ssh_use_pam`; эта Required dependency участвует
 в планировании применения и диагностике policy API.
 
-В `ACTIVE` контроллер получает инвентаризацию сессий и пользователей из
-systemd-logind через системный D-Bus. Доказанно пустой ответ отличается от
-ошибки logind: ошибка даёт `DEGRADED`, сохраняя записанную severity. Для
-termination используются только обычные logind login sessions и user runtime
-с подтверждённой NSS identity; root, члены recovery-группы при включённом
-`lock_exempt_fic_members`, greeter и service identities защищены. Недоказанная
-identity также не становится целью: при недоказанной identity результат
-`DEGRADED`. Классификация проверяет согласованность UID/имени в NSS и logind,
-recovery status и login shell. `Service` означает доказанный non-login shell,
-`Recovery` — root или подтверждённого участника recovery-группы; отсутствие
-доказательств означает `Unknown`. Диапазон UID политики password aging не
-определяет тип пользователя: обычный LDAP/AD/SSSD пользователь может иметь
-UID выше 60000. Для `TerminateSession` требуются обычная identity и login
-session класса `user`, `user-early`, `user-light` либо `user-early-light`.
-`manager`, `background` и `background-light` не завершаются по отдельности,
-но допустимы внутри доказанного обычного user runtime при `ISOLATE`:
-`TerminateUser` завершает runtime целиком. `manager-early`, `greeter`,
-`lock-screen` и неизвестные классы не разрешают такое действие без
-дополнительных доказательств. `HARD` завершает обычные login sessions, а `ISOLATE`
-дополнительно запрашивает `TerminateUser` и проверяет исчезновение logind user
-и остановку `user@UID.service`; сетевой карантин остаётся отдельной
-незавершённой частью `ISOLATE`.
+В `ACTIVE` контроллер получает инвентаризацию сессий из systemd-logind через
+системный D-Bus и выбирает цели containment по **Model A**: целями являются
+только реально существующие обычные login-сессии, доказанные logind.
+Доказанно пустой ответ отличается от ошибки logind: ошибка даёт `DEGRADED`,
+сохраняя записанную severity.
 
-В `STANDARD` графическая сессия получает `LockSession`, но ответ logind и
-`LockedHint` не доказывают фактическую блокировку desktop. Пока для
-поддерживаемых DE нет общего доверенного lock proof, backend сразу переходит
-к `TerminateSession` и проверяет исчезновение той же session через logind.
-SSH/TTY завершаются без lock. `OFF` и `PASSIVE` не меняют сессии, clear не
-разблокирует экраны. Перед изменяющим вызовом identity перечитывается, вызов
-направляется уникальному D-Bus владельцу logind; между повторной проверкой и
-действием остаётся узкая гонка, поскольку API logind не даёт атомарной
-операции «terminate if identity unchanged». Проверки ограничены timeout и
-объёмом inventory. Это доказательство logind-managed состояния, а не всех
-процессов данного UID.
+Критерий выбора цели — **положительные доказательства**, а не предположения о
+назначении Linux-аккаунтов: session получена из logind; её класс — обычный
+login class (`user`, `user-early`, `user-light`, `user-early-light`); UID и
+username согласованы с NSS; identity не изменилась с момента inventory; это
+не root и не защищённая recovery identity (членство в recovery-группе при
+включённом `lock_exempt_fic_members` проверяется успешно). **Login shell,
+UID-диапазоны (`UID_MIN`/`UID_MAX`), имя пользователя и перечисление
+`/etc/passwd` не участвуют в выборе цели**; NSS используется только для
+подтверждения identity и recovery membership. Следствие Model A: учётная
+запись службы с настоящей login-сессией (`Class=user`) — сознательная цель,
+а пользователь с только lingering user manager и без выбранной обычной
+login-сессии целью не становится никогда.
+
+`manager`, `background` и `background-light` сами по себе не создают цель, но
+могут принадлежать уже выбранному обычному пользователю и завершаться как
+часть его user runtime при `ISOLATE`. `manager-early`, `greeter`,
+`lock-screen` и неизвестные классы защищены; неизвестный класс делает
+inventory недоказанным (`DEGRADED`), не допуская действий вслепую.
+
+`STANDARD` запрашивает блокировку графической сессии, но ответ logind и
+`LockedHint` не доказывают фактическую блокировку desktop, поэтому backend
+сразу переходит к `TerminateSession` и проверяет исчезновение той же session
+через logind. SSH/TTY завершаются без lock. `HARD` завершает все выбранные
+обычные login-сессии через `TerminateSession` и не вызывает `TerminateUser`.
+`ISOLATE` дополнительно выполняет `TerminateUser` и проверяет исчезновение
+logind user и остановку `user@UID.service`. Сетевой карантин остаётся
+отдельной незавершённой частью `ISOLATE` (`NullIncidentNetworkBackend`).
+
+### Durable session target store (Model A)
+
+`TerminateSession` уничтожает само доказательство выбора пользователя, поэтому
+каждая выбранная цель **сначала** фиксируется в отдельном durable-хранилище
+`incident_session_targets` (рядом с `lockstatus`, root-owned, 0640, atomic
+replace, fsync файла и каталога; формат — версионированный JSON c `boot_id`,
+`incident_generation` и evidence выбора: session id, класс, timestamp), и
+только затем выполняется разрушающее действие. Если durable-регистрация не
+подтверждена — `TerminateSession` удерживается, результат `DEGRADED`, severity
+сохраняется.
+
+Это даёт: повторный `reconcile()` и эскалация `HARD → ISOLATE` используют
+сохранённые цели даже после исчезновения login-сессий; перезапуск FIC
+восстанавливает pending-обязательства из store; проверенное ядро reboot
+разрешает runtime-обязательства предыдущей загрузки (процессы не могли
+пережить смену `boot_id`; systemd soft-reboot с тем же `boot_id` их
+сохраняет). При `ISOLATE` каждый pending-UID повторно доказывается через NSS
+(UID ↔ canonical name): повторное использование UID другим аккаунтом
+блокирует действие и даёт `DEGRADED`, а не успех. `ListUsers` больше не
+является источником новых целей — только механизмом выполнения и
+подтверждения user-level containment уже выбранных UID.
+
+Административный clear (durable `UNLOCKED`) инкрементирует
+`incident_generation` и очищает targets: цели старого инцидента не могут
+сработать в новом. Два persistent-объекта не заменяются атомарно вместе;
+если cleanup store после успешного clear не удался, следующий raise с нового
+`UNLOCKED` всё равно заменяет store целиком, поэтому промежуточное состояние
+безопасно. При недоказуемом (повреждённом) store пользовательские действия
+не выполняются и результат `DEGRADED` — никогда не пустой успех. Повторная
+проверка identity и D-Bus-действие по-прежнему разделены узкой гонкой (API
+logind не даёт атомарной операции), что остаётся задокументированным
+ограничением. `OFF` и `PASSIVE` не выполняют никаких мутаций сессий и
+пользователей, clear не разблокирует экраны. Проверки ограничены timeout и
+объёмом inventory. Это доказательство logind-managed состояния выбранных
+пользователей, а не всех процессов всех обычных пользователей Linux.
 
 ### Работа с SSH
 

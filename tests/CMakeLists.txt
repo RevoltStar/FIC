@@ -2617,6 +2617,30 @@ target_include_directories(reconciliation_outcome_tests PRIVATE
 add_test(NAME reconciliation_outcome_tests
          COMMAND reconciliation_outcome_tests)
 
+add_executable(model_a_containment_tests
+    fic/incident/ModelAContainmentTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/LogindSessionContainmentBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SystemLogindClient.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp
+)
+target_include_directories(model_a_containment_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src)
+find_package(PkgConfig QUIET)
+pkg_check_modules(FIC_MA_LIBSYSTEMD QUIET IMPORTED_TARGET libsystemd)
+target_link_libraries(model_a_containment_tests PRIVATE
+    fic-core fic-platform Threads::Threads
+    ${FIC_MA_LIBSYSTEMD_LINK})
+if(TARGET PkgConfig::FIC_MA_LIBSYSTEMD)
+    target_link_libraries(model_a_containment_tests PRIVATE
+        PkgConfig::FIC_MA_LIBSYSTEMD)
+endif()
+add_test(NAME model_a_containment_tests COMMAND model_a_containment_tests)
+
 add_executable(calc_hash_command_tests
     fic/daemon/CalcHashCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/CalcHashCommand.cpp
