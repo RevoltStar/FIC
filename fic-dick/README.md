@@ -234,20 +234,38 @@ OFF/PASSIVE/ACTIVE containment semantics. Восстановление устр�
 перезапуске device daemon'а проверка восстанавливается через startup
 reconciliation.
 
-Retry-обязательство глобальное и очищается **только** полной проверкой:
-успешная проверка подмножества устройств (например, после udev remove) или
-успешная доставка частичного batch не доказывает отсутствие недоставленных
-нарушений в остальной БД, поэтому глобальный retry сохраняется.
+Retry-обязательство глобальное и очищается **только** полной проверкой,
+завершившейся **доказанно успешным** чтением inventory: ошибка SQLite
+(`sqlite3_prepare_v2`), ошибка `sqlite3_step` до `SQLITE_DONE` или ошибка
+инициализации БД означают, что inventory **недоказан** — пустой или частичный
+список никогда не трактуется как «all permanent devices are connected», и
+существующий retry сохраняется (`DB::getAllDevicesChecked()`,
+`updatePermanentIncidentRetry()`). Успешная проверка подмножества устройств
+(например, после udev remove) или успешная доставка частичного batch также не
+доказывает отсутствие недоставленных нарушений в остальной БД, поэтому
+глобальный retry сохраняется.
 
 Событие считается доставленным (acknowledged) только при явном подтверждении
-основного daemon'а: ответ должен называть команду `incident_device_missing`,
-содержать типизированные поля `acknowledged`/`persistence_confirmed` и
-согласованный `response_mode`. `acknowledged=true` означает, что severity
-длительно записана (или реакция намеренно выключена), но **не** доказывает
-успешный containment: `DEGRADED`-containment не отменяет доставку и не
-запускает повторную доставку события — за повторным containment следит сам
-IncidentController. Неизвестный формат ответа, чужая команда или
-несогласованные поля считаются ошибкой доставки.
+основного daemon'а. Ответ должен называть команду `incident_device_missing`,
+содержать типизированные поля и согласованную комбинацию:
+
+| Случай | acknowledged | persistence_confirmed | ignored |
+|---|---|---|---|
+| Policy DISABLE / severity NONE / режим OFF | true | false | true |
+| PASSIVE, severity durably recorded | true | true | false |
+| ACTIVE, durable + containment OK | true | true | false |
+| ACTIVE, durable + DEGRADED containment | true | true | false |
+| Persistence failed/unproven | false | false | false |
+
+`persistence_confirmed=false` при намеренном игнорировании **не является
+ошибкой** — нового обязательства записи в этих случаях нет. `acknowledged=true`
+означает, что обязательство доставки закрыто, но **не** доказывает успешный
+containment: `DEGRADED`-containment при подтверждённой персистенции не отменяет
+доставку и не запускает повторную доставку события — за повторным containment
+следит сам IncidentController. Парсер никогда не «чинит» несогласованный ответ
+(в частности, не превращает `acknowledged=false` в `true`): неизвестный формат,
+чужая команда, неожиданный тип поля или несогласованная комбинация считаются
+ошибкой доставки.
 
 Проверка выполняется по стабильной идентичности устройства (`device_hash` +
 `subsystem`), а не по одному историческому экземпляру дерева. При remove-событии

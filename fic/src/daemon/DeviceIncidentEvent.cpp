@@ -2,7 +2,79 @@
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
 
+#include <nlohmann/json.hpp>
+
 namespace fic::daemon {
+
+namespace {
+
+// The message must describe the ACTUAL persistence outcome: a durably
+// recorded severity with a failed containment is a recorded incident with a
+// degraded containment, never a recording failure.
+std::string raiseMessage(bool persistenceConfirmed, bool degraded) {
+    if (!persistenceConfirmed) {
+        return "device incident could not be recorded";
+    }
+    return degraded
+        ? "device incident recorded; containment degraded"
+        : "device incident processed";
+}
+
+} // namespace
+
+json make_device_incident_ack_response(
+    const DeviceMissingReaction& reaction,
+    bool ignoredByMode,
+    bool persistenceConfirmed,
+    bool incidentOk,
+    const std::string& requestedSeverityToken,
+    const std::string& effectiveSeverityToken,
+    const std::string& responseModeToken,
+    const std::string& runtimeToken,
+    bool escalated,
+    bool persistentStateBroken,
+    const std::string& detail) {
+    if (ignoredByMode ||
+        reaction.kind == DeviceMissingReactionKind::Disabled ||
+        reaction.kind == DeviceMissingReactionKind::None) {
+        // An intentional ignore closes the delivery obligation without any
+        // incident write: no new persistence obligation exists, so
+        // persistence_confirmed=false is the correct, non-error answer.
+        return json{
+            {"ok", true},
+            {"message", "device incident intentionally ignored"},
+            {"command", "incident_device_missing"},
+            {"acknowledged", true},
+            {"persistence_confirmed", false},
+            {"incident_ok", true},
+            {"escalated", false},
+            {"reason", reaction.diagnostic},
+            {"response_mode", responseModeToken},
+            {"requested_severity", "NONE"},
+            {"effective_severity", effectiveSeverityToken},
+            {"ignored", true},
+            {"runtime", runtimeToken},
+            {"api_version", 1}};
+    }
+    return json{
+        {"ok", incidentOk},
+        {"message", raiseMessage(persistenceConfirmed,
+                                 runtimeToken == "degraded")},
+        {"command", "incident_device_missing"},
+        {"acknowledged", persistenceConfirmed},
+        {"persistence_confirmed", persistenceConfirmed},
+        {"incident_ok", incidentOk},
+        {"escalated", escalated},
+        {"reason", reaction.diagnostic},
+        {"response_mode", responseModeToken},
+        {"requested_severity", requestedSeverityToken},
+        {"effective_severity", effectiveSeverityToken},
+        {"ignored", false},
+        {"persistent_state_broken", persistentStateBroken},
+        {"runtime", runtimeToken},
+        {"detail", detail},
+        {"api_version", 1}};
+}
 
 DeviceMissingReaction resolve_device_missing_severity(Policy& policy) {
     DeviceMissingReaction reaction;

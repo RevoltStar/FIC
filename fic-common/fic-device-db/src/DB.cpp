@@ -1486,6 +1486,64 @@ std::vector<DeviceInfo> DB::getAllDevices() {
     return devices;
 }
 
+DB::DeviceListResult DB::getAllDevicesChecked() {
+    DeviceListResult result;
+    if (inventoryFaultHook_ && inventoryFaultHook_("prepare")) {
+        result.error = "device inventory read failed: injected prepare fault";
+        return result;
+    }
+
+    const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "
+                     "control_level, control_explicit, ignore_hierarchy, boot_id, created_at, last_event_at, notes, children_control "
+                     "FROM devices ORDER BY id";
+
+    sqlite3_stmt* stmt;
+    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+    if (rc != SQLITE_OK) {
+        result.error = std::string("device inventory query failed: ") +
+                       sqlite3_errmsg(db);
+        return result;
+    }
+
+    int stepRc = SQLITE_OK;
+    while ((stepRc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        result.devices.push_back(resultToDeviceInfo(stmt));
+        if (inventoryFaultHook_ && inventoryFaultHook_("step")) {
+            // A fault mid-scan: whatever was accumulated so far is a PARTIAL
+            // list and must never be presented as a proven inventory.
+            result.devices.clear();
+            result.error =
+                "device inventory read failed: injected step fault before "
+                "the scan completed";
+            sqlite3_finalize(stmt);
+            return result;
+        }
+    }
+    // The scan is only complete when the step loop ended with SQLITE_DONE;
+    // SQLITE_ROW can never terminate the loop, so anything else is an error
+    // (SQLITE_BUSY, SQLITE_CORRUPT, SQLITE_INTERRUPT, ...).
+    if (stepRc != SQLITE_DONE) {
+        result.devices.clear();
+        result.error = std::string("device inventory read failed: ") +
+                       sqlite3_errmsg(db);
+        sqlite3_finalize(stmt);
+        return result;
+    }
+    if (sqlite3_finalize(stmt) != SQLITE_OK) {
+        result.devices.clear();
+        result.error =
+            "device inventory read could not be finalized";
+        return result;
+    }
+    result.ok = true;
+    return result;
+}
+
+void DB::setInventoryFaultHookForTests(
+    std::function<bool(const char* stage)> hook) {
+    inventoryFaultHook_ = std::move(hook);
+}
+
 DeviceInfo DB::getDeviceByDevpathAndSubsystem(const std::string& devpath,
                                           const std::string& subsystem){
     const char* sql = "SELECT id, device_hash, devpath, subsystem, device_type, parent_id, "

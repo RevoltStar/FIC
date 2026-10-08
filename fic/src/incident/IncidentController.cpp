@@ -284,10 +284,14 @@ IncidentResult IncidentController::raise(
             current.provenance != IncidentStateStore::Provenance::Proven;
         ignored.ignoredByMode = true;
         ignored.detail = "incident ignored in OFF mode";
-        // OFF acknowledges the event without any write: the current proven
-        // state is unchanged, so there is no persistence to confirm.
-        ignored.persistenceConfirmed =
-            current.provenance == IncidentStateStore::Provenance::Proven;
+        // OFF acknowledges the event WITHOUT any write, so no NEW persistence
+        // obligation exists for this event. persistenceConfirmed describes the
+        // outcome of THIS raise call, not the provenance of the historical
+        // lockstatus: proving that the old state was readable is not a
+        // proof that this event's severity was (or needed to be) durably
+        // recorded. A detector may therefore rely on
+        // (acknowledged, persistence_confirmed) = (true, false) here.
+        ignored.persistenceConfirmed = false;
         return ignored;
     }
 

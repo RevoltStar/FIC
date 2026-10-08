@@ -1147,26 +1147,25 @@ json handle_request(json request,
 
             // 4. An INTENTIONAL ignore (proven DISABLE or proven NONE). The
             //    event is acknowledged without any incident write, and the
-            //    response is distinguishable from an IPC error.
+            //    response is distinguishable from an IPC error. No new
+            //    persistence obligation exists, so persistence_confirmed=false
+            //    is the correct, non-error answer.
             if (reaction.kind == fic::daemon::DeviceMissingReactionKind::Disabled ||
                 reaction.kind == fic::daemon::DeviceMissingReactionKind::None) {
-                return json{
-                    {"ok", true},
-                    {"message", "device incident processed"},
-                    {"command", command},
-                    {"acknowledged", true},
-                    {"persistence_confirmed", true},
-                    {"escalated", false},
-                    {"reason", reaction.diagnostic},
-                    {"response_mode", fic::incident::incidentResponseModeToken(mode.mode)},
-                    {"requested_severity", "NONE"},
-                    {"effective_severity",
-                     fic::core::incidentSeverityToken(
-                         incidentController().status().severity)},
-                    {"ignored", true},
-                    {"runtime", fic::incident::runtimeStateToString(
-                         fic::incident::RuntimeState::Inactive)}
-                };
+                return fic::daemon::make_device_incident_ack_response(
+                    reaction,
+                    /*ignoredByMode=*/true,
+                    /*persistenceConfirmed=*/false,
+                    /*incidentOk=*/true,
+                    /*requestedSeverityToken=*/"NONE",
+                    /*effectiveSeverityToken=*/fic::core::incidentSeverityToken(
+                        incidentController().status().severity),
+                    /*responseModeToken=*/fic::incident::incidentResponseModeToken(mode.mode),
+                    /*runtimeToken=*/fic::incident::runtimeStateToString(
+                        fic::incident::RuntimeState::Inactive),
+                    /*escalated=*/false,
+                    /*persistentStateBroken=*/false,
+                    /*detail=*/"");
             }
 
             // 5. ONE raise per detector batch: the controller is monotonic, so
@@ -1185,29 +1184,20 @@ json handle_request(json request,
             // 6. An explicit result. acknowledged=true means the EVENT was
             //    processed and its severity is durably recorded; it does NOT
             //    mean the host is contained. persistence_confirmed reflects the
-            //    actual store outcome, independent of the containment result.
-            return json{
-                {"ok", raised.ok},
-                {"message", raised.ok
-                    ? (raised.runtime == fic::incident::RuntimeState::Degraded
-                           ? "device incident recorded; containment degraded"
-                           : "device incident processed")
-                    : "device incident could not be recorded"},
-                {"command", command},
-                {"acknowledged", raised.persistenceConfirmed},
-                {"persistence_confirmed", raised.persistenceConfirmed},
-                {"incident_ok", raised.ok},
-                {"escalated", raised.escalated},
-                {"reason", reaction.diagnostic},
-                {"response_mode", fic::incident::incidentResponseModeToken(mode.mode)},
-                {"requested_severity",
-                 fic::core::incidentSeverityToken(reaction.severity)},
-                {"effective_severity",
-                 fic::core::incidentSeverityToken(raised.effectiveSeverity)},
-                {"ignored", raised.ignoredByMode},
-                {"persistent_state_broken", raised.persistentStateBroken},
-                {"runtime", fic::incident::runtimeStateToString(raised.runtime)}
-            };
+            //    actual store outcome, independent of the containment result,
+            //    and incident_ok carries the combined containment outcome.
+            return fic::daemon::make_device_incident_ack_response(
+                reaction,
+                /*ignoredByMode=*/raised.ignoredByMode,
+                /*persistenceConfirmed=*/raised.persistenceConfirmed,
+                /*incidentOk=*/raised.ok,
+                /*requestedSeverityToken=*/fic::core::incidentSeverityToken(reaction.severity),
+                /*effectiveSeverityToken=*/fic::core::incidentSeverityToken(raised.effectiveSeverity),
+                /*responseModeToken=*/fic::incident::incidentResponseModeToken(mode.mode),
+                /*runtimeToken=*/fic::incident::runtimeStateToString(raised.runtime),
+                /*escalated=*/raised.escalated,
+                /*persistentStateBroken=*/raised.persistentStateBroken,
+                /*detail=*/raised.detail);
         }
         if (command == "incident_clear") {
             const fic::incident::IncidentResult cleared =

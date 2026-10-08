@@ -1,6 +1,7 @@
 #include "DeviceControlDaemon.h"
 #include "daemon/DeviceAudit.h"
 #include "daemon/PermanentDeviceIncident.h"
+#include "daemon/PermanentDeviceRetry.h"
 #include "device/DeviceLifecycle.h"
 #include "device/DevicePaths.h"
 #include "device/DeviceTreeSnapshot.h"
@@ -64,17 +65,11 @@ std::atomic_bool g_stop{false};
 // The interval is bounded and there is no busy-loop: a failed delivery only
 // schedules a recheck, and the recheck re-derives the violations from the
 // database instead of replaying a fixed payload.
-std::atomic_bool g_permanentIncidentRetryRequired{false};
+// The retry obligation and its transition authority live in
+// daemon/PermanentDeviceRetry.h: updatePermanentIncidentRetry is the SAME
+// production function the tests exercise. Only the throttling timestamp is
+// local to the daemon loop.
 std::chrono::steady_clock::time_point g_nextPermanentIncidentRetry{};
-inline constexpr std::chrono::seconds PERMANENT_INCIDENT_RETRY_INTERVAL{5};
-
-bool permanentIncidentRetryRequired() {
-    return g_permanentIncidentRetryRequired.load();
-}
-
-void setPermanentIncidentRetryRequired(bool required) {
-    g_permanentIncidentRetryRequired.store(required);
-}
 
 struct EffectivePolicy {
     std::string level = "allowed";
@@ -636,8 +631,21 @@ bool permanent_satisfied(DB& db, const DeviceInfo& device, const EffectivePolicy
     return identity_connected(db, source, bootId);
 }
 
-std::vector<PermanentViolation> collect_missing_permanent_devices(DB& db,
-                                                                  const std::optional<std::vector<int>>& candidateIds = std::nullopt) {
+// Collects the permanent-device violations. Returns ok=false when the full
+// inventory read itself FAILED: then the violation list is meaningless and a
+// caller must never treat the result as "no violations". For a partial
+// (candidate-limited) check ok is always true, because the full inventory is
+// not read.
+struct PermanentViolationScan {
+    bool ok = true;
+    std::string error;
+    std::vector<PermanentViolation> violations;
+};
+
+PermanentViolationScan collect_missing_permanent_devices_checked(
+    DB& db,
+    const std::optional<std::vector<int>>& candidateIds = std::nullopt) {
+    PermanentViolationScan scan;
     std::vector<DeviceInfo> candidates;
     if (candidateIds.has_value()) {
         for (int deviceId : candidateIds.value()) {
@@ -647,12 +655,19 @@ std::vector<PermanentViolation> collect_missing_permanent_devices(DB& db,
             }
         }
     } else {
-        candidates = db.getAllDevices();
+        // The FULL check must be based on a PROVEN complete inventory read: a
+        // failed or partial SQLite read can never be presented as
+        // "all permanent obligations were examined".
+        DB::DeviceListResult inventory = db.getAllDevicesChecked();
+        if (!inventory.ok) {
+            scan.ok = false;
+            scan.error = inventory.error;
+            return scan;
+        }
+        candidates = std::move(inventory.devices);
     }
 
-    std::vector<PermanentViolation> missing;
     std::set<std::string> seenObligations;
-
     for (const DeviceInfo& device : candidates) {
         const EffectivePolicy policy = effective_policy(db, device);
         if (policy.level != "permanent") {
@@ -672,10 +687,21 @@ std::vector<PermanentViolation> collect_missing_permanent_devices(DB& db,
             continue;
         }
 
-        missing.push_back(PermanentViolation{device.id, source.id, device.devpath, policy.source});
+        scan.violations.push_back(
+            PermanentViolation{device.id, source.id, device.devpath, policy.source});
     }
 
-    return missing;
+    return scan;
+}
+
+std::vector<PermanentViolation> collect_missing_permanent_devices(DB& db,
+                                                                  const std::optional<std::vector<int>>& candidateIds = std::nullopt) {
+    const PermanentViolationScan scan =
+        collect_missing_permanent_devices_checked(db, candidateIds);
+    // The unchecked wrapper keeps the pre-existing contract for callers that
+    // have no retry state to protect; the security-critical path uses the
+    // checked variant.
+    return scan.violations;
 }
 
 json missing_permanent_to_json(const std::vector<PermanentViolation>& violations) {
@@ -696,18 +722,29 @@ json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& cand
     // no violations proves nothing about the rest of the database, so it must
     // never clear the global retry obligation for an undelivered violation
     // elsewhere. Only a FULL check of every permanent obligation may do that,
-    // and only after the database itself was proven readable.
+    // and only after the full inventory read itself was PROVEN successful: a
+    // failed SQLite read is an unproven inventory, never "no violations".
     const bool fullCheck = !candidateIds.has_value();
-    const std::vector<PermanentViolation> violations =
-        collect_missing_permanent_devices(db, candidateIds);
+    const PermanentViolationScan scan =
+        collect_missing_permanent_devices_checked(db, candidateIds);
+    if (!scan.ok) {
+        // The inventory is unproven: an existing retry obligation MUST
+        // survive, and the diagnostic must not claim that all devices are
+        // connected.
+        return fic::ipc::make_error_response(
+            "permanent device inventory is unproven: " + scan.error);
+    }
+    const std::vector<PermanentViolation>& violations = scan.violations;
 
     if (violations.empty()) {
         if (fullCheck) {
             // A later successful FULL check clears the retry obligation: every
-            // permanent obligation was re-derived from the authoritative
-            // database and none is violated any more, so nothing must be
+            // permanent obligation was re-derived from a PROVEN complete
+            // inventory and none is violated any more, so nothing must be
             // re-reported.
-            setPermanentIncidentRetryRequired(false);
+            updatePermanentIncidentRetry(
+                /*scanOk=*/true, /*fullCheck=*/true,
+                /*violationsEmpty=*/true, /*delivered=*/false);
             return fic::ipc::make_ok_response("all permanent devices are connected");
         }
         // Partial empty: the global retry obligation, if any, stays untouched.
@@ -719,18 +756,9 @@ json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& cand
     // severity once and the IncidentController deduplicates the escalation.
     const DeviceIncidentDelivery delivery = call_fic_device_incident(violations);
     const bool success = delivery.delivered;
-    if (!success) {
-        // The violation still exists, so it MUST be re-reported when the main
-        // daemon becomes reachable again. The recheck itself re-derives the
-        // violations from the authoritative database and observed presence.
-        setPermanentIncidentRetryRequired(true);
-    } else if (fullCheck) {
-        // Only a FULL successful delivery proves that no undelivered violation
-        // remains anywhere in the database.
-        setPermanentIncidentRetryRequired(false);
-    }
-    // A successful PARTIAL delivery keeps an existing global retry: other
-    // undelivered violations may still exist outside this subset.
+    updatePermanentIncidentRetry(
+        /*scanOk=*/true, /*fullCheck=*/fullCheck,
+        /*violationsEmpty=*/false, /*delivered=*/success);
 
     // Device-local audit records the FACT of the violation and the delivery
     // result. It is independent of the incident response mode: even OFF must be
@@ -2041,15 +2069,30 @@ int run_daemon(const std::string& socketPathArg) {
             g_nextPermanentIncidentRetry =
                 std::chrono::steady_clock::now() +
                 PERMANENT_INCIDENT_RETRY_INTERVAL;
-            {
+            // A failed database initialization or an unusable database means
+            // the inventory is UNPROVEN: the retry obligation must survive,
+            // and the failure must not be masked as "all devices connected".
+            try {
                 DB db(DeviceRuntimePaths::get().databaseOptions());
-                db.initializeDatabase();
-                const json retryCheck = check_permanent_devices(db);
-                if (retryCheck.value("ok", false)) {
+                if (!db.initializeDatabase()) {
                     log_device(
-                        "permanent device incident retry delivered",
-                        logLevel::INFO);
+                        "permanent device incident retry skipped: device "
+                        "database is unavailable: " + db.lastError(),
+                        logLevel::ERROR);
+                } else {
+                    const json retryCheck = check_permanent_devices(db);
+                    if (retryCheck.value("ok", false)) {
+                        log_device(
+                            "permanent device incident retry delivered",
+                            logLevel::INFO);
+                    }
                 }
+            } catch (const std::exception& databaseError) {
+                log_device(
+                    std::string("permanent device incident retry skipped: "
+                                "device database error: ") +
+                        databaseError.what(),
+                    logLevel::ERROR);
             }
         }
 

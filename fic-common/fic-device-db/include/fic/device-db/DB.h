@@ -16,6 +16,7 @@
 #include <cstring>
 #include <cerrno>
 #include <filesystem>
+#include <functional>
 
 struct DBOptions {
     std::filesystem::path databaseFile;
@@ -97,6 +98,10 @@ private:
     void closeDatabase();
     bool verifyDatabaseSchemaMetadata(std::string& error);
 
+    // Test-only fault injection for the checked inventory read (never set in
+    // production); see setInventoryFaultHookForTests.
+    std::function<bool(const char* stage)> inventoryFaultHook_;
+
     bool log(std::string message, logLevel logLev);
 public:
     // Методы для работы с блокировкой
@@ -130,6 +135,29 @@ public:
     DeviceInfo getDeviceByHashAndSubsystem(const std::string& device_hash, const std::string& subsystem);
     std::vector<DeviceInfo> getDevicesByHashAndSubsystem(const std::string& device_hash, const std::string& subsystem);
     std::vector<DeviceInfo> getAllDevices();
+
+    // A PROVEN full inventory read for security-critical paths.
+    //
+    // The plain getAllDevices() silently maps SQLite failures to an empty or
+    // partial list, which a caller could mistake for "no devices exist". The
+    // checked variant only reports ok=true when the statement was prepared,
+    // stepped to SQLITE_DONE and finalized without error, and then returns the
+    // complete list. Any failure returns ok=false with a diagnostic and NO
+    // device list, so a partial read can never pass as a complete inventory.
+    struct DeviceListResult {
+        bool ok = false;
+        std::vector<DeviceInfo> devices;
+        std::string error;
+    };
+    DeviceListResult getAllDevicesChecked();
+
+    // Minimal fault-injection seam for the checked inventory read, used ONLY
+    // by regression tests to prove the prepare/step failure paths without
+    // corrupting a real database. Production code must never set it. When the
+    // hook returns true for a stage ("prepare" or "step"), that stage is
+    // reported as failed.
+    void setInventoryFaultHookForTests(
+        std::function<bool(const char* stage)> hook);
     std::vector<DeviceInfo> getDevicesByType(const std::string& device_type);
     std::vector<DeviceInfo> getChildDevices(int parent_id);
     std::vector<DeviceInfo> getDescendantDevices(int parent_id);

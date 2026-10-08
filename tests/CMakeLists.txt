@@ -2541,6 +2541,50 @@ target_link_libraries(device_incident_event_tests PRIVATE
     fic-core Threads::Threads)
 add_test(NAME device_incident_event_tests COMMAND device_incident_event_tests)
 
+add_executable(device_incident_response_compat_tests
+    fic/daemon/DeviceIncidentResponseCompatTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DeviceIncidentEvent.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/PermanentDeviceIncident.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/src/Policy.cpp
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/src/PolicyTypeValue.cpp
+)
+target_include_directories(device_incident_response_compat_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/include
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/include
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src
+    ${CMAKE_BINARY_DIR}/fic-common/fic-ipc/generated/include
+)
+target_link_libraries(device_incident_response_compat_tests PRIVATE
+    fic-core Threads::Threads)
+add_test(NAME device_incident_response_compat_tests
+         COMMAND device_incident_response_compat_tests)
+
+add_executable(checked_device_inventory_tests
+    fic-dick/daemon/CheckedDeviceInventoryTests.cpp
+)
+target_include_directories(checked_device_inventory_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-device-db/include
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-core/include
+)
+target_link_libraries(checked_device_inventory_tests PRIVATE
+    fic-device-db fic-core)
+add_test(NAME checked_device_inventory_tests
+         COMMAND checked_device_inventory_tests)
+
+add_executable(permanent_device_retry_tests
+    fic-dick/daemon/PermanentDeviceRetryTests.cpp
+)
+target_include_directories(permanent_device_retry_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+add_test(NAME permanent_device_retry_tests
+         COMMAND permanent_device_retry_tests)
+
 add_executable(calc_hash_command_tests
     fic/daemon/CalcHashCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/CalcHashCommand.cpp

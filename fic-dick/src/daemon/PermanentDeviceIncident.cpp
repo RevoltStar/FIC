@@ -145,15 +145,28 @@ DeviceIncidentAcknowledgement parse_device_incident_acknowledgement(
                                 acknowledgement.mode;
         return acknowledgement;
     }
-    // Consistency: an ignored event is acknowledged without persistence, and a
-    // non-ignored event needs a confirmed persistence to be acknowledged.
+    // Consistency of the three independent statements (see the ACK matrix in
+    // daemon/DeviceIncidentEvent.h on the main-daemon side):
+    //   - ignored=true means an intentional no-op write: it MUST be
+    //     acknowledged=true with persistence_confirmed=false, because no new
+    //     persistence obligation exists for an ignored event;
+    //   - a non-ignored event acknowledges exactly a confirmed persistence:
+    //     acknowledged=true requires the severity to be durably recorded, and
+    //     acknowledged=false must not claim it.
+    // The parser NEVER repairs an inconsistent reply (in particular, it never
+    // turns acknowledged=false into true): a reply the daemon did not
+    // explicitly acknowledge is a delivery failure.
     if (acknowledgement.ignored) {
         if (acknowledgement.persistenceConfirmed) {
             acknowledgement.error =
                 "an intentionally ignored event must not claim persistence";
             return acknowledgement;
         }
-        acknowledgement.acknowledged = true;
+        if (!acknowledgement.acknowledged) {
+            acknowledgement.error =
+                "an intentionally ignored event must still be acknowledged";
+            return acknowledgement;
+        }
     } else if (acknowledgement.acknowledged !=
                acknowledgement.persistenceConfirmed) {
         acknowledgement.error =

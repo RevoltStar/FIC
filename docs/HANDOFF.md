@@ -45,19 +45,29 @@ Device Control → Incident Response integration. Выполнено.
   `retry_required` и периодически (5s, без busy-loop) перечитывает нарушения из
   авторитетной БД и повторяет доставку; restart device daemon восстанавливает
   проверку через startup reconciliation. State в памяти, без persistent queue.
-  Retry-обязательство **глобальное** и очищается только полной проверкой:
-  пустая частичная проверка или успешная доставка частичного batch не очищает
-  глобальный retry — недоставленные нарушения в остальной БД остаются
-  обязательством. Ошибка чтения БД не позволяет объявить «all connected».
-* **Acknowledgement vs containment:** `IncidentResult.persistenceConfirmed`
-  отражает фактический результат `IncidentStateStore::raiseToAtLeast()`
-  (durable запись), независимо от containment-результата. IPC-ответ несёт
-  `acknowledged`/`persistence_confirmed` отдельно от `ok`; fic-dick принимает
-  строго типизированный ответ (имя команды, типы полей, согласованность
-  acknowledged/persistence/response_mode); `acknowledged=true` НЕ доказывает
-  containment, `DEGRADED`-containment при подтверждённой персистенции не
-  запускает повторную доставку — за containment отвечает сам
-  IncidentController.
+  Retry-обязательство **глобальное** и очищается только полной проверкой с
+  **доказанно успешным** чтением inventory (`DB::getAllDevicesChecked()`:
+  prepare OK, step до `SQLITE_DONE`, finalize OK): ошибка prepare/step/init БД
+  означает недоказанный inventory — «all connected» не объявляется, retry
+  сохраняется (`updatePermanentIncidentRetry()` в
+  `daemon/PermanentDeviceRetry.h` — единая production-функция перехода).
+  Пустая частичная проверка или успешная доставка частичного batch retry не
+  меняет. Ошибка чтения БД не позволяет объявить «all connected».
+* **Acknowledgement vs containment:** единая ACK-матрица sender/receiver
+  (`make_device_incident_ack_response` ↔ `parse_device_incident_acknowledgement`,
+  контракт закреплён `device_incident_response_compat_tests`):
+  DISABLE/NONE/OFF → `acknowledged=true, persistence_confirmed=false,
+  ignored=true` (не ошибка — обязательства записи нет); PASSIVE/ACTIVE с
+  durable severity → `acknowledged=persistence_confirmed=true, ignored=false`;
+  persistence failure → оба false, delivery не закрыт.
+  `IncidentResult.persistenceConfirmed` отражает фактический результат
+  `IncidentStateStore::raiseToAtLeast()` (durable запись), независимо от
+  containment-результата. `acknowledged=true` НЕ доказывает containment:
+  `DEGRADED`-containment при подтверждённой персистенции даёт
+  `incident_ok=false`, сообщение `device incident recorded; containment
+  degraded` и не запускает повторную доставку — за containment отвечает сам
+  IncidentController. Парсер никогда не ремонтирует несогласованный ответ
+  (не превращает `acknowledged=false` в `true`).
 * **Deadlock:** `device_regenerate_policy` handler fic-dick НЕ вызывает
   `check_permanent_devices`, поэтому цепочка fic→fic-dick→fic не существует.
 * **Ответ:** `ok=true` = событие обработано, НЕ «компьютер заблокирован»;

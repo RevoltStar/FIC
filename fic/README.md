@@ -796,14 +796,23 @@ notification/containment. Недоказуемая настройка (поли�
 статус не ENABLE/DISABLE, значение отсутствует или не распознано) является
 fail-closed: реакция `ISOLATE` через `IncidentController.raise()`, а не
 намеренное игнорирование. Восстановление устройства не снижает severity и не
-вызывает автоматический clear. Ответ distinguishes `acknowledged` (событие
-обработано и severity длительно записана — из `IncidentResult.
-persistenceConfirmed`, т.е. фактического результата
-`IncidentStateStore::raiseToAtLeast()`) от `ok`/containment-результата:
-`acknowledged=true` не доказывает успешный containment, и `DEGRADED`-
-containment при подтверждённой персистенции не является ошибкой доставки —
-повторная доставка не выполняется, за containment отвечает сам
-IncidentController.
+вызывает автоматический clear.
+
+Ответ daemon'а формируется единым production-билдером
+(`fic::daemon::make_device_incident_ack_response`) и несёт три независимых
+утверждения: `acknowledged` (обязательство доставки детектора закрыто),
+`persistence_confirmed` (требуемая severity долговременно сохранена —
+фактический результат `IncidentStateStore::raiseToAtLeast()`) и `incident_ok`
+(совокупная успешность, включая containment). Для намеренно игнорируемого
+события (DISABLE/NONE/OFF): `acknowledged=true`, `persistence_confirmed=false`,
+`ignored=true` — нового обязательства записи нет, и это не ошибка.
+`acknowledged=true` не доказывает успешный containment: `DEGRADED`-containment
+при подтверждённой персистенции даёт `acknowledged=true`,
+`persistence_confirmed=true`, `incident_ok=false`, сообщение
+`device incident recorded; containment degraded` и не запускает повторную
+доставку — за containment отвечает сам IncidentController. Неудачная
+персистенция даёт `device incident could not be recorded` и не подтверждает
+доставку.
 
 `pam_fic_access.so` установлен постоянно. В `OFF`/`PASSIVE` он нейтрален и
 не требует работающего daemon. Только в `ACTIVE` обычный контролируемый вход
