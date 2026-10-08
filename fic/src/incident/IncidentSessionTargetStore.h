@@ -2,11 +2,13 @@
 #define FIC_INCIDENT_INCIDENT_SESSION_TARGET_STORE_H
 
 #include <fic/core/fs/SecureStateFile.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <optional>
 
 namespace fic::incident {
 
@@ -58,6 +60,7 @@ public:
         std::uint64_t incidentGeneration = 0;
         std::vector<IncidentSessionTarget> targets;
         std::string detail;
+        std::optional<AtomicTargetState> provenState;
     };
 
     struct WriteResult {
@@ -85,6 +88,12 @@ public:
     WriteResult write(const std::string& bootId,
                       std::uint64_t incidentGeneration,
                       const std::vector<IncidentSessionTarget>& targets) const;
+    // Conditional replacement against the exact secure read used by the
+    // caller. Absent uses exclusive create; Proven uses the captured state.
+    WriteResult writeIfCurrent(const ReadResult& expected,
+                               const std::string& bootId,
+                               std::uint64_t incidentGeneration,
+                               const std::vector<IncidentSessionTarget>& targets) const;
 
     // Expectation used for both read and write; mirrors the lockstatus
     // contract (root owner, 0640, single link, safe parent, small).

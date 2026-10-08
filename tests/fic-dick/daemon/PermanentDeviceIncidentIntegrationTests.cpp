@@ -170,6 +170,8 @@ int main() {
     // invoking user, so the expectation is overridden for the whole run.
     IncidentStateStore::setOwnershipExpectationForTests(
         ::geteuid(), ::geteuid());
+    fic::incident::IncidentSessionTargetStore::setOwnershipExpectationForTests(
+        ::geteuid(), ::geteuid());
 
     TempTree tree;
 

@@ -278,6 +278,9 @@ void testResponseModes(const TempTree& tree) {
             "OFF must preserve lockstatus");
     require(audits == 0 && notifications == 0 && harness.sessions->actions.empty() &&
             harness.network->applications == 0, "OFF must have no response effects");
+    require(IncidentSessionTargetStore(tree.statePath).read().provenance ==
+                IncidentSessionTargetStore::ReadProvenance::Absent,
+            "OFF must not create a target generation");
 
     mode = IncidentResponseMode::Passive;
     const auto passive = harness.controller.raise(IncidentSeverity::Hard, source, "passive");
@@ -285,6 +288,9 @@ void testResponseModes(const TempTree& tree) {
             "PASSIVE must persist HARD");
     require(audits == 1 && notifications == 1 && harness.sessions->actions.empty() &&
             harness.network->applications == 0, "PASSIVE must audit and notify without containment");
+    require(IncidentSessionTargetStore(tree.statePath).read().provenance ==
+                IncidentSessionTargetStore::ReadProvenance::Proven,
+            "PASSIVE must durably fence the incident before severity");
 
     mode = IncidentResponseMode::Active;
     const auto active = harness.controller.reconcile();
@@ -408,16 +414,15 @@ void testNotificationLevelsAndRepeatedClear(const TempTree& tree) {
 void testPersistenceFailureAuditsAfterContainment(const TempTree& tree) {
     Harness harness(tree.statePath);
     bool audited = false;
-    bool containedAtAudit = false;
+    bool unsafeActionAtAudit = false;
     harness.controller.setAuditSink([&](const std::string& line) {
         if (line.find("incident_persistence_failed") != std::string::npos) {
             audited = true;
-            containedAtAudit = harness.sessions->acted("terminate-session:c1");
+            unsafeActionAtAudit = harness.sessions->acted("terminate-session:c1");
         }
     });
-    // Break ONLY the lockstatus durability: the Model A target store must
-    // keep working, because without a durably proven target set FIC would
-    // (correctly) refuse to destroy the proving login sessions.
+    // Break ONLY lockstatus durability after the target fence. The failed
+    // severity write cannot authorize destructive session actions.
     AtomicFileWriter::setDirectoryFsyncHookForTests(
         [](const std::string& target) {
             return target.find("lockstatus") == std::string::npos;
@@ -425,7 +430,8 @@ void testPersistenceFailureAuditsAfterContainment(const TempTree& tree) {
     harness.controller.raise(IncidentSeverity::Hard, policySource("a"), "hard");
     AtomicFileWriter::setDirectoryFsyncHookForTests({});
     require(audited, "persistence failure must be audited");
-    require(containedAtAudit, "emergency containment must precede persistence audit");
+    require(!unsafeActionAtAudit,
+            "unproven severity must not authorize session termination");
 }
 
 void testUnavailableBackendsRemainUnproven(const TempTree& tree) {
@@ -737,7 +743,11 @@ void testReconcileNeverLowersSeverity(const TempTree& tree) {
 // Invariant 29: startup reconciliation re-applies containment for a persisted
 // severity, so a reboot cannot silently drop an incident.
 void testReconcileRestoresContainmentAfterRestart(const TempTree& tree) {
-    writeState(tree.statePath, "HARD\n");
+    {
+        Harness beforeRestart(tree.statePath);
+        beforeRestart.controller.raise(IncidentSeverity::Hard,
+                                       policySource("seed"), "before restart");
+    }
     Harness harness(tree.statePath);
 
     const IncidentResult reconciled = harness.controller.reconcile();

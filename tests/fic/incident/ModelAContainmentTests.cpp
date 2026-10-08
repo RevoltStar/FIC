@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -63,7 +64,9 @@ public:
     bool listOk = true;
     bool keepSession = false;
     bool keepUser = false;
-    bool acceptTermination = true;
+    bool acceptSessionTermination = true;
+    bool acceptUserTermination = true;
+    std::optional<uid_t> rejectUserUid;
     bool managerStopped = true;
     int terminatedSessions = 0;
     int terminatedUsers = 0;
@@ -111,7 +114,7 @@ public:
     }
     bool terminateSession(const LogindSessionRecord& s, std::string&) override {
         ++terminatedSessions;
-        if (!acceptTermination) return false;
+        if (!acceptSessionTermination) return false;
         if (!keepSession) {
             sessions.erase(std::remove_if(sessions.begin(), sessions.end(),
                 [&](const auto& c) { return c.id == s.id; }), sessions.end());
@@ -120,7 +123,10 @@ public:
     }
     bool terminateUser(const LogindUserRecord& u, std::string& error) override {
         ++terminatedUsers;
-        if (!acceptTermination) { error = "terminate rejected"; return false; }
+        if (!acceptUserTermination || rejectUserUid == u.uid) {
+            error = "terminate rejected";
+            return false;
+        }
         if (!keepUser) {
             users.erase(std::remove_if(users.begin(), users.end(),
                 [&](const auto& c) { return c.uid == u.uid; }), users.end());
@@ -170,17 +176,18 @@ struct World {
     std::shared_ptr<FakeLogind> logind = std::make_shared<FakeLogind>();
     std::shared_ptr<LogindSessionContainmentBackend> backend;
     std::unique_ptr<IncidentController> controller;
+    fic::session::ContainmentIdentityEvidenceReader identityReader;
+    std::string bootId;
 
     explicit World(
-        const fic::session::ContainmentIdentityEvidenceReader& reader) {
+        const fic::session::ContainmentIdentityEvidenceReader& reader)
+        : identityReader(reader) {
         char pattern[] = "/tmp/fic-model-a-XXXXXX";
         char* created = ::mkdtemp(pattern);
         if (created == nullptr) throw std::runtime_error("mkdtemp failed");
         root = created;
         statePath = root / "lockstatus";
         resetState();
-        backend = std::make_shared<LogindSessionContainmentBackend>(
-            logind, classifier(reader));
         rebuild();
     }
 
@@ -194,6 +201,8 @@ struct World {
     // A genuinely NEW controller + NEW backend + NEW store over the same
     // durable paths: the restart-recovery semantics under test.
     void rebuild() {
+        backend = std::make_shared<LogindSessionContainmentBackend>(
+            logind, classifier(identityReader));
         controller = std::make_unique<IncidentController>(
             IncidentStateStore(statePath),
             IncidentSessionTargetStore(statePath), backend,
@@ -203,6 +212,8 @@ struct World {
                 IncidentResponseMode::Active, true, "test ACTIVE"};
         });
         controller->setAccessGateVerifier([](std::string&) { return true; });
+        if (!bootId.empty())
+            controller->setBootIdProviderForTests([this] { return bootId; });
     }
 
     IncidentSessionTargetStore store() const {
@@ -217,7 +228,7 @@ struct World {
 
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
     IncidentStateStore::setOwnershipExpectationForTests(
         ::geteuid(), ::geteuid());
     IncidentSessionTargetStore::setOwnershipExpectationForTests(
@@ -269,7 +280,7 @@ int main() {
         World world(provenIdentity);
         world.logind->sessions = {loginSession("c1", 1000, "alice", "user", "ssh")};
         world.logind->users = {loginUser(1000, "alice")};
-        world.logind->acceptTermination = false;
+        world.logind->acceptUserTermination = false;
         const auto raised = world.controller->raise(
             Severity::Isolate, {"test"}, "partial failure");
         require(!raised.ok && raised.runtime == RuntimeState::Degraded,
@@ -278,7 +289,7 @@ int main() {
                 "the registered target must be attempted");
         // Reconcile after the login session is gone: the pending target must
         // survive (it lives in the store, not in the session list).
-        world.logind->acceptTermination = true;
+        world.logind->acceptUserTermination = true;
         world.controller->reconcile();
         require(world.logind->terminatedUsers == 2,
                 "reconcile must retry the pending user-runtime obligation");
@@ -306,14 +317,14 @@ int main() {
         World world(provenIdentity);
         world.logind->sessions = {loginSession("c1", 1000, "alice", "user", "ssh")};
         world.logind->users = {loginUser(1000, "alice")};
-        world.logind->acceptTermination = false;
+        world.logind->acceptUserTermination = false;
         world.controller->raise(Severity::Isolate, {"test"}, "crash soon");
         require(world.logind->terminatedUsers == 1, "target attempted");
         // fic crashes and restarts: NEW controller/backend/store objects; the
         // login session is already gone, the user runtime remains.
         world.logind->sessions.clear();
         world.logind->users = {loginUser(1000, "alice")};
-        world.logind->acceptTermination = true;
+        world.logind->acceptUserTermination = true;
         world.rebuild();
         world.controller->reconcile();
         require(world.logind->terminatedUsers == 2,
@@ -348,12 +359,12 @@ int main() {
         World world(provenIdentity);
         world.logind->sessions = {loginSession("c1", 1000, "alice", "user", "ssh")};
         world.logind->users = {loginUser(1000, "alice")};
-        world.logind->acceptTermination = false;
+        world.logind->acceptUserTermination = false;
         world.controller->raise(Severity::Isolate, {"test"}, "uid reuse seed");
         // The account behind UID 1000 is replaced by a different one.
         world.logind->users = {loginUser(1000, "svc")};
         world.logind->sessions.clear();
-        world.logind->acceptTermination = true;
+        world.logind->acceptUserTermination = true;
         const auto reused = world.controller->reconcile();
         require(world.logind->terminatedUsers == 1,
                 "a reused UID must never inherit the old authority");
@@ -366,7 +377,7 @@ int main() {
         World world(provenIdentity);
         world.logind->sessions = {loginSession("c1", 1000, "alice", "user", "ssh")};
         world.logind->users = {loginUser(1000, "alice")};
-        world.logind->acceptTermination = false;
+        world.logind->acceptUserTermination = false;
         world.controller->raise(Severity::Isolate, {"test"}, "incident one");
         const auto cleared = world.controller->clear("admin");
         require(cleared.ok, "clear must succeed");
@@ -374,10 +385,305 @@ int main() {
         // runtime): the old target must never authorize an action.
         world.logind->sessions.clear();
         world.logind->users = {loginUser(1000, "alice", "lingering")};
-        world.logind->acceptTermination = true;
+        world.logind->acceptUserTermination = true;
         world.controller->raise(Severity::Isolate, {"test"}, "incident two");
         require(world.logind->terminatedUsers == 1,
                 "the old incident target must not fire in the new incident");
+    }
+
+    // ---- Lifecycle RED R1: crash after UNLOCKED, before target cleanup ----
+    if (argc < 2 || std::string(argv[1]) == "R1") {
+        World world(provenIdentity);
+        world.logind->sessions = {loginSession("old", 1000, "alice")};
+        world.logind->users = {loginUser(1000, "alice")};
+        world.logind->acceptUserTermination = false;
+        world.controller->raise(Severity::Isolate, {"test"}, "old incident");
+        require(world.logind->terminatedSessions == 1 &&
+                    world.logind->terminatedUsers == 1 &&
+                    world.logind->sessions.empty(),
+                "session succeeds while user runtime stays pending");
+        const auto unlocked = world.controller->stateStore().clear();
+        require(unlocked.ok, "durable UNLOCKED before simulated crash");
+        world.rebuild();
+        world.controller->raise(Severity::Soft, {"test"}, "new SOFT");
+        world.logind->acceptUserTermination = true;
+        world.controller->raise(Severity::Isolate, {"test"}, "new ISOLATE");
+        require(world.logind->terminatedUsers == 1,
+                "old incident target must not survive clear-crash-SOFT boundary");
+    }
+
+    // ---- Lifecycle RED R2: HARD must rebase a proved previous boot --------
+    if (argc < 2 || std::string(argv[1]) == "R2") {
+        for (const Severity level : {Severity::Standard, Severity::Hard}) {
+            World world(provenIdentity);
+            world.logind->sessions = {loginSession("old", 1000, "alice")};
+            world.controller->raise(level, {"test"}, "old boot");
+            const auto saved = world.store().read();
+            require(saved.provenance ==
+                        IncidentSessionTargetStore::ReadProvenance::Proven,
+                    "old boot target store exists");
+            require(world.store().write(
+                        "00000000-0000-4000-8000-000000000001",
+                        saved.incidentGeneration, saved.targets).durable,
+                    "simulate previous kernel boot ID");
+            world.logind->sessions = {loginSession("new", 1001, "bob")};
+            world.rebuild();
+            world.controller->reconcile();
+            require(world.logind->terminatedSessions == 2 &&
+                        world.store().read().bootId !=
+                            "00000000-0000-4000-8000-000000000001",
+                    "STANDARD/HARD must rebase and terminate new-boot login session");
+        }
+    }
+
+    // ---- Lifecycle RED R3: active target store loss is not empty success --
+    if (argc < 2 || std::string(argv[1]) == "R3") {
+        World world(provenIdentity);
+        world.logind->sessions = {loginSession("c1", 1000, "alice")};
+        world.logind->users = {loginUser(1000, "alice")};
+        world.logind->acceptUserTermination = false;
+        world.controller->raise(Severity::Isolate, {"test"}, "pending");
+        require(world.logind->sessions.empty(), "proving login session is gone");
+        std::filesystem::remove(world.store().path());
+        world.rebuild();
+        const auto reconciled = world.controller->reconcile();
+        require(reconciled.runtime == RuntimeState::Degraded &&
+                    !world.controller->status().containment.userRuntimeContained,
+                "missing store with active incident must remain unproven");
+    }
+
+    // ---- Lifecycle RED R4: unknown obligation cannot parse as pending -----
+    if (argc < 2 || std::string(argv[1]) == "R4") {
+        World world(provenIdentity);
+        const IncidentSessionTarget target{1000, "alice", "c1", 12345,
+            "user", IncidentSessionTarget::RuntimeObligation::Pending};
+        require(world.store().write("00000000-0000-4000-8000-000000000001",
+                                    1, {target}).durable, "seed target store");
+        std::ifstream in(world.store().path());
+        std::string content((std::istreambuf_iterator<char>(in)), {});
+        const auto token = content.find("\"pending\"");
+        require(token != std::string::npos, "seed contains pending token");
+        content.replace(token, 9, "\"invalid\"");
+        std::ofstream out(world.store().path(), std::ios::trunc);
+        out << content;
+        out.close();
+        require(world.store().read().provenance ==
+                    IncidentSessionTargetStore::ReadProvenance::Unprovable,
+                "unknown obligation token must be unprovable");
+    }
+
+    // ---- Lifecycle RED R5: cleanup failure remains in clear response ------
+    if (argc < 2 || std::string(argv[1]) == "R5") {
+        World world(provenIdentity);
+        world.logind->sessions = {loginSession("c1", 1000, "alice")};
+        world.controller->raise(Severity::Hard, {"test"}, "seed");
+        ::AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [](const std::string& path) {
+                return path.find("incident_session_targets") == std::string::npos;
+            });
+        const auto cleared = world.controller->clear("admin");
+        ::AtomicFileWriter::setDirectoryFsyncHookForTests({});
+        require(cleared.effectiveSeverity == Severity::Unlocked &&
+                    cleared.detail.find("target cleanup failed") != std::string::npos,
+                "durable UNLOCKED must retain target cleanup diagnostic");
+        const auto before = world.store().read();
+        world.rebuild();
+        const auto next = world.controller->raise(
+            Severity::Soft, {"test"}, "after failed cleanup");
+        const auto after = world.store().read();
+        require(next.persistenceConfirmed &&
+                    after.incidentGeneration > before.incidentGeneration &&
+                    after.targets.empty(),
+                "new SOFT must fence even after failed clear cleanup");
+    }
+
+    // An installed target write with an unproven directory fsync cannot
+    // publish a new severity or authorize a user action.
+    {
+        World world(provenIdentity);
+        world.logind->sessions = {loginSession("s1", 1000, "alice")};
+        world.logind->users = {loginUser(1000, "alice")};
+        ::AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [](const std::string& path) {
+                return path.find("incident_session_targets") == std::string::npos;
+            });
+        const auto failed = world.controller->raise(
+            Severity::Isolate, {"test"}, "fence durability failure");
+        ::AtomicFileWriter::setDirectoryFsyncHookForTests({});
+        require(!failed.ok && !failed.persistenceConfirmed &&
+                    failed.runtime == RuntimeState::Degraded &&
+                    world.logind->terminatedSessions == 0 &&
+                    world.logind->terminatedUsers == 0,
+                "unproven fence must forbid destructive actions");
+    }
+
+    // Fence is committed before severity. A severity durability failure
+    // leaves a safe BROKEN_STATE/UNLOCKED observation after restart, never a
+    // usable active severity with unfenced targets.
+    {
+        World world(provenIdentity);
+        world.logind->sessions = {loginSession("s1", 1000, "alice")};
+        ::AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [](const std::string& path) {
+                return path.find("lockstatus") == std::string::npos;
+            });
+        const auto failed = world.controller->raise(
+            Severity::Hard, {"test"}, "severity durability failure");
+        ::AtomicFileWriter::setDirectoryFsyncHookForTests({});
+        const auto fenced = world.store().read();
+        require(!failed.persistenceConfirmed &&
+                    fenced.provenance ==
+                        IncidentSessionTargetStore::ReadProvenance::Proven &&
+                    fenced.targets.empty() &&
+                    world.logind->terminatedSessions == 0,
+                "durable empty fence must precede failed severity");
+        world.rebuild();
+        const auto restarted = world.controller->reconcile();
+        require(restarted.runtime == RuntimeState::Degraded &&
+                    world.logind->terminatedSessions == 0,
+                "severity failure must remain fail-closed after restart");
+    }
+
+    // A proved kernel boot change clears old runtime obligations before
+    // processing the current boot. An unavailable boot ID does neither.
+    {
+        World world(provenIdentity);
+        world.bootId = "00000000-0000-4000-8000-000000000001";
+        world.rebuild();
+        world.logind->sessions = {loginSession("old", 1000, "alice")};
+        world.logind->users = {loginUser(1000, "alice")};
+        world.logind->acceptUserTermination = false;
+        world.controller->raise(Severity::Isolate, {"test"}, "old boot");
+        world.logind->sessions.clear();
+        world.bootId = "00000000-0000-4000-8000-000000000002";
+        world.logind->acceptUserTermination = true;
+        world.rebuild();
+        world.controller->reconcile();
+        require(world.logind->terminatedUsers == 1 &&
+                    world.store().read().targets.empty(),
+                "ISOLATE reboot must discharge old-boot obligations");
+        world.bootId.clear();
+        world.rebuild();
+        world.controller->setBootIdProviderForTests([] { return std::string{}; });
+        world.logind->sessions = {loginSession("new", 1001, "bob")};
+        const auto unknown = world.controller->reconcile();
+        require(unknown.runtime == RuntimeState::Degraded &&
+                    world.logind->terminatedSessions == 1,
+                "unknown kernel boot ID must prohibit destructive actions");
+    }
+
+    // Strict parsing never truncates an out-of-range UID.
+    {
+        World world(provenIdentity);
+        const IncidentSessionTarget target{1000, "alice", "c1", 12345,
+            "user", IncidentSessionTarget::RuntimeObligation::Pending};
+        require(world.store().write("00000000-0000-4000-8000-000000000001",
+                                    1, {target}).durable, "seed strict parser");
+        std::ifstream in(world.store().path());
+        std::string content((std::istreambuf_iterator<char>(in)), {});
+        const auto uid = content.find("\"uid\":1000");
+        require(uid != std::string::npos, "seed UID serialized");
+        content.replace(uid, 10, "\"uid\":4294967296");
+        std::ofstream out(world.store().path(), std::ios::trunc);
+        out << content;
+        out.close();
+        require(world.store().read().provenance ==
+                    IncidentSessionTargetStore::ReadProvenance::Unprovable,
+                "overflow UID must be unprovable");
+        const auto assertInvalid = [&](std::string invalid,
+                                       const std::string& diagnostic) {
+            std::ofstream replacement(world.store().path(), std::ios::trunc);
+            replacement << invalid;
+            replacement.close();
+            require(world.store().read().provenance ==
+                        IncidentSessionTargetStore::ReadProvenance::Unprovable,
+                    diagnostic);
+        };
+        // Restore the valid seed through the production writer, then mutate
+        // each independent field without relying on a parser-only mock.
+        require(world.store().write("00000000-0000-4000-8000-000000000001",
+                                    1, {target}).durable, "restore parser seed");
+        std::ifstream validInput(world.store().path());
+        const std::string valid((std::istreambuf_iterator<char>(validInput)), {});
+        auto changed = valid;
+        const auto classAt = changed.find("\"session_class\":\"user\"");
+        require(classAt != std::string::npos, "seed class serialized");
+        changed.replace(classAt, 22, "\"session_class\":\"manager\"");
+        assertInvalid(changed, "invalid session class must be unprovable");
+        changed = valid;
+        const auto startAt = changed.find("\"session_start\":12345");
+        require(startAt != std::string::npos, "seed timestamp serialized");
+        changed.replace(startAt, 21, "\"session_start\":0");
+        assertInvalid(changed, "zero timestamp must be unprovable");
+        changed = valid;
+        changed.insert(changed.size() - 1, ",\"extra\":true");
+        assertInvalid(changed, "extra schema field must be unprovable");
+        assertInvalid("{", "malformed JSON must be unprovable");
+    }
+
+    // An unexpected generation replacement in the same controller cannot
+    // turn a saved UID into a fresh user-runtime authorization.
+    {
+        World world(provenIdentity);
+        world.logind->sessions = {loginSession("old", 1000, "alice")};
+        world.logind->users = {loginUser(1000, "alice")};
+        world.controller->raise(Severity::Hard, {"test"}, "seed generation");
+        const auto saved = world.store().read();
+        require(saved.provenance ==
+                    IncidentSessionTargetStore::ReadProvenance::Proven,
+                "generation seed is proven");
+        require(world.store().writeIfCurrent(
+                    saved, saved.bootId, saved.incidentGeneration + 1,
+                    saved.targets).durable, "replace generation");
+        const auto stale = world.controller->raise(
+            Severity::Isolate, {"test"}, "stale generation");
+        require(stale.runtime == RuntimeState::Degraded &&
+                    world.logind->terminatedUsers == 0,
+                "stale generation must not authorize TerminateUser");
+    }
+
+    // Reconciliation of an unchanged same-boot target set is read-only.
+    {
+        World world(provenIdentity);
+        world.logind->sessions = {loginSession("s1", 1000, "alice")};
+        world.controller->raise(Severity::Hard, {"test"}, "seed read-only reconcile");
+        struct stat before{};
+        struct stat after{};
+        require(::stat(world.store().path().c_str(), &before) == 0,
+                "read-only reconcile seed exists");
+        world.rebuild();
+        world.controller->reconcile();
+        require(::stat(world.store().path().c_str(), &after) == 0 &&
+                    before.st_ino == after.st_ino,
+                "unchanged same-boot reconcile must not rewrite target store");
+    }
+
+    // One discharged user must not erase the other user's pending obligation.
+    {
+        World world(provenIdentity);
+        world.logind->sessions = {
+            loginSession("a", 1000, "alice"),
+            loginSession("b", 1001, "bob")};
+        world.logind->users = {
+            loginUser(1000, "alice"), loginUser(1001, "bob")};
+        world.logind->rejectUserUid = 1001;
+        world.controller->raise(Severity::Isolate, {"test"}, "partial discharge");
+        const auto saved = world.store().read();
+        require(saved.provenance ==
+                    IncidentSessionTargetStore::ReadProvenance::Proven &&
+                    saved.targets.size() == 2 &&
+                    saved.targets[0].runtimeObligation ==
+                        IncidentSessionTarget::RuntimeObligation::Discharged &&
+                    saved.targets[1].runtimeObligation ==
+                        IncidentSessionTarget::RuntimeObligation::Pending,
+                "partial discharge must persist both outcomes");
+        world.logind->rejectUserUid.reset();
+        world.rebuild();
+        world.controller->reconcile();
+        require(world.logind->terminatedUsers == 3 &&
+                    world.store().read().targets[1].runtimeObligation ==
+                        IncidentSessionTarget::RuntimeObligation::Discharged,
+                "restart must retry only the pending user");
     }
 
     std::cout << "Model A session-derived containment targets proven\n";

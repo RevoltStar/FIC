@@ -191,19 +191,19 @@ public:
     void setModeResolver(ModeResolver resolver) {
         modeResolver_ = std::move(resolver);
     }
+    // Test seam for kernel boot transitions; production reads SystemBootInfo.
+    void setBootIdProviderForTests(std::function<std::string()> provider) {
+        bootIdProvider_ = std::move(provider);
+    }
 
 private:
     IncidentResponseModeResult resolveMode() const;
     IncidentResult settleNonActiveMode(IncidentResponseMode mode,
                                       ::fic::core::IncidentSeverity severity);
-    // `newIncident` marks a raise that started a NEW incident (previous
-    // severity was a durably proven UNLOCKED): the target store is then
-    // REPLACED with generation+1 and only this incident's targets, so a stale
-    // record of a previous incident can never authorize actions.
     IncidentResult applyContainment(
         ::fic::core::IncidentSeverity severity,
         const std::string& reason,
-        bool newIncident = false);
+        bool allowTargetMutation = true);
 
     // Model A durable registration of session-derived targets.
     //
@@ -211,20 +211,21 @@ private:
     // current incident are preserved (a target never disappears just because
     // its login session was already terminated), duplicates are idempotent.
     // ok=true means the merged set was DURABLY confirmed and destructive
-    // session actions may proceed; ok=false forbids them. When the store
-    // carries a DIFFERENT boot id, the previous boot's runtime obligations
-    // are resolved (processes cannot survive a kernel reboot) and the store
-    // is re-based onto the current boot before the merge.
+    // session actions may proceed; ok=false forbids them. Boot reconciliation
+    // and generation validation happen before this merge.
     struct TargetRegistration {
         bool ok = false;
         std::string detail;
     };
     TargetRegistration registerSessionTargets(
-        std::vector<IncidentSessionTarget> newTargets, bool newIncident);
+        std::vector<IncidentSessionTarget> newTargets);
+
+    TargetRegistration fenceNewIncident();
+    TargetRegistration prepareActiveTargetStore();
 
     // Proven kernel boot id; empty when unprovable, which disables every
     // durable target operation (fail-closed).
-    static std::string currentIncidentBootId();
+    std::string currentIncidentBootId() const;
 
     void recordAudit(const std::string& event,
                      const IncidentResult& result,
@@ -239,11 +240,12 @@ private:
     std::shared_ptr<session::SessionContainmentBackend> sessions_;
     std::shared_ptr<IncidentNetworkBackend> network_;
     // Model A: generation of the incident whose targets are in the store.
-    // Unknown after restart until the first store use adopts it; known after
-    // a new-incident reset, which lets a stale record be refused.
+    // Unknown after restart until a proven active store is read; known only
+    // after a durable new-incident fence or proven active-state adoption.
     std::optional<std::uint64_t> incidentGeneration_;
     AccessGateVerifier accessGateVerifier_;
     ModeResolver modeResolver_ = IncidentResponseModeResolver::production;
+    std::function<std::string()> bootIdProvider_;
 
     // Incident transitions are serialised: two concurrent raises must not
     // interleave their read/compute/write cycles.

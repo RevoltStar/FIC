@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <limits>
 #include <utility>
 
 namespace fic::incident {
@@ -121,7 +122,7 @@ IncidentResult IncidentController::settleNonActiveMode(
 IncidentResult IncidentController::applyContainment(
     IncidentSeverity severity,
     const std::string& reason,
-    bool newIncident) {
+    bool allowTargetMutation) {
     IncidentResult result;
     result.effectiveSeverity = severity;
     runtime_ = RuntimeState::Applying;
@@ -177,15 +178,24 @@ IncidentResult IncidentController::applyContainment(
         if (!networkOk) failures.emplace_back("network quarantine failed: " + networkDiagnostic);
     }
 
+    // The marker is required for EVERY active severity, including SOFT.
+    // A broken lockstatus or missing/unproven target store cannot authorize
+    // any session or user action, even if a stale target file still exists.
+    const auto lifecycle = allowTargetMutation
+        ? prepareActiveTargetStore()
+        : TargetRegistration{false, "incident lifecycle is unproven"};
+    if (!lifecycle.ok)
+        failures.emplace_back("incident target lifecycle is unproven: " +
+                              lifecycle.detail);
+
     // Session containment. SOFT does not touch existing sessions.
     // Model A: every ordinary login session FIC is about to act on is FIRST
     // registered in the durable target store, because TerminateSession
     // destroys the very evidence that selected the user. A failed durable
     // registration must prevent the destructive action.
-    std::vector<IncidentSessionTarget> registeredTargets;
-    std::uint64_t targetsGeneration = 0;
     bool targetsUsable = false;
-    if (severity >= IncidentSeverity::Standard && sessions_ != nullptr) {
+    if (severity >= IncidentSeverity::Standard && sessions_ != nullptr &&
+        lifecycle.ok) {
         const auto inventory = sessions_->listSessions();
         std::vector<LoginSession> toTerminate;
         if (!inventory.proven) {
@@ -234,12 +244,11 @@ IncidentResult IncidentController::applyContainment(
         }
 
         // Durable registration BEFORE any destructive action. The merge keeps
-        // every previously selected target of the current incident; a NEW
-        // incident (raise from UNLOCKED) replaces the store, so a run without
-        // any ordinary session still re-bases the store onto this incident.
+        // previously selected targets; the incident fence already established
+        // an empty current generation, even when there are no login sessions.
         if (inventory.proven) {
             const auto registration =
-                registerSessionTargets(std::move(newTargets), newIncident);
+                registerSessionTargets(std::move(newTargets));
             targetsUsable = registration.ok;
             if (!registration.ok) {
                 failures.emplace_back(
@@ -262,16 +271,18 @@ IncidentResult IncidentController::applyContainment(
         }
 
         std::string goneDiagnostic = inventory.proven ? "" : inventory.diagnostic;
-        const bool sessionsGone = inventory.proven && (toTerminate.empty() ||
+        const bool sessionsGone = inventory.proven && targetsUsable &&
+            (toTerminate.empty() ||
             sessions_->verifySessionsGone(toTerminate, goneDiagnostic));
         status.sessionsContained = sessionsGone;
         if (!sessionsGone) {
             failures.emplace_back("session containment could not be proven: " + goneDiagnostic);
         }
-    } else if (severity >= IncidentSeverity::Standard && sessions_ == nullptr) {
+    } else if (severity >= IncidentSeverity::Standard) {
         // No containment backend wired: containment cannot be claimed.
         status.sessionsContained = false;
-        failures.emplace_back("session containment backend is unavailable");
+        if (sessions_ == nullptr)
+            failures.emplace_back("session containment backend is unavailable");
     } else {
         status.sessionsContained = true;
     }
@@ -280,7 +291,8 @@ IncidentResult IncidentController::applyContainment(
     // DURABLY selected by ordinary login sessions during this incident
     // (Model A). ListUsers is never a source of new targets: a lingering-only
     // service without a previously qualifying login session is NOT a target.
-    if (severity == IncidentSeverity::Isolate && sessions_ != nullptr) {
+    if (severity == IncidentSeverity::Isolate && sessions_ != nullptr &&
+        lifecycle.ok) {
         bool usersProven = false;
         // The durable target provenance is loaded fresh from the store: it
         // must survive session termination, partial failures and restarts,
@@ -293,47 +305,11 @@ IncidentResult IncidentController::applyContainment(
         if (store.provenance ==
             IncidentSessionTargetStore::ReadProvenance::Proven) {
             const std::string bootId = currentIncidentBootId();
-            if (bootId.empty()) {
-                failures.emplace_back(
-                    "kernel boot id is unprovable; user-runtime obligations "
-                    "cannot be resolved safely");
-            } else if (store.bootId == bootId) {
-                if (incidentGeneration_.has_value() &&
-                    *incidentGeneration_ != store.incidentGeneration) {
-                    // A stale record of a PREVIOUS incident (its cleanup at
-                    // new-incident start or at clear failed): never authorize
-                    // user-runtime actions from it.
-                    failures.emplace_back(
-                        "incident session target store belongs to a previous "
-                        "incident generation");
-                } else {
-                    if (!incidentGeneration_.has_value()) {
-                        // Restart during an active incident: adopt the store
-                        // generation written before the restart.
-                        incidentGeneration_ = store.incidentGeneration;
-                    }
-                    storeUsable = true;
-                }
-            } else {
-                // A verified kernel reboot: previous-boot processes cannot
-                // have survived, so their runtime obligations resolve safely.
-                // The store is re-based onto the current boot; a failed
-                // durable re-base keeps the old record and degrades.
-                for (IncidentSessionTarget& target : obligations) {
-                    target.runtimeObligation =
-                        IncidentSessionTarget::RuntimeObligation::Discharged;
-                }
-                const IncidentSessionTargetStore::WriteResult rebased =
-                    targetStore_.write(bootId, store.incidentGeneration,
-                                       obligations);
-                if (rebased.durable) {
-                    storeUsable = true;
-                } else {
-                    failures.emplace_back(
-                        "previous-boot target obligations could not be "
-                        "re-based durably: " + rebased.detail);
-                }
-            }
+            storeUsable = !bootId.empty() && store.bootId == bootId &&
+                incidentGeneration_.has_value() &&
+                *incidentGeneration_ == store.incidentGeneration;
+            if (!storeUsable)
+                failures.emplace_back("incident target store changed during containment");
         } else if (store.provenance ==
                    IncidentSessionTargetStore::ReadProvenance::Absent) {
             // An active incident with a missing store is NOT a proven empty
@@ -406,8 +382,8 @@ IncidentResult IncidentController::applyContainment(
             if (obligationsChanged) {
                 const std::string bootId = currentIncidentBootId();
                 const IncidentSessionTargetStore::WriteResult persisted =
-                    targetStore_.write(bootId, store.incidentGeneration,
-                                       obligations);
+                    targetStore_.writeIfCurrent(
+                        store, bootId, store.incidentGeneration, obligations);
                 if (!persisted.durable) {
                     usersProven = false;
                     failures.emplace_back(
@@ -423,7 +399,8 @@ IncidentResult IncidentController::applyContainment(
         status.userRuntimeContained = usersProven;
     } else if (severity == IncidentSeverity::Isolate) {
         status.userRuntimeContained = false;
-        failures.emplace_back("user runtime containment backend is unavailable");
+        if (sessions_ == nullptr)
+            failures.emplace_back("user runtime containment backend is unavailable");
     } else {
         status.userRuntimeContained = true;
     }
@@ -489,6 +466,28 @@ IncidentResult IncidentController::raise(
         before.provenance == IncidentStateStore::Provenance::Proven &&
         before.severity == IncidentSeverity::Unlocked;
 
+    if (newIncident && !incidentSeverityIsUnlocked(requested)) {
+        const TargetRegistration fenced = fenceNewIncident();
+        if (!fenced.ok) {
+            const auto broken = stateStore_.encodeDurableBrokenState();
+            result.ok = false;
+            result.effectiveSeverity = IncidentSeverity::Isolate;
+            result.persistenceConfirmed = false;
+            result.persistentStateBroken = true;
+            result.detail = "new incident generation could not be fenced: " +
+                fenced.detail + "; BROKEN_STATE fallback: " + broken.detail;
+            const auto contained = mode.mode == IncidentResponseMode::Active
+                ? applyContainment(IncidentSeverity::Isolate,
+                    "incident generation fencing failed", false)
+                : settleNonActiveMode(mode.mode, IncidentSeverity::Isolate);
+            result.runtime = runtime_ = RuntimeState::Degraded;
+            result.detail += "; " + contained.detail;
+            recordAudit("incident_persistence_failed", result, source, reason);
+            notifySeverity(IncidentSeverity::Isolate, reason);
+            return result;
+        }
+    }
+
     const IncidentStateStore::RaiseResult raised =
         stateStore_.raiseToAtLeast(requested);
     result.ok = raised.durable;
@@ -525,7 +524,7 @@ IncidentResult IncidentController::raise(
         IncidentResult contained = applyContainment(
             IncidentSeverity::Isolate,
             "incident state could not be persisted; containing at ISOLATE",
-            newIncident);
+            false);
         contained.previousSeverity = result.previousSeverity;
         contained.escalated = result.escalated;
         contained.persistentStateBroken = result.persistentStateBroken;
@@ -551,7 +550,7 @@ IncidentResult IncidentController::raise(
     lastMode_ = IncidentResponseMode::Active;
 
     const IncidentResult contained = applyContainment(
-        result.effectiveSeverity, reason, newIncident);
+        result.effectiveSeverity, reason);
     result.runtime = contained.runtime;
     result.detail = contained.detail.empty() ? result.detail : contained.detail;
     // The incident is only fully established when BOTH halves succeeded: the
@@ -583,6 +582,7 @@ IncidentResult IncidentController::clear(const std::string& actor) {
 
     const IncidentStateStore::ClearResult cleared = stateStore_.clear();
     result.ok = cleared.ok;
+    result.persistenceConfirmed = cleared.ok;
     result.effectiveSeverity = cleared.effectiveSeverity;
     result.persistentStateBroken =
         stateStore_.read().provenance != IncidentStateStore::Provenance::Proven;
@@ -615,19 +615,26 @@ IncidentResult IncidentController::clear(const std::string& actor) {
     // they can never authorize actions in a future incident. A failed cleanup
     // is tolerable here (lockstatus is authoritative and the next raise
     // replaces the whole store with a new generation), but it is reported.
+    bool targetCleanupDurable = false;
     {
         const std::string bootId = currentIncidentBootId();
         const IncidentSessionTargetStore::ReadResult store =
             targetStore_.read();
-        const std::uint64_t nextGeneration =
-            store.provenance == IncidentSessionTargetStore::ReadProvenance::Proven
-                ? store.incidentGeneration + 1
-                : 1;
-        const IncidentSessionTargetStore::WriteResult cleaned =
-            bootId.empty()
-                ? IncidentSessionTargetStore::WriteResult{false,
-                      "kernel boot id is unprovable"}
-                : targetStore_.write(bootId, nextGeneration, {});
+        IncidentSessionTargetStore::WriteResult cleaned;
+        if (bootId.empty())
+            cleaned.detail = "kernel boot id is unprovable";
+        else if (store.provenance == IncidentSessionTargetStore::ReadProvenance::Unprovable)
+            cleaned.detail = "target store is unprovable: " + store.detail;
+        else if (store.provenance == IncidentSessionTargetStore::ReadProvenance::Proven &&
+                 store.incidentGeneration == std::numeric_limits<std::uint64_t>::max())
+            cleaned.detail = "incident generation overflow";
+        else {
+            const std::uint64_t nextGeneration =
+                store.provenance == IncidentSessionTargetStore::ReadProvenance::Proven
+                    ? store.incidentGeneration + 1 : 1;
+            cleaned = targetStore_.writeIfCurrent(store, bootId, nextGeneration, {});
+        }
+        targetCleanupDurable = cleaned.durable;
         if (!cleaned.durable) {
             result.detail += "; incident session target cleanup failed: " +
                              cleaned.detail;
@@ -638,8 +645,9 @@ IncidentResult IncidentController::clear(const std::string& actor) {
         ? applyContainment(IncidentSeverity::Unlocked, "incident cleared by " + actor)
         : settleNonActiveMode(mode.mode, IncidentSeverity::Unlocked);
     result.runtime = contained.runtime;
-    result.detail = contained.detail;
-    result.ok = result.ok && contained.ok;
+    result.detail += "; " + contained.detail;
+    result.ok = result.ok && contained.ok && targetCleanupDurable;
+    if (!targetCleanupDurable) result.runtime = runtime_ = RuntimeState::Degraded;
 
     lastNotified_.reset();
     IncidentSource source;
@@ -779,94 +787,88 @@ void IncidentController::notifySeverity(
 // the store generation to match the controller's known generation for the
 // current incident, and degrades on any mismatch instead of guessing.
 
-std::string IncidentController::currentIncidentBootId() {
-    return SystemBootInfo::get_boot_id();
+std::string IncidentController::currentIncidentBootId() const {
+    return bootIdProvider_ ? bootIdProvider_() : SystemBootInfo::get_boot_id();
+}
+
+IncidentController::TargetRegistration
+IncidentController::fenceNewIncident() {
+    const std::string bootId = currentIncidentBootId();
+    if (bootId.empty()) return {false, "kernel boot id is unprovable"};
+    const IncidentSessionTargetStore::ReadResult store = targetStore_.read();
+    if (store.provenance == IncidentSessionTargetStore::ReadProvenance::Unprovable)
+        return {false, "target store is unprovable: " + store.detail};
+    if (store.provenance == IncidentSessionTargetStore::ReadProvenance::Proven &&
+        store.incidentGeneration == std::numeric_limits<std::uint64_t>::max())
+        return {false, "incident generation overflow"};
+    const std::uint64_t generation =
+        store.provenance == IncidentSessionTargetStore::ReadProvenance::Proven
+            ? store.incidentGeneration + 1 : 1;
+    const auto written = targetStore_.writeIfCurrent(store, bootId, generation, {});
+    if (!written.durable) return {false, written.detail};
+    incidentGeneration_ = generation;
+    return {true, ""};
+}
+
+IncidentController::TargetRegistration
+IncidentController::prepareActiveTargetStore() {
+    const auto state = stateStore_.read();
+    if (state.provenance != IncidentStateStore::Provenance::Proven ||
+        incidentSeverityIsUnlocked(state.severity))
+        return {false, "active lockstatus is not proven"};
+    const std::string bootId = currentIncidentBootId();
+    if (bootId.empty()) return {false, "kernel boot id is unprovable"};
+    const auto store = targetStore_.read();
+    if (store.provenance != IncidentSessionTargetStore::ReadProvenance::Proven)
+        return {false, store.provenance ==
+            IncidentSessionTargetStore::ReadProvenance::Absent
+                ? "target store is absent during an active incident"
+                : "target store is unprovable: " + store.detail};
+    if (incidentGeneration_.has_value() &&
+        *incidentGeneration_ != store.incidentGeneration)
+        return {false, "target generation differs from current incident"};
+    // On restart there is no in-memory generation. Schema 2's marker is a
+    // durable witness of the new writer's fence-before-severity protocol;
+    // a proven active lockstatus can only have been published after it.
+    // Schema 1 is rejected by the store parser, never silently adopted.
+    if (store.bootId != bootId) {
+        // A new kernel boot discharges all prior runtime obligations. Drop
+        // prior login authorizations before reading new-boot sessions.
+        const auto rebased = targetStore_.writeIfCurrent(
+            store, bootId, store.incidentGeneration, {});
+        if (!rebased.durable)
+            return {false, "previous-boot target rebase failed: " + rebased.detail};
+    }
+    incidentGeneration_ = store.incidentGeneration;
+    return {true, ""};
 }
 
 IncidentController::TargetRegistration
 IncidentController::registerSessionTargets(
-    std::vector<IncidentSessionTarget> newTargets, bool newIncident) {
-    TargetRegistration registration;
+    std::vector<IncidentSessionTarget> newTargets) {
     const std::string bootId = currentIncidentBootId();
-    if (bootId.empty()) {
-        registration.detail = "kernel boot id is unprovable";
-        return registration;
-    }
-    const IncidentSessionTargetStore::ReadResult store = targetStore_.read();
-    std::uint64_t generation = 0;
-    // Several login sessions of the SAME user are one target: dedupe by UID.
-    std::vector<IncidentSessionTarget> merged;
+    if (bootId.empty()) return {false, "kernel boot id is unprovable"};
+    const auto store = targetStore_.read();
+    if (store.provenance != IncidentSessionTargetStore::ReadProvenance::Proven ||
+        store.bootId != bootId || !incidentGeneration_.has_value() ||
+        *incidentGeneration_ != store.incidentGeneration)
+        return {false, "current incident target store is unproven"};
+    std::vector<IncidentSessionTarget> merged = store.targets;
     for (IncidentSessionTarget& target : newTargets) {
-        const bool duplicate = std::any_of(
-            merged.begin(), merged.end(),
-            [&](const IncidentSessionTarget& existing) {
-                return existing.uid == target.uid;
-            });
-        if (!duplicate) merged.push_back(std::move(target));
+        const auto existing = std::find_if(merged.begin(), merged.end(),
+            [&](const auto& item) { return item.uid == target.uid; });
+        if (existing != merged.end()) {
+            if (existing->canonicalName != target.canonicalName)
+                return {false, "target UID identity changed during incident"};
+            continue;
+        }
+        merged.push_back(std::move(target));
     }
-    if (newIncident) {
-        // The previous record (whatever it holds) belongs to a previous
-        // incident: the store is REPLACED, generation increments.
-        if (store.provenance == IncidentSessionTargetStore::ReadProvenance::Proven) {
-            generation = store.incidentGeneration + 1;
-        } else if (store.provenance ==
-                   IncidentSessionTargetStore::ReadProvenance::Absent) {
-            generation = 1;
-        } else {
-            registration.detail = "incident session target store is unprovable: " +
-                                  store.detail;
-            return registration;
-        }
-    } else {
-        // Same incident: merge into the existing record, never losing a
-        // previously selected user.
-        if (store.provenance ==
-            IncidentSessionTargetStore::ReadProvenance::Absent) {
-            // The incident never registered targets (e.g. it was raised at
-            // SOFT) and the store does not exist yet: bootstrap it with this
-            // pass. This CREATES a record; it never trusts absence.
-            generation = 1;
-        } else if (store.provenance !=
-                   IncidentSessionTargetStore::ReadProvenance::Proven) {
-            registration.detail = "incident session target store is unprovable: " +
-                                  store.detail;
-            return registration;
-        } else if (store.bootId != bootId) {
-            // The kernel rebooted mid-incident. Previous-boot runtime
-            // obligations resolve safely (processes cannot survive a kernel
-            // reboot); the store is re-based before the merge.
-            registration.detail =
-                "incident session target store belongs to a previous boot";
-            return registration;
-        }
-        if (incidentGeneration_.has_value() &&
-            *incidentGeneration_ != store.incidentGeneration) {
-            registration.detail =
-                "incident session target store generation does not match the "
-                "current incident";
-            return registration;
-        }
-        generation = store.incidentGeneration;
-        for (const IncidentSessionTarget& previous : store.targets) {
-            const bool duplicate = std::any_of(
-                merged.begin(), merged.end(), [&](const IncidentSessionTarget&
-                                                      target) {
-                    return target.uid == previous.uid;
-                });
-            if (!duplicate) merged.push_back(previous);
-        }
-    }
-    incidentGeneration_ = generation;
-    const IncidentSessionTargetStore::WriteResult written =
-        targetStore_.write(bootId, generation, merged);
-    if (!written.durable) {
-        registration.detail = written.detail.empty()
-            ? "durable session target registration was not confirmed"
-            : written.detail;
-        return registration;
-    }
-    registration.ok = true;
-    return registration;
+    // Reconciliation with no new session requires no write/fsync.
+    if (merged.size() == store.targets.size()) return {true, ""};
+    const auto written = targetStore_.writeIfCurrent(
+        store, bootId, store.incidentGeneration, merged);
+    return {written.durable, written.detail};
 }
 
 } // namespace fic::incident

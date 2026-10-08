@@ -2,11 +2,11 @@
 
 ## Current base
 
-* Branch `main`; task base `943b34b580b6a93e608b98d75f1bd8914a2e3353`.
+* Branch `main`; follow-up applied on `5a07798aeff71cfa9ae4618c26229bb7598370a5`.
 
 ## Current task
 
-* Model A (session-derived containment targets) — реализовано.
+* Crash-consistent lifecycle для Session Containment Model A — реализован.
 
 ## Accepted architecture / invariants
 
@@ -15,31 +15,31 @@
 * **Durable target store** `incident_session_targets` (рядом с lockstatus, root-owned 0640, atomic replace + fsync файла и каталога, версионированный JSON: `boot_id`, `incident_generation`, targets с evidence). Инвариант: **сначала durable регистрация цели, затем разрушающее действие**; неуспешная регистрация удерживает `TerminateSession` и даёт `DEGRADED`.
 * Списки целей: session-level — обычные login-сессии текущего инцидента; user-runtime (ISOLATE) — **только** pending-цели из store. `ListUsers` — не источник новых целей, только механизм действия/верификации выбранных UID через `lookupProvenUser(uid, expectedName)`.
 * Переживает: повторный `reconcile()`, частичный отказ `TerminateSession`/`TerminateUser`, рестарт FIC (store), эскалацию STANDARD→HARD→ISOLATE. Проверенный kernel reboot (смена `boot_id`) разрешает runtime-обязательства предыдущей загрузки; soft-reboot с тем же `boot_id` их сохраняет.
-* `incident_generation` инкрементируется при новом инциденте (raise с proven UNLOCKED) и после административного clear: цели старого инцидента не могут сработать в новом. Два persistent-объекта (lockstatus + store) не заменяются атомарно вместе; промежуточные состояния разрешены в безопасную сторону (следующий raise заменяет store целиком).
+* При первом raise из proven `UNLOCKED` пустое новое поколение schema 2 с lifecycle marker durable фиксируется **до** записи ненулевой severity, включая SOFT/PASSIVE. Два persistent-объекта не атомарная транзакция: авария до severity оставляет `UNLOCKED`, после severity — доказанное новое поколение. Failed fencing пытается durable BROKEN_STATE и запрещает session/user mutations.
+* При durable `UNLOCKED` clear затем очищает store; ошибка cleanup видна в ответе, а следующий инцидент снова фиксирует пустое поколение. Active severity + отсутствующий/повреждённый/старой схемы store → `DEGRADED` без session/user mutations.
+* Проверенная смена kernel boot ID durably rebases store на пустые targets при любой active severity до обработки новых сессий. Restart FIC/logind с прежним boot ID не rebases; недоказанный boot ID degrades.
 * Недоказуемый (повреждённый) store → `DEGRADED`, никаких unsafe-действий и никогда не пустой успех. UID reuse (UID теперь другой аккаунт) → отказ + `DEGRADED`.
 * Root, configured recovery-group members, greeter/service и unproven identities никогда не являются целями. Unknown class делает inventory недоказанным.
 * Logind actions are pinned to its unique D-Bus owner, with immediate identity recheck. The narrow race between recheck and terminate was accepted for explicit documentation.
 
 ## Completed
 
-* Production `IncidentSessionTargetStore` (SecureStateFile + AtomicFileWriter, fault-injection seams унаследованы), controller registration-before-termination, ISOLATE через store, clear/new-incident generation protocol, `lookupProvenUser` в backend API.
+* Follow-up: controller fencing-before-severity, active store proof, unified boot rebase, clear diagnostics; strict parser/schema 2 and state-bound conditional writes.
 * Удалена shell-based классификация (`Service` по `nologin/false/true`); Model A в `classifyProductionContainmentIdentity`.
-* `tests/fic/incident/ModelAContainmentTests.cpp` — production-to-production сценарии R1–R8 (partial failure+reconcile, HARD→ISOLATE escalation, restart recovery, corrupt store, UID reuse, clear isolation, root/recovery/lingering-only).
+* Исполняемые RED R1–R5 на base; GREEN регрессии на crash/boot/missing store/parser/fsync, сохранены исходные R1–R8 Model A.
 * Обновлены IncidentControllerTests/LogindSessionContainmentBackendTests под Model A.
 
 ## Changed areas
 
-* `fic/src/incident/IncidentSessionTargetStore.{h,cpp}` (новый), `fic/src/incident/IncidentController.{h,cpp}`, `fic/src/session/{LogindSessionContainmentBackend,SessionContainmentBackend}.h`, `fic/src/session/LogindSessionContainmentBackend.cpp`, `fic/src/main.cpp` (wiring через 3-arg ctor), тесты, `fic/README.md`.
+* `fic/src/incident/{IncidentController,IncidentSessionTargetStore}.{h,cpp}`, incident/controller and two device-incident fixture tests, `fic/README.md`, `docs/HANDOFF.md`.
 
 ## Validation
 
-* Fresh full build OK; полный CTest **143/143 passed** (включая новый `model_a_containment_tests`).
-* `mutation_journal_tests` под UID 1000 — PASS.
-* `git diff --check` passed.
-* RED-before: старая shell-классификация противоречила R6/R7 сценарием (lingering-only service был бы целью через ListUsers; genuine login session service — нет); отсутствие store-привязки допускало потерю pending obligation после TerminateSession. Исполнительный RED прогон против base `4bf3a41` не выполнялся (production-код заменён); противоречия закреплены регрессиями Model A suite.
+* RED-before: R1–R5 executable on `5a07798`, each failed on its intended assertion.
+* Fresh Debian 12 Docker full build PASS. CTest as root excluding `mutation_journal_tests`: **142/142 PASS** (Git safe.directory set for read-only `/src`); the excluded journal executable separately passed under UID 1000. Initial unadjusted root CTest had 4 failures: Git safe.directory, root-dependent journal harness, and two device fixtures missing the new target-store test ownership override; all affected cases were rerun successfully.
+* Targeted Model A/controller/backend/recovery tests PASS. Final targeted Model A/controller builds and direct runs PASS on Debian 13, Ubuntu 24.04, ALT p11. ALT image lacks `ctest`; Ubuntu 26.04 configure is blocked by missing PAM development files in the image.
+* `git diff --check` PASS before commit.
 
 ## Remaining
 
-* No live host session mutation or real desktop/session E2E has been performed. Verify runtime D-Bus behavior in disposable systemd staging before deployment; fake transport tests do not prove real DE lock behavior.
-* Network quarantine остаётся `NullIncidentNetworkBackend` — незавершённая часть ISOLATE.
-* Cross-distro targeted builds (Debian 12/13, Ubuntu 24.04, ALT p11) для Model A не прогонялись в этой сессии; Ubuntu 26.04 по-прежнему без PAM dev headers.
+* Real systemd-logind/desktop E2E requires disposable staging; fake transport does not prove desktop lock behavior. Identity recheck and D-Bus termination retain the documented narrow race. Network quarantine remains `NullIncidentNetworkBackend`.

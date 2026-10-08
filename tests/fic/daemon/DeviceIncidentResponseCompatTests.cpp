@@ -162,6 +162,8 @@ int main() {
     // the invoking user.
     IncidentStateStore::setOwnershipExpectationForTests(
         ::geteuid(), ::geteuid());
+    fic::incident::IncidentSessionTargetStore::setOwnershipExpectationForTests(
+        ::geteuid(), ::geteuid());
 
     TempTree tree;
     IncidentController controller(
