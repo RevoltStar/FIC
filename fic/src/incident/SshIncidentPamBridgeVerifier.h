@@ -41,6 +41,17 @@ public:
         const platform::PlatformExecutableResolver& executables,
         std::string& error, SshCommandRunner runner = {},
         SshMainProcessVerifier processVerifier = {});
+
+    // A FIC-stopped service is started by the ownership-aware guard after
+    // proving the future recipe. Re-prove the active process and unchanged
+    // manager environment before declaring the bridge ready.
+    static bool activateBlocked(
+        const platform::SshPlatformConfig& platform,
+        const platform::PlatformExecutableResolver& executables,
+        std::string& error,
+        const std::function<bool(std::string&)>& restoreOwned,
+        SshCommandRunner runner = {},
+        SshMainProcessVerifier processVerifier = {});
 };
 
 } // namespace fic::incident

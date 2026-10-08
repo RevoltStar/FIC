@@ -803,14 +803,37 @@ fallback `ACTIVE`, а не автоматическое смягчение ре�
 но не отключает парольную аутентификацию. `ssh_use_pam` также имеет
 фиксированное значение `yes` и включена в новой конфигурации по умолчанию.
 
-При входе в `ACTIVE` FIC применяет Required `ssh_use_pam`, доказывает
-`UsePAM=yes` через доверенный `sshd -T`, проверяет `PAMServiceName=sshd`
+При управляемом переходе `OFF`/`PASSIVE` → `ACTIVE` FIC сначала закрывает
+объявленные SSH service/socket entry points, затем записывает новый режим в
+`GLOBAL.conf`, применяет Required `ssh_use_pam` и доказывает prerequisite.
+Если запись не удалась и прежний режим всё ещё доказуемо неактивен, временная
+блокировка снимается только по подтверждённому ownership. Неудача любого
+последующего этапа оставляет внутреннее состояние `DEGRADED` и SSH закрытым;
+административный IPC остаётся доступен. `sd_notify READY=1` сообщает systemd
+о запуске daemon, а не о готовности IncidentAccessGate. Редактирование значения
+`ACTIVE` при `DISABLE` не создаёт перехода и не блокирует SSH.
+При старте с `ACTIVE`, включая fallback при недоверенном `GLOBAL.conf`, SSH
+закрывается до startup apply. При выходе в `PASSIVE`/`OFF` сохранённый
+`lockstatus` не меняется.
+Внешняя запись `GLOBAL.conf` вне daemon IPC не синхронизирована с ним: следующий
+периодический проход закрывает SSH перед apply, но момент такой записи FIC
+контролировать не может.
+
+При входе в `ACTIVE` FIC доказывает `UsePAM=yes` через доверенный `sshd -T`,
+проверяет `PAMServiceName=sshd` во всех допустимых `Match`/`Include` контекстах
 на поддерживающих его OpenSSH и постоянную topology `pam_fic_access.so`.
 Поддерживается узкая штатная service/socket topology из `PlatformProfile`:
 доверенный `/usr/sbin/sshd`, стандартный `ExecStart` и пустые дополнительные
 параметры в доверенном package option file. Неизвестное явное окружение,
 `PassEnvironment`, custom `-f`/`-o`, executable или socket target оставляют
-ACTIVE prerequisite недоказанным. Активный штатный service управляемо
+ACTIVE prerequisite недоказанным. Кроме unit environment, проверяется
+`systemctl --system show-environment`: разрешены только простые `LANG` и
+штатные значения `PATH` поддерживаемых платформ; иные переменные, ошибки,
+экранирование или изменение блока при активации дают `DEGRADED`. Проверка
+не исполняет вывод как shell. Это сравнение снимков до и после операции:
+кратковременное изменение с возвратом прежнего значения между чтениями
+неразличимо без атомарного контракта со стороны systemd. Активный штатный
+service управляемо
 перезапускается; неактивный не запускается ради доказательства. После restart
 проверяются активность service, `MainPID`, доверенный `/proc/MainPID/exe`,
 эффективный SSH config и PAM topology.
@@ -822,10 +845,24 @@ FIC не восстанавливает исторические argv/environmen
 он недоказан, daemon остаётся доступен для администратора в `DEGRADED`,
 контролируемые PAM-входы fail-closed, а FIC останавливает объявленные SSH
 service/socket units, пишет security audit и уведомляет. После восстановления
-prerequisite FIC включает только те listeners, которые остановил сам в этом
-процессе. `PASSIVE`/`OFF` не выполняют SSH guard и снимают его собственную
-блокировку. Отдельно запущенные вне объявленных units процессы `sshd` не
-входят в этот контракт.
+prerequisite FIC включает только те listeners, для которых доказал собственную
+остановку. Witness `/run/fic/incident-ssh-block` хранит точные unit names,
+boot ID и состояние `intent`/`stopped`; перед stop атомарно фиксируется intent,
+для всех изначально активных service/socket units, поскольку остановка socket
+может одновременно остановить service. После подтверждения inactive
+фиксируется completed stop. Файл `root:root`, `0600`,
+в защищённом `/run/fic`; это runtime ownership текущего boot, а не persistent
+policy. После crash новый daemon читает witness до restore. Изначально
+inactive/failed/deactivating units не становятся FIC-owned. Неоднозначный
+`intent`, недоверенный witness или неудачный restore не дают права автоматически
+запускать SSH и оставляют `DEGRADED`; при частичном восстановлении успех не
+объявляется. В `PASSIVE`/`OFF` активная блокировка не устанавливается, но
+FIC снимает доказанную ранее собственную блокировку. При неоднозначном witness
+локальный root-администратор должен остановить daemon FIC, проверить состояние
+unit и PAM/SSH config, восстановить нужный SSH listener вручную и только затем
+удалить witness перед повторным запуском FIC;
+слепой `systemctl start` FIC не выполняет. Отдельно запущенные вне объявленных
+units процессы `sshd` не входят в этот контракт.
 
 Политики SSH после атомарной записи перечитывают `sshd_config`, получают все
 эффективные значения через `sshd -T` и перезагружают активный `ssh.service` или

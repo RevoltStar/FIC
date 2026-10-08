@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cctype>
 #include <fstream>
 #include <map>
@@ -144,8 +145,66 @@ bool stockOptionFile(const platform::SshPlatformConfig& platform,
     return lines.eof();
 }
 
+// systemctl show-environment prints the combined manager block, not shell
+// input. Only the stock, non-executable variables observed on supported
+// profiles are accepted. In particular, no quoting or escape syntax is
+// interpreted here: such output remains unproven.
+bool safeManagerEnvironment(const std::string& systemctl,
+                            const SshCommandRunner& runner,
+                            std::string& snapshot, std::string& error) {
+    ProcessOptions clean;
+    clean.clearEnvironment = true;
+    clean.maxOutputBytes = 4096;
+    clean.timeout = std::chrono::milliseconds(2000);
+    const auto result = runner(systemctl, {"--system", "show-environment"}, clean);
+    if (!result.success() || !result.standardError.empty() ||
+        result.standardOutput.size() > clean.maxOutputBytes) {
+        error = "systemd manager environment is unavailable or incomplete";
+        return false;
+    }
+    snapshot = result.standardOutput;
+    if (!snapshot.empty() && snapshot.back() != '\n') {
+        error = "systemd manager environment has incomplete final assignment";
+        return false;
+    }
+    std::set<std::string> seen;
+    std::istringstream lines(snapshot);
+    std::string line;
+    while (std::getline(lines, line)) {
+        const auto equal = line.find('=');
+        if (equal == std::string::npos || equal == 0 ||
+            !seen.insert(line.substr(0, equal)).second) {
+            error = "ambiguous systemd manager environment assignment";
+            return false;
+        }
+        const std::string name = line.substr(0, equal);
+        const std::string value = line.substr(equal + 1);
+        const bool simple = !value.empty() && value.size() <= 256 &&
+            std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+                return (ch >= 'A' && ch <= 'Z') ||
+                       (ch >= 'a' && ch <= 'z') ||
+                       (ch >= '0' && ch <= '9') ||
+                       ch == '_' || ch == '.' || ch == '-' ||
+                       ch == '@' || ch == '/' || ch == ':';
+            });
+        const bool locale = name == "LANG" && value.size() <= 64 &&
+            value.find('/') == std::string::npos &&
+            value.find(':') == std::string::npos;
+        const bool path = name == "PATH" &&
+            (value == "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" ||
+             value == "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin" ||
+             value == "/usr/bin:/bin");
+        if (!simple || !(locale || path)) {
+            error = "unsupported systemd manager environment variable: " + name;
+            return false;
+        }
+    }
+    return true;
+}
+
 struct Topology {
     std::vector<std::string> activeServices;
+    std::string managerEnvironment;
 };
 
 bool inspect(const platform::SshPlatformConfig& platform,
@@ -162,6 +221,8 @@ bool inspect(const platform::SshPlatformConfig& platform,
     if (!executables.resolve(platform::ExecutableId::Sshd, sshd, error) ||
         !executables.resolve(platform::ExecutableId::Systemctl, systemctl, error))
         return false;
+    if (!safeManagerEnvironment(systemctl.string(), runner,
+                                topology.managerEnvironment, error)) return false;
     struct stat trusted {};
     if (::stat(sshd.c_str(), &trusted) != 0) {
         error = "trusted sshd is unavailable";
@@ -265,13 +326,9 @@ bool inspect(const platform::SshPlatformConfig& platform,
     options.requireTrustedInputs = true;
     SshRuntime runtime(options, executables, runner);
     if (!runtime.verifyPolicyValue("UsePAM", "yes", error)) return false;
-    std::vector<std::string> values;
     std::string detail;
-    if (runtime.effectiveValues("PAMServiceName", values, detail)) {
-        if (values != std::vector<std::string>{"sshd"}) {
-            error = "SSH PAMServiceName is not sshd";
-            return false;
-        }
+    if (runtime.verifyPolicyValue("PAMServiceName", "sshd", detail)) {
+        // Includes and Match branches have been audited by SshRuntime.
     } else if (detail.find("does not contain parameter PAMServiceName") !=
                std::string::npos) {
         ProcessOptions clean;
@@ -340,12 +397,38 @@ bool SshIncidentPamBridgeVerifier::activate(
     Topology after;
     if (!inspect(platform, executables, runner, true, after, error,
                  processVerifier)) return false;
+    if (after.managerEnvironment != before.managerEnvironment) {
+        error = "systemd manager environment changed during SSH activation";
+        return false;
+    }
     for (const auto& unit : before.activeServices)
         if (std::find(after.activeServices.begin(), after.activeServices.end(), unit) ==
             after.activeServices.end()) {
             error = "SSH service did not return active: " + unit;
             return false;
         }
+    return true;
+}
+
+bool SshIncidentPamBridgeVerifier::activateBlocked(
+    const platform::SshPlatformConfig& platform,
+    const platform::PlatformExecutableResolver& executables,
+    std::string& error,
+    const std::function<bool(std::string&)>& restoreOwned,
+    SshCommandRunner runner,
+    SshMainProcessVerifier processVerifier) {
+    runner = commandRunner(std::move(runner));
+    Topology before;
+    if (!inspect(platform, executables, runner, false, before, error, {}))
+        return false;
+    if (!restoreOwned(error)) return false;
+    Topology after;
+    if (!inspect(platform, executables, runner, true, after, error,
+                 processVerifier)) return false;
+    if (after.managerEnvironment != before.managerEnvironment) {
+        error = "systemd manager environment changed during SSH restoration";
+        return false;
+    }
     return true;
 }
 

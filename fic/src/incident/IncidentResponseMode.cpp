@@ -95,7 +95,8 @@ IncidentResponseModeResult IncidentResponseModeResolver::read(
     const auto mode = status == "DISABLE" ? IncidentResponseMode::Off :
         value == "PASSIVE" ? IncidentResponseMode::Passive :
                               IncidentResponseMode::Active;
-    return {mode, true, std::string("configured ") + incidentResponseModeToken(mode)};
+    return {mode, true, std::string("configured ") +
+                            incidentResponseModeToken(mode), value};
 }
 
 } // namespace fic::incident

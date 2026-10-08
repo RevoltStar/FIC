@@ -104,17 +104,27 @@ def main():
     bridge = helper.find("SshIncidentPamBridgeVerifier::")
     blocked = helper.find("sshGuard.block(")
     degraded = helper.find("DaemonReadinessState::Degraded", blocked)
-    require(0 <= nonactive < pam < bridge < blocked < degraded,
-            "only ACTIVE must prove PAM and SSH, then block on proof failure")
+    require(0 <= nonactive < blocked < pam < bridge and degraded >= 0,
+            "ACTIVE transition must block before proving PAM and SSH")
     apply = startup.find("run_daemon_apply_all_pass(", startup.find("int main("))
     startup_recompute = startup.find("recomputeAccessReadiness(", apply)
     notify = startup.find('"READY=1', startup_recompute)
     require(0 <= apply < startup_recompute < notify,
             "startup must apply, prove prerequisites and then announce readiness")
-    require("if (mayChangeSshPamBridge(requestText))" in startup and
+    require("runGuardedModeMutation<json>(" in startup and
+            'const bool leavingActive =' in startup and
+            'before.mode != fic::incident::IncidentResponseMode::Active &&' in startup and
+            'mayPublishManagedActive(request, before)' in startup and
+            'before.configuredValue' in startup and
+            "mayChangeSshPamBridge(requestText) && !preflightFailed" in startup and
             startup.count("recomputeAccessReadiness(") >= 4 and
             "std::chrono::seconds(30)" in startup,
             "admin changes and short periodic drift checks must recompute ACTIVE proof")
+    periodic = startup.find("if (now >= nextPeriodicApply)")
+    periodic_block = startup.find("incidentSshGuard().block(", periodic)
+    periodic_apply = startup.find("run_daemon_apply_all_pass(", periodic)
+    require(0 <= periodic < periodic_block < periodic_apply,
+            "periodic apply must guard an externally activated mode first")
     bridge_source = (root / "fic/src/incident/SshIncidentPamBridgeVerifier.cpp").read_text()
     require("/proc/" in bridge_source and "/exe" in bridge_source and
             "/cmdline" not in bridge_source and "/environ" not in bridge_source,

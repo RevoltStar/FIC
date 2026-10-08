@@ -13,6 +13,8 @@ struct IncidentResponseModeResult {
     IncidentResponseMode mode = IncidentResponseMode::Active;
     bool proven = false;
     std::string diagnostic;
+    // Validated stored value, including when status=DISABLE. Empty on fallback.
+    std::string configuredValue;
 };
 
 class IncidentResponseModeResolver {

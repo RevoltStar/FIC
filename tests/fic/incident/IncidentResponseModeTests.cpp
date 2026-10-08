@@ -50,6 +50,11 @@ int main() {
         write("incident_response_mode.status=DISABLE\n"
               "incident_response_mode.value=PASSIVE\n");
         require(read().mode == fic::incident::IncidentResponseMode::Off && read().proven);
+        require(read().configuredValue == "PASSIVE");
+        write("incident_response_mode.status=DISABLE\n"
+              "incident_response_mode.value=ACTIVE\n");
+        require(read().mode == fic::incident::IncidentResponseMode::Off &&
+                read().configuredValue == "ACTIVE");
         write("incident_response_mode.status=ENABLE\n"
               "incident_response_mode.value=PASSIVE\n");
         require(read().mode == fic::incident::IncidentResponseMode::Passive && read().proven);

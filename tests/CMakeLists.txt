@@ -797,6 +797,12 @@ target_include_directories(incident_response_mode_tests PRIVATE
 target_link_libraries(incident_response_mode_tests PRIVATE fic-core)
 add_test(NAME incident_response_mode_tests COMMAND incident_response_mode_tests)
 
+add_executable(incident_mode_transition_tests
+    fic/incident/IncidentModeTransitionTests.cpp)
+target_include_directories(incident_mode_transition_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+add_test(NAME incident_mode_transition_tests COMMAND incident_mode_transition_tests)
+
 add_executable(incident_recovery_group_tests
     fic/incident/IncidentRecoveryGroupTests.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)

@@ -715,13 +715,37 @@ void testNarrowIncidentSshBridge() {
     int restarts = 0;
     bool active = true;
     std::string environment;
+    std::string managerEnvironment = "LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+    bool managerUnavailable = false;
+    bool changeManagerOnRestart = false;
+    bool legacyPamRouting = false;
     std::string execArgs = " -D $SSHD_OPTS";
     std::string effective = "usepam yes\npamservicename sshd\n";
     const auto runner = [&](const std::string&, const std::vector<std::string>& args,
                             const ProcessOptions&) {
         if (!args.empty() && args.front() == "restart") {
             ++restarts;
+            if (changeManagerOnRestart)
+                managerEnvironment = "LANG=en_US.UTF-8\nPATH=/usr/bin:/bin\n";
             return success();
+        }
+        if (args == std::vector<std::string>{"--system", "show-environment"}) {
+            if (managerUnavailable) {
+                ProcessResult result;
+                result.started = true;
+                result.exitCode = 1;
+                return result;
+            }
+            return success(managerEnvironment);
+        }
+        if (legacyPamRouting && !args.empty() && args.front() == "-T" &&
+            std::find(args.begin(), args.end(),
+                      "PAMServiceName=fic-capability-probe") != args.end()) {
+            ProcessResult result;
+            result.started = true;
+            result.exitCode = 1;
+            result.standardError = "Bad configuration option: PAMServiceName";
+            return result;
         }
         if (!args.empty() && args.front() == "show") {
             if (args.back() == "ssh.socket")
@@ -750,6 +774,92 @@ void testNarrowIncidentSshBridge() {
     require(fic::incident::SshIncidentPamBridgeVerifier::proveCurrent(
                 platform, tree.executables(), error, runner, process) && restarts == 1,
             "healthy drift check must not restart SSH");
+    managerEnvironment = "LANG=C.UTF-8\nLD_PRELOAD=/tmp/wrap.so\n";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "manager-wide loader environment must fail closed");
+    managerEnvironment = "LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+    managerEnvironment = "LANG=C.UTF-8\nSSHD_OPTS=-o UsePAM=no\n";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "manager-wide SSH options must fail closed");
+    managerEnvironment = "LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+    tree.write("sshd_config",
+               "UsePAM yes\nPAMServiceName sshd\n"
+               "Match User alice\n    PAMServiceName custom\n");
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "conditional PAMServiceName override must fail closed");
+    tree.write("sshd_config", "UsePAM yes\nPAMServiceName sshd\n"
+                              "Include sshd_config.d/outer.conf\n");
+    tree.write("sshd_config.d/outer.conf",
+               "Match User alice\nInclude sshd_config.d/nested.conf\n");
+    tree.write("sshd_config.d/nested.conf", "PAMServiceName custom\n");
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "nested Include must not hide a conditional PAM route override");
+    tree.write("sshd_config.d/nested.conf", "PAMServiceName sshd\n");
+    require(fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "matching PAM route in every Match context must be proven: " + error);
+    tree.write("sshd_config.d/outer.conf", "Include ../ambiguous.conf\n");
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "ambiguous Include must fail closed");
+    tree.write("sshd_config", "UsePAM yes\nPAMServiceName sshd\n");
+    managerEnvironment = "LANG=$'C.UTF-8'\n";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "escaped manager environment must be unproven");
+    managerEnvironment = "LANG=C.UTF-8";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "truncated manager environment must be unproven");
+    managerEnvironment = "LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+    managerUnavailable = true;
+    require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "unavailable manager environment must be unproven");
+    managerUnavailable = false;
+    changeManagerOnRestart = true;
+    restarts = 0;
+    require(!fic::incident::SshIncidentPamBridgeVerifier::activate(
+                platform, tree.executables(), error, runner, process) && restarts == 1,
+            "environment change during restart must not yield READY");
+    changeManagerOnRestart = false;
+    managerEnvironment = "LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+    bool restoreCalled = false;
+    require(fic::incident::SshIncidentPamBridgeVerifier::activateBlocked(
+                platform, tree.executables(), error,
+                [&](std::string&) { restoreCalled = true; active = true; return true; },
+                runner, process) && restoreCalled,
+            "blocked SSH may restore only after future proof: " + error);
+    active = false;
+    restoreCalled = false;
+    managerEnvironment = "LD_PRELOAD=/tmp/wrap.so\n";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::activateBlocked(
+                platform, tree.executables(), error,
+                [&](std::string&) { restoreCalled = true; return true; },
+                runner, process) && !restoreCalled,
+            "unsafe manager environment must prevent SSH restoration");
+    managerEnvironment = "LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+    require(!fic::incident::SshIncidentPamBridgeVerifier::activateBlocked(
+                platform, tree.executables(), error,
+                [&](std::string&) {
+                    active = true;
+                    managerEnvironment = "LANG=en_US.UTF-8\nPATH=/usr/bin:/bin\n";
+                    return true;
+                }, runner, process),
+            "manager environment drift across restore must prevent READY");
+    managerEnvironment = "LANG=C.UTF-8\nPATH=/usr/bin:/bin\n";
+    active = true;
+    effective = "usepam yes\n";
+    legacyPamRouting = true;
+    require(fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
+                platform, tree.executables(), error, runner),
+            "legacy sshd capability probe must remain supported: " + error);
+    legacyPamRouting = false;
+    effective = "usepam yes\npamservicename sshd\n";
     environment = "LD_PRELOAD=/tmp/x.so";
     require(!fic::incident::SshIncidentPamBridgeVerifier::proveFuture(
                 platform, tree.executables(), error, runner),
@@ -774,11 +884,15 @@ void testNarrowIncidentSshBridge() {
 
 void testSshAccessContainmentOwnership() {
     TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+        ::getegid(), 0700};
     fic::platform::SshPlatformConfig platform;
     platform.serviceUnits = {"ssh.service"};
     platform.socketUnits = {"ssh.socket"};
     bool serviceActive = true, socketActive = true;
     int stops = 0, starts = 0;
+    std::vector<std::string> startOrder;
     const auto runner = [&](const std::string&, const std::vector<std::string>& args,
                             const ProcessOptions&) {
         const bool socket = args.back() == "ssh.socket";
@@ -787,10 +901,15 @@ void testSshAccessContainmentOwnership() {
             return success(std::string("ActiveState=") +
                            (state ? "active\n" : "inactive\n"));
         if (args.front() == "stop") { ++stops; state = false; return success(); }
-        if (args.front() == "start") { ++starts; state = true; return success(); }
+        if (args.front() == "start") {
+            ++starts;
+            startOrder.push_back(args.back());
+            state = true;
+            return success();
+        }
         return success();
     };
-    fic::incident::SshAccessContainmentBackend guard;
+    fic::incident::SshAccessContainmentBackend guard(witness);
     std::string error;
     require(guard.block(platform, tree.executables(), error, runner) &&
             !serviceActive && !socketActive && stops == 2 && guard.ownsBlock(),
@@ -798,7 +917,8 @@ void testSshAccessContainmentOwnership() {
     require(guard.block(platform, tree.executables(), error, runner) && stops == 2,
             "repeated block must not claim extra actions");
     require(guard.restore(platform, tree.executables(), error, runner) &&
-            serviceActive && socketActive && starts == 2 && !guard.ownsBlock(),
+            serviceActive && socketActive && starts == 2 && !guard.ownsBlock() &&
+            startOrder == std::vector<std::string>({"ssh.socket", "ssh.service"}),
             "SSH guard must restore only its own stops: " + error);
     serviceActive = false;
     socketActive = false;
@@ -807,6 +927,15 @@ void testSshAccessContainmentOwnership() {
             "already stopped listener must not become FIC-owned");
     require(guard.restore(platform, tree.executables(), error, runner) &&
             starts == 2, "pre-disabled SSH must remain stopped");
+
+    serviceActive = true;
+    socketActive = true;
+    require(guard.block(platform, tree.executables(), error, runner),
+            "second block must succeed: " + error);
+    fic::incident::SshAccessContainmentBackend afterCrash(witness);
+    require(afterCrash.restore(platform, tree.executables(), error, runner) &&
+            serviceActive && socketActive,
+            "a new backend must restore FIC-owned listeners after crash");
 
     // An activating listener can still accept connections. Stop it and prove
     // the final inactive state rather than treating the transition as safe.
@@ -821,8 +950,343 @@ void testSshAccessContainmentOwnership() {
     };
     serviceActive = true;
     require(guard.block(platform, tree.executables(), error, transitionalRunner) &&
-            !serviceActive && stops == 3 && guard.ownsBlock(),
+            !serviceActive && stops == 5 && guard.ownsBlock(),
             "transitional SSH listener must be stopped: " + error);
+}
+
+void testInitiallyFailedServiceIsNotOwned() {
+    TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+        ::getegid(), 0700};
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    bool socketActive = true;
+    int serviceStarts = 0;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        const bool socket = args.back() == "ssh.socket";
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (socket ? (socketActive ? "active\n" : "inactive\n")
+                                   : "failed\n"));
+        if (socket && args.front() == "stop") socketActive = false;
+        if (!socket && args.front() == "start") ++serviceStarts;
+        if (socket && args.front() == "start") socketActive = true;
+        return success();
+    };
+    fic::incident::SshAccessContainmentBackend guard(witness);
+    std::string error;
+    require(guard.block(platform, tree.executables(), error, runner) &&
+                !socketActive && guard.ownsBlock(),
+            "active SSH socket must be blocked beside failed service");
+    require(guard.restore(platform, tree.executables(), error, runner) &&
+                socketActive && serviceStarts == 0,
+            "originally failed SSH service must not be owned or started");
+}
+
+void testDeactivatingServiceIsNotOwned() {
+    TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+        ::getegid(), 0700};
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    bool serviceInactive = false;
+    int serviceStarts = 0;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        const bool service = args.back() == "ssh.service";
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (service ? (serviceInactive ? "inactive\n" : "deactivating\n")
+                                    : "inactive\n"));
+        if (service && args.front() == "stop") serviceInactive = true;
+        if (service && args.front() == "start") ++serviceStarts;
+        return success();
+    };
+    std::string error;
+    fic::incident::SshAccessContainmentBackend guard(witness);
+    require(guard.block(platform, tree.executables(), error, runner) &&
+                serviceInactive && !guard.ownsBlock(),
+            "deactivating SSH service must reach inactive without ownership");
+    fic::incident::SshAccessContainmentBackend restarted(witness);
+    require(restarted.restore(platform, tree.executables(), error, runner) &&
+                serviceStarts == 0,
+            "deactivating SSH service must not be started on restore");
+}
+
+void testActivatingServiceStopIsOwnedAfterProof() {
+    TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+        ::getegid(), 0700};
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    std::string serviceState = "activating";
+    int starts = 0;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        const bool service = args.back() == "ssh.service";
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (service ? serviceState + "\n" : "inactive\n"));
+        if (service && args.front() == "stop") serviceState = "inactive";
+        if (service && args.front() == "start") {
+            ++starts;
+            serviceState = "active";
+        }
+        return success();
+    };
+    std::string error;
+    fic::incident::SshAccessContainmentBackend guard(witness);
+    require(guard.block(platform, tree.executables(), error, runner) &&
+                serviceState == "inactive" && guard.ownsBlock(),
+            "activating SSH service must be owned after confirmed stop");
+    fic::incident::SshAccessContainmentBackend restarted(witness);
+    require(restarted.restore(platform, tree.executables(), error, runner) &&
+                starts == 1,
+            "proven activating service stop must restore after crash");
+}
+
+void testSocketStopAlsoStopsOwnedService() {
+    TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+        ::getegid(), 0700};
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    bool socketActive = true, serviceActive = true;
+    int serviceStops = 0;
+    std::vector<std::string> starts;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        const bool socket = args.back() == "ssh.socket";
+        bool& active = socket ? socketActive : serviceActive;
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (active ? "active\n" : "inactive\n"));
+        if (args.front() == "stop") {
+            active = false;
+            if (socket) serviceActive = false; // real Ubuntu 24.04 topology
+            else ++serviceStops;
+        }
+        if (args.front() == "start") {
+            starts.push_back(args.back());
+            active = true;
+        }
+        return success();
+    };
+    std::string error;
+    fic::incident::SshAccessContainmentBackend guard(witness);
+    require(guard.block(platform, tree.executables(), error, runner) &&
+                !socketActive && !serviceActive && serviceStops == 0,
+            "socket stop must capture its side effect on initially active service");
+    fic::incident::SshAccessContainmentBackend restarted(witness);
+    require(restarted.restore(platform, tree.executables(), error, runner) &&
+                socketActive && serviceActive &&
+                starts == std::vector<std::string>({"ssh.socket", "ssh.service"}),
+            "socket and service ownership must survive crash in restore order");
+}
+
+void testWitnessCrashAmbiguity() {
+    for (const bool stopWasPerformed : {false, true}) {
+        TemporaryTree tree;
+        fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+            tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+            ::getegid(), 0700};
+        fic::platform::SshPlatformConfig platform;
+        platform.serviceUnits = {"ssh.service"};
+        platform.socketUnits = {"ssh.socket"};
+        bool socketActive = true;
+        int starts = 0;
+        const auto runner = [&](const std::string&,
+                                const std::vector<std::string>& args,
+                                const ProcessOptions&) {
+            if (args.front() == "show")
+                return success(std::string("ActiveState=") +
+                               (args.back() == "ssh.socket" && socketActive
+                                    ? "active\n" : "inactive\n"));
+            if (args.front() == "stop" && args.back() == "ssh.socket") {
+                if (stopWasPerformed) socketActive = false;
+                throw std::runtime_error("simulated daemon crash during stop");
+            }
+            if (args.front() == "start") ++starts;
+            return success();
+        };
+        fic::incident::SshAccessContainmentBackend first(witness);
+        std::string error;
+        try {
+            (void)first.block(platform, tree.executables(), error, runner);
+            require(false, "injected crash must interrupt the stop");
+        } catch (const std::runtime_error& exception) {
+            require(std::string(exception.what()) ==
+                        "simulated daemon crash during stop",
+                    "unexpected stop exception");
+        }
+        fic::incident::SshAccessContainmentBackend restarted(witness);
+        require(!restarted.restore(platform, tree.executables(), error, runner) &&
+                    starts == 0 && error.find("ambiguous") != std::string::npos,
+                "intent-only witness must never start a unit after crash");
+    }
+}
+
+void testPartialStopKeepsCompletedAndAmbiguousOwnershipSeparate() {
+    TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+        ::getegid(), 0700};
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    bool socketActive = true;
+    int starts = 0;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        const bool socket = args.back() == "ssh.socket";
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (socket && socketActive ? "active\n" :
+                            socket ? "inactive\n" : "active\n"));
+        if (args.front() == "stop" && socket) socketActive = false;
+        if (args.front() == "stop" && !socket) {
+            ProcessResult failed;
+            failed.started = true;
+            failed.exitCode = 1;
+            return failed;
+        }
+        if (args.front() == "start") ++starts;
+        return success();
+    };
+    std::string error;
+    fic::incident::SshAccessContainmentBackend guard(witness);
+    require(!guard.block(platform, tree.executables(), error, runner),
+            "partial stop must not claim success");
+    std::ifstream stream(witness.path);
+    const std::string content((std::istreambuf_iterator<char>(stream)),
+                              std::istreambuf_iterator<char>());
+    require(content.find("socket ssh.socket stopped\n") != std::string::npos &&
+            content.find("service ssh.service intent\n") != std::string::npos,
+            "partial witness must distinguish completed socket from service intent");
+    fic::incident::SshAccessContainmentBackend restarted(witness);
+    require(!restarted.restore(platform, tree.executables(), error, runner) &&
+                starts == 0 && error.find("ambiguous") != std::string::npos,
+            "ambiguous partial stop must never trigger blind start");
+}
+
+void testWitnessDurabilityFailureNeverReportsReversibleBlock() {
+    TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+        ::getegid(), 0700};
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    bool active = true;
+    int starts = 0;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (active ? "active\n" : "inactive\n"));
+        if (args.front() == "stop") active = false;
+        if (args.front() == "start") ++starts;
+        return success();
+    };
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests({}); }
+    } reset;
+    AtomicFileWriter::setDirectoryFsyncHookForTests(
+        [&](const std::string& path) { return path != witness.path.string(); });
+    fic::incident::SshAccessContainmentBackend guard(witness);
+    std::string error;
+    require(!guard.block(platform, tree.executables(), error, runner) && !active,
+            "undurable witness must fail and close declared SSH entry points");
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    fic::incident::SshAccessContainmentBackend restarted(witness);
+    require(!restarted.restore(platform, tree.executables(), error, runner) &&
+                starts == 0,
+            "undurable intent may not authorize blind restore after restart");
+}
+
+void testUntrustedAndStaleWitness() {
+    TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "new-boot", ::geteuid(),
+        ::getegid(), 0700};
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    int starts = 0;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        if (args.front() == "show") return success("ActiveState=inactive\n");
+        if (args.front() == "start") ++starts;
+        return success();
+    };
+    const auto path = witness.path;
+    const auto write = [&](const std::string& content) {
+        std::ofstream stream(path, std::ios::trunc);
+        stream << content;
+        stream.close();
+        ::chmod(path.c_str(), 0600);
+    };
+    std::string error;
+    fic::incident::SshAccessContainmentBackend guard(witness);
+    write("fic-ssh-block-v1\nboot=new-boot\nservice foreign.service stopped\n");
+    require(!guard.restore(platform, tree.executables(), error, runner) && starts == 0,
+            "unknown unit must not authorize start");
+    write("broken witness\n");
+    require(!guard.restore(platform, tree.executables(), error, runner) && starts == 0,
+            "malformed witness must not authorize start");
+    write("fic-ssh-block-v1\nboot=new-boot\nservice ssh.service stopped\n");
+    ::chmod(path.c_str(), 0644);
+    require(!guard.restore(platform, tree.executables(), error, runner) && starts == 0,
+            "foreign witness metadata must not authorize start");
+    std::filesystem::remove(path);
+    std::filesystem::create_symlink("/etc/passwd", path);
+    require(!guard.restore(platform, tree.executables(), error, runner) && starts == 0,
+            "symlink witness must not authorize start");
+    std::filesystem::remove(path);
+    write("fic-ssh-block-v1\nboot=old-boot\nservice ssh.service stopped\n");
+    require(guard.restore(platform, tree.executables(), error, runner) &&
+                starts == 0 && !std::filesystem::exists(path),
+            "stale boot witness must be discarded without starting SSH");
+}
+
+void testExternallyRestoredUnitDoesNotRestart() {
+    TemporaryTree tree;
+    fic::incident::SshAccessContainmentBackend::WitnessOptions witness{
+        tree.root / "incident-ssh-block", "test-boot", ::geteuid(),
+        ::getegid(), 0700};
+    fic::platform::SshPlatformConfig platform;
+    platform.serviceUnits = {"ssh.service"};
+    platform.socketUnits = {"ssh.socket"};
+    bool active = true;
+    int starts = 0;
+    const auto runner = [&](const std::string&, const std::vector<std::string>& args,
+                            const ProcessOptions&) {
+        if (args.front() == "show")
+            return success(std::string("ActiveState=") +
+                           (active ? "active\n" : "inactive\n"));
+        if (args.front() == "stop") active = false;
+        if (args.front() == "start") ++starts;
+        return success();
+    };
+    fic::incident::SshAccessContainmentBackend first(witness);
+    std::string error;
+    require(first.block(platform, tree.executables(), error, runner), error);
+    active = true; // independent administrator start before daemon recovery
+    fic::incident::SshAccessContainmentBackend restarted(witness);
+    require(restarted.restore(platform, tree.executables(), error, runner) &&
+                starts == 0 && !std::filesystem::exists(witness.path),
+            "already-active owned unit must clear witness without restart");
+    require(restarted.restore(platform, tree.executables(), error, runner) &&
+                starts == 0, "repeat restore must be idempotent");
 }
 
 } // namespace
@@ -855,7 +1319,16 @@ int main() {
         {"reload failure", testReloadFailureIsReported},
         {"service inspection failure", testServiceInspectionFailureIsReported},
         {"narrow incident SSH bridge", testNarrowIncidentSshBridge},
-        {"SSH block ownership", testSshAccessContainmentOwnership}
+        {"SSH block ownership", testSshAccessContainmentOwnership},
+        {"originally failed SSH service", testInitiallyFailedServiceIsNotOwned},
+        {"deactivating SSH service", testDeactivatingServiceIsNotOwned},
+        {"activating SSH service", testActivatingServiceStopIsOwnedAfterProof},
+        {"socket stop owns service side effect", testSocketStopAlsoStopsOwnedService},
+        {"crash ambiguity", testWitnessCrashAmbiguity},
+        {"partial stop ownership", testPartialStopKeepsCompletedAndAmbiguousOwnershipSeparate},
+        {"witness durability failure", testWitnessDurabilityFailureNeverReportsReversibleBlock},
+        {"untrusted and stale witness", testUntrustedAndStaleWitness},
+        {"externally restored unit", testExternallyRestoredUnitDoesNotRestart}
     };
 
     std::size_t failures = 0;
