@@ -1,5 +1,6 @@
 #include "DeviceControlDaemon.h"
 #include "daemon/DeviceAudit.h"
+#include "daemon/PermanentDeviceIncident.h"
 #include "device/DeviceLifecycle.h"
 #include "device/DevicePaths.h"
 #include "device/DeviceTreeSnapshot.h"
@@ -56,6 +57,25 @@ namespace {
 
 std::atomic_bool g_stop{false};
 
+// Bounded retry state for the permanent-device incident delivery. It is
+// intentionally IN-MEMORY: a device daemon restart re-runs the startup
+// reconciliation, which re-derives the violations from the authoritative
+// database and re-reports them, so no persistent incident queue is needed.
+// The interval is bounded and there is no busy-loop: a failed delivery only
+// schedules a recheck, and the recheck re-derives the violations from the
+// database instead of replaying a fixed payload.
+std::atomic_bool g_permanentIncidentRetryRequired{false};
+std::chrono::steady_clock::time_point g_nextPermanentIncidentRetry{};
+inline constexpr std::chrono::seconds PERMANENT_INCIDENT_RETRY_INTERVAL{5};
+
+bool permanentIncidentRetryRequired() {
+    return g_permanentIncidentRetryRequired.load();
+}
+
+void setPermanentIncidentRetryRequired(bool required) {
+    g_permanentIncidentRetryRequired.store(required);
+}
+
 struct EffectivePolicy {
     std::string level = "allowed";
     std::string source = "default";
@@ -73,13 +93,8 @@ struct ControlOverride {
 
 using PeerCredentials = fic::core::security_audit::PeerCredentials;
 
-struct PermanentViolation {
-    int deviceId = -1;
-    int sourceDeviceId = -1;
-    std::string devpath;
-    std::string source;
-};
-
+// PermanentViolation is shared with the incident sender: see
+// daemon/PermanentDeviceIncident.h.
 struct DeviceEventEnvelope {
     std::string action;
     std::string devpath;
@@ -426,10 +441,66 @@ bool deny_enforcement_observed(const DeviceInfo& device, std::string& details) {
     return false;
 }
 
-bool call_fic_lock(std::string& message) {
-    json response = fic::ipc::Client().request({{"command", "lock"}});
-    message = response.value("message", "unknown fic daemon response");
-    return response.value("ok", false);
+// Reports the established permanent-device violation to the main fic daemon.
+//
+// TRUST BOUNDARY: the event carries the FACT only. The main daemon resolves
+// the reaction severity from its own configuration and owns the
+// IncidentController, so a compromised or misconfigured device daemon can
+// never choose the host's containment level.
+struct DeviceIncidentDelivery {
+    bool delivered = false;
+    bool escalated = false;
+    bool ignored = false;
+    std::string mode;
+    std::string requestedSeverity;
+    std::string effectiveSeverity;
+    std::string message;
+};
+
+DeviceIncidentDelivery call_fic_device_incident(
+    const std::vector<PermanentViolation>& violations) {
+    DeviceIncidentDelivery delivery;
+    const json request = permanent_device_incident_request(violations);
+    std::string schemaError;
+    if (!is_valid_permanent_device_incident_request(request, schemaError)) {
+        // A malformed detector event must never be sent: the main daemon would
+        // correctly refuse it, but the bug should not be masked as a network
+        // problem.
+        delivery.message = "detector event schema is invalid: " + schemaError;
+        return delivery;
+    }
+    const fic::ipc::Client::RequestResult result =
+        fic::ipc::Client().requestWithStatus(request);
+    if (!result.hasResponse) {
+        delivery.message = result.error.empty()
+            ? "main fic daemon did not respond"
+            : result.error;
+        return delivery;
+    }
+    const json& response = result.response;
+    if (!response.is_object()) {
+        delivery.message = "main fic daemon returned a malformed response";
+        return delivery;
+    }
+    // An unknown command answer from an OLD main daemon must never be read as
+    // a success: ok is taken from the response only with a known shape.
+    const std::string command = response.value("command", "");
+    const bool recognizedShape = response.contains("command") &&
+        response.contains("escalated") && response.contains("response_mode");
+    if (!recognizedShape) {
+        delivery.message = "main fic daemon did not process the device incident: " +
+            response.value("message", "unknown response");
+        return delivery;
+    }
+    (void)command;
+    delivery.delivered = response.value("ok", false);
+    delivery.escalated = response.value("escalated", false);
+    delivery.ignored = response.value("ignored", false);
+    delivery.mode = response.value("response_mode", "");
+    delivery.requestedSeverity = response.value("requested_severity", "");
+    delivery.effectiveSeverity = response.value("effective_severity", "");
+    delivery.message = response.value("message", "unknown fic daemon response");
+    return delivery;
 }
 
 void add_event(DB& db,
@@ -624,24 +695,55 @@ json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& cand
     const std::vector<PermanentViolation> violations = collect_missing_permanent_devices(db, candidateIds);
 
     if (violations.empty()) {
+        // A later successful check clears the retry obligation: the violation is
+        // no longer present, so nothing must be re-reported.
+        setPermanentIncidentRetryRequired(false);
         return fic::ipc::make_ok_response("all permanent devices are connected");
     }
 
-    std::string lockMessage;
-    const bool locked = call_fic_lock(lockMessage);
+    // ONE aggregated detector event per pass: the main daemon resolves the
+    // severity once and the IncidentController deduplicates the escalation.
+    const DeviceIncidentDelivery delivery = call_fic_device_incident(violations);
+    const bool success = delivery.delivered;
+    if (!success) {
+        // The violation still exists, so it MUST be re-reported when the main
+        // daemon becomes reachable again. The recheck itself re-derives the
+        // violations from the authoritative database and observed presence.
+        setPermanentIncidentRetryRequired(true);
+    } else {
+        setPermanentIncidentRetryRequired(false);
+    }
+
+    // Device-local audit records the FACT of the violation and the delivery
+    // result. It is independent of the incident response mode: even OFF must be
+    // visible here, while incident audit/notifications stay owned by the main
+    // daemon.
     for (const PermanentViolation& violation : violations) {
         add_event(db,
                   violation.deviceId,
-                  "lock",
-                  locked ? "success" : "error",
-                  "permanent device is missing; fic lock: " + lockMessage);
+                  "incident",
+                  success ? "success" : "error",
+                  std::string("permanent device is missing; incident_device_missing: ") +
+                      (success ? "delivered" : "delivery failed") +
+                      "; mode=" + delivery.mode +
+                      "; requested=" + delivery.requestedSeverity +
+                      "; effective=" + delivery.effectiveSeverity +
+                      "; escalated=" + (delivery.escalated ? "true" : "false") +
+                      "; detail=" + delivery.message);
     }
 
     return json{
-        {"ok", locked},
-        {"message", locked ? "missing permanent device; computer locked" : "missing permanent device; failed to lock computer"},
+        {"ok", success},
+        {"message", success
+            ? "missing permanent device; incident reported"
+            : "missing permanent device; incident delivery failed"},
         {"missing", missing_permanent_to_json(violations)},
-        {"lock_message", lockMessage}
+        {"incident_mode", delivery.mode},
+        {"incident_requested_severity", delivery.requestedSeverity},
+        {"incident_effective_severity", delivery.effectiveSeverity},
+        {"incident_escalated", delivery.escalated},
+        {"incident_ignored", delivery.ignored},
+        {"retry_required", permanentIncidentRetryRequired()}
     };
 }
 
@@ -795,7 +897,7 @@ json process_device_event(const DeviceEventEnvelope& event) {
             if (!permanentCheck.value("ok", true)) {
                 permanentCheck["message"] = permanentCheck.value(
                     "message",
-                    "permanent device disconnected; failed to lock computer");
+                    "permanent device disconnected; incident delivery failed");
                 permanentCheck["device_id"] = removal.deviceId;
                 return permanentCheck;
             }
@@ -1907,6 +2009,27 @@ int run_daemon(const std::string& socketPathArg) {
         for (int i = 0; i < 8; ++i) {
             if (!process_queued_event(eventQueue)) {
                 break;
+            }
+        }
+
+        // Bounded retry for an undelivered permanent-device incident. The
+        // recheck re-derives the violations from the authoritative database, so
+        // a violation that no longer exists is simply not re-reported and the
+        // retry obligation clears. The interval keeps this off the busy path.
+        if (permanentIncidentRetryRequired() &&
+            std::chrono::steady_clock::now() >= g_nextPermanentIncidentRetry) {
+            g_nextPermanentIncidentRetry =
+                std::chrono::steady_clock::now() +
+                PERMANENT_INCIDENT_RETRY_INTERVAL;
+            {
+                DB db(DeviceRuntimePaths::get().databaseOptions());
+                db.initializeDatabase();
+                const json retryCheck = check_permanent_devices(db);
+                if (retryCheck.value("ok", false)) {
+                    log_device(
+                        "permanent device incident retry delivered",
+                        logLevel::INFO);
+                }
             }
         }
 

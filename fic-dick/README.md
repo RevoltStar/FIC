@@ -215,11 +215,34 @@ fic-dick check-permanent
 ```
 
 Отправляет daemon команду проверки `permanent` устройств. Если обязательное
-устройство отсутствует, daemon вызывает `lock` через основной `fic` socket.
+устройство отсутствует, daemon устанавливает **detector event** и отправляет
+его основному `fic` daemon'у через IPC-команду `incident_device_missing`.
+
+Граница доверия: fic-dick сообщает **факт** нарушения (ограниченный список
+`device_ids`), но **не** выбирает severity и не выполняет containment. Основной
+daemon проверяет peer credentials (`SO_PEERCRED`, только root-UID device
+daemon), резолвит реакцию из собственной конфигурации
+(`DC/DeviceControl/permanent_device_missing_severity`, токен
+NONE/SOFT/STANDARD/HARD/ISOLATE) и вызывает `IncidentController.raise()`, где
+уже реализованы severity-персистенция, audit, notification и
+OFF/PASSIVE/ACTIVE containment semantics. Восстановление устройства **не**
+снижает severity и не вызывает автоматический `incident clear`.
+
+Если основной daemon временно недоступен, fic-dick запоминает необходимость
+повторной проверки и периодически (ограниченный интервал, без busy-loop)
+перепроверяет нарушения из авторитетной БД и повторяет доставку; при
+перезапуске device daemon'а проверка восстанавливается через startup
+reconciliation.
+
 Проверка выполняется по стабильной идентичности устройства (`device_hash` +
 `subsystem`), а не по одному историческому экземпляру дерева. При remove-событии
 проверяется все отключенное поддерево, чтобы исчезновение обязательного
 потомка не терялось за событием родителя.
+
+Ответ `ok=true` означает, что **событие обработано**, а не что компьютер
+физически заблокирован: режим PASSIVE сохраняет severity без containment,
+OFF/NONE не создают incident state. Device-local audit (`incident`) фиксирует
+факт и результат доставки независимо от режима.
 
 ## Режим wait-daemon
 

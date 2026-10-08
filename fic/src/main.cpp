@@ -650,7 +650,105 @@ json log_records_json(
         limit);
 }
 
+// ---- Device-detector incident events (incident_device_missing) ------------
+//
+// TRUST BOUNDARY. The privileged FIC device daemon (fic-dick) reports an
+// ESTABLISHED violation: a permanent-device obligation whose device is absent.
+// The event carries the FACT only; the main daemon resolves the reaction from
+// its own trusted configuration (DC/DeviceControl/permanent_device_missing_severity)
+// and owns IncidentController. Access to the administrative socket alone does
+// NOT make a sender a trusted device detector: the peer must be the root-UID
+// system device daemon, which is how fic-dick runs in production.
+
+// The production fic-dick runs as root; a non-root peer cannot be the device
+// daemon by construction.
+bool is_trusted_device_daemon_peer(const PeerCredentials& peer) {
+    return peer.available && peer.uid == 0;
+}
+
+// Bounded event schema: command + non-empty bounded id list + truthful total.
+inline constexpr std::size_t MAX_DEVICE_MISSING_IDS = 64U;
+
+bool validate_device_missing_event(
+    const json& request, std::vector<int>& deviceIds, std::string& error) {
+    if (!fic::ipc::request_has_only_fields(
+            request, {"command", "device_ids", "device_ids_total"}, error)) {
+        return false;
+    }
+    const auto& ids = request.at("device_ids");
+    if (!ids.is_array() || ids.empty()) {
+        error = "request.device_ids must be a non-empty array";
+        return false;
+    }
+    if (ids.size() > MAX_DEVICE_MISSING_IDS) {
+        error = "request.device_ids exceeds the bounded payload";
+        return false;
+    }
+    deviceIds.reserve(ids.size());
+    for (const auto& id : ids) {
+        if (!id.is_number_integer()) {
+            error = "request.device_ids entries must be integers";
+            return false;
+        }
+        const std::int64_t value = id.get<std::int64_t>();
+        if (value <= 0 || value > std::numeric_limits<int>::max()) {
+            error = "request.device_ids entries must be positive device ids";
+            return false;
+        }
+        deviceIds.push_back(static_cast<int>(value));
+    }
+    const auto& total = request.at("device_ids_total");
+    if (!total.is_number_unsigned() ||
+        total.get<std::uint64_t>() >
+            static_cast<std::uint64_t>(std::numeric_limits<int>::max()) ||
+        total.get<std::uint64_t>() < ids.size()) {
+        error = "request.device_ids_total must be a bounded non-negative integer "
+                "not smaller than device_ids";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+// The authoritative detector reaction, resolved from the trusted main-daemon
+// configuration. nullopt means "the detector does not escalate": either the
+// policy is DISABLE, or the configured value is NONE.
+std::optional<fic::core::IncidentSeverity> resolve_device_missing_severity(
+    PolicyRegistry& policyRegistry, std::string& diagnostic) {
+    Policy* policy =
+        getPolicyClass(policyRegistry, "DC", "permanent_device_missing_severity");
+    if (policy == nullptr) {
+        diagnostic = "permanent_device_missing_severity policy is not registered";
+        return std::nullopt;
+    }
+    if (!policy->isEnabled()) {
+        diagnostic = "permanent_device_missing_severity is DISABLE";
+        return std::nullopt;
+    }
+    const std::optional<std::string> value = policy->getValue();
+    if (!value.has_value()) {
+        // Fail closed, never silently NONE: an unparsable security-critical
+        // value must not degrade the reaction.
+        diagnostic =
+            "permanent_device_missing_severity has an invalid configured value";
+        return std::nullopt;
+    }
+    const auto severity = fic::core::parseIncidentSeverityToken(value.value());
+    if (!severity.has_value()) {
+        diagnostic =
+            "permanent_device_missing_severity has an invalid configured value";
+        return std::nullopt;
+    }
+    if (*severity == fic::core::IncidentSeverity::Unlocked) {
+        diagnostic = "permanent_device_missing_severity is NONE";
+        return std::nullopt;
+    }
+    diagnostic = "configured " + value.value();
+    return severity;
+}
+
 json handle_request(json request,
+                    const PeerCredentials& peer,
                     PolicyRegistry& policyRegistry,
                     DesktopGlobalConfigReconciler& desktopGlobalConfig,
                     const fic::platform::PlatformProfile& platform,
@@ -1045,6 +1143,87 @@ json handle_request(json request,
                 {"runtime", fic::incident::runtimeStateToString(raised.runtime)}
             };
         }
+        if (command == "incident_device_missing") {
+            // 1. Trusted peer: only the root system device daemon may report
+            //    established device violations. Socket membership in the fic
+            //    group is NOT sufficient.
+            if (!is_trusted_device_daemon_peer(peer)) {
+                write_audit_log(fic::core::security_audit::makeEvent("fic", {
+                    {"event", "device_incident_rejected"},
+                    {"message", "untrusted peer for incident_device_missing"},
+                    {"peer_uid", peer.uid},
+                    {"peer_available", peer.available}
+                }));
+                return fic::ipc::make_error_response(
+                    "incident_device_missing requires the trusted device daemon");
+            }
+            // 2. Strict bounded schema.
+            std::vector<int> deviceIds;
+            std::string eventError;
+            if (!validate_device_missing_event(request, deviceIds, eventError)) {
+                return fic::ipc::make_error_response(eventError);
+            }
+            // 3. The authoritative reaction is resolved HERE, from the trusted
+            //    configuration; the detector never chooses it.
+            std::string severityDiagnostic;
+            const std::optional<fic::core::IncidentSeverity> configured =
+                resolve_device_missing_severity(policyRegistry, severityDiagnostic);
+            const fic::incident::IncidentResponseModeResult mode =
+                fic::incident::IncidentResponseModeResolver::production();
+
+            // 4. Mode/NONE semantics. OFF or NONE must be distinguishable from
+            //    an IPC error, and neither must write incident state.
+            if (!configured.has_value()) {
+                return json{
+                    {"ok", true},
+                    {"message", "device incident processed"},
+                    {"command", command},
+                    {"escalated", false},
+                    {"reason", severityDiagnostic},
+                    {"response_mode", fic::incident::incidentResponseModeToken(mode.mode)},
+                    {"requested_severity", "NONE"},
+                    {"effective_severity",
+                     fic::core::incidentSeverityToken(
+                         incidentController().status().severity)},
+                    {"ignored", true},
+                    {"runtime", fic::incident::runtimeStateToString(
+                         fic::incident::RuntimeState::Inactive)}
+                };
+            }
+
+            // 5. ONE raise per detector batch: the controller is monotonic, so
+            //    an aggregated event is enough and keeps the audit/notification
+            //    deduplication meaningful.
+            fic::incident::IncidentSource source;
+            source.name = "device";
+            std::string reason = "PERMANENT_DEVICE_MISSING:";
+            for (const int deviceId : deviceIds) {
+                reason += " device_id=" + std::to_string(deviceId);
+            }
+            const fic::incident::IncidentResult raised =
+                incidentController().raise(*configured, source, reason);
+
+            // 6. An explicit result: ok=true means the EVENT was processed, not
+            //    that the host was contained. PASSIVE with a proven persistence
+            //    is a success with no containment.
+            return json{
+                {"ok", raised.ok},
+                {"message", raised.detail.empty()
+                                 ? "device incident processed"
+                                 : raised.detail},
+                {"command", command},
+                {"escalated", raised.escalated},
+                {"reason", severityDiagnostic},
+                {"response_mode", fic::incident::incidentResponseModeToken(mode.mode)},
+                {"requested_severity",
+                 fic::core::incidentSeverityToken(*configured)},
+                {"effective_severity",
+                 fic::core::incidentSeverityToken(raised.effectiveSeverity)},
+                {"ignored", raised.ignoredByMode},
+                {"persistent_state_broken", raised.persistentStateBroken},
+                {"runtime", fic::incident::runtimeStateToString(raised.runtime)}
+            };
+        }
         if (command == "incident_clear") {
             const fic::incident::IncidentResult cleared =
                 incidentController().clear("administrator");
@@ -1105,6 +1284,13 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
     if (command == "incident_raise") {
         return fic::ipc::request_has_only_fields(
             request, {"command", "value"}, error);
+    }
+    if (command == "incident_device_missing") {
+        // Strict bounded schema: the detector event carries the FACT only.
+        // The full field/type/limit validation runs in the handler, which also
+        // rejects an empty list.
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "device_ids", "device_ids_total"}, error);
     }
     if (command == "set_policy_value") {
         return fic::ipc::request_has_only_fields(
@@ -1178,7 +1364,7 @@ std::string handle_client_packet(
                     platform.ssh, executables, detail);
             },
             [&] {
-                return handle_request(request, policyRegistry,
+                return handle_request(request, peer, policyRegistry,
                                       desktopGlobalConfig, platform,
                                       executables, logRecordsReader);
             },

@@ -2,9 +2,50 @@
 
 ## Current base
 
-* Branch `main`; task base `a405b3c11717c02fc9c78f6ecc0a75e02e21979d`.
+* Branch `main`; task base `0de37d3319fd22f07cbeddfc628a9b7ba1e7a807`.
 
 ## Current task
+
+Device Control → Incident Response integration. Выполнено.
+
+## Device Control → IncidentController (detect-only boundary)
+
+* **Прежняя production regression устранена:** `fic-dick` отправлял устаревшую
+  команду `command="lock"`, которую основной daemon больше не поддерживает.
+  Теперь используется `incident_device_missing`.
+* **Detector event (fic-dick → fic):** `{command, device_ids[], device_ids_total}`.
+  Только ФАКТ нарушения; severity/mode/containment авторитетно НЕ передаются.
+  Список ограничен (64 id), truncation сохраняет общий total. Пустой список,
+  неизвестные поля, нецелые id и неверная schema отклоняются.
+* **Авторизация:** peer должен быть root-UID system device daemon
+  (`SO_PEERCRED`); членства в административной группе недостаточно. Source
+  устанавливает main daemon (`IncidentSource.name="device"`), поле `source`
+  из JSON не читается.
+* **Настройка:** `DC/DeviceControl/permanent_device_missing_severity`, токен
+  NONE/SOFT/STANDARD/HARD/ISOLATE, заводской default STANDARD, status ENABLE.
+  Это НЕ `Policy::violation_severity`: реакция на runtime-факт отсутствия
+  устройства, а не на apply failure. У самой policy `violation_severity=NONE`,
+  чтобы её собственная ошибка применения не породила самостоятельный incident.
+  Неверное значение fail-closed (не интерпретируется как NONE/STANDARD).
+* **Режимы:** OFF — не изменяет lockstatus, не создаёт incident audit/
+  notification; PASSIVE — persistent severity + audit + notification, без
+  containment; ACTIVE — плюс существующий containment. NONE/DISABLE —
+  escalated=false, `ok=true` с `ignored=true` (отличимо от ошибки IPC).
+* **Монотонность:** повторное событие того же/меньшего уровня не повышает
+  severity и не повторяет notification; reconnected device НЕ вызывает
+  automatic clear; после административного clear продолжающееся нарушение может
+  снова повысить severity.
+* **Retry:** при недоступности main daemon fic-dick запоминает
+  `retry_required` и периодически (5s, без busy-loop) перечитывает нарушения из
+  авторитетной БД и повторяет доставку; restart device daemon восстанавливает
+  проверку через startup reconciliation. State в памяти, без persistent queue.
+* **Deadlock:** `device_regenerate_policy` handler fic-dick НЕ вызывает
+  `check_permanent_devices`, поэтому цепочка fic→fic-dick→fic не существует.
+* **Ответ:** `ok=true` = событие обработано, НЕ «компьютер заблокирован»;
+  PASSIVE сохраняет severity без containment; malformed/unknown response —
+  delivery failure.
+
+
 
 * Close the administrative IPC ACTIVE preflight bypass through module aliases.
 

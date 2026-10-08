@@ -2495,6 +2495,37 @@ target_include_directories(device_audit_tests PRIVATE
 target_link_libraries(device_audit_tests PRIVATE fic-core)
 add_test(NAME device_audit_tests COMMAND device_audit_tests)
 
+add_executable(permanent_device_incident_tests
+    fic-dick/daemon/PermanentDeviceIncidentTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/PermanentDeviceIncident.cpp
+)
+target_include_directories(permanent_device_incident_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/include
+)
+target_link_libraries(permanent_device_incident_tests PRIVATE fic-core)
+add_test(NAME permanent_device_incident_tests COMMAND permanent_device_incident_tests)
+
+add_executable(permanent_device_incident_integration_tests
+    fic-dick/daemon/PermanentDeviceIncidentIntegrationTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/PermanentDeviceIncident.cpp
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src/FicIpcClient.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
+)
+target_include_directories(permanent_device_incident_integration_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+    ${CMAKE_SOURCE_DIR}/fic/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/include
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src
+    ${CMAKE_BINARY_DIR}/fic-common/fic-ipc/generated/include
+)
+target_link_libraries(permanent_device_incident_integration_tests PRIVATE
+    fic-core Threads::Threads)
+add_test(NAME permanent_device_incident_integration_tests
+         COMMAND permanent_device_incident_integration_tests)
+
 add_executable(calc_hash_command_tests
     fic/daemon/CalcHashCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/CalcHashCommand.cpp

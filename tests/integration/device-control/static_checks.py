@@ -209,8 +209,14 @@ def main():
     dc_policy_source = read_text(dc_policy)
     require('std::make_unique<FixedPolicyTypeValue>("true")' in dc_policy_source,
             "DC policies must expose the intrinsic fixed value true")
-    require("PossibleListPolicyTypeValue" not in dc_policy_source,
-            "DC policies must not expose a configurable true/false list")
+    # Only the detector-severity policy may expose a value list, and it must be
+    # the severity token list, never a configurable true/false toggle.
+    require(
+        dc_policy_source.count("PossibleListPolicyTypeValue") == 1,
+        "only permanent_device_missing_severity may expose a value list")
+    require(
+        '{"STANDARD", "NONE", "SOFT", "HARD", "ISOLATE"}' in dc_policy_source,
+        "the detector severity list must be the severity tokens")
 
     dc_config_values = {}
     for line in read_text(dc_config).splitlines():

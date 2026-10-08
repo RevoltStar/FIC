@@ -683,6 +683,7 @@ bool initPolicyRegistry(
     cafArr.push_back(std::make_unique<DC_block_usb_storage>());
     cafArr.push_back(std::make_unique<DC_block_printers_scanners>());
     cafArr.push_back(std::make_unique<DC_block_optical_drives>());
+    cafArr.push_back(std::make_unique<DC_permanent_device_missing_severity>());
 
     //Глобальные настройки программы
     cafArr.push_back(std::make_unique<AUDIT_log_level>());

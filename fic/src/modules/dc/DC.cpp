@@ -34,3 +34,12 @@ DC_block_optical_drives::DC_block_optical_drives()
     : DC("block_optical_drives")
 {
 }
+
+DC_permanent_device_missing_severity::DC_permanent_device_missing_severity()
+    : DC("permanent_device_missing_severity")
+{
+    // The detector reaction is a severity token, chosen by the administrator.
+    // STANDARD first keeps the generated default, the rest are selectable.
+    this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
+        std::vector<std::string>{"STANDARD", "NONE", "SOFT", "HARD", "ISOLATE"});
+}

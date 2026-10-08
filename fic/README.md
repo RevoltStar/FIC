@@ -785,6 +785,17 @@ FIC снимаются, а ранее завершённые процессы и
 Переход обратно в `ACTIVE` применяет containment к уже сохранённой severity.
 Административный `incident clear` доступен в любом режиме.
 
+Device-detector события идут по той же единой подсистеме: `fic-dick` сообщает
+факт отсутствия permanent-устройства через команду `incident_device_missing`
+(только `device_ids`, без severity), основной daemon проверяет peer credentials
+(только root-UID device daemon), резолвит реакцию из политики
+`DC/DeviceControl/permanent_device_missing_severity` (NONE/SOFT/STANDARD/HARD/
+ISOLATE; заводской default STANDARD) и вызывает `IncidentController.raise()`.
+`NONE` и `DISABLE` не создают incident state; `OFF` не выполняет audit/
+notification/containment. Восстановление устройства не снижает severity и не
+вызывает автоматический clear. Ответ `ok=true` означает обработку события, а не
+физическую блокировку.
+
 `pam_fic_access.so` установлен постоянно. В `OFF`/`PASSIVE` он нейтрален и
 не требует работающего daemon. Только в `ACTIVE` обычный контролируемый вход
 зависит от daemon и fail-closed при недоступности, `DEGRADED` или severity
