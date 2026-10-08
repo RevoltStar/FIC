@@ -124,9 +124,13 @@ int main() {
         require(enabled());
         write(file, "lock_exempt_fic_members.status=DISABLE\n");
         require(!enabled());
+        require(fic::incident::IncidentRecoveryConfigReader::readStatus(
+                    file, expected, diagnostic) == std::optional<bool>(false));
         write(file, "lock_exempt_fic_members.status=ENABLE\n"
                     "lock_exempt_fic_members.status=DISABLE\n");
         require(!enabled());
+        require(!fic::incident::IncidentRecoveryConfigReader::readStatus(
+                    file, expected, diagnostic).has_value());
         write(file, "lock_exempt_fic_members.status=INVALID\n");
         require(!enabled());
         write(file, "other=value\n");

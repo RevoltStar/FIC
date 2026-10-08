@@ -59,6 +59,7 @@
 #include "session/SessionAgentClient.h"
 #include "session/SessionAgentClientInternal.h"
 #include "session/SessionEventServer.h"
+#include "session/LogindSessionContainmentBackend.h"
 #include "session/SessionReadyValidation.h"
 #include "session/SystemGraphicalSessionInventory.h"
 #include "incident/IncidentController.h"
@@ -357,7 +358,7 @@ void install_desktop_global_report(
 fic::incident::IncidentController& incidentController() {
     static fic::incident::IncidentController controller(
         fic::incident::IncidentStateStore(),
-        nullptr,
+        std::make_shared<fic::session::LogindSessionContainmentBackend>(),
         std::make_shared<fic::incident::NullIncidentNetworkBackend>());
     static const bool sinksInstalled = [] {
         controller.setAccessGateVerifier([](std::string& diagnostic) {

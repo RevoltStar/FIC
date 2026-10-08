@@ -6,6 +6,7 @@
 #include "session/UserSession.h"
 
 #include <memory>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,6 +34,15 @@ struct LoginSession {
     // True when the session belongs to a recovery identity and must never be
     // terminated by containment.
     bool recovery = false;
+    std::string className;
+    std::string state;
+    bool remote = false;
+    // Backend-derived NSS + logind decision; never populated from IPC input.
+    bool ordinary = false;
+    bool serviceAccount = false;
+    std::string objectPath;
+    std::string logindOwner;
+    std::uint64_t startTimestamp = 0;
 };
 
 // A user identity as reported by the AUTHORITATIVE source (systemd-logind).
@@ -45,6 +55,22 @@ struct LoginUser {
     bool recovery = false;
     // True when a user manager is running (including lingering state).
     bool userManagerRunning = false;
+    // Backend-derived identity decision, not a claim from ListUsers alone.
+    bool ordinary = false;
+    std::string objectPath;
+    std::string logindOwner;
+};
+
+struct SessionInventoryResult {
+    bool proven = false;
+    std::vector<LoginSession> sessions;
+    std::string diagnostic;
+};
+
+struct UserInventoryResult {
+    bool proven = false;
+    std::vector<LoginUser> users;
+    std::string diagnostic;
 };
 
 // Result of a containment action on one object.
@@ -81,8 +107,8 @@ class SessionContainmentBackend {
 public:
     virtual ~SessionContainmentBackend() = default;
 
-    virtual std::vector<LoginSession> listSessions() = 0;
-    virtual std::vector<LoginUser> listUsers() = 0;
+    virtual SessionInventoryResult listSessions() = 0;
+    virtual UserInventoryResult listUsers() = 0;
 
     virtual SessionKind classifySession(const LoginSession& session) = 0;
 

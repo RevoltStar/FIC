@@ -16,28 +16,41 @@ std::string trim(const std::string& value) {
 } // namespace
 
 bool IncidentRecoveryConfigReader::ficMemberExemptionEnabled(std::string& diagnostic) {
+    return ficMemberExemptionStatus(diagnostic).value_or(false);
+}
+
+std::optional<bool> IncidentRecoveryConfigReader::ficMemberExemptionStatus(
+    std::string& diagnostic) {
     ::fic::core::ConfigAuthorityIdentity identity;
     if (!::fic::core::productionConfigAuthority(identity, diagnostic)) {
-        return false;
+        return std::nullopt;
     }
     const auto expectation = ::fic::core::configAuthorityExpectation(identity);
-    return read(std::filesystem::path(::fic::core::path_defaults::CONFIG_DIR) / "GLOBAL.conf",
-                expectation, diagnostic);
+    return readStatus(
+        std::filesystem::path(::fic::core::path_defaults::CONFIG_DIR) / "GLOBAL.conf",
+        expectation, diagnostic);
 }
 
 bool IncidentRecoveryConfigReader::read(
     const std::filesystem::path& path,
     const ::fic::core::SecureStateFileExpectation& expectation,
     std::string& diagnostic) {
+    return readStatus(path, expectation, diagnostic).value_or(false);
+}
+
+std::optional<bool> IncidentRecoveryConfigReader::readStatus(
+    const std::filesystem::path& path,
+    const ::fic::core::SecureStateFileExpectation& expectation,
+    std::string& diagnostic) {
     if (!::fic::core::proveSafeParentDirectory(
             path.parent_path().parent_path(), expectation, diagnostic)) {
-        return false;
+        return std::nullopt;
     }
     const auto secure = ::fic::core::readSecureFileBounded(
         path, expectation, ::fic::core::MAX_WORKING_CONFIG_BYTES);
     if (secure.status != ::fic::core::SecureStateReadStatus::Proven) {
         diagnostic = secure.detail.empty() ? "GLOBAL.conf is not proven" : secure.detail;
-        return false;
+        return std::nullopt;
     }
     bool seen = false;
     bool enabled = false;
@@ -53,26 +66,26 @@ bool IncidentRecoveryConfigReader::read(
         if (key != Key) {
             if (line.find(Key) != std::string::npos) {
                 diagnostic = "malformed recovery key";
-                return false;
+                return std::nullopt;
             }
             continue;
         }
         if (seen || separator == std::string::npos ||
             line.find('=', separator + 1U) != std::string::npos) {
             diagnostic = "duplicate or malformed recovery key";
-            return false;
+            return std::nullopt;
         }
         const std::string value = trim(line.substr(separator + 1U));
         if (value != "ENABLE" && value != "DISABLE") {
             diagnostic = "invalid recovery value";
-            return false;
+            return std::nullopt;
         }
         seen = true;
         enabled = value == "ENABLE";
     }
     if (!seen) {
         diagnostic = "recovery key is missing";
-        return false;
+        return std::nullopt;
     }
     diagnostic = enabled ? "recovery enabled" : "recovery disabled";
     return enabled;

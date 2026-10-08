@@ -96,8 +96,26 @@ public:
 
     std::vector<std::string> actions;
 
-    std::vector<LoginSession> listSessions() override { return sessions; }
-    std::vector<LoginUser> listUsers() override { return users; }
+    bool sessionsProven = true;
+    bool usersProven = true;
+    bool exposePartialInventory = false;
+    ::fic::session::SessionInventoryResult listSessions() override {
+        auto result = ::fic::session::SessionInventoryResult{
+            sessionsProven, (sessionsProven || exposePartialInventory)
+                ? sessions : std::vector<LoginSession>{},
+            sessionsProven ? "" : "logind unavailable"};
+        for (auto& session : result.sessions) session.ordinary = !session.recovery;
+        return result;
+    }
+    ::fic::session::UserInventoryResult listUsers() override {
+        auto result = ::fic::session::UserInventoryResult{
+            usersProven, (usersProven || exposePartialInventory)
+                ? users : std::vector<LoginUser>{},
+            usersProven ? "" : "logind unavailable"};
+        for (auto& user : result.users)
+            user.ordinary = !user.recovery && !user.serviceAccount;
+        return result;
+    }
 
     SessionKind classifySession(const LoginSession& session) override {
         return session.kind;
@@ -387,6 +405,32 @@ void testUnavailableBackendsRemainUnproven(const TempTree& tree) {
                 !status.containment.userRuntimeContained &&
                 !status.containment.networkQuarantined,
             "component status must report only proven containment");
+}
+
+void testInventoryFailuresAreNotEmptySuccess(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    harness.controller.setModeResolver([] {
+        return IncidentResponseModeResult{IncidentResponseMode::Active, true, "test"};
+    });
+    harness.controller.setAccessGateVerifier([](std::string&) { return true; });
+    harness.sessions->sessionsProven = false;
+    harness.sessions->exposePartialInventory = true;
+    const auto hard = harness.controller.raise(
+        IncidentSeverity::Hard, policySource("inventory-failure"), "hard");
+    require(!hard.ok && hard.runtime == RuntimeState::Degraded &&
+            !harness.controller.status().containment.sessionsContained,
+            "failed session inventory must not prove HARD containment");
+    require(!harness.sessions->acted("terminate-session:c1"),
+            "partial unproven session inventory must not trigger actions");
+    harness.sessions->sessionsProven = true;
+    harness.sessions->usersProven = false;
+    const auto isolate = harness.controller.raise(
+        IncidentSeverity::Isolate, policySource("user-inventory-failure"), "isolate");
+    require(!isolate.ok && isolate.runtime == RuntimeState::Degraded &&
+            !harness.controller.status().containment.userRuntimeContained,
+            "failed user inventory must not prove ISOLATE runtime containment");
+    require(!harness.sessions->acted("terminate-user:1000"),
+            "partial unproven user inventory must not trigger actions");
 }
 
 void testNetworkFailureStillAttemptsSessionsAndUsers(const TempTree& tree) {
@@ -732,6 +776,8 @@ int main() {
         {"persistence_failure_audits_after_containment", testPersistenceFailureAuditsAfterContainment},
         {"unavailable_backends_remain_unproven",
          testUnavailableBackendsRemainUnproven},
+        {"inventory_failures_are_not_empty_success",
+         testInventoryFailuresAreNotEmptySuccess},
         {"network_failure_still_attempts_sessions_and_users",
          testNetworkFailureStillAttemptsSessionsAndUsers},
         {"failed_termination_is_not_silently_verified",

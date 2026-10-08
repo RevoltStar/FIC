@@ -89,16 +89,17 @@ private:
 class NeverProvenSessions final
     : public fic::session::SessionContainmentBackend {
 public:
-    std::vector<fic::session::LoginSession> listSessions() override {
+    fic::session::SessionInventoryResult listSessions() override {
         fic::session::LoginSession session;
         session.id = "c1";
         session.uid = 12345;
         session.user = "target";
         session.type = "wayland";
         session.kind = fic::session::SessionKind::Graphical;
-        return {session};
+        session.ordinary = true;
+        return {true, {session}, ""};
     }
-    std::vector<fic::session::LoginUser> listUsers() override { return {}; }
+    fic::session::UserInventoryResult listUsers() override { return {true, {}, ""}; }
     fic::session::SessionKind classifySession(
         const fic::session::LoginSession&) override {
         return fic::session::SessionKind::Graphical;

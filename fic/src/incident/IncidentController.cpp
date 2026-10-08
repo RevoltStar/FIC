@@ -24,7 +24,7 @@ using session::SessionKind;
 // STANDARD - when the lock was requested AND independently verified.
 // Recovery identities are never touched.
 bool isOrdinaryTarget(const LoginSession& session) {
-    return !session.recovery;
+    return session.ordinary && !session.recovery && session.uid != 0;
 }
 
 } // namespace
@@ -163,12 +163,19 @@ IncidentResult IncidentController::applyContainment(
 
     // Session containment. SOFT does not touch existing sessions.
     if (severity >= IncidentSeverity::Standard && sessions_ != nullptr) {
-        const std::vector<LoginSession> sessions = sessions_->listSessions();
+        const auto inventory = sessions_->listSessions();
         std::vector<LoginSession> toTerminate;
-
-        for (const LoginSession& session : sessions) {
+        if (!inventory.proven) {
+            failures.emplace_back("session inventory is unproven: " +
+                                  inventory.diagnostic);
+        }
+        if (inventory.proven) for (const LoginSession& session : inventory.sessions) {
             if (!isOrdinaryTarget(session)) {
-                // Recovery identities must survive containment.
+                if (!session.recovery && !session.serviceAccount &&
+                    session.uid != 0) {
+                    failures.emplace_back("session target identity is unproven: " +
+                                          session.id);
+                }
                 continue;
             }
             const SessionKind kind = sessions_->classifySession(session);
@@ -199,9 +206,9 @@ IncidentResult IncidentController::applyContainment(
                 "session termination request failed for " + session.id + ": " + outcome.diagnostic);
         }
 
-        std::string goneDiagnostic;
-        const bool sessionsGone = toTerminate.empty() ||
-            sessions_->verifySessionsGone(toTerminate, goneDiagnostic);
+        std::string goneDiagnostic = inventory.proven ? "" : inventory.diagnostic;
+        const bool sessionsGone = inventory.proven && (toTerminate.empty() ||
+            sessions_->verifySessionsGone(toTerminate, goneDiagnostic));
         status.sessionsContained = sessionsGone;
         if (!sessionsGone) {
             failures.emplace_back("session containment could not be proven: " + goneDiagnostic);
@@ -218,13 +225,23 @@ IncidentResult IncidentController::applyContainment(
     // including lingering user managers, so a contained attacker cannot keep a
     // foothold outside any login session.
     if (severity == IncidentSeverity::Isolate && sessions_ != nullptr) {
-        const std::vector<LoginUser> users = sessions_->listUsers();
-        bool usersProven = true;
-        for (const LoginUser& user : users) {
+        const auto inventory = sessions_->listUsers();
+        bool usersProven = inventory.proven;
+        if (!inventory.proven) {
+            failures.emplace_back("user inventory is unproven: " +
+                                  inventory.diagnostic);
+        }
+        if (inventory.proven) for (const LoginUser& user : inventory.users) {
             // Service accounts and recovery identities are never terminated,
             // and the target set comes from logind - never from /etc/passwd or
             // from a bare UID >= UID_MIN test.
-            if (user.recovery || user.serviceAccount) {
+            if (user.recovery || user.serviceAccount || user.uid == 0) {
+                continue;
+            }
+            if (!user.ordinary) {
+                usersProven = false;
+                failures.emplace_back("user target identity is unproven: " +
+                                      std::to_string(user.uid));
                 continue;
             }
             const session::ContainmentOutcome outcome =

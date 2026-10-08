@@ -824,6 +824,33 @@ fallback `ACTIVE`, а не автоматическое смягчение ре�
 условно требует `NET/SshEdit/ssh_use_pam`; эта Required dependency участвует
 в планировании применения и диагностике policy API.
 
+В `ACTIVE` контроллер получает инвентаризацию сессий и пользователей из
+systemd-logind через системный D-Bus. Доказанно пустой ответ отличается от
+ошибки logind: ошибка даёт `DEGRADED`, сохраняя записанную severity. Для
+termination используются только обычные logind login sessions и user runtime
+с подтверждённой NSS identity; root, члены recovery-группы при включённом
+`lock_exempt_fic_members`, greeter и service identities защищены. Недоказанная
+identity также не становится целью. Признак обычного пользователя требует
+согласованного UID/имени в NSS и logind, login shell, платформенного диапазона
+обычных UID и
+обычного logind `Class`; один UID-порог сам по себе не даёт разрешения на
+termination. `HARD` завершает обычные сессии, а
+`ISOLATE` дополнительно запрашивает `TerminateUser` и проверяет исчезновение
+logind user и остановку `user@UID.service`; сетевой карантин остаётся отдельной
+незавершённой частью `ISOLATE`.
+
+В `STANDARD` графическая сессия получает `LockSession`, но ответ logind и
+`LockedHint` не доказывают фактическую блокировку desktop. Пока для
+поддерживаемых DE нет общего доверенного lock proof, backend сразу переходит
+к `TerminateSession` и проверяет исчезновение той же session через logind.
+SSH/TTY завершаются без lock. `OFF` и `PASSIVE` не меняют сессии, clear не
+разблокирует экраны. Перед изменяющим вызовом identity перечитывается, вызов
+направляется уникальному D-Bus владельцу logind; между повторной проверкой и
+действием остаётся узкая гонка, поскольку API logind не даёт атомарной
+операции «terminate if identity unchanged». Проверки ограничены timeout и
+объёмом inventory. Это доказательство logind-managed состояния, а не всех
+процессов данного UID.
+
 ### Работа с SSH
 
 Модуль включает политики `ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,

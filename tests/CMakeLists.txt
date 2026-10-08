@@ -769,6 +769,24 @@ target_include_directories(incident_controller_tests PRIVATE
 target_link_libraries(incident_controller_tests PRIVATE fic-core)
 add_test(NAME incident_controller_tests COMMAND incident_controller_tests)
 
+add_executable(logind_session_containment_backend_tests
+    fic/incident/LogindSessionContainmentBackendTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/session/LogindSessionContainmentBackend.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/session/SystemLogindClient.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)
+target_include_directories(logind_session_containment_backend_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FIC_TEST_LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+target_link_libraries(logind_session_containment_backend_tests PRIVATE
+    fic-core fic-platform PkgConfig::FIC_TEST_LIBSYSTEMD)
+add_test(NAME logind_session_containment_backend_tests
+    COMMAND logind_session_containment_backend_tests)
+
 add_executable(daemon_readiness_tests
     fic/incident/DaemonReadinessTests.cpp)
 target_include_directories(daemon_readiness_tests PRIVATE
