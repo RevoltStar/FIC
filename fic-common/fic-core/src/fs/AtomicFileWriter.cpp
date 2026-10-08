@@ -530,13 +530,6 @@ bool AtomicFileWriter::captureTargetState(const std::string& path,
     state.group = info.st_gid;
     state.content = std::move(content);
     return true;
-    state.identity.device = info.st_dev;
-    state.identity.inode = info.st_ino;
-    state.mode = info.st_mode & 07777;
-    state.owner = info.st_uid;
-    state.group = info.st_gid;
-    state.content = std::move(content);
-    return true;
 }
 
 bool AtomicFileWriter::removeIfCurrentState(
