@@ -2,8 +2,18 @@
 
 #include <string>
 #include <utility>
+#include <nlohmann/json.hpp>
 
 namespace fic::incident {
+
+template <typename ResolveModule>
+void canonicalizePolicyRequest(nlohmann::json& request,
+                               ResolveModule&& resolveModule) {
+    if (request.contains("module")) {
+        request["module"] = std::forward<ResolveModule>(resolveModule)(
+            request["module"].get<std::string>());
+    }
+}
 
 inline bool managedModeMutationMayActivate(
     const std::string& command, const std::string& module,

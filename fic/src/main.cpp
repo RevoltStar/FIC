@@ -1144,6 +1144,10 @@ std::string handle_client_packet(
     json response;
     if (fic::ipc::parse_request_json(requestText, request, error) &&
         validate_policy_request_schema(request, error)) {
+        fic::incident::canonicalizePolicyRequest(request,
+            [&](const std::string& module) {
+                return canonical_module_name(policyRegistry, module);
+            });
         const auto before = fic::incident::IncidentResponseModeResolver::production();
         const bool leavingActive =
             request.value("module", "") == "GLOBAL" &&

@@ -94,6 +94,14 @@ def main():
             "only ACTIVE must require the SSH PAM policy")
 
     startup = (root / "fic/src/main.cpp").read_text()
+    packet = startup[startup.find("std::string handle_client_packet("):]
+    canonical = packet.find("canonicalizePolicyRequest(request,")
+    preflight = packet.find("const bool leavingActive =")
+    handler = packet.find("return handle_request(request,")
+    require(0 <= canonical < preflight < handler and
+            "return canonical_module_name(policyRegistry, module);" in
+            packet[canonical:preflight],
+            "IPC must canonicalize module before ACTIVE preflight")
     helper_start = startup.find("IncidentPrerequisiteResult recomputeAccessReadiness(")
     helper_end = startup.find("bool mayChangeSshPamBridge(", helper_start)
     require(0 <= helper_start < helper_end,
