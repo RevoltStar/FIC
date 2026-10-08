@@ -2,11 +2,11 @@
 
 ## Current base
 
-* Branch `main`; follow-up applied on `5a07798aeff71cfa9ae4618c26229bb7598370a5`.
+* Branch `main`; current follow-up based on `3d39cd7ed7b1492870f64c99fc3786bff11ec9fb`.
 
 ## Current task
 
-* Crash-consistent lifecycle для Session Containment Model A — реализован.
+* Fresh verification and durable re-arm of `Discharged` Model A obligations — реализовано.
 
 ## Accepted architecture / invariants
 
@@ -21,6 +21,7 @@
 * Недоказуемый (повреждённый) store → `DEGRADED`, никаких unsafe-действий и никогда не пустой успех. UID reuse (UID теперь другой аккаунт) → отказ + `DEGRADED`.
 * Root, configured recovery-group members, greeter/service и unproven identities никогда не являются целями. Unknown class делает inventory недоказанным.
 * Logind actions are pinned to its unique D-Bus owner, with immediate identity recheck. The narrow race between recheck and terminate was accepted for explicit documentation.
+* `Discharged` is a past proof only. Each ISOLATE reconciliation freshly verifies it. A proven reactivated previously selected runtime or new qualifying login re-arms `Pending` durably before termination. Unproven identity/runtime or failed re-arm degrades without unsafe mutation. Periodic reconciliation is not continuous enforcement.
 
 ## Completed
 
@@ -28,10 +29,11 @@
 * Удалена shell-based классификация (`Service` по `nologin/false/true`); Model A в `classifyProductionContainmentIdentity`.
 * Исполняемые RED R1–R5 на base; GREEN регрессии на crash/boot/missing store/parser/fsync, сохранены исходные R1–R8 Model A.
 * Обновлены IncidentControllerTests/LogindSessionContainmentBackendTests под Model A.
+* Follow-up: new login refreshes selection evidence and durably re-arms; discharged targets receive fresh runtime proof, with bulk conditional re-arm before user actions. RED D1–D6 executable on base `3d39cd7` and GREEN after implementation.
 
 ## Changed areas
 
-* `fic/src/incident/{IncidentController,IncidentSessionTargetStore}.{h,cpp}`, incident/controller and two device-incident fixture tests, `fic/README.md`, `docs/HANDOFF.md`.
+* Current follow-up: `fic/src/incident/IncidentController.cpp`, `tests/fic/incident/ModelAContainmentTests.cpp`, `fic/README.md`, `docs/HANDOFF.md`.
 
 ## Validation
 
@@ -39,6 +41,8 @@
 * Fresh Debian 12 Docker full build PASS. CTest as root excluding `mutation_journal_tests`: **142/142 PASS** (Git safe.directory set for read-only `/src`); the excluded journal executable separately passed under UID 1000. Initial unadjusted root CTest had 4 failures: Git safe.directory, root-dependent journal harness, and two device fixtures missing the new target-store test ownership override; all affected cases were rerun successfully.
 * Targeted Model A/controller/backend/recovery tests PASS. Final targeted Model A/controller builds and direct runs PASS on Debian 13, Ubuntu 24.04, ALT p11. ALT image lacks `ctest`; Ubuntu 26.04 configure is blocked by missing PAM development files in the image.
 * `git diff --check` PASS before commit.
+* Current follow-up: executable RED D1–D6 each failed on base `3d39cd7` for the intended assertion; GREEN Model A/controller/backend/recovery tests passed. Fresh Debian 12 full build PASS; CTest **142/142 PASS** with `mutation_journal_tests` excluded from root run and separately **PASS under UID 1000**. The first build attempt stopped at 90% only because `/tmp` filled; after removing the previous follow-up's temporary build and resuming with `-j2`, it passed.
+* Final targeted Debian 13, Ubuntu 24.04 and ALT p11 Model A/controller runs PASS after extra crash tests. Ubuntu 26.04 configure is blocked by PAM development files missing from the local image.
 
 ## Remaining
 

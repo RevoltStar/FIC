@@ -297,7 +297,7 @@ IncidentResult IncidentController::applyContainment(
         // The durable target provenance is loaded fresh from the store: it
         // must survive session termination, partial failures and restarts,
         // so it is never taken from the in-memory session pass alone.
-        const IncidentSessionTargetStore::ReadResult store =
+        IncidentSessionTargetStore::ReadResult store =
             targetStore_.read();
         std::vector<IncidentSessionTarget> obligations =
             store.targets;
@@ -323,12 +323,94 @@ IncidentResult IncidentController::applyContainment(
                 store.detail);
         }
 
-        if (!storeUsable) {
+        if (!storeUsable || !targetsUsable) {
             // No unsafe action and never a false success.
+            if (!targetsUsable)
+                failures.emplace_back("session target registration is unproven");
         } else {
             usersProven = true;
+            // Discharged records are past observations, not permanent proof.
+            // A proven logind user is a reactivated runtime of an already
+            // selected identity. Re-arm all such targets in ONE durable
+            // snapshot before ANY user-runtime mutation in this pass.
+            bool rearmChanged = false;
+            for (IncidentSessionTarget& target : obligations) {
+                if (target.runtimeObligation !=
+                    IncidentSessionTarget::RuntimeObligation::Discharged)
+                    continue;
+                const auto lookup = sessions_->lookupProvenUser(
+                    target.uid, target.canonicalName);
+                if (lookup.status == session::SessionContainmentBackend::
+                                         RegisteredUserLookup::Status::Unproven) {
+                    usersProven = false;
+                    failures.emplace_back(
+                        "discharged user target is unproven for uid " +
+                        std::to_string(target.uid) + ": " + lookup.diagnostic);
+                    continue;
+                }
+                if (lookup.status == session::SessionContainmentBackend::
+                                         RegisteredUserLookup::Status::Found) {
+                    target.runtimeObligation =
+                        IncidentSessionTarget::RuntimeObligation::Pending;
+                    rearmChanged = true;
+                    continue;
+                }
+                LoginUser user;
+                user.uid = target.uid;
+                user.name = target.canonicalName;
+                std::string diagnostic;
+                if (!sessions_->verifyUserRuntimeGone(user, diagnostic)) {
+                    usersProven = false;
+                    failures.emplace_back(
+                        "discharged user runtime absence is unproven for uid " +
+                        std::to_string(target.uid) + ": " + diagnostic);
+                }
+            }
+            bool rearmDurable = true;
+            if (rearmChanged) {
+                const auto written = targetStore_.writeIfCurrent(
+                    store, store.bootId, store.incidentGeneration, obligations);
+                if (!written.durable) {
+                    rearmDurable = false;
+                    usersProven = false;
+                    failures.emplace_back(
+                        "re-arming user-runtime obligations could not be "
+                        "made durable: " + written.detail);
+                } else {
+                    store = targetStore_.read();
+                    rearmDurable = store.provenance ==
+                            IncidentSessionTargetStore::ReadProvenance::Proven &&
+                        store.bootId == currentIncidentBootId() &&
+                        incidentGeneration_.has_value() &&
+                        store.incidentGeneration == *incidentGeneration_ &&
+                        store.targets.size() == obligations.size();
+                    if (rearmDurable) {
+                        for (std::size_t i = 0; i < obligations.size(); ++i) {
+                            const auto& actual = store.targets[i];
+                            const auto& expected = obligations[i];
+                            if (actual.uid != expected.uid ||
+                                actual.canonicalName != expected.canonicalName ||
+                                actual.sessionId != expected.sessionId ||
+                                actual.sessionStartTimestamp !=
+                                    expected.sessionStartTimestamp ||
+                                actual.sessionClass != expected.sessionClass ||
+                                actual.runtimeObligation !=
+                                    expected.runtimeObligation) {
+                                rearmDurable = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!rearmDurable) {
+                        usersProven = false;
+                        failures.emplace_back(
+                            "target store changed after durable re-arm");
+                    }
+                }
+            }
             bool obligationsChanged = false;
             for (IncidentSessionTarget& target : obligations) {
+                if (!rearmDurable) break;
                 if (target.runtimeObligation ==
                     IncidentSessionTarget::RuntimeObligation::Discharged) {
                     continue;
@@ -854,18 +936,32 @@ IncidentController::registerSessionTargets(
         *incidentGeneration_ != store.incidentGeneration)
         return {false, "current incident target store is unproven"};
     std::vector<IncidentSessionTarget> merged = store.targets;
+    bool changed = false;
     for (IncidentSessionTarget& target : newTargets) {
         const auto existing = std::find_if(merged.begin(), merged.end(),
             [&](const auto& item) { return item.uid == target.uid; });
         if (existing != merged.end()) {
             if (existing->canonicalName != target.canonicalName)
                 return {false, "target UID identity changed during incident"};
+            if (existing->runtimeObligation ==
+                IncidentSessionTarget::RuntimeObligation::Discharged) {
+                // Inventory already proved this NEW ordinary login session.
+                // Preserve its evidence and durably re-arm before the session
+                // that proved selection may be terminated.
+                existing->sessionId = target.sessionId;
+                existing->sessionStartTimestamp = target.sessionStartTimestamp;
+                existing->sessionClass = target.sessionClass;
+                existing->runtimeObligation =
+                    IncidentSessionTarget::RuntimeObligation::Pending;
+                changed = true;
+            }
             continue;
         }
         merged.push_back(std::move(target));
+        changed = true;
     }
     // Reconciliation with no new session requires no write/fsync.
-    if (merged.size() == store.targets.size()) return {true, ""};
+    if (!changed) return {true, ""};
     const auto written = targetStore_.writeIfCurrent(
         store, bootId, store.incidentGeneration, merged);
     return {written.durable, written.detail};
