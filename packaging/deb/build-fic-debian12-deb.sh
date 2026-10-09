@@ -53,12 +53,14 @@ FIC_SESSION_AGENT_SRC_DIR="$ROOT_DIR/fic-session-agent"
 FIC_DICK_SRC_DIR="$ROOT_DIR/fic-dick"
 FIC_CLI_SRC_DIR="$ROOT_DIR/fic-cli"
 FIC_GUI_SRC_DIR="$ROOT_DIR/fic-gui"
+FIC_PRELOGIN_SRC_DIR="$ROOT_DIR/fic-prelogin"
 
 FIC_BUILD_DIR="$BUILD_ROOT/fic"
 FIC_SESSION_AGENT_BUILD_DIR="$BUILD_ROOT/fic-session-agent"
 FIC_DICK_BUILD_DIR="$BUILD_ROOT/fic-dick"
 FIC_CLI_BUILD_DIR="$BUILD_ROOT/fic-cli"
 FIC_GUI_BUILD_DIR="$BUILD_ROOT/fic-gui"
+FIC_PRELOGIN_BUILD_DIR="$BUILD_ROOT/fic-prelogin"
 
 cleanup() {
     rm -rf "$STAGING_BASE"
@@ -1451,6 +1453,63 @@ build_fic_gui_package() {
     printf '%s\n' "$output_deb"
 }
 
+detect_prelogin_depends() {
+    local package_root="$1"
+    local work output depends
+    local binaries=("$package_root/opt/fic/bin/fic-prelogin" "$package_root/opt/fic/bin/fic-prelogin-integration")
+    work="$(mktemp -d "$STAGING_BASE/prelogin-shlibdeps-XXXXXX")"
+    mkdir -p "$work/debian"
+    cat > "$work/debian/control" <<'EOF'
+Source: fic-prelogin
+Section: utils
+Priority: optional
+Maintainer: FIC Maintainers <maintainers@example.com>
+
+Package: fic-prelogin
+Architecture: any
+Description: dependency analysis fixture
+EOF
+    output="$(cd "$work" && dpkg-shlibdeps -O "${binaries[@]}")" || return 1
+    depends="$(printf '%s\n' "$output" | sed -n 's/^shlibs:Depends=//p')"
+    [ -n "$depends" ] || return 1
+    printf '%s\n' "$depends"
+}
+
+build_fic_prelogin_package() {
+    local package_name=fic-prelogin
+    local package_root output_deb binary_depends
+    package_root="$(init_package_root "$package_name")"
+    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
+    install_cmake_component "$FIC_PRELOGIN_BUILD_DIR" fic-prelogin "$package_root"
+    binary_depends="$(detect_prelogin_depends "$package_root")" || return 1
+    write_control_file "$package_root" "$package_name" \
+        "$(join_depends "$binary_depends" "fic (= ${PACKAGE_VERSION})" "systemd")" \
+        "FIC optional local pre-login systemd gate"
+    cat > "$package_root/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -eu
+case "$1" in
+    configure|abort-remove|abort-deconfigure|abort-upgrade)
+        if [ -d /run/systemd/system ]; then
+            /opt/fic/bin/fic-prelogin-integration activate
+        else
+            echo 'FIC prelogin inactive: systemd is offline; activate explicitly after boot' >&2
+        fi
+        ;;
+esac
+EOF
+    cat > "$package_root/DEBIAN/prerm" <<'EOF'
+#!/bin/sh
+set -eu
+case "$1" in
+    remove|deconfigure|upgrade) /opt/fic/bin/fic-prelogin-integration deactivate ;;
+esac
+EOF
+    chmod 0755 "$package_root/DEBIAN/postinst" "$package_root/DEBIAN/prerm"
+    build_deb_package "$package_root" "$output_deb" || return 1
+    printf '%s\n' "$output_deb"
+}
+
 main() {
     require_command cmake
     require_command dpkg-deb
@@ -1470,30 +1529,35 @@ main() {
     build_project "$FIC_SESSION_AGENT_SRC_DIR" "$FIC_SESSION_AGENT_BUILD_DIR"
     build_project "$FIC_CLI_SRC_DIR" "$FIC_CLI_BUILD_DIR"
     build_project "$FIC_GUI_SRC_DIR" "$FIC_GUI_BUILD_DIR"
+    build_project "$FIC_PRELOGIN_SRC_DIR" "$FIC_PRELOGIN_BUILD_DIR"
 
     verify_built_binary "$FIC_DICK_BUILD_DIR/fic-dick" fic-dick
     verify_built_binary "$FIC_BUILD_DIR/fic" fic
     verify_built_binary "$FIC_SESSION_AGENT_BUILD_DIR/fic-session-agent" fic-session-agent
     verify_built_binary "$FIC_CLI_BUILD_DIR/fic-cli" fic-cli
     verify_built_binary "$FIC_GUI_BUILD_DIR/fic-gui" fic-gui
+    verify_built_binary "$FIC_PRELOGIN_BUILD_DIR/fic-prelogin" fic-prelogin
 
     local dick_deb
     local fic_deb
     local session_agent_deb
     local cli_deb
     local gui_deb
+    local prelogin_deb
 
     dick_deb="$(build_fic_dick_package)"
     fic_deb="$(build_fic_package)"
     session_agent_deb="$(build_fic_session_agent_package)"
     cli_deb="$(build_fic_cli_package)"
     gui_deb="$(build_fic_gui_package)" || exit 1
+    prelogin_deb="$(build_fic_prelogin_package)" || exit 1
 
     verify_deb_metadata "$dick_deb" fic-dick
     verify_deb_metadata "$fic_deb" fic
     verify_deb_metadata "$session_agent_deb" fic-session-agent
     verify_deb_metadata "$cli_deb" fic-cli
     verify_deb_metadata "$gui_deb" fic-gui
+    verify_deb_metadata "$prelogin_deb" fic-prelogin
     verify_deb_gui_compliance_metadata "$gui_deb"
 
     echo "Packages created:"
@@ -1502,6 +1566,7 @@ main() {
     echo "  $session_agent_deb"
     echo "  $cli_deb"
     echo "  $gui_deb"
+    echo "  $prelogin_deb"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

@@ -1,0 +1,7 @@
+#pragma once
+namespace fic::prelogin::paths {
+inline constexpr const char* BIN = "@FIC_PRIVATE_BINDIR@";
+inline constexpr const char* SHARE = "@FIC_SHARE_DIR@/prelogin";
+inline constexpr const char* UNIT = "@FIC_SYSTEMD_UNIT_DIR@/fic-prelogin.service";
+inline constexpr const char* DROPIN = "/etc/systemd/system/display-manager.service.d/50-fic-prelogin.conf";
+}

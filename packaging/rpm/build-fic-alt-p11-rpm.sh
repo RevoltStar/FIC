@@ -41,12 +41,14 @@ FIC_SESSION_AGENT_SRC_DIR="$ROOT_DIR/fic-session-agent"
 FIC_DICK_SRC_DIR="$ROOT_DIR/fic-dick"
 FIC_CLI_SRC_DIR="$ROOT_DIR/fic-cli"
 FIC_GUI_SRC_DIR="$ROOT_DIR/fic-gui"
+FIC_PRELOGIN_SRC_DIR="$ROOT_DIR/fic-prelogin"
 
 FIC_BUILD_DIR="$BUILD_ROOT/fic"
 FIC_SESSION_AGENT_BUILD_DIR="$BUILD_ROOT/fic-session-agent"
 FIC_DICK_BUILD_DIR="$BUILD_ROOT/fic-dick"
 FIC_CLI_BUILD_DIR="$BUILD_ROOT/fic-cli"
 FIC_GUI_BUILD_DIR="$BUILD_ROOT/fic-gui"
+FIC_PRELOGIN_BUILD_DIR="$BUILD_ROOT/fic-prelogin"
 
 cleanup() {
     rm -rf "$STAGING_BASE" "$RPM_TOPDIR"
@@ -985,6 +987,34 @@ build_fic_gui_package() {
     printf '%s\n' "$output_rpm"
 }
 
+prelogin_pre_script() {
+    cat <<'EOF'
+if [ -x /opt/fic/bin/fic-prelogin-integration ]; then
+    /opt/fic/bin/fic-prelogin-integration deactivate || exit 1
+fi
+EOF
+    common_pre_script
+}
+
+build_fic_prelogin_package() {
+    local package_root output_rpm
+    package_root="$(init_package_root fic-prelogin)"
+    install_cmake_component "$FIC_PRELOGIN_BUILD_DIR" fic-prelogin "$package_root"
+    output_rpm="$(build_rpm_package "$package_root" fic-prelogin \
+        "FIC optional pre-login gate" "Local systemd gate without authentication" \
+        "fic = $PACKAGE_VERSION-$RPM_RELEASE, systemd" \
+        "$(prelogin_pre_script)" \
+        'if [ -d /run/systemd/system ]; then
+    /opt/fic/bin/fic-prelogin-integration activate || exit 1
+else
+    echo "FIC prelogin inactive: systemd is offline; activate explicitly after boot" >&2
+fi' \
+        'if [ "$1" -eq 0 ]; then
+    /opt/fic/bin/fic-prelogin-integration deactivate || exit 1
+fi')" || return 1
+    printf '%s\n' "$output_rpm"
+}
+
 main() {
     require_command cmake
     require_command cp
@@ -1009,30 +1039,35 @@ main() {
     build_project "$FIC_SESSION_AGENT_SRC_DIR" "$FIC_SESSION_AGENT_BUILD_DIR"
     build_project "$FIC_CLI_SRC_DIR" "$FIC_CLI_BUILD_DIR"
     build_project "$FIC_GUI_SRC_DIR" "$FIC_GUI_BUILD_DIR"
+    build_project "$FIC_PRELOGIN_SRC_DIR" "$FIC_PRELOGIN_BUILD_DIR"
 
     verify_built_binary "$FIC_DICK_BUILD_DIR/fic-dick" fic-dick
     verify_built_binary "$FIC_BUILD_DIR/fic" fic
     verify_built_binary "$FIC_SESSION_AGENT_BUILD_DIR/fic-session-agent" fic-session-agent
     verify_built_binary "$FIC_CLI_BUILD_DIR/fic-cli" fic-cli
     verify_built_binary "$FIC_GUI_BUILD_DIR/fic-gui" fic-gui
+    verify_built_binary "$FIC_PRELOGIN_BUILD_DIR/fic-prelogin" fic-prelogin
 
     local dick_rpm
     local fic_rpm
     local session_agent_rpm
     local cli_rpm
     local gui_rpm
+    local prelogin_rpm
 
     dick_rpm="$(build_fic_dick_package)"
     fic_rpm="$(build_fic_package)"
     session_agent_rpm="$(build_fic_session_agent_package)"
     cli_rpm="$(build_fic_cli_package)"
     gui_rpm="$(build_fic_gui_package)"
+    prelogin_rpm="$(build_fic_prelogin_package)" || exit 1
 
     verify_rpm_metadata "$dick_rpm" fic-dick
     verify_rpm_metadata "$fic_rpm" fic
     verify_rpm_metadata "$session_agent_rpm" fic-session-agent
     verify_rpm_metadata "$cli_rpm" fic-cli
     verify_rpm_metadata "$gui_rpm" fic-gui
+    verify_rpm_metadata "$prelogin_rpm" fic-prelogin
     verify_rpm_gui_license_metadata "$gui_rpm"
     verify_rpm_gui_dependency_metadata "$gui_rpm"
 
@@ -1042,6 +1077,9 @@ main() {
     echo "  $session_agent_rpm"
     echo "  $cli_rpm"
     echo "  $gui_rpm"
+    echo "  $prelogin_rpm"
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

@@ -1640,3 +1640,22 @@ failure is fatal for this `SessionOnly` reconciliation. File readback does not
 prove the timeout cached by KScreenLocker because it exposes no corresponding
 runtime-state read API. FIC does not claim machine-wide immutable KConfig
 authority, and the headless daemon has no link-time KDE framework dependency.
+
+## Pre-Login Gate
+
+```mermaid
+flowchart TD
+    transaction[systemd DM start transaction] --> gate[fic-prelogin oneshot]
+    transaction --> dm[Stock Display Manager waits for gate]
+    daemon[fic.service: first apply and startup lifecycle] --> ipc[Verified read-only prelogin_status]
+    progress[systemd progress: display only] --> gate
+    ipc --> gate
+    gate --> release[Manual or verified auto handoff: resource cleanup]
+    release --> exit[Successful gate exit]
+    exit --> dm
+    dm --> pam[pam_fic_access: independent account decision]
+```
+
+Gate не изменяет policy/IncidentStateStore/PAM и не запускает DM напрямую.
+`READY=1` служит lifecycle notification, не доказательством first apply.
+Authoritative contract и recovery: [Pre-Login Gate](../fic-prelogin/README.md).

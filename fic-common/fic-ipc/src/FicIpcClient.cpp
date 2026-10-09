@@ -12,6 +12,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <vector>
+#include <set>
 
 namespace fic::ipc {
 namespace {
@@ -247,6 +248,7 @@ Client::RequestResult Client::requestWithStatus(const json& payload) const {
     if (!connectWithDeadline(fd.get(), socketPath_, deadline, error)) {
         return failure("connect(" + socketPath_ + ") failed: " + error);
     }
+    pid_t peerPid = 0;
     if (expectedPeerUid_.has_value()) {
         struct ucred peer {};
         socklen_t peerSize = sizeof(peer);
@@ -254,6 +256,7 @@ Client::RequestResult Client::requestWithStatus(const json& payload) const {
             peerSize != sizeof(peer) || peer.uid != *expectedPeerUid_) {
             return failure("daemon peer credentials are not trusted");
         }
+        peerPid = peer.pid;
     }
     if (!sendPacket(fd.get(), requestText, deadline, error)) {
         return failure("send failed: " + error);
@@ -265,7 +268,16 @@ Client::RequestResult Client::requestWithStatus(const json& payload) const {
     }
 
     try {
-        json response = json::parse(responseText);
+        std::vector<std::set<std::string>> keys;
+        json response = json::parse(responseText, [&](int depth, json::parse_event_t event, json& value) {
+            if (depth > static_cast<int>(MAX_JSON_DEPTH))
+                throw std::runtime_error("daemon JSON nesting exceeds transport limit");
+            if (event == json::parse_event_t::object_start) keys.emplace_back();
+            if (event == json::parse_event_t::key && !keys.back().insert(value.get<std::string>()).second)
+                throw std::runtime_error("duplicate daemon JSON key");
+            if (event == json::parse_event_t::object_end) keys.pop_back();
+            return true;
+        });
         const bool supportedApiVersion = response.is_object() &&
             response.contains("api_version") &&
             ((response["api_version"].is_number_unsigned() &&
@@ -276,7 +288,7 @@ Client::RequestResult Client::requestWithStatus(const json& payload) const {
         if (!supportedApiVersion) {
             return failure("daemon response has an unsupported IPC API version");
         }
-        return {true, std::move(response), {}};
+        return {true, std::move(response), {}, peerPid};
     } catch (const std::exception& exception) {
         const std::string raw = responseText.substr(0, 512);
         return failure("invalid daemon response: " +

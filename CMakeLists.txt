@@ -13,6 +13,7 @@ add_subdirectory(fic-common/fic-policy)
 add_subdirectory(fic)
 add_subdirectory(fic-session-agent)
 add_subdirectory(fic-cli)
+add_subdirectory(fic-prelogin)
 add_subdirectory(fic-dick)
 add_subdirectory(fic-gui)
 

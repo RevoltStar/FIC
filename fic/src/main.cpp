@@ -43,6 +43,7 @@
 #include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
+#include <fic/ipc/FicReadinessStatus.h>
 #include <fic/ipc/FicIpcPathDefaults.h>
 #include <fic/version/BuildInfo.h>
 #include <fic/version/ProductVersion.h>
@@ -177,7 +178,7 @@ bool should_audit_ipc_request(const json& request) {
 
     const std::string command = admin_audit_command(request);
     return command != "boot_id" && command != "log_records" &&
-        command != "access_gate_status";
+        command != "access_gate_status" && command != "prelogin_status";
 }
 
 std::string canonical_module_name(
@@ -389,6 +390,31 @@ fic::incident::IncidentController& incidentController() {
 fic::incident::DaemonReadiness& daemonReadiness() {
     static fic::incident::DaemonReadiness readiness;
     return readiness;
+}
+
+// In-memory first-apply result belongs to THIS daemon instance and kernel boot.
+// Periodic/admin passes never overwrite it; systemd READY is independent.
+fic::ipc::PreLoginStatus& startupLifecycle() {
+    static fic::ipc::PreLoginStatus status = [] {
+        fic::ipc::PreLoginStatus value;
+        value.bootId = SystemBootInfo::get_boot_id();
+        value.daemonPid = static_cast<int>(::getpid());
+        return value;
+    }();
+    return status;
+}
+fic::ipc::AccessGateStatus currentAccessStatus() {
+    const auto status = incidentController().status();
+    fic::ipc::AccessGateStatus value;
+    value.state = fic::incident::daemonReadinessToken(daemonReadiness().state());
+    value.mode = fic::incident::incidentResponseModeToken(status.responseMode.mode);
+    value.modeProven = status.responseMode.proven;
+    value.severity = fic::core::incidentSeverityToken(status.severity);
+    value.stateProven = status.stateProven;
+    value.provenance = fic::incident::incidentProvenanceToken(status.provenance);
+    value.loginAllowed = fic::incident::ordinaryLoginAllowed(
+        daemonReadiness().state(), status.stateProven, status.severity, status.responseMode.mode);
+    return value;
 }
 
 fic::incident::SshAccessContainmentBackend& incidentSshGuard() {
@@ -1085,23 +1111,14 @@ json handle_request(json request,
                 {"detail", status.detail}
             };
         }
-        if (command == "access_gate_status") {
-            const fic::incident::IncidentStatus status = incidentController().status();
-            const auto state = daemonReadiness().state();
-            return json{
-                {"ok", true},
-                {"message", "incident access gate status"},
-                {"daemon_state", fic::incident::daemonReadinessToken(state)},
-                {"response_mode", fic::incident::incidentResponseModeToken(
-                    status.responseMode.mode)},
-                {"response_mode_proven", status.responseMode.proven},
-                {"severity", fic::core::incidentSeverityToken(status.severity)},
-                {"persistent_state_proven", status.stateProven},
-                {"persistent_provenance", fic::incident::incidentProvenanceToken(status.provenance)},
-                {"ordinary_login_allowed", fic::incident::ordinaryLoginAllowed(
-                    state, status.stateProven, status.severity,
-                    status.responseMode.mode)}
-            };
+        if (command == "access_gate_status")
+            return fic::ipc::serializeAccessGateStatus(currentAccessStatus());
+        if (command == "prelogin_status") {
+            auto status = startupLifecycle();
+            status.access = currentAccessStatus();
+            if (status.access.state == "DEGRADED")
+                status.diagnostic = "Incident prerequisites or containment are unproven";
+            return fic::ipc::serializePreLoginStatus(status);
         }
         if (command == "incident_raise") {
             const std::optional<fic::core::IncidentSeverity> severity =
@@ -1270,7 +1287,7 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
     const std::string command = request.at("command").get<std::string>();
     if (command == "shutdown" || command == "reload_config" ||
         command == "apply_all" || command == "incident_status" ||
-        command == "access_gate_status" ||
+        command == "access_gate_status" || command == "prelogin_status" ||
         command == "incident_clear") {
         return fic::ipc::request_has_only_fields(request, {"command"}, error);
     }
@@ -2382,10 +2399,14 @@ int main(int argc, char* argv[]) {
     }
 
     (void)::sd_notify(0, "STATUS=Applying startup policies");
+    startupLifecycle().started = true;
     bool startupRegistryReloadFailed = false;
     const bool startupApplyOk = run_daemon_apply_all_pass(
         policyRegistry, desktopGlobalConfig, platform, executables, "startup",
         &startupRegistryReloadFailed);
+    startupLifecycle().completed = true;
+    startupLifecycle().applyOk = startupApplyOk;
+    startupLifecycle().diagnostic = startupApplyOk ? "" : "Startup policy apply completed with errors";
     if (startupRegistryReloadFailed) {
         std::cerr << "fic daemon startup aborted because PolicyRegistry reload failed"
                   << std::endl;
@@ -2468,6 +2489,7 @@ int main(int argc, char* argv[]) {
     if (!accessReadiness.ready) {
         std::cerr << accessReadiness.diagnostic << std::endl;
     }
+    startupLifecycle().lifecycleCompleted = true;
     (void)::sd_notify(
         0,
         !accessReadiness.ready

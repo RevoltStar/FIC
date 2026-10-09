@@ -1367,3 +1367,11 @@ cmake --build build-fic
 - После изменения конфигурации демон должен перечитывать `policyMap`, чтобы последующие операции работали с актуальным состоянием.
 - Новые socket-команды должны возвращать единый JSON-формат с полями `ok` и `message`.
 - CLI и GUI не должны получать прямую запись в `/opt/fic/config`.
+
+### Pre-Login Gate
+
+Опциональный пакет `fic-prelogin` удерживает штатный DM через systemd до ручного
+или доказанного автоматического handoff. Это отдельный экран, не authentication
+provider; handoff не отключает PAM и не меняет Incident Response.
+Контракт status API, lifecycle установки/удаления и recovery описаны в
+[`fic-prelogin/README.md`](../fic-prelogin/README.md).

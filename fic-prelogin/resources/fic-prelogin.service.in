@@ -1,0 +1,26 @@
+[Unit]
+Description=FIC Pre-Login Gate
+Wants=fic.service
+Before=display-manager.service
+Conflicts=getty@tty7.service
+After=systemd-user-sessions.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=infinity
+ExecStart=@FIC_PRIVATE_BINDIR@/fic-prelogin
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+TTYPath=/dev/tty7
+TTYReset=yes
+TTYVHangup=yes
+KillMode=control-group
+Restart=no
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK

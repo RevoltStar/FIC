@@ -3,11 +3,26 @@ find_package(Threads REQUIRED)
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
 
+add_executable(prelogin_controller_tests fic/incident/PreLoginControllerTests.cpp)
+target_include_directories(prelogin_controller_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src)
+target_link_libraries(prelogin_controller_tests PRIVATE fic-prelogin-core Threads::Threads)
+add_test(NAME prelogin_controller_tests COMMAND prelogin_controller_tests)
+add_executable(prelogin_daemon_fixture fic/incident/PreLoginDaemonFixture.cpp)
+target_include_directories(prelogin_daemon_fixture PRIVATE ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src)
+target_link_libraries(prelogin_daemon_fixture PRIVATE fic-prelogin-core)
+add_executable(prelogin_pam_probe fic/incident/PreLoginPamProbe.cpp)
+target_include_directories(prelogin_pam_probe PRIVATE ${FIC_ACCESS_PAM_INCLUDE_DIR})
+target_link_libraries(prelogin_pam_probe PRIVATE ${FIC_ACCESS_PAM_LIBRARY})
+
 # Several tests compile daemon sources directly instead of consuming
 # fic-platform, so they need the generated part of the public platform header.
 include_directories(${CMAKE_BINARY_DIR}/fic/generated/include)
 
 if(Python3_Interpreter_FOUND)
+    add_test(NAME prelogin_package_lifecycle_tests
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/integration/prelogin/PackageLifecycleTests.py
+            ${CMAKE_SOURCE_DIR})
     add_test(
         NAME device_control_static_checks
         COMMAND ${Python3_EXECUTABLE}

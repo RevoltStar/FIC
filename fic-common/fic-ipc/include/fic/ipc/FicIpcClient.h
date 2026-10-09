@@ -203,6 +203,7 @@ public:
         bool hasResponse = false;
         json response;
         std::string error;
+        pid_t peerPid = 0;
     };
 
     Client();

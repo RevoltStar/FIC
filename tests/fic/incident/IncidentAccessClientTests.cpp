@@ -1,5 +1,6 @@
 #include "incident/IncidentAccessClient.h"
 #include "FicIpcWire.h"
+#include <fic/ipc/FicReadinessStatus.h>
 
 #include <nlohmann/json.hpp>
 
@@ -80,13 +81,12 @@ private:
 };
 
 std::string response(bool allowed) {
-    return nlohmann::json{
-        {"ok", true}, {"message", "gate"}, {"api_version", 1},
-        {"daemon_state", "READY"}, {"severity", allowed ? "UNLOCKED" : "HARD"},
-        {"persistent_state_proven", true},
-        {"persistent_provenance", "PROVEN"},
-        {"ordinary_login_allowed", allowed}
-    }.dump();
+    fic::ipc::AccessGateStatus status;
+    status.state = "READY"; status.modeProven = true;
+    status.severity = allowed ? "UNLOCKED" : "HARD";
+    status.stateProven = true; status.provenance = "PROVEN";
+    status.loginAllowed = allowed;
+    return fic::ipc::serializeAccessGateStatus(status).dump();
 }
 }
 

@@ -22,6 +22,7 @@ configure_file(
 add_library(fic-ipc STATIC
     src/FicAdminSocket.cpp
     src/FicIpcClient.cpp
+    src/FicReadinessStatus.cpp
     src/FicIpcTransport.cpp
 )
 target_link_libraries(fic-ipc PUBLIC fic-version)
