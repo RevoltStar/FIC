@@ -34,6 +34,10 @@ public:
                      bool& changed,
                      std::string& error) const;
 
+    // Journal-authorized rollback releases only this resource, without
+    // creating missing resources belonging to any other ordinary policy.
+    bool removePolicy(const std::string& policyName, std::string& error) const;
+
     bool applyExclusive(std::vector<ForeignBaseChain>& neutralized,
                         std::string& error) const;
 
@@ -45,7 +49,8 @@ private:
     friend class FirewallCoordinator;
     bool applyEffective(const FirewallDesiredState& desired, bool& changed,
                         std::vector<ForeignBaseChain>& neutralized,
-                        std::string& error, const std::string& onlyPolicy = {}) const;
+                        std::string& error, const std::string& onlyPolicy = {},
+                        bool removalOnly = false) const;
     ProcessResult run(const std::string& executable,
                       const std::vector<std::string>& args,
                       const ProcessOptions& options) const;

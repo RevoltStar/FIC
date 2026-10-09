@@ -26,6 +26,7 @@ public:
                    bool exclusiveRequested = false);
     bool applyPolicy(const std::string& policy, const std::vector<FirewallRule>& rules,
                      bool& changed, std::string& error);
+    bool removePolicy(const std::string& policy, std::string& error);
     bool applyJournaledPolicy(const PolicyRef& policy, const std::vector<FirewallRule>& rules,
                               std::string& error);
     bool requestProfile(bool quarantine, std::string& error);
@@ -36,6 +37,8 @@ public:
                                   FirewallEffectiveProfile profile,
                                   FirewallDesiredState&, std::string&);
 private:
+    bool applyPolicyImpl(const std::string& policy, const std::vector<FirewallRule>& rules,
+                         bool& changed, std::string& error, bool removalOnly);
     bool effectiveState(const FirewallDesiredState* normalIntent,
                         FirewallDesiredState& desired, std::string& configError);
     const FirewallBackend& backend_;

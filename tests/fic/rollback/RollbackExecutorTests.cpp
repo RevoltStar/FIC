@@ -2946,7 +2946,11 @@ void testKerberosExecutorDriftConflictRefusesDisable() {
             "the administrator value must be preserved");
 }
 
-int main() {
+int runFirewallProvenanceTests(const std::string& scenario);
+
+int main(int argc, char** argv) {
+    if (argc == 3 && std::string(argv[1]) == "--firewall-provenance")
+        return runFirewallProvenanceTests(argv[2]);
     TempTree runtimeTree("/tmp/fic-rollback-runtime-XXXXXX");
     fic::core::FicProductPaths paths=fic::core::FicProductPaths::production();
     paths.configDir=runtimeTree.root/"config";

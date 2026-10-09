@@ -1499,29 +1499,10 @@ RollbackExecutorDeps productionRollbackDeps(
 
     deps.undoFirewallPolicy =
         [&executables](const std::string& policyName, std::string& error) {
-            ModuleConfigFileHandler config("FIREWALL");
-            if (!config.loadConfig()) {
-                error = "could not load FIREWALL.conf";
-                return false;
-            }
-            std::map<std::string, bool> enabled;
-            for (const std::string& policy :
-                 {"block_rdp", "block_ftp", "custom_rules",
-                  "exclusive_firewall_control"}) {
-                enabled[policy] = policy != policyName &&
-                    config.getPolicyStatus(policy) == "ENABLE";
-            }
-            const std::string customRules =
-                config.hasConfiguredValue("custom_rules")
-                    ? config.getPolicyValue("custom_rules") : "";
-            fic::firewall::FirewallDesiredState desired;
-            if (!fic::firewall::buildFirewallDesiredState(
-                    enabled, customRules, desired, error)) {
-                return false;
-            }
             fic::firewall::FirewallBackend backend(executables);
-            std::vector<fic::firewall::ForeignBaseChain> neutralized;
-            return backend.reconcile(desired, neutralized, error);
+            // Release only this resource. A disable must never instantiate
+            // another enabled policy merely because its table is missing.
+            return backend.removePolicy(policyName, error);
         };
 
     deps.disableDeviceFeature = std::move(disableDeviceFeature);

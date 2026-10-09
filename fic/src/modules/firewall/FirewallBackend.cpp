@@ -2,11 +2,13 @@
 #include "modules/firewall/FirewallCoordinator.h"
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include "incident/IncidentStateStore.h"
+#include "rollback/DaemonMutationJournal.h"
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
 #include <fic/core/logging/Logger.h>
 
 #include <filesystem>
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <array>
 #include <sys/random.h>
@@ -47,6 +49,69 @@ bool stampOwnership(nlohmann::json& objects, std::string& error) {
     for (auto& item : objects)
         if (item.contains("rule"))
             item.at("rule")["comment"] = item.at("rule").at("comment").get<std::string>() + ":owner:" + nonce;
+    return true;
+}
+
+// Backend ownership authorizes nft object replacement, not Policy rollback.
+// Prepare at the shared physical execution boundary, after ownership proof,
+// so direct apply, startup and every profile restoration use the same protocol.
+bool prepareOrdinaryMutations(const std::map<std::string, nlohmann::json>& observed,
+    const std::map<std::string, nlohmann::json>& wanted,
+    std::vector<fic::rollback::MutationId>& pending, std::string& error) {
+    using namespace fic::rollback;
+    if (wanted.empty()) return true;
+    auto* journal = DaemonMutationJournal::instance().tryGet(error);
+    if (!journal) {
+        if (error.empty()) error = "ordinary FIREWALL mutation journal is unavailable";
+        return false;
+    }
+    // A cached Healthy object does not prove that its persistent file still
+    // exists. Re-prove the witness-aware journal before authorizing a batch.
+    if (!journal->initializeOrLoad(error)) return false;
+    std::map<std::string, MutationRecord> existing;
+    for (const auto& [table, objects] : wanted) {
+        const auto& policies = managedFirewallPolicies();
+        const auto found = std::find_if(policies.begin(), policies.end(),
+            [&](const auto& policy) { return managedTableName(policy) == table; });
+        if (found == policies.end()) {
+            error = "unsupported ordinary FIREWALL resource: " + table; return false;
+        }
+        const PolicyRef policy{"FIREWALL", "HostFiltering", *found};
+        const auto records = journal->activeRecords(policy);
+        if (records.size() > 1) {
+            error = "ambiguous ordinary FIREWALL rollback provenance: " + *found; return false;
+        }
+        if (!records.empty()) {
+            const auto& record = records.front();
+            const auto* undo = std::get_if<UndoRemoveFirewallPolicy>(&record.undo.payload);
+            if (record.resource != *found || record.undo.backend != MutationBackend::Firewall ||
+                !undo || undo->policyName != *found) {
+                error = "ordinary FIREWALL rollback provenance conflicts: " + *found; return false;
+            }
+            existing.emplace(*found, record);
+        } else if (observed.count(table)) {
+            // Even an exact durable backend manifest cannot retroactively
+            // provide missing Policy provenance for an already present table.
+            error = "ordinary FIREWALL rollback provenance unavailable: " + *found; return false;
+        }
+    }
+    // Validate the whole plan before any preparation; prepare ALL missing
+    // obligations durably before the ONE multi-policy nft transaction.
+    for (const auto& policy : managedFirewallPolicies()) {
+        if (!wanted.count(managedTableName(policy))) continue;
+        const auto found = existing.find(policy);
+        if (found != existing.end()) {
+            if (found->second.status == MutationStatus::Prepared)
+                pending.push_back(found->second.id);
+            // Applied and RollbackFailed remain active, without being reset
+            // to Prepared or losing an earlier failed rollback diagnostic.
+            continue;
+        }
+        MutationId id = 0;
+        if (!recordPreparedMutation({"FIREWALL", "HostFiltering", policy}, policy,
+                {MutationBackend::Firewall, UndoRemoveFirewallPolicy{policy}}, id, error)) return false;
+        pending.push_back(id);
+    }
     return true;
 }
 
@@ -138,6 +203,9 @@ bool FirewallBackend::applyPolicy(const std::string& policy,
     const std::vector<FirewallRule>& rules, bool& changed, std::string& error) const {
     return FirewallCoordinator(*this).applyPolicy(policy, rules, changed, error);
 }
+bool FirewallBackend::removePolicy(const std::string& policy, std::string& error) const {
+    return FirewallCoordinator(*this).removePolicy(policy, error);
+}
 bool FirewallBackend::applyExclusive(std::vector<ForeignBaseChain>& neutralized,
                                     std::string& error) const {
     bool changed = false;
@@ -165,7 +233,7 @@ FirewallBackend::FirewallBackend(
 
 bool FirewallBackend::applyEffective(const FirewallDesiredState& desired,
     bool& changed, std::vector<ForeignBaseChain>& neutralized, std::string& error,
-    const std::string& onlyPolicy) const {
+    const std::string& onlyPolicy, bool removalOnly) const {
     using Json = nlohmann::json;
     using namespace fic::core;
     changed = false;
@@ -178,7 +246,8 @@ bool FirewallBackend::applyEffective(const FirewallDesiredState& desired,
     std::map<std::string, Json> observed, wanted;
     if (!observeManagedObjects({{"nftables", actual.objects}}, observed, error) ||
         !observeManagedObjects({{"nftables", compileFirewallObjects(desired)}}, wanted, error)) return false;
-    bool onlySelectedPolicy = !desired.quarantine && !onlyPolicy.empty() && !observed.count("fic_incident_quarantine");
+    bool onlySelectedPolicy = !desired.quarantine && !onlyPolicy.empty() &&
+        (removalOnly || !observed.count("fic_incident_quarantine"));
     if (onlySelectedPolicy) {
         // A normal direct policy apply owns only that policy's mutation.
         // A profile restoration still compiles the complete current config.
@@ -207,7 +276,7 @@ bool FirewallBackend::applyEffective(const FirewallDesiredState& desired,
                     ownership_.path.string(), witness.targetState, &error)) return false;
         } catch (const Json::exception& ex) { error = ex.what(); return false; }
     }
-    if (onlySelectedPolicy && document.at("after").contains("fic_incident_quarantine")) {
+    if (onlySelectedPolicy && !removalOnly && document.at("after").contains("fic_incident_quarantine")) {
         // Drift may have removed quarantine before a profile restoration.
         // Its durable intent still distinguishes this from a normal single
         // policy apply: restore ALL current normal settings atomically.
@@ -276,6 +345,12 @@ bool FirewallBackend::applyEffective(const FirewallDesiredState& desired,
             neutralized.push_back(chain);
         }
     }
+    std::vector<fic::rollback::MutationId> pending;
+    // Removal-only rollback preserves all other objects and never creates
+    // ordinary resources from configuration. Quarantine requires no ordinary
+    // journal and cannot be weakened by an ordinary journal failure.
+    if (!desired.quarantine && !removalOnly &&
+        !prepareOrdinaryMutations(observed, wanted, pending, error)) return false;
     if (!commands.empty()) {
         Json next = {{"schema_version", 1}, {"before", observed}, {"after", wanted}};
         const auto serialized = next.dump();
@@ -307,6 +382,11 @@ bool FirewallBackend::applyEffective(const FirewallDesiredState& desired,
     if (desired.exclusive && !desired.quarantine && !onlySelectedPolicy && !verified.foreignHostFilterChains.empty()) {
         error = "exclusive firewall postcondition failed"; return false;
     }
+    // Also resolves a crash-after-nft Prepared on a proven kernel no-op.
+    // Partial completion is recoverable: remaining Prepared records stay
+    // active, and a failure here must never be reported as successful apply.
+    for (const auto id : pending)
+        if (!fic::rollback::commitMutation(id, error)) return false;
     error.clear(); return true;
     } catch (const std::exception& exception) {
         error = std::string("firewall state is unproven: ") + exception.what();

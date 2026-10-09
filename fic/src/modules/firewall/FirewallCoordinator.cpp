@@ -2,7 +2,6 @@
 #include "modules/firewall/FirewallPolicies.h"
 #include "incident/IncidentController.h"
 #include "incident/IncidentProfileSynchronization.h"
-#include "rollback/DaemonMutationJournal.h"
 #include <fic/core/config/ConfigAuthority.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <sstream>
@@ -138,6 +137,15 @@ bool FirewallCoordinator::reconcile(const FirewallDesiredState* normalIntent,
 }
 bool FirewallCoordinator::applyPolicy(const std::string& policy,
     const std::vector<FirewallRule>& rules, bool& changed, std::string& error) {
+    return applyPolicyImpl(policy, rules, changed, error, false);
+}
+bool FirewallCoordinator::removePolicy(const std::string& policy, std::string& error) {
+    bool changed = false;
+    return applyPolicyImpl(policy, {}, changed, error, true);
+}
+bool FirewallCoordinator::applyPolicyImpl(const std::string& policy,
+    const std::vector<FirewallRule>& rules, bool& changed, std::string& error,
+    bool removalOnly) {
     std::lock_guard<std::recursive_mutex> lock(incident::incidentProfileMutex());
     changed = false;
     FirewallDesiredState desired;
@@ -150,7 +158,8 @@ bool FirewallCoordinator::applyPolicy(const std::string& policy,
     std::vector<ForeignBaseChain> neutralized;
     bool kernelChanged = false;
     if (!backend_.applyEffective(desired, kernelChanged, neutralized, error,
-                                 desired.quarantine ? "" : policy)) {
+                                 desired.quarantine ? "" : policy,
+                                 removalOnly && !desired.quarantine)) {
         changed = !desired.quarantine && kernelChanged;
         return false;
     }
@@ -177,35 +186,11 @@ bool FirewallCoordinator::applyJournaledPolicy(const PolicyRef& policy,
     const std::vector<FirewallRule>& rules, std::string& error) {
     std::lock_guard<std::recursive_mutex> lock(incident::incidentProfileMutex());
     bool changed = false;
-    if (options_.profile() == FirewallEffectiveProfile::IncidentQuarantine ||
-        policy.policyName == "incident_quarantine")
-        return applyPolicy(policy.policyName, rules, changed, error);
-
-    using namespace fic::rollback;
-    auto* journal = DaemonMutationJournal::instance().tryGet(error);
-    if (!journal) return false;
-    MutationId id = 0;
-    bool existing = false;
-    for (const auto& record : journal->activeRecords(policy)) {
-        if (record.resource != policy.policyName) continue;
-        const auto* undo = std::get_if<UndoRemoveFirewallPolicy>(&record.undo.payload);
-        if (record.undo.backend != MutationBackend::Firewall || !undo || undo->policyName != policy.policyName) {
-            error = "ordinary FIREWALL journal ownership conflicts with policy"; return false;
-        }
-        id = record.id; existing = true; break;
+    if (policy.moduleName != "FIREWALL" || policy.submoduleName != "HostFiltering") {
+        error = "invalid FIREWALL journal policy identity"; return false;
     }
-    if (!existing && !recordPreparedMutation(policy, policy.policyName,
-            {MutationBackend::Firewall, UndoRemoveFirewallPolicy{policy.policyName}}, id, error)) return false;
-    if (!applyPolicy(policy.policyName, rules, changed, error)) {
-        if (!existing && !changed) {
-            std::string cleanup;
-            if (!discardMutation(id, cleanup)) error += "; journal cleanup failed: " + cleanup;
-        }
-        return false;
-    }
-    if (changed) return commitMutation(id, error);
-    // prepareMutation is idempotent and may return an existing active id.
-    // A no-op must NEVER discard that older rollback obligation.
-    return existing || discardMutation(id, error);
+    // The physical execution boundary prepares the complete effective plan,
+    // which can include several policies when this apply restores NORMAL.
+    return applyPolicy(policy.policyName, rules, changed, error);
 }
 }

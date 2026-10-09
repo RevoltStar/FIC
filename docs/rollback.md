@@ -653,14 +653,25 @@ I/O), это ошибка загрузки — fail closed. Существующ
   неатрибутируемая FIC-подобная обёртка без активной записи журнала —
   fail closed (`Conflict`/`Unsupported`). После восстановления выполняется
   `visudo` и повторная загрузка графа.
-* `UndoRemoveFirewallPolicy{policyName}` — удаление FIC-managed правила и
-  обычная firewall reconciliation. Snapshot всего nftables ruleset не
-  выполняется. Все kernel действия проходят общий FirewallCoordinator:
-  при ACTIVE+ISOLATE ordinary rollback сохраняет quarantine-only profile;
-  профиль не удаляет существующие ordinary journal obligations. После clear
-  NORMAL восстанавливается из текущей post-rollback конфигурации. Incident
-  quarantine не создаёт ordinary UndoRemoveFirewallPolicy records. Ownership
-  и ограничения описаны в разделе FIREWALL `fic/README.md`.
+* `UndoRemoveFirewallPolicy{policyName}` — release только соответствующей
+  FIC-managed ordinary table через общий FirewallCoordinator. Rollback не создаёт
+  отсутствующие ресурсы других policies и не запускает exclusive enforcement.
+  При ACTIVE+ISOLATE он сохраняет quarantine-only profile; после успешного rollback
+  DISABLE config исключает policy из последующего NORMAL restoration.
+  Snapshot всего nftables ruleset не выполняется. Incident quarantine не создаёт
+  ordinary UndoRemoveFirewallPolicy records.
+  First-time ordinary creation всеми путями, включая startup/full reconciliation
+  и ISOLATE→NORMAL, требует durable Prepared **до** ownership intent/nft mutation;
+  для multi-policy batch все preparations завершаются до единой kernel transaction.
+  Backend ownership manifest не заменяет Policy rollback journal: существующая
+  owned table без active record означает provenance conflict, adoption отсутствует.
+  Fresh complete kernel proof завершает тот же Prepared в Applied, включая no-op
+  recovery после crash-after-nft. Applied no-op сохраняет record; RollbackFailed
+  остаётся активным с диагностикой. Partial commit/unknown mutation сохраняет
+  unresolved provenance и возвращает failure; retry не создаёт duplicate ids.
+  Journal/manifest являются ordered durable protocol, не общей файловой транзакцией.
+  Failure NORMAL restoration не откатывает durable UNLOCKED и не означает успешный
+  clear. Полная recovery/failure модель и ограничения — FIREWALL `fic/README.md`.
 * `UndoRemoveSshManagedPolicy{policyName, directive, appliedValue,
   disabledMutationIds}` — SSH: ownership-release rollback FIC-managed
   артефактов в main `sshd_config` (`/etc/ssh/sshd_config` Debian/Ubuntu,

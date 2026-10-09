@@ -2,45 +2,38 @@
 
 ## Current base
 
-* Branch `main`; focused implementation based on `d10900e28b8eb273a4d24e91d344a913b01294f9`.
+* Branch `main`; follow-up based on `f910e50de867ff64be34d60c50d5ca9f4c20f068`.
 
 ## Current task
 
-* Сетевой карантин через единый FIREWALL coordinator — реализован и проверен; requested focused commit.
+* Исправление ordinary FIREWALL rollback provenance при profile restoration; implementation и вся required validation завершены. Focused follow-up commit `Preserve FIREWALL rollback provenance across profile restoration`.
 
 ## Accepted architecture / invariants
 
-* `IncidentController` выбирает NORMAL/INCIDENT_QUARANTINE: ACTIVE + effective ISOLATE требует карантина. Недоказанные mode/state означают ACTIVE/ISOLATE; более строгая текущая requirement при failed persistence также учитывается. Thin network adapter не исполняет nft самостоятельно.
-* Все backend apply/reconcile/ordinary rollback проходят coordinator. Controller transitions и firewall operations сериализованы общим in-process lock. Failed registry rebuild подавляет dependent reconciliation.
-* Quarantine: `inet fic_incident_quarantine`, filter input/output/forward, priority 0, DROP; loopback input/output разрешён. Ordinary FIC tables/exclusive enforcement отсутствуют. ENABLE использует allow exceptions, DISABLE сохраняет строгий карантин без exceptions.
-* Stateful replies требуют established + reply direction + обратный разрешённый tuple. IPv6 exceptions добавляют только ND types 135/136, code 0, hoplimit 255. Полный contract/schema/limitations — `fic/README.md`, раздел FIREWALL.
-* Ownership: root-owned 0640 `firewall_ownership` рядом с lockstatus; durable before/after структуры и случайные nonce фиксируются до единого nft batch. Fresh полная kernel proof обязательна; unchanged ruleset не пересоздаётся.
-* Пользователь явно принял отказ/DEGRADED для legacy таблиц без manifest. Имя/комментарий не дают права destructive replacement; automatic adoption отсутствует.
-* Выход восстанавливает текущую ordinary configuration, включая direct apply после исчезновения quarantine table. Durable UNLOCKED не откатывается при cleanup failure; последующий reconcile повторяет cleanup.
-* Quarantine/normal no-op не теряет существующие ordinary journal obligations. Incident policy не enrolled в ordinary rollback. Model A, PAM/SSH subsystem и incident token format не перепроектированы.
+* Unified FirewallCoordinator и IncidentController authority NORMAL/INCIDENT_QUARANTINE сохранены. Compiler, JSON schema, IPv4/IPv6 semantics, incident severity/state format и Model A не менялись.
+* Все ordinary creations, включая direct apply, full/startup/periodic/exclusive reconcile и возврат из ISOLATE/OFF/PASSIVE, проходят общий physical execution boundary `FirewallBackend::applyEffective`.
+* Ordered protocol: actual inspection + manifest proof → witness-aware durable journal proof → все missing ordinary Prepared → durable ownership intent → ONE checked nft batch → independent complete kernel proof → durable Prepared→Applied. Journal и manifest не являются одной файловой транзакцией.
+* Existing Prepared разрешается на том же id после fresh proof, в том числе kernel no-op после crash. Applied no-op не переписывается; RollbackFailed authority/diagnostic сохраняется. Missing table с existing active record восстанавливается без duplicate. Preparation/ownership/apply/proof/partial commit failure не теряет unresolved provenance и не сообщает успех.
+* Manifest-proven existing ordinary table без journal — provenance conflict; foreign/legacy objects не принимаются. Автоматической миграции/adoption нет.
+* Production rollback использует explicit `removePolicy`: release только выбранной таблицы, без создания missing ordinary resources других policies/exclusive actions. Empty-rules обычный apply по-прежнему способен восстановить полный NORMAL profile.
+* ISOLATE deferred apply не создаёт false Applied. Ordinary journal error не ослабляет quarantine; failed NORMAL restoration сохраняет durable UNLOCKED и сообщает DEGRADED. Empty NORMAL cleanup без ordinary creation не зависит от journal.
 
-## Completed
+## Completed / changed areas
 
-* Coordinator/backend/compiler/verifier, incident adapter и production wiring; default policy/config/ru/en; bounded runtime re-proof и registry failure guards.
-* Исполняемые profile/controller/fake nft tests, RED/GREEN legacy replay и disposable packet harness.
-* Документация profiles, ownership, schema, transitions, rollback/recovery и ограничений.
-
-## Changed areas
-
-* `fic/src/modules/firewall/`, incident controller/adapter/synchronization, daemon registry/main, rollback enrollment, FIREWALL config/lang.
-* `tests/CMakeLists.txt`, firewall/incident/rollback tests; `fic/README.md`, architecture/rollback docs.
-* `tests/fic/modules/firewall/packet_tests.py` — standalone disposable packet harness; включён explicit force-add несмотря на общий Git ignore.
+* `fic/src/modules/firewall/FirewallBackend.{h,cpp}`, `FirewallCoordinator.{h,cpp}`; production callback в `rollback/RollbackExecutor.cpp`.
+* 20 focused provenance scenarios в `FirewallProvenanceTests.cpp`, shared fake nft fixture; реальный `rollbackPolicyBeforeDisable` и persistent restart/recovery. IncidentController clear/journal-failure integration regression.
+* `tests/CMakeLists.txt`, rollback/profile test entry points; FIREWALL README, rollback docs и architecture diagram.
 
 ## Validation
 
-* RED C13 до implementation: unsupported nft entry был принят. RED C14/C15/F13: отдельный executable с production FIREWALL sources из base archive; wrong hook, permissive expression и name-only destructive mutation провалили соответствующие assertions. Current replay GREEN.
-* Fresh Debian 12 configure: `cmake -S /src -B /build -DFIC_TARGET_PLATFORM=debian-12`; full `cmake --build /build -j2` PASS. Full `ctest --test-dir /build -E "^mutation_journal_tests$" --output-on-failure`: 146/146 PASS на окончательном source state, включая firewall/profile/legacy/controller/Model A/rollback tests.
-* `mutation_journal_tests` отдельно под UID/GID 1000 PASS (`setpriv --reuid=1000 --regid=1000 --clear-groups /tmp/fic-journal-check`). В disposable image исправлены только мешавшие 0700 ancestors/library permissions; host не изменялся.
-* Debian 13, Ubuntu 24.04/26.04 targeted configure/build и 7 CTest cases PASS; ALT p11 те же executables непосредственно PASS. Final reruns после последней правки PASS. OS identifiers образов проверены. Недостающие PAM/GIO/git dependencies добавлялись только в disposable containers.
-* Real nft kernel profile/IPv6 exception proof PASS. Packet E2E PASS: IPv4/IPv6 input/output/forward, loopback, старый unallowed TCP, TCP/UDP exceptions/replies, DNS deny, IPv6 ND, NORMAL restoration, foreign table. Routed leg использует static neighbour fixture; ND отдельно проверен на exception peer с очисткой neighbour cache.
-* `git diff --check` и firewall static checks PASS. `git show --check` — после focused commit.
+* Executable RED-before на unchanged production `f910e50`: R1–R3/R5 отказ production disable из-за provenance; R4/R6–R10/R12 ожидаемые violations; R11 уже PASS. Log `/tmp/fic-quarantine-build-debian12/provenance-red-tests.log`. Test-only `FIC_FIREWALL_PROVENANCE_BASE_REPLAY` сохраняет исходный public API для replay R1–R12.
+* Final Debian 12 targeted build/CTest: 28/28 PASS (20 provenance cases + firewall/static/profile/legacy/controller/rollback). Logs `/tmp/fic-quarantine-build-debian12/provenance-green-*.log`.
+* Debian 13 и Ubuntu 24.04/26.04 final targeted configure/build/CTest: 27/27 PASS каждый; ALT p11 те же executable cases непосредственно PASS (`ctest` отсутствует). Logs `/tmp/fic-quarantine-{debian13,ubuntu2404,ubuntu2604,altp11}/provenance-*-final.log`; OS IDs проверены.
+* Fresh Debian 12 `cmake -S /src -B /build -DFIC_TARGET_PLATFORM=debian-12` и full `cmake --build /build -j2` PASS. Final configure/build после добавления R18–R20 и обновления headers PASS; full `ctest --test-dir /build -E "^mutation_journal_tests$" --output-on-failure`: 166/166 PASS на окончательном source state. Logs `/tmp/fic-provenance-debian12/{configure,build,ctest}-final.log`. Первичный full run 163/163 PASS использовал раннюю CMake регистрацию 17 новых cases.
+* Fresh `mutation_journal_tests` отдельно под UID/GID 1000 (`setpriv --reuid=1000 --regid=1000 --clear-groups /tmp/fic-journal-check`) PASS. Permissions/dependencies исправлялись только внутри disposable images.
+* Real nft NORMAL/quarantine/IPv6 exception/NORMAL kernel proof PASS. Packet E2E PASS: IPv4/IPv6 input/output/forward, loopback, old unallowed TCP, TCP/UDP exceptions/replies, DNS deny, ND, NORMAL restoration, foreign table. Для routed fixture disposable namespace запущен с IPv4/IPv6 forwarding sysctl; первый запуск без IPv6 forwarding остановился до карантина на NORMAL fixture.
+* `git diff --check` PASS; `git show --check` и clean status проверяются при завершении commit. Все runtime проверки — disposable Podman; host security state не менялся.
 
 ## Remaining
 
-* Known deployment limitation: legacy/unowned/drifted reserved objects требуют явного ownership recovery; FIC не удаляет их автоматически.
-* Inet filtering одного namespace не обеспечивает полный L2/ARP/bridge/netdev/other namespaces/flowtable/offload containment; RA/PMTU и continuous anti-root enforcement не заявляются. Privileged external writers сохраняют residual races. Real logind/desktop/PAM/SSH E2E этой задачей не выполнялся.
+* Known limitations: существующий manifest-proven ресурс без journal требует явного provenance recovery; root/external writers сохраняют residual races. Ранее документированные inet namespace/L2/offload ограничения карантина неизменны. Real logind/desktop/PAM/SSH E2E не выполнялся.

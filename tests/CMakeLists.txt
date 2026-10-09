@@ -1001,6 +1001,7 @@ add_test(NAME mutation_journal_tests COMMAND mutation_journal_tests)
 
 add_executable(rollback_executor_tests
     fic/rollback/RollbackExecutorTests.cpp
+    fic/modules/firewall/FirewallProvenanceTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/PolicyDisableFlow.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/DAC.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
@@ -1102,6 +1103,10 @@ target_link_libraries(rollback_executor_tests PRIVATE
     Threads::Threads
 )
 add_test(NAME rollback_executor_tests COMMAND rollback_executor_tests)
+foreach(scenario RANGE 1 20)
+    add_test(NAME firewall_provenance_R${scenario}
+        COMMAND rollback_executor_tests --firewall-provenance R${scenario})
+endforeach()
 
 # End-to-end journal -> filesystem lifecycle for the SUDO scoped-defaults
 # blocker: real backend, real MutationJournal, real RollbackExecutor over

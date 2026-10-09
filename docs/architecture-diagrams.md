@@ -435,10 +435,12 @@ flowchart LR
     policy[direct apply / rollback / periodic reconcile] --> coordinator
     conf[current FIREWALL.conf] --> coordinator
     coordinator --> desired[NORMAL or INCIDENT_QUARANTINE]
-    desired --> intent[durable ownership before/after + nonce]
+    desired --> prepared[prove journal + prepare all new ordinary obligations]
+    prepared --> intent[durable ownership before/after + nonce]
     intent --> backend[existing FirewallBackend]
     backend --> batch[one checked JSON nft batch]
     batch --> proof[independent complete kernel state proof]
+    proof --> completion[durable Prepared to Applied completion]
 ```
 
 Подробный contract profiles, JSON exceptions, stateful replies, ownership,

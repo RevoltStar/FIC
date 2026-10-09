@@ -1136,10 +1136,44 @@ manual apply_all/module/policy и ordinary rollback проходят coordinator
 Во время карантина ordinary config остаётся редактируемой, ordinary apply
 подтверждает effective quarantine и сообщает deferred enforcement в diagnostics;
 нового ordinary mutation obligation о несуществовавшем kernel apply не возникает.
-Journaled apply сериализован с выбором profile; обычный NORMAL no-op также
-сохраняет существующий Prepared/Applied record, не discarding его id.
-Existing ordinary mutation journal не удаляется переключением профиля.
-Incident policy и profile transitions не являются ordinary policy mutations.
+Journaled apply сериализован с выбором profile. Incident policy не получает
+ordinary rollback record; удаление ordinary tables при входе в карантин сохраняет
+существующие obligations. При восстановлении NORMAL физическое создание обычных
+policy-owned tables требует journal provenance, даже если его инициировали
+profile transition, startup, periodic/full reconciliation или direct backend apply.
+
+**Ownership manifest не заменяет mutation journal.** Manifest доказывает право
+backend менять конкретные nft objects; `UndoRemoveFirewallPolicy` доказывает
+rollback authority соответствующей Policy. После проверки actual state и manifest
+общая physical execution boundary заново доказывает durable journal и проверяет
+весь effective NORMAL plan. Для отсутствующей таблицы без active record готовится
+новый durable Prepared. Все missing obligations нескольких политик готовятся
+**до** ownership intent и единого nft batch. Existing Applied/Prepared/
+RollbackFailed record сохраняет тот же id, без дубликатов; RollbackFailed diagnostic
+не стирается no-op reconciliation. Уже существующая даже manifest-proven таблица
+без journal record — provenance conflict, автоматического принятия нет.
+
+Порядок: kernel inspection + ownership proof → durable journal preparations всех
+ordinary resources → durable ownership intent → один checked nft transaction →
+independent complete postcondition → durable Prepared→Applied completion.
+Journal и manifest — два отдельных файла, а не общая атомарная транзакция.
+Crash/failure до kernel apply оставляет Prepared без ложного Applied; неизвестный
+результат batch/postcondition также сохраняет Prepared. Retry/restart перечитывает
+persistent journal/manifest и повторно доказывает kernel: отсутствующая таблица
+создаётся под прежним active id, совпадающая таблица разрешает тот же Prepared
+без нового nft write. Partial journal commit означает failure/DEGRADED; оставшиеся
+Prepared не теряются и завершаются после fresh proof. Proven no-op с Applied
+не переписывает запись. Empty custom_rules не создаёт table и новый record.
+
+Administrative disable после восстановления идёт через обычный production
+`rollbackPolicyBeforeDisable()`, journal и coordinator. Removal-only rollback
+удаляет только выбранную owned table: он не восстанавливает отсутствующие таблицы
+других policies и не применяет exclusive control. Во время ISOLATE он сохраняет
+карантин, затем DISABLE config исключает policy из будущего NORMAL restoration.
+Ошибка ordinary journal не ослабляет уже установленный quarantine. NORMAL
+restoration, создающий ordinary resources, отказывается при journal error и
+сообщает failure; durable UNLOCKED сохраняется. Empty NORMAL cleanup, которому
+не нужны ordinary creations, может удалить owned quarantine независимо от journal.
 
 Переключение профиля, обновление исключений и возврат в NORMAL используют один
 JSON nft batch: необходимые удаления и создания находятся в одной kernel
