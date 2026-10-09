@@ -54,6 +54,8 @@
 [module:FIREWALL][policy:block_ftp]=Блокировать входящие управляющие подключения FTP
 [module:FIREWALL][policy:block_ftp][description]=Блокирует входящие TCP-подключения IPv4 и IPv6 на порт назначения 21. Каналы данных FTP не входят в FIREWALL v1.
 [module:FIREWALL][policy:custom_rules]=Пользовательские правила межсетевого экрана
+[module:FIREWALL][policy:incident_quarantine]=Минимальный сетевой доступ при блокировке ОС
+[module:FIREWALL][policy:incident_quarantine][description]=Разрешающие JSON-исключения сетевого карантина ACTIVE+ISOLATE. DISABLE исключает дополнительные разрешения, но сохраняет обязательный default DROP. В NORMAL ограничений не создаёт.
 [module:FIREWALL][policy:custom_rules][description]=JSON-массив правил incoming/outgoing для IPv4 и IPv6. Диапазон портов задаётся строкой first-last, одиночный порт — числом, отсутствие ограничения — строкой any.
 [module:FIREWALL][policy:exclusive_firewall_control]=Исключительный контроль фильтрации узла
 [module:FIREWALL][policy:exclusive_firewall_control][description]=Очищает и пересоздаёт с policy accept только сторонние base chains семейств inet/ip/ip6 типов filter/route с hooks input/output. Таблицы, NAT, FORWARD, bridge и netdev не изменяются. Удалённые сторонние правила автоматически не восстанавливаются после отключения политики.

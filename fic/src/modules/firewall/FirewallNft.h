@@ -23,15 +23,24 @@ struct ForeignBaseChain {
 };
 
 struct FirewallActualState {
+    nlohmann::json objects = nlohmann::json::array();
     std::set<std::string> managedInetTables;
     std::map<std::string, std::set<std::string>> managedRuleComments;
     std::vector<ForeignBaseChain> foreignHostFilterChains;
 };
 
 struct FirewallDesiredState {
+    bool quarantine = false;
+    std::vector<FirewallRule> exceptions;
     std::map<std::string, std::vector<FirewallRule>> policyRules;
     bool exclusive = false;
 };
+
+// Semantic objects, in creation order. Handles are never part of desired state.
+nlohmann::json compileFirewallObjects(const FirewallDesiredState& desired);
+bool observeManagedObjects(const nlohmann::json& ruleset,
+                          std::map<std::string, nlohmann::json>& tables,
+                          std::string& error);
 
 const std::vector<std::string>& managedFirewallPolicies();
 std::string managedTableName(const std::string& policyName);

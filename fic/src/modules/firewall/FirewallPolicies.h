@@ -10,7 +10,7 @@
 
 namespace fic::firewall {
 
-class CustomRulesPolicyTypeValue final : public PolicyTypeValue {
+class CustomRulesPolicyTypeValue : public PolicyTypeValue {
 public:
     CustomRulesPolicyTypeValue();
 
@@ -49,6 +49,17 @@ class CustomRulesPolicy final : public FirewallPolicy {
 public:
     explicit CustomRulesPolicy(
         const fic::platform::PlatformExecutableResolver& executables);
+    bool apply() override;
+};
+
+class QuarantineRulesPolicyTypeValue final : public CustomRulesPolicyTypeValue {
+public:
+    bool validate(const std::string& value) override;
+    std::string getPolicyRestrictionInfo() override;
+};
+class IncidentQuarantinePolicy final : public FirewallPolicy {
+public:
+    explicit IncidentQuarantinePolicy(const fic::platform::PlatformExecutableResolver& executables);
     bool apply() override;
 };
 

@@ -39,8 +39,13 @@ bool parseFirewallRules(const std::string& value,
                         std::vector<FirewallRule>& rules,
                         std::string& normalized,
                         std::string& error);
+bool parseFirewallJson(const std::string& value, nlohmann::json& document,
+                       std::string& error);
 
 nlohmann::json firewallRuleToJson(const FirewallRule& rule);
+bool parseQuarantineRules(const std::string& value,
+                          std::vector<FirewallRule>& rules,
+                          std::string& normalized, std::string& error);
 
 } // namespace fic::firewall
 

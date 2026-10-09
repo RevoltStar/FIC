@@ -655,7 +655,12 @@ I/O), это ошибка загрузки — fail closed. Существующ
   `visudo` и повторная загрузка графа.
 * `UndoRemoveFirewallPolicy{policyName}` — удаление FIC-managed правила и
   обычная firewall reconciliation. Snapshot всего nftables ruleset не
-  выполняется.
+  выполняется. Все kernel действия проходят общий FirewallCoordinator:
+  при ACTIVE+ISOLATE ordinary rollback сохраняет quarantine-only profile;
+  профиль не удаляет существующие ordinary journal obligations. После clear
+  NORMAL восстанавливается из текущей post-rollback конфигурации. Incident
+  quarantine не создаёт ordinary UndoRemoveFirewallPolicy records. Ownership
+  и ограничения описаны в разделе FIREWALL `fic/README.md`.
 * `UndoRemoveSshManagedPolicy{policyName, directive, appliedValue,
   disabledMutationIds}` — SSH: ownership-release rollback FIC-managed
   артефактов в main `sshd_config` (`/etc/ssh/sshd_config` Debian/Ubuntu,

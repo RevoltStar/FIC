@@ -875,6 +875,11 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
             : RollbackEnrollment::Unsupported;
     }
     if (policy.moduleName == "FIREWALL" && policy.submoduleName == "HostFiltering") {
+        if (policy.policyName == "incident_quarantine") {
+            // This setting controls exceptions, never the mandatory profile.
+            // Its status can be changed without an ordinary kernel undo.
+            return RollbackEnrollment::NotEnrolled;
+        }
         if (policy.policyName == "exclusive_firewall_control") {
             return RollbackEnrollment::Unsupported;
         }

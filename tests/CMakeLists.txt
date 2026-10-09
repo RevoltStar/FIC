@@ -199,6 +199,10 @@ add_executable(firewall_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
 target_include_directories(firewall_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -210,6 +214,45 @@ target_link_libraries(firewall_tests PRIVATE
     Threads::Threads
 )
 add_test(NAME firewall_tests COMMAND firewall_tests)
+
+add_executable(firewall_incident_profile_tests
+    fic/modules/firewall/FirewallIncidentProfileTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+)
+target_include_directories(firewall_incident_profile_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(firewall_incident_profile_tests PRIVATE fic-core fic-policy fic-platform Threads::Threads)
+add_test(NAME firewall_incident_profile_tests COMMAND firewall_incident_profile_tests)
+
+# Replay the same legacy API regressions against base and current backend.
+add_executable(firewall_legacy_proof_tests
+    fic/modules/firewall/FirewallLegacyProofTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+)
+target_include_directories(firewall_legacy_proof_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(firewall_legacy_proof_tests PRIVATE fic-core fic-policy fic-platform Threads::Threads)
+foreach(scenario C14 C15 F13)
+    add_test(NAME firewall_legacy_proof_${scenario} COMMAND firewall_legacy_proof_tests ${scenario})
+endforeach()
 
 add_executable(gsettings_value_parser_tests
     fic/modules/oss/desktop_environment/GSettingsValueParserTests.cpp
@@ -1042,6 +1085,10 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
+
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
 target_include_directories(rollback_executor_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1146,6 +1193,10 @@ add_executable(sudo_scoped_defaults_lifecycle_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
+
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
 target_include_directories(sudo_scoped_defaults_lifecycle_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -1603,6 +1654,10 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
+
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
 target_include_directories(pam_password_wiring_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -2169,6 +2224,10 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
+
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
 target_include_directories(identity_login_defs_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -2272,6 +2331,10 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
 target_include_directories(identity_concrete_policies_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -2393,6 +2456,10 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
 )
 target_include_directories(ssh_apply_rollback_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src

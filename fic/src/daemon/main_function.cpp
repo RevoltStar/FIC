@@ -676,6 +676,7 @@ bool initPolicyRegistry(
     cafArr.push_back(std::make_unique<fic::firewall::BlockRdpPolicy>(executables));
     cafArr.push_back(std::make_unique<fic::firewall::BlockFtpPolicy>(executables));
     cafArr.push_back(std::make_unique<fic::firewall::CustomRulesPolicy>(executables));
+    cafArr.push_back(std::make_unique<fic::firewall::IncidentQuarantinePolicy>(executables));
     cafArr.push_back(
         std::make_unique<fic::firewall::ExclusiveFirewallControlPolicy>(executables));
 

@@ -855,8 +855,7 @@ inventory недоказанным (`DEGRADED`), не допуская дейс�
 через logind. SSH/TTY завершаются без lock. `HARD` завершает все выбранные
 обычные login-сессии через `TerminateSession` и не вызывает `TerminateUser`.
 `ISOLATE` дополнительно выполняет `TerminateUser` и проверяет исчезновение
-logind user и остановку `user@UID.service`. Сетевой карантин остаётся
-отдельной незавершённой частью `ISOLATE` (`NullIncidentNetworkBackend`).
+logind user и остановку `user@UID.service`. Сетевой карантин реализован через единый FIREWALL coordinator; описание профилей и ограничений — в разделе «Работа с FIREWALL».
 
 ### Durable session target store (Model A)
 
@@ -1056,38 +1055,144 @@ executable; устаревшие hashes их прежних candidates удал�
 
 ### Работа с FIREWALL
 
-FIREWALL v1 использует только nftables и четыре обычные Policy:
-`block_rdp`, `block_ftp`, `custom_rules` и `exclusive_firewall_control`.
-Первые две и exclusive policy управляются только статусом; `.value` для них в
-`FIREWALL.conf` отсутствует. `custom_rules.value` — нормализованный JSON-массив
-правил `incoming`/`outgoing` для IPv4/IPv6 с протоколами `any`, `tcp`, `udp` и
-действиями `allow`, `block`. Одиночный порт задаётся JSON integer, диапазон —
-строкой `first-last`, отсутствие ограничения — строкой `any`. При протоколе
-`any` оба порта должны быть `any`; одновременно заданные source и destination
-должны принадлежать одной IP family.
+FIREWALL имеет два взаимоисключающих effective profile. Единственная authority —
+`IncidentController::networkQuarantineRequired()`: `ACTIVE + ISOLATE` выбирает
+`INCIDENT_QUARANTINE`, остальные сочетания — `NORMAL`. Недоказанная severity
+эффективно равна ISOLATE, недоказанный response mode — ACTIVE. При неудачной
+персистенции контроллер также публикует более строгую текущую effective ISOLATE
+requirement, даже если старый корректный token остался на диске. FIREWALL не
+изменяет severity. Production `FirewallIncidentNetworkAdapter` только передаёт
+запрос общему `FirewallCoordinator`, не исполняя nft-команды самостоятельно.
 
-Каждая конфигурируемая policy владеет отдельной таблицей `inet`:
-`fic_block_rdp`, `fic_block_ftp` или `fic_custom_rules`. Base chains имеют
-`policy accept`, поэтому FIREWALL v1 не вводит default DROP. Обычный
-`policy apply FIREWALL <policy>` атомарно заменяет только таблицу выбранной
-policy. Скрипт сначала проверяется `nft -c -f -`, затем передаётся тому же
-проверенному executable через `nft -f -`; временные файлы не используются.
+В `NORMAL` действуют `block_rdp`, `block_ftp`, `custom_rules` и
+`exclusive_firewall_control`. Первые две и exclusive policy управляются только
+статусом. Обычные правила имеют `policy accept` в отдельных таблицах
+`inet fic_block_rdp`, `fic_block_ftp`, `fic_custom_rules`. Direct ordinary apply
+меняет только выбранную policy; полный reconciliation строит все правила из
+текущего `FIREWALL.conf`. `incident_quarantine` в NORMAL не устанавливает правил,
+а её dormant значение не влияет на ordinary enforcement.
 
-В daemon startup/periodic pass FIREWALL исключается из generic цикла отдельных
-`Policy::apply()`: daemon отдельно загружает `FIREWALL.conf`, строит полный
-desired state и одним nft batch удаляет stale FIC-owned tables и пересоздаёт
-включённые. Это не меняет IPC apply одной Policy или всего модуля. Отдельного ENABLE/DISABLE-состояния
-модуля нет: если все четыре Policy выключены, reconciliation продолжается и
-удаляет все три FIC-owned tables.
+В `INCIDENT_QUARANTINE` ordinary FIC tables отсутствуют, включая их DROP rules:
+разрешения карантина не блокируются собственными обычными политиками FIC.
+`inet fic_incident_quarantine` содержит три base chains `input`, `output`,
+`forward`: type `filter`, соответствующий hook, priority `0`, policy `drop`.
+Это IPv4/IPv6 default-deny для текущего network namespace. Loopback разрешён
+по `iifname/oifname lo` только в input/output. Forward исключений не имеет.
+Пустой список не разрешает SSH, DNS, DHCP, NTP, LAN или старые established flows.
 
-При `exclusive_firewall_control=ENABLE` reconciliation дополнительно находит
-только чужие base chains семейств `inet`, `ip`, `ip6`, типов `filter`/`route`
-и hooks `input`/`output`. Каждая такая влияющая цепочка очищается и атомарно
-пересоздаётся с теми же family/table/name/type/hook/priority и `policy accept`.
-Целая таблица и её остальные цепочки не удаляются; NAT, FORWARD, bridge и
-netdev не изменяются. После отключения exclusive policy дальнейшая
-нейтрализация прекращается, но удалённые сторонние правила автоматически не
-восстанавливаются. Это намеренное ограничение FIREWALL v1.
+Новая policy `FIREWALL/HostFiltering/incident_quarantine` («Минимальный сетевой
+доступ при блокировке ОС») задаёт только исключения. Заводские настройки:
+
+```ini
+incident_quarantine.status=ENABLE
+incident_quarantine.value=[]
+```
+
+ENABLE использует явно заданные allow exceptions. **DISABLE означает отключение
+исключений, а не обязательного карантина**: ISOLATE сохраняет DROP и loopback.
+Внешняя/повреждённая конфигурация исключений означает попытку доказанного
+строгого карантина и одновременно ошибку/DEGRADED, даже если fallback установлен.
+Статусы, metadata, schema, повторяющиеся и неоднозначные ключи configuration
+проверяются через `SecureStateFile` и config authority.
+
+JSON использует общий parser `custom_rules`: массив до 1024 rules и 256 KiB,
+ровно семь полей, IPv4/IPv6 IP или CIDR (host bits нормализуются), одинаковая
+family source/destination, строгие типы и отсутствие raw nft script:
+
+```json
+[
+  {
+    "direction": "outgoing",
+    "protocol": "tcp",
+    "source": "any",
+    "destination": "192.0.2.10",
+    "source_port": "any",
+    "destination_port": 443,
+    "action": "allow"
+  }
+]
+```
+
+`direction`: `incoming|outgoing`; `protocol`: `any|tcp|udp`;
+`source/destination`: `any|IP|CIDR`; ports: `any`, integer 1..65535 или строка
+`first-last` с возрастающими границами. При protocol any порты обязаны быть any.
+Карантин принимает только `action=allow`; `block` отвергается.
+Каждое исключение допускает выбранный tuple в своём направлении, а в обратном
+направлении — только `ct state established`, `ct direction reply` **и обратный
+address/port/protocol tuple того же исключения**. Общего established/related
+accept нет. Старое соединение к неразрешённому endpoint остаётся заблокированным;
+соединение, соответствующее явно разрешённому tuple, может продолжаться.
+RELATED/ICMP errors автоматически не разрешаются.
+
+При исключениях, допускающих IPv6, добавляются только Neighbor Solicitation и
+Neighbor Advertisement (ICMPv6 types 135/136, code 0, hoplimit 255) в input/output.
+При пустых или IPv4-only исключениях их нет. Router Advertisement, DHCPv6 и
+произвольный ICMPv6 не разрешены. Доступность IPv6 требует уже настроенных
+адресов/маршрутов; PMTU и router discovery эта первая версия полностью не
+обеспечивает. ND не является разрешением общего IP-трафика.
+
+Все backend entry points (`applyPolicy`, `applyExclusive`, `reconcile`), startup,
+manual apply_all/module/policy и ordinary rollback проходят coordinator.
+Во время карантина ordinary config остаётся редактируемой, ordinary apply
+подтверждает effective quarantine и сообщает deferred enforcement в diagnostics;
+нового ordinary mutation obligation о несуществовавшем kernel apply не возникает.
+Journaled apply сериализован с выбором profile; обычный NORMAL no-op также
+сохраняет существующий Prepared/Applied record, не discarding его id.
+Existing ordinary mutation journal не удаляется переключением профиля.
+Incident policy и profile transitions не являются ordinary policy mutations.
+
+Переключение профиля, обновление исключений и возврат в NORMAL используют один
+JSON nft batch: необходимые удаления и создания находятся в одной kernel
+transaction. Он проверяется `nft -j -c -f -`, применяется `nft -j -f -` через
+существующий trusted resolver/`VerifiedProcessExecutor`, после чего независимый
+`nft -j list ruleset` доказывает **все** managed tables, chains, hooks, priorities,
+policies и ordered expressions. Только kernel handles не входят в semantic
+сравнение; неожиданные поля, объекты, chains или rules не считаются успехом.
+Удаление таблицы адресуется её наблюдённым kernel handle. Failed check/apply или
+неполная/неподдерживаемая JSON/postcondition дают ошибку, не network proof.
+Неизменный ruleset не пересоздаётся.
+
+Ownership — отдельный root-owned 0640 `firewall_ownership` рядом с `lockstatus`,
+в защищённом product directory. Он содержит versioned before/after maps полной
+структуры FIC объектов и случайные 128-bit nonce в rule comments. Intent durably
+публикуется atomic replace + file/parent fsync **до** nft apply. Это позволяет
+распознать before/after после crash до/после transaction или verification;
+комментарий без manifest и полной структуры ничего не доказывает.
+Имя не даёт ownership. Старые таблицы без manifest и чужие/изменённые объекты
+зарезервированного `fic_` пространства не принимаются автоматически, не удаляются
+и дают DEGRADED. Это сознательное deployment ограничение; automatic adoption
+legacy tables отсутствует. Повреждённый manifest также не заменяется вслепую.
+
+`exclusive_firewall_control` работает только в NORMAL: атомарно нейтрализует
+foreign inet/ip/ip6 filter/route base chains input/output, оставляя таблицы,
+NAT, FORWARD, bridge и netdev. Удалённые foreign rules не восстанавливаются при
+DISABLE. В карантине exclusive не применяется и foreign objects остаются
+нетронутыми. При возврате в NORMAL текущий ENABLE снова включает exclusive.
+Accept FIC не гарантирует связь, если её запрещает независимый foreign firewall.
+
+Administrative clear сначала фиксирует durable UNLOCKED, затем восстанавливает
+NORMAL из **текущей** конфигурации, включая изменения/rollback во время ISOLATE.
+Ошибка восстановления сохраняет UNLOCKED и DEGRADED, retry выполняется reconcile.
+OFF/PASSIVE также восстанавливают NORMAL после restart без in-memory ownership
+flags. Persistent ISOLATE переустанавливает quarantine после kernel reboot.
+Periodic apply и существующая bounded readiness проверка (30 секунд при ACTIVE
+ISOLATE) обновляют proof/drift; это периодический контроль, не continuous
+anti-root enforcement. Controller transitions и FIREWALL operations используют
+общий in-process lock; внешние привилегированные writers всё ещё могут менять
+state между proof и mutation/после verification.
+
+Scope этой реализации — inet filtering одного network namespace. ARP и non-IP
+L2 traffic, bridge/netdev hooks, другие namespaces, existing flowtables и hardware
+offload полного containment не получают. Их обход нельзя считать заблокированным
+этим профилем. Внешний service reload также может удалить rules; требуется
+следующий reconciliation. Полного L2 или мгновенного anti-drift containment
+реализация не заявляет.
+
+Исполняемые проверки: `firewall_incident_profile_tests` использует production
+coordinator/backend над fake nft transport и реальный IncidentController;
+`--kernel-tests` и `packet_tests.py` предназначены **только** для disposable
+Podman namespace с соответствующими capabilities. Фактический результат текущей
+validation записан в `docs/HANDOFF.md`.
 
 ### Работа с sysctl
 

@@ -327,6 +327,9 @@ void testEnrollmentMatrix() {
     require(rollbackEnrollment({"FIREWALL", "HostFiltering", "custom_rules"}) ==
                 RollbackEnrollment::Supported,
             "known supported firewall policies stay enrolled");
+    require(rollbackEnrollment({"FIREWALL", "HostFiltering", "incident_quarantine"}) ==
+                RollbackEnrollment::NotEnrolled,
+            "quarantine exceptions can be disabled without ordinary firewall undo");
     require(rollbackEnrollment({"FIREWALL", "HostFiltering",
                                 "exclusive_firewall_control"}) ==
                 RollbackEnrollment::Unsupported,

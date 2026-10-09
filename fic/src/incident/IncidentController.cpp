@@ -1,4 +1,5 @@
 #include "incident/IncidentController.h"
+#include "incident/IncidentProfileSynchronization.h"
 
 #include <fic/core/logging/Logger.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
@@ -92,8 +93,8 @@ IncidentResult IncidentController::settleNonActiveMode(
     IncidentResult result;
     result.ok = true;
     result.effectiveSeverity = severity;
-    if (lastMode_ == IncidentResponseMode::Active ||
-        containment_.networkQuarantined) {
+    incidentForcedNetworkQuarantine() = false;
+    {
         std::string error;
         if (!network_->applyQuarantine(false, error)) {
             result.ok = false;
@@ -145,6 +146,7 @@ IncidentResult IncidentController::applyContainment(
     }
 
     if (incidentSeverityIsUnlocked(severity)) {
+        incidentForcedNetworkQuarantine() = false;
         // Clearing removes the reversible containment state. It deliberately
         // does NOT unlock any desktop session: unblocking a user's screen is
         // an interactive decision, not a side effect of clearing an incident.
@@ -171,11 +173,17 @@ IncidentResult IncidentController::applyContainment(
 
     // Network quarantine: applied as early as possible for ISOLATE.
     if (severity == IncidentSeverity::Isolate) {
+        incidentForcedNetworkQuarantine() = true;
         std::string networkDiagnostic;
         const bool networkOk =
             network_->applyQuarantine(true, networkDiagnostic);
         status.networkQuarantined = networkOk;
         if (!networkOk) failures.emplace_back("network quarantine failed: " + networkDiagnostic);
+    } else {
+        incidentForcedNetworkQuarantine() = false;
+        std::string networkDiagnostic;
+        if (!network_->applyQuarantine(false, networkDiagnostic))
+            failures.emplace_back("normal firewall restoration failed: " + networkDiagnostic);
     }
 
     // The marker is required for EVERY active severity, including SOFT.
@@ -511,6 +519,7 @@ IncidentResult IncidentController::raise(
     const std::string& reason) {
     // Transitions are serialised so two concurrent detectors cannot interleave
     // their read/compute/write cycles.
+    std::lock_guard<std::recursive_mutex> profileGuard(incidentProfileMutex());
     std::lock_guard<std::mutex> guard(transitionMutex_);
 
     const auto mode = resolveMode();
@@ -651,6 +660,7 @@ IncidentResult IncidentController::raise(
 }
 
 IncidentResult IncidentController::clear(const std::string& actor) {
+    std::lock_guard<std::recursive_mutex> profileGuard(incidentProfileMutex());
     std::lock_guard<std::mutex> guard(transitionMutex_);
     const auto mode = resolveMode();
     runtime_ = RuntimeState::Clearing;
@@ -748,6 +758,7 @@ IncidentResult IncidentController::clear(const std::string& actor) {
 }
 
 IncidentStatus IncidentController::status() {
+    std::lock_guard<std::recursive_mutex> profileGuard(incidentProfileMutex());
     std::lock_guard<std::mutex> guard(transitionMutex_);
     const IncidentStateStore::ReadResult read = stateStore_.read();
     IncidentStatus status;
@@ -766,6 +777,7 @@ IncidentStatus IncidentController::status() {
 }
 
 IncidentResult IncidentController::reconcile() {
+    std::lock_guard<std::recursive_mutex> profileGuard(incidentProfileMutex());
     std::lock_guard<std::mutex> guard(transitionMutex_);
     // The status is derived inline rather than through status(): the public
     // accessor takes the same lock, and re-entering it here would deadlock.

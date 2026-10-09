@@ -421,34 +421,30 @@ persistent-состояние проверено и все физически в
 активация, например remount работающей файловой системы после изменения
 `/etc/fstab`, не входит в обязательные runtime-действия.
 
-FIREWALL дополняет, но не меняет этот lifecycle. Одиночный apply включённой
-firewall Policy заменяет только её собственную nftables table. После общего
-startup/periodic apply pass отдельный reconciler читает статусы всех четырёх
-FIREWALL Policy, удаляет stale FIC-owned tables и восстанавливает полный
-desired state. Поэтому disabled Policy, которую общий `executePolicy()` не
-вызывает, всё равно удаляется из фактического FIREWALL state. Отдельного
-состояния включения модуля нет: все disabled означают пустой managed state, а
-не остановку reconciliation.
+FIREWALL использует единый `FirewallCoordinator` для всех nft mutations.
+`IncidentController` выбирает `NORMAL` либо `INCIDENT_QUARANTINE` по доказанному
+mode/severity с fail-closed ACTIVE/ISOLATE fallback. Thin incident adapter не
+имеет своего nft executor. Direct apply, full reconciliation и ordinary rollback
+проверяют ту же authority; ordinary tables и exclusive enforcement отсутствуют
+в карантине. Clear/OFF/PASSIVE восстанавливают текущую ordinary configuration.
 
 ```mermaid
 flowchart LR
-    conf[FIREWALL.conf] --> desired[desired rules by policy]
-    actual[nft -j list ruleset] --> batch[one nft batch]
-    desired --> batch
-    batch --> check[nft -c -f -]
-    check --> applyNft[nft -f -]
-    applyNft --> owned[fic_block_rdp / fic_block_ftp / fic_custom_rules]
-    exclusive[exclusive enabled] --> foreign[foreign inet/ip/ip6 filter or route input/output base chains]
-    foreign --> batch
+    incident[IncidentController authority] --> coordinator[FirewallCoordinator]
+    adapter[FirewallIncidentNetworkAdapter] --> coordinator
+    policy[direct apply / rollback / periodic reconcile] --> coordinator
+    conf[current FIREWALL.conf] --> coordinator
+    coordinator --> desired[NORMAL or INCIDENT_QUARANTINE]
+    desired --> intent[durable ownership before/after + nonce]
+    intent --> backend[existing FirewallBackend]
+    backend --> batch[one checked JSON nft batch]
+    batch --> proof[independent complete kernel state proof]
 ```
 
-FIC-owned base chains имеют `policy accept`; разрешающее правило завершает
-только текущую base chain, а drop остаётся терминальным для ruleset. Exclusive
-mode не удаляет чужие таблицы: только влияющая base chain очищается и
-пересоздаётся с прежними family/table/name/type/hook/priority и `policy accept`.
-NAT, FORWARD, bridge, netdev и остальные цепочки той же таблицы не входят в
-scope. Удалённые сторонние правила не восстанавливаются после отключения
-exclusive policy.
+Подробный contract profiles, JSON exceptions, stateful replies, ownership,
+exclusive compatibility, crash recovery и network scope находится в разделе
+«Работа с FIREWALL» `fic/README.md`. Неизменный state повторно проверяется без
+kernel write; unknown ownership/structure или failed postcondition — DEGRADED.
 
 Запись конфигурационных файлов централизована в `fic-core`:
 
@@ -1119,6 +1115,7 @@ flowchart TB
     firewall --> blockRdp[block_rdp]
     firewall --> blockFtp[block_ftp]
     firewall --> customRules[custom_rules]
+    firewall --> quarantineExceptions[incident_quarantine exceptions]
     firewall --> exclusiveControl[exclusive_firewall_control]
 
     arr --> identity[IDENTITY_ACCESS]

@@ -62,8 +62,8 @@ def main():
         root / "fic/src/modules/firewall/FirewallBackend.cpp"
     ).read_text()
     require(
-        '{"-c", "-f", "-"}' in backend and '{"-f", "-"}' in backend,
-        "nft scripts must be checked and then applied through stdin",
+        '{"-j", "-c", "-f", "-"}' in backend and '{"-j", "-f", "-"}' in backend,
+        "nft JSON transactions must be checked and then applied through stdin",
     )
     require("flush ruleset" not in backend, "FIREWALL must not flush the ruleset")
     for message in (

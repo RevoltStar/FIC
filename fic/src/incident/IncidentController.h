@@ -126,6 +126,11 @@ public:
 // results irrelevant (the merge is a max).
 class IncidentController {
 public:
+    // Single production authority used by every firewall mutation entry point.
+    static bool productionNetworkQuarantineRequired();
+    static bool networkQuarantineRequired(const IncidentResponseModeResult& mode,
+                                         const IncidentStateStore::ReadResult& state,
+                                         bool forcedEffectiveIsolate = false);
     IncidentController(
         IncidentStateStore stateStore,
         std::shared_ptr<session::SessionContainmentBackend> sessions,

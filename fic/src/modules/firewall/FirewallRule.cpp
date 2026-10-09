@@ -166,6 +166,13 @@ bool parseAddress(const nlohmann::json& value,
     }
 
     std::array<char, INET6_ADDRSTRLEN> canonical {};
+    if (slash != std::string::npos) {
+        // Kernel nft output canonicalizes network prefixes. Canonicalize here
+        // too so an exact semantic proof never depends on host bits in CIDR.
+        const unsigned int bytes = maxPrefix / 8;
+        for (unsigned int bit = prefix; bit < bytes * 8; ++bit)
+            binary[bit / 8] &= static_cast<unsigned char>(~(1U << (7 - bit % 8)));
+    }
     if (::inet_ntop(family, binary.data(), canonical.data(), canonical.size()) == nullptr) {
         error = "could not normalize " + field + " address";
         return false;
@@ -270,6 +277,26 @@ bool parseRule(const nlohmann::json& value,
 
 } // namespace
 
+bool parseFirewallJson(const std::string& value, nlohmann::json& document,
+                       std::string& error) {
+    std::vector<std::set<std::string>> keys;
+    bool duplicate = false;
+    try {
+        document = nlohmann::json::parse(value, [&](int, nlohmann::json::parse_event_t event,
+                                                   nlohmann::json& parsed) {
+            if (event == nlohmann::json::parse_event_t::object_start) keys.emplace_back();
+            if (event == nlohmann::json::parse_event_t::key &&
+                !keys.back().insert(parsed.get<std::string>()).second) duplicate = true;
+            if (event == nlohmann::json::parse_event_t::object_end) keys.pop_back();
+            return true;
+        });
+        if (duplicate) { error = "duplicate firewall JSON key"; document = {}; return false; }
+        error.clear(); return true;
+    } catch (const nlohmann::json::exception& exception) {
+        error = std::string("invalid firewall JSON: ") + exception.what(); return false;
+    }
+}
+
 bool parseFirewallRules(const std::string& value,
                         std::vector<FirewallRule>& rules,
                         std::string& normalized,
@@ -277,15 +304,18 @@ bool parseFirewallRules(const std::string& value,
     rules.clear();
     normalized.clear();
     error.clear();
-    nlohmann::json document;
-    try {
-        document = nlohmann::json::parse(value);
-    } catch (const nlohmann::json::exception& exception) {
-        error = std::string("invalid firewall JSON: ") + exception.what();
+    if (value.size() > 256 * 1024) {
+        error = "firewall JSON exceeds 256 KiB";
         return false;
     }
+    nlohmann::json document;
+    if (!parseFirewallJson(value, document, error)) return false;
     if (!document.is_array()) {
         error = "custom_rules top level must be a JSON array";
+        return false;
+    }
+    if (document.size() > 1024) {
+        error = "firewall rule count exceeds 1024";
         return false;
     }
 
@@ -315,6 +345,20 @@ nlohmann::json firewallRuleToJson(const FirewallRule& rule) {
         {"source", rule.source.value},
         {"source_port", portToJson(rule.sourcePort)}
     };
+}
+
+bool parseQuarantineRules(const std::string& value,
+                          std::vector<FirewallRule>& rules,
+                          std::string& normalized, std::string& error) {
+    if (!parseFirewallRules(value, rules, normalized, error)) return false;
+    for (const auto& rule : rules) {
+        if (rule.action != Action::Allow) {
+            error = "incident_quarantine supports only action=allow";
+            rules.clear();
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace fic::firewall

@@ -277,7 +277,7 @@ void testResponseModes(const TempTree& tree) {
     require(harness.controller.status().severity == IncidentSeverity::Unlocked,
             "OFF must preserve lockstatus");
     require(audits == 0 && notifications == 0 && harness.sessions->actions.empty() &&
-            harness.network->applications == 0, "OFF must have no response effects");
+            !harness.network->quarantineActive, "OFF must remove reversible quarantine without session effects");
     require(IncidentSessionTargetStore(tree.statePath).read().provenance ==
                 IncidentSessionTargetStore::ReadProvenance::Absent,
             "OFF must not create a target generation");
@@ -287,7 +287,7 @@ void testResponseModes(const TempTree& tree) {
     require(passive.ok && harness.controller.status().severity == IncidentSeverity::Hard,
             "PASSIVE must persist HARD");
     require(audits == 1 && notifications == 1 && harness.sessions->actions.empty() &&
-            harness.network->applications == 0, "PASSIVE must audit and notify without containment");
+            !harness.network->quarantineActive, "PASSIVE must audit, notify and restore NORMAL without session containment");
     require(IncidentSessionTargetStore(tree.statePath).read().provenance ==
                 IncidentSessionTargetStore::ReadProvenance::Proven,
             "PASSIVE must durably fence the incident before severity");

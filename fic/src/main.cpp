@@ -63,6 +63,7 @@
 #include "session/SessionReadyValidation.h"
 #include "session/SystemGraphicalSessionInventory.h"
 #include "incident/IncidentController.h"
+#include "incident/FirewallIncidentNetworkAdapter.h"
 #include "incident/IncidentModeTransition.h"
 #include "incident/PamIncidentAccessGateVerifier.h"
 #include "incident/SshIncidentPamBridgeVerifier.h"
@@ -356,10 +357,14 @@ void install_desktop_global_report(
 // policy failures, device events, administrative actions - reports through it,
 // so there is exactly one runtime owner of the shared incident state.
 fic::incident::IncidentController& incidentController() {
+    static fic::platform::PlatformExecutableResolver networkExecutables(
+        fic::platform::makeBuildPlatformProfile().executables);
+    static fic::firewall::FirewallBackend networkBackend(networkExecutables);
+    static fic::firewall::FirewallCoordinator networkCoordinator(networkBackend);
     static fic::incident::IncidentController controller(
         fic::incident::IncidentStateStore(),
         std::make_shared<fic::session::LogindSessionContainmentBackend>(),
-        std::make_shared<fic::incident::NullIncidentNetworkBackend>());
+        std::make_shared<fic::incident::FirewallIncidentNetworkAdapter>(networkCoordinator));
     static const bool sinksInstalled = [] {
         controller.setAccessGateVerifier([](std::string& diagnostic) {
             return fic::incident::PamIncidentAccessGateVerifier::prove(
@@ -496,7 +501,9 @@ IncidentPrerequisiteResult recomputeAccessReadiness(
         return {false, diagnostic};
     }
     const bool needsContainment = !activeEstablished ||
-        daemonReadiness().state() == fic::incident::DaemonReadinessState::Degraded;
+        daemonReadiness().state() == fic::incident::DaemonReadinessState::Degraded ||
+        incidentController().status().severity == fic::core::IncidentSeverity::Isolate ||
+        incidentController().status().runtime == fic::incident::RuntimeState::Degraded;
     activeEstablished = true;
     if (needsContainment) {
         const auto reconciled = incidentController().reconcile();
@@ -974,7 +981,10 @@ json handle_request(json request,
             return policy_apply_summary_json(
                 summary,
                 ok,
-                policy_apply_message(summary, ok, "all enabled policies applied", "failed to apply one or more policies")
+                policy_apply_message(summary, ok,
+                    fic::firewall::FirewallCoordinator::productionProfile() == fic::firewall::FirewallEffectiveProfile::IncidentQuarantine
+                        ? "policy intent applied; ordinary FIREWALL enforcement deferred during quarantine"
+                        : "all enabled policies applied", "failed to apply one or more policies")
             );
         }
         if (command == "apply_module") {
@@ -995,7 +1005,10 @@ json handle_request(json request,
             return policy_apply_summary_json(
                 summary,
                 ok,
-                policy_apply_message(summary, ok, "module policies applied", "failed to apply module policies")
+                policy_apply_message(summary, ok,
+                    module == "FIREWALL" && fic::firewall::FirewallCoordinator::productionProfile() == fic::firewall::FirewallEffectiveProfile::IncidentQuarantine
+                        ? "quarantine verified; ordinary FIREWALL enforcement deferred"
+                        : "module policies applied", "failed to apply module policies")
             );
         }
         if (command == "apply_policy") {
@@ -1022,7 +1035,11 @@ json handle_request(json request,
             return policy_apply_summary_json(
                 summary,
                 ok,
-                policy_apply_message(summary, ok, "policy applied", "failed to apply policy")
+                policy_apply_message(summary, ok,
+                    module == "FIREWALL" && policy != "incident_quarantine" &&
+                    fic::firewall::FirewallCoordinator::productionProfile() == fic::firewall::FirewallEffectiveProfile::IncidentQuarantine
+                        ? "quarantine verified; ordinary FIREWALL enforcement deferred"
+                        : "policy applied", "failed to apply policy")
             );
         }
         if (command.rfind("device_", 0) == 0) {
@@ -1389,6 +1406,11 @@ std::string handle_client_packet(
                 response = fic::ipc::make_error_response(
                     response.value("message", std::string("registry reload failed")) +
                     "; " + diagnostic);
+            } else if (registryRebuildFailedThisRequest()) {
+                daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
+                response = fic::ipc::make_error_response(
+                    response.value("message", std::string("registry reload failed")) +
+                    "; containment reconciliation skipped after failed registry rebuild");
             } else {
                 const auto readiness = recomputeAccessReadiness(
                     policyRegistry, platform, executables);
@@ -2459,6 +2481,7 @@ int main(int argc, char* argv[]) {
               << ", target-platform=" << platform.id << std::endl;
 
     auto nextPeriodicApply = std::chrono::steady_clock::now() + std::chrono::seconds(intervalSeconds);
+    bool periodicRegistryReloadFailed = false;
     auto nextSshCheck = std::chrono::steady_clock::now() + std::chrono::seconds(30);
 
     while (!g_stop) {
@@ -2506,13 +2529,21 @@ int main(int argc, char* argv[]) {
             if (mayApply)
                 run_daemon_apply_all_pass(
                     policyRegistry, desktopGlobalConfig, platform, executables,
-                    "periodic");
-            recomputeAccessReadiness(
-                policyRegistry, platform, executables);
+                    "periodic", &periodicRegistryReloadFailed);
+            if (!periodicRegistryReloadFailed)
+                recomputeAccessReadiness(policyRegistry, platform, executables);
+            else
+                daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
             nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
         }
         if (now >= nextSshCheck) {
-            recomputeAccessReadiness(policyRegistry, platform, executables);
+            if (!periodicRegistryReloadFailed && !registryRebuildFailedThisRequest()) {
+                // Network drift must still be re-proven when SSH prerequisites
+                // fail. Registry failure, however, must suppress dependent apply.
+                if (!incidentController().reconcile().ok)
+                    daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
+                recomputeAccessReadiness(policyRegistry, platform, executables);
+            }
             nextSshCheck = now + std::chrono::seconds(30);
         }
     }

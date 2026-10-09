@@ -1,10 +1,15 @@
 #include "modules/firewall/FirewallBackend.h"
+#include "modules/firewall/FirewallCoordinator.h"
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include "incident/IncidentStateStore.h"
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
 #include <fic/core/logging/Logger.h>
 
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <array>
+#include <sys/random.h>
 
 namespace fic::firewall {
 namespace {
@@ -21,13 +26,28 @@ std::string processFailure(const std::string& operation,
     return operation + " failed: " + detail;
 }
 
-std::set<std::string> expectedComments(const std::string& policyName,
-                                       std::size_t ruleCount) {
-    std::set<std::string> comments;
-    for (std::size_t index = 0; index < ruleCount; ++index) {
-        comments.insert("fic:" + policyName + ":" + std::to_string(index));
+nlohmann::json logicalObjects(nlohmann::json objects) {
+    for (auto& item : objects) {
+        if (!item.contains("rule")) continue;
+        auto& rule = item.at("rule");
+        const auto comment = rule.at("comment").get<std::string>();
+        const auto marker = comment.rfind(":owner:");
+        if (marker != std::string::npos) rule["comment"] = comment.substr(0, marker);
     }
-    return comments;
+    return objects;
+}
+bool stampOwnership(nlohmann::json& objects, std::string& error) {
+    std::array<unsigned char, 16> bytes{};
+    if (::getrandom(bytes.data(), bytes.size(), 0) != static_cast<ssize_t>(bytes.size())) {
+        error = "could not obtain firewall ownership nonce"; return false;
+    }
+    const char hex[] = "0123456789abcdef";
+    std::string nonce;
+    for (const auto byte : bytes) { nonce += hex[byte >> 4]; nonce += hex[byte & 15]; }
+    for (auto& item : objects)
+        if (item.contains("rule"))
+            item.at("rule")["comment"] = item.at("rule").at("comment").get<std::string>() + ":owner:" + nonce;
+    return true;
 }
 
 } // namespace
@@ -35,10 +55,14 @@ std::set<std::string> expectedComments(const std::string& policyName,
 FirewallBackend::FirewallBackend(
     const fic::platform::PlatformExecutableResolver& executables)
     : executables_(executables) {
+    ownership_.path = fic::core::FicRuntimePaths::get().lockStatusFile.parent_path() / "firewall_ownership";
+    ownership_.expectation = fic::incident::IncidentStateStore::lockedStateExpectation();
+    ownership_.expectation.maxSize = 4 * 1024 * 1024;
 }
 
 bool FirewallBackend::resolveNft(std::string& executable,
                                  std::string& error) const {
+    if (runner_) { executable = "injected-nft"; return true; }
     std::filesystem::path path;
     if (!executables_.resolve(
             fic::platform::ExecutableId::Nft, path, error)) {
@@ -55,14 +79,27 @@ bool FirewallBackend::readActual(const std::string& executable,
     options.timeout = std::chrono::seconds(10);
     // Full host ruleset includes foreign rules and potentially large sets.
     options.maxOutputBytes = 32 * 1024 * 1024;
-    const ProcessResult result = VerifiedProcessExecutor::execute(
+    const ProcessResult result = run(
         executable, {"-j", "list", "ruleset"}, options);
     if (!result.success()) {
         error = processFailure("nft ruleset inspection", result);
         return false;
     }
     try {
-        const nlohmann::json ruleset = nlohmann::json::parse(result.standardOutput);
+        nlohmann::json ruleset;
+        if (!parseFirewallJson(result.standardOutput, ruleset, error)) return false;
+        std::size_t metadataCount = 0;
+        if (ruleset.is_object() && ruleset.contains("nftables") && ruleset.at("nftables").is_array()) {
+            for (const auto& item : ruleset.at("nftables")) {
+                if (!item.is_object() || !item.contains("metainfo")) continue;
+                ++metadataCount;
+                if (!item.at("metainfo").is_object() ||
+                    item.at("metainfo").at("json_schema_version") != 1) {
+                    error = "unsupported nft JSON metadata"; return false;
+                }
+            }
+        }
+        if (metadataCount != 1) { error = "incomplete/ambiguous nft JSON metadata"; return false; }
         return parseNftActualState(ruleset, state, error);
     } catch (const nlohmann::json::exception& exception) {
         error = std::string("could not parse nft ruleset JSON: ") + exception.what();
@@ -80,14 +117,14 @@ bool FirewallBackend::executeScript(const std::string& executable,
     ProcessOptions options;
     options.timeout = std::chrono::seconds(10);
     options.standardInput = script;
-    const ProcessResult check = VerifiedProcessExecutor::execute(
-        executable, {"-c", "-f", "-"}, options);
+    const ProcessResult check = run(
+        executable, {"-j", "-c", "-f", "-"}, options);
     if (!check.success()) {
         error = processFailure("nft script validation", check);
         return false;
     }
-    const ProcessResult apply = VerifiedProcessExecutor::execute(
-        executable, {"-f", "-"}, options);
+    const ProcessResult apply = run(
+        executable, {"-j", "-f", "-"}, options);
     if (!apply.success()) {
         error = processFailure("nft script application", apply);
         return false;
@@ -96,153 +133,185 @@ bool FirewallBackend::executeScript(const std::string& executable,
     return true;
 }
 
-bool FirewallBackend::applyPolicy(const std::string& policyName,
-                                  const std::vector<FirewallRule>& rules,
-                                  bool& changed,
-                                  std::string& error) const {
-    changed = false;
-    std::string executable;
-    if (!resolveNft(executable, error)) {
-        return false;
-    }
-    FirewallActualState actual;
-    if (!readActual(executable, actual, error)) {
-        return false;
-    }
-    const std::string table = managedTableName(policyName);
-    if (actual.managedInetTables.count(table) == 0 && !rules.empty()) {
-        Logger::log("Managed firewall rule set is missing: " + policyName,
-                    logLevel::DEBUG, "daemon");
-    } else if (actual.managedInetTables.count(table) != 0) {
-        Logger::log("Refreshing managed firewall rule set: " + policyName,
-                    logLevel::DEBUG, "daemon");
-    }
-    const std::string script = buildPolicyScript(policyName, rules, actual);
-    changed = !script.empty();
-    if (!executeScript(executable, script, error)) {
-        return false;
-    }
-    FirewallActualState verified;
-    if (!readActual(executable, verified, error)) {
-        return false;
-    }
-    const bool shouldExist = !rules.empty();
-    const bool exists = verified.managedInetTables.count(
-        managedTableName(policyName)) != 0;
-    if (exists != shouldExist) {
-        error = "nft postcondition failed for " + policyName;
-        return false;
-    }
-    if (shouldExist && verified.managedRuleComments[managedTableName(policyName)] !=
-            expectedComments(policyName, rules.size())) {
-        error = "managed nft rule postcondition failed for " + policyName;
-        return false;
-    }
-    Logger::log(
-        shouldExist ? "Managed firewall rule set created: " + policyName
-                    : "Managed firewall rule set removed: " + policyName,
-        logLevel::INFO, "daemon");
-    return true;
-}
 
-bool FirewallBackend::applyExclusive(
-    std::vector<ForeignBaseChain>& neutralized,
-    std::string& error) const {
-    FirewallDesiredState desired;
-    desired.exclusive = true;
-    std::string executable;
-    if (!resolveNft(executable, error)) {
-        return false;
-    }
-    FirewallActualState actual;
-    if (!readActual(executable, actual, error)) {
-        return false;
-    }
-    actual.managedInetTables.clear();
-    const std::string script = buildReconciliationScript(
-        desired, actual, neutralized);
-    if (!executeScript(executable, script, error)) {
-        return false;
-    }
-    FirewallActualState verified;
-    if (!readActual(executable, verified, error)) {
-        return false;
-    }
-    if (!verified.foreignHostFilterChains.empty()) {
-        error = "foreign host filtering chains remain after exclusive apply";
-        return false;
-    }
-    return true;
+bool FirewallBackend::applyPolicy(const std::string& policy,
+    const std::vector<FirewallRule>& rules, bool& changed, std::string& error) const {
+    return FirewallCoordinator(*this).applyPolicy(policy, rules, changed, error);
 }
-
+bool FirewallBackend::applyExclusive(std::vector<ForeignBaseChain>& neutralized,
+                                    std::string& error) const {
+    bool changed = false;
+    return FirewallCoordinator(*this).reconcile(nullptr, changed, neutralized, error, true);
+}
 bool FirewallBackend::reconcile(const FirewallDesiredState& desired,
-                                std::vector<ForeignBaseChain>& neutralized,
-                                std::string& error) const {
+    std::vector<ForeignBaseChain>& neutralized, std::string& error) const {
+    bool changed = false;
+    return FirewallCoordinator(*this).reconcile(&desired, changed, neutralized, error);
+}
+
+ProcessResult FirewallBackend::run(const std::string& executable,
+    const std::vector<std::string>& args, const ProcessOptions& options) const {
+    return runner_ ? runner_(args, options)
+                   : VerifiedProcessExecutor::execute(executable, args, options);
+}
+
+FirewallBackend::FirewallBackend(
+    const fic::platform::PlatformExecutableResolver& executables,
+    NftRunner runner, FirewallOwnershipOptions ownership,
+    std::function<bool()> quarantineDecision,
+    std::function<bool(FirewallDesiredState&, std::string&)> configuration)
+    : executables_(executables), runner_(std::move(runner)), ownership_(std::move(ownership)),
+      quarantineDecision_(std::move(quarantineDecision)), configuration_(std::move(configuration)) {}
+
+bool FirewallBackend::applyEffective(const FirewallDesiredState& desired,
+    bool& changed, std::vector<ForeignBaseChain>& neutralized, std::string& error,
+    const std::string& onlyPolicy) const {
+    using Json = nlohmann::json;
+    using namespace fic::core;
+    changed = false;
+    neutralized.clear();
+    try {
     std::string executable;
-    if (!resolveNft(executable, error)) {
-        return false;
-    }
+    if (!resolveNft(executable, error)) return false;
     FirewallActualState actual;
-    if (!readActual(executable, actual, error)) {
-        return false;
+    if (!readActual(executable, actual, error)) return false;
+    std::map<std::string, Json> observed, wanted;
+    if (!observeManagedObjects({{"nftables", actual.objects}}, observed, error) ||
+        !observeManagedObjects({{"nftables", compileFirewallObjects(desired)}}, wanted, error)) return false;
+    bool onlySelectedPolicy = !desired.quarantine && !onlyPolicy.empty() && !observed.count("fic_incident_quarantine");
+    if (onlySelectedPolicy) {
+        // A normal direct policy apply owns only that policy's mutation.
+        // A profile restoration still compiles the complete current config.
+        const auto table = managedTableName(onlyPolicy);
+        auto selected = wanted.find(table);
+        nlohmann::json replacement = selected == wanted.end() ? nlohmann::json::array() : selected->second;
+        wanted = observed;
+        wanted.erase(table);
+        if (!replacement.empty()) wanted[table] = std::move(replacement);
     }
-    for (const std::string& table : actual.managedInetTables) {
-        bool remainsDesired = false;
-        for (const auto& [policy, rules] : desired.policyRules) {
-            if (!rules.empty() && managedTableName(policy) == table) {
-                remainsDesired = true;
-                break;
+
+    if (!proveSafeParentDirectory(ownership_.path.parent_path(), ownership_.expectation, error)) return false;
+    const auto witness = readSecureFileBounded(ownership_.path, ownership_.expectation, 4 * 1024 * 1024);
+    Json document = {{"schema_version", 1}, {"before", Json::object()}, {"after", Json::object()}};
+    if (witness.status == SecureStateReadStatus::Unprovable) {
+        error = "firewall ownership is unproven: " + witness.detail; return false;
+    }
+    if (witness.status == SecureStateReadStatus::Proven) {
+        try {
+            if (!parseFirewallJson(witness.content, document, error)) return false;
+            if (document.size() != 3 || document.at("schema_version") != 1 ||
+                !document.at("before").is_object() || !document.at("after").is_object()) {
+                error = "invalid firewall ownership document"; return false;
             }
-        }
-        if (remainsDesired) {
-            Logger::log("Refreshing managed firewall table: " + table,
-                        logLevel::DEBUG, "daemon");
-        } else {
-            Logger::log("Removing stale managed firewall table: " + table,
-                        logLevel::INFO, "daemon");
-        }
+            if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                    ownership_.path.string(), witness.targetState, &error)) return false;
+        } catch (const Json::exception& ex) { error = ex.what(); return false; }
     }
-    for (const auto& [policy, rules] : desired.policyRules) {
-        const std::string table = managedTableName(policy);
-        if (!rules.empty() && actual.managedInetTables.count(table) == 0) {
-            Logger::log("Managed firewall table is missing: " + table,
-                        logLevel::DEBUG, "daemon");
-        }
+    if (onlySelectedPolicy && document.at("after").contains("fic_incident_quarantine")) {
+        // Drift may have removed quarantine before a profile restoration.
+        // Its durable intent still distinguishes this from a normal single
+        // policy apply: restore ALL current normal settings atomically.
+        onlySelectedPolicy = false;
+        if (!observeManagedObjects({{"nftables", compileFirewallObjects(desired)}}, wanted, error)) return false;
     }
-    if (!executeScript(
-        executable,
-        buildReconciliationScript(desired, actual, neutralized),
-        error)) {
-        return false;
-    }
-    FirewallActualState verified;
-    if (!readActual(executable, verified, error)) {
-        return false;
-    }
-    std::set<std::string> expectedTables;
-    for (const auto& [policy, rules] : desired.policyRules) {
-        if (!rules.empty()) {
-            expectedTables.insert(managedTableName(policy));
-        }
-    }
-    if (verified.managedInetTables != expectedTables) {
-        error = "managed nft table postcondition failed after reconciliation";
-        return false;
-    }
-    for (const auto& [policy, rules] : desired.policyRules) {
-        if (!rules.empty() &&
-            verified.managedRuleComments[managedTableName(policy)] !=
-                expectedComments(policy, rules.size())) {
-            error = "managed nft rule postcondition failed after reconciliation: " +
-                policy;
+    for (const auto& [table, objects] : observed) {
+        bool owned = false;
+        for (const char* phase : {"before", "after"})
+            if (document.at(phase).contains(table) && document.at(phase).at(table) == objects)
+                owned = true;
+        if (!owned) {
+            error = "reserved table ownership/structure unproven: " + table;
             return false;
         }
     }
-    if (desired.exclusive && !verified.foreignHostFilterChains.empty()) {
-        error = "foreign host filtering chains remain after reconciliation";
+    // A durable intent plus exact structure alone could adopt a competing
+    // deterministic lookalike after a failed create. Bind every intended table
+    // to an unpredictable nonce, durable BEFORE its creation. Comments are
+    // checked only together with the full root-owned manifest and structure.
+    for (auto& [table, objects] : wanted) {
+        const auto logical = logicalObjects(objects);
+        if (observed.count(table) && logicalObjects(observed.at(table)) == logical) {
+            objects = observed.at(table);
+        } else if (document.at("after").contains(table) &&
+                   logicalObjects(document.at("after").at(table)) == logical) {
+            objects = document.at("after").at(table);
+        } else if (!stampOwnership(objects, error)) return false;
+    }
+    Json commands = Json::array();
+    // All removals and additions, including NORMAL/quarantine switch, share
+    // ONE kernel batch. Delete uses observed handles, refusing replaced tables.
+    for (const auto& [table, objects] : observed) {
+        if (wanted.count(table) && wanted.at(table) == objects) continue;
+        if (wanted.count(table)) {
+            Logger::log("Refreshing managed firewall table: " + table, logLevel::DEBUG, "daemon");
+            Logger::log("Refreshing managed firewall rule set: " + table, logLevel::DEBUG, "daemon");
+        } else {
+            Logger::log("Removing stale managed firewall table: " + table, logLevel::INFO, "daemon");
+        }
+        Json deletion = {{"family", "inet"}, {"name", table}};
+        for (const auto& item : actual.objects)
+            if (item.contains("table") && item.at("table").at("family") == "inet" &&
+                item.at("table").at("name") == table && item.at("table").contains("handle")) {
+                deletion.erase("name"); deletion["handle"] = item.at("table").at("handle");
+            }
+        commands.push_back({{"delete", {{"table", deletion}}}});
+    }
+    for (const auto& [table, objects] : wanted) {
+        if (observed.count(table) && observed.at(table) == objects) continue;
+        if (!observed.count(table)) {
+            Logger::log("Managed firewall table is missing: " + table, logLevel::DEBUG, "daemon");
+            Logger::log("Managed firewall rule set is missing: " + table, logLevel::DEBUG, "daemon");
+        }
+        for (const auto& item : objects)
+            commands.push_back({{item.contains("table") ? "create" : "add", item}});
+    }
+    if (desired.exclusive && !desired.quarantine && !onlySelectedPolicy) {
+        for (const auto& chain : actual.foreignHostFilterChains) {
+            Json id = {{"family", chain.family}, {"table", chain.table}, {"name", chain.chain}};
+            commands.push_back({{"flush", {{"chain", id}}}});
+            commands.push_back({{"delete", {{"chain", id}}}});
+            id["type"] = chain.type; id["hook"] = chain.hook;
+            id["prio"] = chain.priority; id["policy"] = "accept";
+            commands.push_back({{"add", {{"chain", id}}}});
+            neutralized.push_back(chain);
+        }
+    }
+    if (!commands.empty()) {
+        Json next = {{"schema_version", 1}, {"before", observed}, {"after", wanted}};
+        const auto serialized = next.dump();
+        if (serialized.size() > 4 * 1024 * 1024) {
+            error = "firewall ownership document exceeds bound"; return false;
+        }
+        AtomicWriteOptions options;
+        options.createIfMissing = witness.status == SecureStateReadStatus::Missing;
+        options.exclusiveCreate = options.createIfMissing;
+        options.rejectSymlink = true;
+        options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+        options.fileOwner = ownership_.expectation.owner;
+        options.fileGroup = ownership_.expectation.group;
+        options.fileMode = 0640;
+        if (!options.createIfMissing) options.expectedTargetState = witness.targetState;
+        AtomicWriteResult written;
+        if (!AtomicFileWriter::writeWithResult(ownership_.path.string(), serialized, options,
+                &error, &written) || !written.durabilityConfirmed) return false;
+        changed = true;
+        if (!executeScript(executable, Json{{"nftables", commands}}.dump(), error)) return false;
+    }
+    FirewallActualState verified;
+    std::map<std::string, Json> verifiedObjects;
+    if (!readActual(executable, verified, error) ||
+        !observeManagedObjects({{"nftables", verified.objects}}, verifiedObjects, error)) return false;
+    if (verifiedObjects != wanted) {
+        error = "effective firewall postcondition is unproven"; return false;
+    }
+    if (desired.exclusive && !desired.quarantine && !onlySelectedPolicy && !verified.foreignHostFilterChains.empty()) {
+        error = "exclusive firewall postcondition failed"; return false;
+    }
+    error.clear(); return true;
+    } catch (const std::exception& exception) {
+        error = std::string("firewall state is unproven: ") + exception.what();
         return false;
     }
-    return true;
 }
 
 } // namespace fic::firewall

@@ -1,10 +1,10 @@
 #include "modules/firewall/FirewallPolicies.h"
+#include "modules/firewall/FirewallCoordinator.h"
 
 #include <fic/core/i18n/LocalizationManager.h>
 #include <fic/core/logging/Logger.h>
 #include <fic/core/config/ModuleConfigFileHandler.h>
 
-#include "rollback/DaemonMutationJournal.h"
 
 #include <iostream>
 #include <utility>
@@ -96,59 +96,15 @@ FirewallPolicy::FirewallPolicy(
 bool FirewallPolicy::applyRules(const std::vector<FirewallRule>& rules) {
     FirewallBackend backend(executables_);
 
-    // Crash-consistent journaling: prepare the rollback record before the
-    // nftables mutation; discard it when the apply turns out to be a no-op.
-    fic::rollback::MutationId mutationId = 0;
-    bool mutationPrepared = false;
-    {
-        std::string journalError;
-        fic::rollback::UndoAction undo{
-            fic::rollback::MutationBackend::Firewall,
-            fic::rollback::UndoRemoveFirewallPolicy{this->policyName}};
-        if (!fic::rollback::recordPreparedMutation(
-                this->policyRef(), this->policyName, undo, mutationId,
-                journalError)) {
-            this->log("Не удалось подготовить запись mutation journal: " +
-                          journalError,
-                      logLevel::ERROR);
-            return false;
-        }
-        mutationPrepared = true;
-    }
-
-    bool changed = false;
     std::string error;
-    if (!backend.applyPolicy(this->policyName, rules, changed, error)) {
-        std::string discardError;
-        if (mutationPrepared &&
-            !fic::rollback::discardMutation(mutationId, discardError)) {
-            this->log("Ошибка удаления подготовленной записи mutation journal: " +
-                          discardError,
-                      logLevel::WARN);
-        }
+    if (!FirewallCoordinator(backend).applyJournaledPolicy(this->policyRef(), rules, error)) {
         this->log("Firewall policy apply failed: " + error, logLevel::ERROR);
         return false;
     }
 
-    std::string journalError;
-    if (!mutationPrepared) {
-        // unreachable, defensive
-    } else if (changed) {
-        if (!fic::rollback::commitMutation(mutationId, journalError)) {
-            // The nftables mutation already happened: apply must not report
-            // success without reliable provenance. The Prepared record stays
-            // active on disk and remains safely resolvable.
-            this->log("Ошибка фиксации записи mutation journal: " + journalError,
-                      logLevel::ERROR);
-            return false;
-        }
-    } else if (!fic::rollback::discardMutation(mutationId, journalError)) {
-        this->log("Ошибка удаления подготовленной записи mutation journal: " +
-                      journalError,
-                  logLevel::WARN);
-    }
-
-    this->log("Firewall policy state applied: " + this->policyName, logLevel::INFO);
+    this->log(FirewallCoordinator::productionProfile() == FirewallEffectiveProfile::IncidentQuarantine
+        ? "Настройки сохранены; обычное enforcement отложено до выхода из карантина: " + this->policyName
+        : "Firewall policy state applied: " + this->policyName, logLevel::INFO);
     return true;
 }
 
@@ -211,7 +167,9 @@ bool ExclusiveFirewallControlPolicy::apply() {
         this->log("Neutralized foreign host filtering chain: " +
                   chainLabel(chain), logLevel::WARN);
     }
-    this->log("Exclusive firewall control applied", logLevel::INFO);
+    this->log(FirewallCoordinator::productionProfile() == FirewallEffectiveProfile::IncidentQuarantine
+        ? "Exclusive enforcement отложено; подтверждён quarantine profile"
+        : "Exclusive firewall control applied", logLevel::INFO);
     return true;
 }
 
@@ -244,42 +202,44 @@ bool buildFirewallDesiredState(const std::map<std::string, bool>& enabled,
 bool reconcileFirewall(
     const fic::platform::PlatformExecutableResolver& executables,
     std::string& error) {
-    ModuleConfigFileHandler config("FIREWALL");
-    if (!config.loadConfig()) {
-        error = "could not load FIREWALL.conf";
-        Logger::log("Firewall reconciliation failed: " + error,
-                    logLevel::ERROR, "daemon");
-        return false;
-    }
-
-    std::map<std::string, bool> enabled;
-    for (const std::string& policy : {
-             "block_rdp", "block_ftp", "custom_rules",
-             "exclusive_firewall_control"}) {
-        enabled[policy] = config.getPolicyStatus(policy) == "ENABLE";
-    }
-    const std::string customRules = config.hasConfiguredValue("custom_rules")
-        ? config.getPolicyValue("custom_rules") : "";
-    FirewallDesiredState desired;
-    if (!buildFirewallDesiredState(enabled, customRules, desired, error)) {
-        Logger::log("Firewall reconciliation validation failed: " + error,
-                    logLevel::ERROR, "daemon");
-        return false;
-    }
-
     FirewallBackend backend(executables);
+    bool changed = false;
     std::vector<ForeignBaseChain> neutralized;
-    if (!backend.reconcile(desired, neutralized, error)) {
-        Logger::log("Firewall reconciliation failed: " + error,
-                    logLevel::ERROR, "daemon");
-        return false;
-    }
-    for (const ForeignBaseChain& chain : neutralized) {
-        Logger::log("Firewall reconciliation neutralized foreign chain: " +
-                    chainLabel(chain), logLevel::WARN, "daemon");
-    }
-    Logger::log("Firewall reconciliation successful", logLevel::INFO, "daemon");
-    return true;
+    return FirewallCoordinator(backend).reconcile(nullptr, changed, neutralized, error);
 }
+
+bool QuarantineRulesPolicyTypeValue::validate(const std::string& value) {
+    std::vector<FirewallRule> rules;
+    std::string normalized, error;
+    return parseQuarantineRules(value, rules, normalized, error);
+}
+std::string QuarantineRulesPolicyTypeValue::getPolicyRestrictionInfo() {
+    return CustomRulesPolicyTypeValue::getPolicyRestrictionInfo() +
+        "; quarantine: action=allow only; DISABLE suppresses exceptions, never mandatory quarantine";
+}
+IncidentQuarantinePolicy::IncidentQuarantinePolicy(
+    const fic::platform::PlatformExecutableResolver& executables)
+    : FirewallPolicy("incident_quarantine", executables) {
+    policyTypeValue = std::make_unique<QuarantineRulesPolicyTypeValue>();
+}
+bool IncidentQuarantinePolicy::apply() {
+    std::vector<FirewallRule> rules;
+    std::string normalized, error;
+    if (FirewallCoordinator::productionProfile() == FirewallEffectiveProfile::Normal) {
+        const auto value = getValue();
+        if (!value || !parseQuarantineRules(*value, rules, normalized, error)) {
+            log("Invalid quarantine exceptions: " + error, logLevel::ERROR);
+            return false;
+        }
+    }
+    FirewallBackend backend(executables_);
+    bool changed = false;
+    const bool ok = backend.applyPolicy("incident_quarantine", rules, changed, error);
+    if (!ok) log(error, logLevel::ERROR);
+    else if (FirewallCoordinator::productionProfile() == FirewallEffectiveProfile::Normal)
+        log("Quarantine exceptions validated; no nft mutation in NORMAL", logLevel::INFO);
+    return ok;
+}
+
 
 } // namespace fic::firewall
