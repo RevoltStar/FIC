@@ -279,3 +279,5 @@ auth requisite pam_faillock.so preauth silent audit deny=5 unlock_time=300
 Скрипт удаление для Альта (preun) удаляет pam-topology через control, обходя rollback-механизм FIC. Для Debian/Ubuntu есть похожая проблема.
 
 Текущая архитектура DC-правила не позволяет создать rollback-механизм. Требуется переработка. Нужно перевести их на модель с выбором значений new/all. Тогда rollback будет заключаться в простом переобходе бд устройств
+
+FIC-prelogin то отображается, то нет. То грузится QT, то только текстовый fallback
