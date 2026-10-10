@@ -896,6 +896,24 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
     }
+    if (policy.moduleName == "OSS" && policy.submoduleName == "Fstab") {
+        // Known policies intentionally preserve fstab and mount state on disable.
+        // Future policies require an explicit lifecycle decision.
+        const bool nonReverting =
+            policy.policyName == "fstab_tmp_profile" ||
+            policy.policyName == "fstab_var_tmp_profile" ||
+            policy.policyName == "fstab_dev_shm_profile" ||
+            policy.policyName == "fstab_home_profile" ||
+            policy.policyName == "fstab_removable_media_profile" ||
+            policy.policyName == "fstab_var_log_secure_options" ||
+            policy.policyName == "fstab_var_log_audit_secure_options" ||
+            policy.policyName == "fstab_boot_profile" ||
+            policy.policyName == "fstab_boot_efi_profile" ||
+            policy.policyName == "fstab_srv_profile" ||
+            policy.policyName == "fstab_opt_profile";
+        return nonReverting ? RollbackEnrollment::NotEnrolled
+                            : RollbackEnrollment::Unsupported;
+    }
     if (policy.moduleName == "OSS" && policy.submoduleName == "Grub") {
         // Explicit whitelist: a new GRUB policy needs its own journal
         // integration and undo payload before it becomes rollback-supported.

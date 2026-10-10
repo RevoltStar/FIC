@@ -810,6 +810,44 @@ void testNotEnrolledPolicyKeepsLegacyDisable() {
 // NotEnrolled lifecycle: disable stops future enforcement and preserves the
 // account aging state that exists at the moment of disable. No journal
 // provenance, no chage undo, no baseline exists for them by design.
+void testFstabNonRevertingLifecycle() {
+    for (const std::string& name : {
+             "fstab_tmp_profile",
+             "fstab_var_tmp_profile",
+             "fstab_dev_shm_profile",
+             "fstab_home_profile",
+             "fstab_removable_media_profile",
+             "fstab_var_log_secure_options",
+             "fstab_var_log_audit_secure_options",
+             "fstab_boot_profile",
+             "fstab_boot_efi_profile",
+             "fstab_srv_profile",
+             "fstab_opt_profile"}) {
+        const PolicyRef policy{"OSS", "Fstab", name};
+        require(rollbackEnrollment(policy) == RollbackEnrollment::NotEnrolled,
+                "FSTAB must be explicitly NotEnrolled: " + name);
+        require(effectiveRollbackEnrollment(policy, RollbackExecutorDeps{}) ==
+                    RollbackEnrollment::NotEnrolled,
+                "contextual FSTAB enrollment changed: " + name);
+        const auto report = rollbackPolicyBeforeDisable(
+            policy, "/etc/fstab", RollbackExecutorDeps{});
+        require(report.status == RollbackStatus::Success &&
+                    report.rollbackCompleted() && report.outcomes.empty() &&
+                    report.message == "Policy не участвует в системе rollback",
+                "FSTAB disable must perform no rollback: " + name);
+    }
+    const PolicyRef future{"OSS", "Fstab", "future_fstab_policy"};
+    require(rollbackEnrollment(future) == RollbackEnrollment::Unsupported &&
+                effectiveRollbackEnrollment(future, RollbackExecutorDeps{}) ==
+                    RollbackEnrollment::Unsupported,
+            "unknown FSTAB policy must be Unsupported");
+    const auto report = rollbackPolicyBeforeDisable(
+        future, "/etc/fstab", RollbackExecutorDeps{});
+    require(report.status == RollbackStatus::Unsupported &&
+                !report.rollbackCompleted(),
+            "unknown FSTAB policy must refuse disable");
+}
+
 void testPasswordAgingOperationalNotEnrolledLifecycle() {
     const PolicyRef bulk{"IDENTITY_ACCESS", "PASSWORD_AGING",
                          "password_aging_apply_to_existing_accounts"};
@@ -2969,6 +3007,7 @@ int main(int argc, char** argv) {
         void (*test)();
     } tests[] = {
         {"enrollment matrix", testEnrollmentMatrix},
+        {"FSTAB non-reverting lifecycle", testFstabNonRevertingLifecycle},
         {"USER_CREATION executor ownership release",
          testUserCreationExecutorOwnershipRelease},
         {"USER_CREATION Prepared previous-side rollback retry",

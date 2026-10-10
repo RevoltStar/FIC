@@ -35,6 +35,24 @@ Policy → backend → MutationRecord → persistent MutationJournal
   завершается ошибкой, а `Prepared`-запись остаётся активной на диске и
   безопасно разрешается rollback executor'ом.
 
+## FSTAB: намеренно non-reverting lifecycle
+
+Все 11 зарегистрированных политик `OSS/Fstab` имеют явный
+`RollbackEnrollment::NotEnrolled`: `fstab_tmp_profile`,
+`fstab_var_tmp_profile`, `fstab_dev_shm_profile`, `fstab_home_profile`,
+`fstab_removable_media_profile`, `fstab_var_log_secure_options`,
+`fstab_var_log_audit_secure_options`, `fstab_boot_profile`,
+`fstab_boot_efi_profile`, `fstab_srv_profile`, `fstab_opt_profile`.
+
+Отключение политики прекращает её последующее применение. Отключение
+политики и удаление FIC не восстанавливают прежний `/etc/fstab`; текущие
+параметры монтирования сохраняются. Автоматический откат этих изменений
+намеренно не выполняется.
+
+Неизвестная будущая политика `OSS/Fstab` получает `Unsupported`: она
+не наследует этот lifecycle автоматически, и отключение через rollback
+executor отклоняется (fail-closed).
+
 ## Расположение
 
 * `fic/src/rollback/MutationRecord.h` — `MutationRecord`, `MutationStatus`,
@@ -1907,7 +1925,8 @@ no effect on users who are in the group specified by exempt_group».
   rollback-enrolled submodule — будущая SUDO/FIREWALL policy никогда не
   становится автоматически rollback-Supported без собственной journal
   integration и undo-действия;
-* `NotEnrolled` — все остальные модули. В частности,
+* `NotEnrolled` — перечисленные выше известные политики `OSS/Fstab`
+  (см. «FSTAB: намеренно non-reverting lifecycle») и остальные модули. В частности,
   `DAC/Mode_and_Owner/mode_and_owner_profiles` использует release-only
   lifecycle: `disable` меняет только status и не меняет filesystem metadata.
 
