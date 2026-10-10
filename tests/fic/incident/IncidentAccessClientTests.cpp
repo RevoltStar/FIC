@@ -111,6 +111,16 @@ int main() {
         server.join();
         require(!reply.allowed, "deny: " + reply.diagnostic);
     }
+    for (const bool claimed : {true, false}) {
+        auto unproven = nlohmann::json::parse(response(true));
+        unproven["response_mode_proven"] = false;
+        unproven["ordinary_login_allowed"] = claimed;
+        auto server = fixture.answer(unproven.dump());
+        const auto reply = IncidentAccessClient::queryAtPathForTests(fixture.path(), ::geteuid());
+        server.join();
+        require(!reply.allowed, "unproven mode with stale READY allowed login");
+        if (!claimed) require(reply.diagnostic == "incident access denied", "consistent denial was rejected as malformed");
+    }
     {
         auto server = fixture.answer(R"({"ok":true,"api_version":1})");
         const auto reply = IncidentAccessClient::queryAtPathForTests(

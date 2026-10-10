@@ -15,7 +15,7 @@ namespace {
 void require(bool condition, const std::string& error) { if (!condition) throw std::runtime_error(error); }
 const std::string boot = "11111111-1111-4111-8111-111111111111";
 struct Provider : StatusProvider { Observation value; int reads = 0; Observation read() override { ++reads; return value; } };
-struct Gui : GuiLifecycle { int closes = 0; bool ok = true; bool cleanup(std::string& error) override { ++closes; if (!ok) error = "cleanup failed"; return ok; } };
+struct Gui : GuiLifecycle { int closes = 0; bool ok = true, ready = true; bool readyForHandoff() const override { return ready; } bool cleanup(std::string& error) override { ++closes; if (!ok) error = "cleanup failed"; return ok; } };
 struct Power : PowerController { std::vector<Action> actions; bool execute(Action a, std::string&) override { actions.push_back(a); return true; } };
 fic::ipc::PreLoginStatus success() {
     fic::ipc::PreLoginStatus s;
@@ -26,6 +26,10 @@ fic::ipc::PreLoginStatus success() {
     return s;
 }
 void lifecycle() {
+    { Provider p; Gui g; Power w; p.value.verified = success(); g.ready = false;
+      PreLoginController c(p,g,w,boot); c.poll(); require(!c.finished(), "auto-handoff before renderer ready");
+      g.ready = true; c.poll(); require(c.finished() && c.exitCode()==0, "renderer readiness didn't release auto handoff"); }
+
     for (const auto state : {"INITIALIZING", "APPLYING", "READY", "DEGRADED", "STOPPING", "missing", "crashed"}) {
         Provider provider; Gui gui; Power power;
         if (std::string(state) != "missing" && std::string(state) != "crashed") {

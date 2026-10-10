@@ -989,6 +989,9 @@ build_fic_gui_package() {
 
 prelogin_pre_script() {
     cat <<'EOF'
+if ! getent passwd fic-prelogin >/dev/null; then
+    useradd -r -U -M -d /nonexistent -s /sbin/nologin fic-prelogin || exit 1
+fi
 if [ -x /opt/fic/bin/fic-prelogin-integration ]; then
     /opt/fic/bin/fic-prelogin-integration deactivate || exit 1
 fi
@@ -996,13 +999,25 @@ EOF
     common_pre_script
 }
 
+detect_prelogin_plugin_requires() {
+    local plugins plugin owner
+    plugins="$(find_qt_plugin_dir)" || return 1
+    for plugin in platforms/libqeglfs.so egldeviceintegrations/libqeglfs-kms-integration.so; do
+        [ -f "$plugins/$plugin" ] || { echo "Missing system Qt EGLFS/KMS plugin: $plugin" >&2; return 1; }
+        owner="$(fic_gui_package_owner rpm "$plugins/$plugin")" || return 1
+        printf '%s, ' "$owner"
+    done
+}
+
 build_fic_prelogin_package() {
-    local package_root output_rpm
+    local package_root output_rpm plugin_requires
     package_root="$(init_package_root fic-prelogin)"
     install_cmake_component "$FIC_PRELOGIN_BUILD_DIR" fic-prelogin "$package_root"
+    plugin_requires="$(detect_prelogin_plugin_requires)" || return 1
+    plugin_requires="${plugin_requires%, }"
     output_rpm="$(build_rpm_package "$package_root" fic-prelogin \
         "FIC optional pre-login gate" "Local systemd gate without authentication" \
-        "fic = $PACKAGE_VERSION-$RPM_RELEASE, systemd" \
+        "fic = $PACKAGE_VERSION-$RPM_RELEASE, systemd, dbus, shadow-utils, fonts-ttf-dejavu, $plugin_requires" \
         "$(prelogin_pre_script)" \
         'if [ -d /run/systemd/system ]; then
     /opt/fic/bin/fic-prelogin-integration activate || exit 1

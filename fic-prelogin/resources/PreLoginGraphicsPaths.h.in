@@ -1,0 +1,5 @@
+#pragma once
+namespace fic::prelogin::graphicsPaths {
+inline constexpr const char* FRONTEND = "@FIC_PRELOGIN_FRONTEND_BINDIR@/fic-prelogin-frontend";
+inline constexpr const char* PLUGINS = "@FIC_PRELOGIN_QT_PLUGIN_DIR@";
+}

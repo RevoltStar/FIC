@@ -1650,7 +1650,9 @@ flowchart TD
     daemon[fic.service: first apply and startup lifecycle] --> ipc[Verified read-only prelogin_status]
     progress[systemd progress: display only] --> gate
     ipc --> gate
-    gate --> release[Manual or verified auto handoff: resource cleanup]
+    gate --> frontend[Unprivileged Qt EGLFS KMS on seat0]
+    frontend --> release[Manual or verified auto handoff: Qt reap and cgroup proof]
+    gate --> release
     release --> exit[Successful gate exit]
     exit --> dm
     dm --> pam[pam_fic_access: independent account decision]

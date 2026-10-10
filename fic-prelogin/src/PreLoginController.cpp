@@ -33,7 +33,7 @@ void PreLoginController::poll() {
         else if (s.completed && s.applyOk) state_ = UiState::Succeeded;
         else if (s.started) state_ = UiState::Applying;
         else state_ = UiState::Starting;
-        if (ipc::mayAutoHandoff(s, bootId_)) request(Action::Handoff);
+        if (ipc::mayAutoHandoff(s, bootId_) && gui_.readyForHandoff()) request(Action::Handoff);
     } else if (observation_.systemd.available) {
         const auto& s = observation_.systemd;
         if (s.active == "inactive") state_ = UiState::Waiting;

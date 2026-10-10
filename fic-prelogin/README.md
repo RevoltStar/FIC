@@ -6,7 +6,8 @@
 ## Systemd lifecycle
 
 Пакет устанавливает `/opt/fic/bin/fic-prelogin`,
-`/opt/fic/bin/fic-prelogin-integration` и `/lib/systemd/system/fic-prelogin.service`.
+`/opt/fic/bin/fic-prelogin-integration` и `fic-prelogin.service` в системном unit
+каталоге (`/lib/systemd/system` для DEB, `/usr/lib/systemd/system` для ALT RPM).
 Checked helper устанавливает только собственный
 `/etc/systemd/system/display-manager.service.d/50-fic-prelogin.conf`:
 
@@ -78,3 +79,68 @@ Unit/transport tests: `prelogin_controller_tests`, `incident_access_client_tests
 Generated package scripts: `prelogin_package_lifecycle_tests`.
 Systemd/DRM проверки выполняются только в disposable VM. Контейнерная сборка
 и offscreen tests не доказывают корректность DRM handoff или конкретного GPU.
+
+## Qt EGLFS/KMS frontend
+
+Root broker остаётся `/opt/fic/bin/fic-prelogin`; графический executable —
+`/usr/libexec/fic/fic-prelogin-frontend`, системный аккаунт `fic-prelogin`
+(`nologin`, `/nonexistent`). Frontend получает только private inherited
+SOCK_SEQPACKET fd, данные для отображения и три local actions. Administrative
+socket не наследуется; `fic` group не передаётся. Broker ограничивает
+supplementary groups `video`, `render`, `input`; graphics account metadata
+проверяется до запуска. Общий systemd cgroup и parent-death signal ограничивают
+lifetime renderer; все прочие broker fd закрываются перед pinned `fexecve`.
+Синхронный ProcessExecutor не используется для renderer, поскольку не поддерживает
+asynchronous status/action channel и service-length cleanup lifecycle.
+
+Используется **системный Qt6 Widgets**, `QT_QPA_PLATFORM=eglfs`,
+`QT_QPA_EGLFS_INTEGRATION=eglfs_kms`. Qt/loader environment очищается; plugin
+search ограничен compile-time системным каталогом с root-owned/non-writable
+parents и проверкой EGLFS/KMS plugin files. Bundled `fic-gui` runtime не
+используется. Package dependencies вычисляются из actual ELF и владельцев
+обоих plugins, поэтому наличие `qtbase` само по себе не считается достаточным.
+Qt остаётся отдельным shared runtime дистрибутива; новый bundled Qt не поставляется.
+Базовый `fic` не получает новых Qt Widgets/EGLFS dependencies. При standalone
+configure `-DFIC_PRELOGIN_GRAPHICS=OFF` controller/console не требуют Qt.
+
+Seat0 primary DRM node выбирается через libsystemd sd-device enumeration;
+предпочитается PCI boot VGA, иначе первый подходящий primary node. Устройство
+другого seat не выбирается. KMS configuration передаётся Qt через sealed memfd,
+без environment-selected file и без persistent/transient status files.
+Qt работает без X11/Wayland/window manager. Единственное fullscreen окно
+использует primary output; поддержка multi-GPU/multi-monitor не подтверждена.
+Режим/severity с отсутствующим proof обозначаются в UI как неподтверждённые.
+Длинная diagnostic прокручивается отдельно: manual/power buttons не исчезают.
+Power confirmation имеет default «Нет»; пароля/root shell/user session нет.
+
+Renderer-ready barrier удерживает auto-handoff до готовности QPA; manual action
+остаётся независимым от daemon. При handoff broker прекращает polling,
+передаёт quit, ждёт normal process exit/reap (не window-close acknowledgement),
+восстанавливает display/keyboard/VT modes, termios и previous VT; доказывает, что в unit cgroup остался
+только broker. Дополнительный process, nonzero exit или forced kill означает
+failure, а не успешный handoff. Затем broker exit(0) освобождает pending DM job.
+Закрытие процесса освобождает DRM/GBM/EGL/input fd; ожидание по времени не
+используется как доказательство освобождения ресурсов.
+
+Missing/untrusted plugin, отсутствие seat0 DRM или renderer crash дают
+диагностику в journal и interactive text fallback на tty7 **после reap** и
+восстановления terminal state. Enter/`handoff` остаётся локальным переходом;
+Ctrl+Alt+F1 оставляет recovery TTY. Если восстановление/cleanup не доказаны,
+unit завершается failure, DM не выдаётся ложный success. Stopped failed unit
+можно деактивировать/удалить только после доказанного empty cgroup.
+
+### Проверенная конфигурация и ограничения
+
+Реальная graphics/systemd validation относится к disposable Debian12 VM,
+virtio-gpu/seat0, Mesa LLVMpipe, system Qt6.4, LightDM/GTK greeter. Configure/build
+и offscreen GUI tests других платформ не доказывают их GPU/DM E2E.
+Startup состояния в VM задаёт guarded read-only fixture с production serializer;
+systemd, Qt/KMS, logind, LightDM и PAM account probes — реальные. Это не E2E
+реального применения всех политик daemon. Optional DEB lifecycle проверяется
+с `--force-depends`: base daemon/PAM binaries staged отдельно, без `fic` dpkg
+record; полный dependency/install lifecycle базового пакета этим не доказан.
+Не заявляется универсальная поддержка hardware GPU, multi-seat или monitors.
+Ручной handoff не делает недоказанный autologin безопасным: integration helper
+проверяет installed controlled PAM account paths, а дополнительные нестандартные
+login paths требуют отдельного proof. Root/external writers сохраняют residual
+races между snapshot proof и последующим systemd/driver действием.

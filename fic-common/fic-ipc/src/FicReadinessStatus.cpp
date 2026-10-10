@@ -32,8 +32,8 @@ bool accessFields(const json& value, AccessGateStatus& s) {
 }
 }
 bool computedLoginAllowed(const AccessGateStatus& s) {
-    return s.mode != "ACTIVE" || (s.state == "READY" && s.stateProven &&
-        (s.severity == "UNLOCKED" || s.severity == "SOFT"));
+    return s.modeProven && (s.mode != "ACTIVE" || (s.state == "READY" && s.stateProven &&
+        (s.severity == "UNLOCKED" || s.severity == "SOFT")));
 }
 json serializeAccessGateStatus(const AccessGateStatus& s) {
     return {{"api_version", API_VERSION}, {"ok", true}, {"message", "incident access gate status"},

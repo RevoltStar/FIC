@@ -412,8 +412,7 @@ fic::ipc::AccessGateStatus currentAccessStatus() {
     value.severity = fic::core::incidentSeverityToken(status.severity);
     value.stateProven = status.stateProven;
     value.provenance = fic::incident::incidentProvenanceToken(status.provenance);
-    value.loginAllowed = fic::incident::ordinaryLoginAllowed(
-        daemonReadiness().state(), status.stateProven, status.severity, status.responseMode.mode);
+    value.loginAllowed = fic::ipc::computedLoginAllowed(value);
     return value;
 }
 

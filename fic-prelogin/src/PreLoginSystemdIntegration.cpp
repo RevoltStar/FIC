@@ -2,6 +2,7 @@
 #include <systemd/sd-bus.h>
 #include <cstdlib>
 #include <algorithm>
+#include <unistd.h>
 
 namespace fic::prelogin {
 namespace {
@@ -36,6 +37,26 @@ SystemdStatus PreLoginSystemdIntegration::observe() const {
     }
     sd_bus_message_unref(reply);
     return result;
+}
+bool PreLoginSystemdIntegration::proveBrokerOnly(std::string& error) {
+    Bus bus;
+    if (!bus.value) { error = "cannot prove graphics cgroup without systemd"; return false; }
+    sd_bus_message* reply = nullptr;
+    const int called = sd_bus_call_method(bus.value, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager", "GetUnitProcesses", nullptr, &reply, "s", "fic-prelogin.service");
+    bool onlyBroker = called >= 0 && sd_bus_message_enter_container(reply, 'a', "(sus)") > 0;
+    unsigned int count = 0, pid = 0;
+    const char *group = nullptr, *command = nullptr;
+    if (onlyBroker) {
+        int read = 0;
+        while ((read = sd_bus_message_read(reply, "(sus)", &group, &pid, &command)) > 0) {
+            if (++count > 1 || pid != static_cast<unsigned int>(::getpid())) { onlyBroker = false; break; }
+        }
+        onlyBroker = onlyBroker && read >= 0 && count == 1;
+    }
+    sd_bus_message_unref(reply);
+    if (!onlyBroker) error = "prelogin cgroup still contains another process or could not be proven";
+    return onlyBroker;
 }
 bool PreLoginPowerController::execute(Action action, std::string& error) {
     const char* method = action == Action::Reboot ? "Reboot" : action == Action::PowerOff ? "PowerOff" : nullptr;

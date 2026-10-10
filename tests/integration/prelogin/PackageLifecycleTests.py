@@ -6,6 +6,9 @@ import subprocess
 import sys
 import tempfile
 root = pathlib.Path(sys.argv[1])
+for name in ['SystemdVmTests.py', 'GraphicsVmTests.py']:
+    path = root / 'tests/integration/prelogin' / name
+    compile(path.read_text(), str(path), 'exec')
 script = (root / 'packaging/deb/build-fic-debian12-deb.sh').read_text()
 section = script.split('build_fic_prelogin_package() {', 1)[1].split('\nmain() {', 1)[0]
 with tempfile.TemporaryDirectory(prefix='fic-prelogin-package-') as directory:

@@ -24,3 +24,4 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 RestrictAddressFamilies=AF_UNIX AF_NETLINK
+CapabilityBoundingSet=CAP_SETUID CAP_SETGID CAP_SYS_TTY_CONFIG

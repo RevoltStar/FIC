@@ -23,6 +23,7 @@ public:
 class GuiLifecycle {
 public:
     virtual ~GuiLifecycle() = default;
+    virtual bool readyForHandoff() const { return true; }
     // Stop polling/rendering/input and prove resource release. Parent of a
     // graphics process must reap it, not merely acknowledge window closing.
     virtual bool cleanup(std::string& error) = 0;

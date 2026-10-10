@@ -398,3 +398,8 @@ Supported tuning variables are `BUILD_JOBS`, `FIC_BUILD_MAX_JOBS`,
 `FIC_BUILD_MEMORY_PER_JOB_MB`, `FIC_HOST_MEMORY_RESERVE_MB`,
 `CONTAINER_CPUS`, `CONTAINER_MEMORY_MB`, `CONTAINER_MEMORY_SWAP_MB`,
 `FIC_BUILD_NICE`, and `FIC_BUILD_IONICE_PRIORITY`.
+
+Optional `fic-prelogin` uses system Qt6 EGLFS/KMS. Qt ELF requirements are not
+filtered as they are for the bundled `fic-gui`; both QPA/KMS plugin owners are
+explicit requirements. Lifecycle/recovery and validation limits:
+[Pre-Login Gate](../../fic-prelogin/README.md).

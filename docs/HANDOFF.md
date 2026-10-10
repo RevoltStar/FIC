@@ -2,36 +2,39 @@
 
 ## Current base
 
-* `main`, task base `2efd2644d7850459a0195bde6d01b185c8e477bb`.
+* `main`; task base `2efd2644d7850459a0195bde6d01b185c8e477bb`, headless commit `1eba2d8944adae0c6f8772dbef0f415de6b7cb6b`.
+* Qt stage is complete in the commit containing this snapshot; use `git log -2` for its SHA.
 
 ## Current task
 
-* Complete Pre-Login Gate attachment `7012859f-fb78-4662-af95-5ba13452632e`: two sequential focused commits. Headless stage complete; Qt EGLFS/KMS stage next.
+* Pre-Login Gate attachment `7012859f-fb78-4662-af95-5ba13452632e`: both focused stages complete. No subsequent refactor/deployment authorized.
 
 ## Accepted architecture / invariants
 
-* Gate is systemd/UI only: no authentication, policy apply, mode/severity/PAM mutation or direct DM start. Manual handoff always available.
-* Auto-handoff requires trusted first-apply result and startup lifecycle, current kernel boot ID, kernel peer PID (and observed systemd MainPID), proven mode/readiness. Systemd READY/StatusText is display-only.
-* Oneshot + RemainAfterExit, Requires/After DM drop-in, Wants fic without After/Requires fic. Checked helper changes only exact managed drop-in and proves effective graph. Inverse After from gate's Before survives detach but does not pull gate into transaction; removal rejects remaining Requires/Wants/BindsTo/Requisite/Upholds.
-* Planned graphics: root broker for IPC/power/VT, dedicated unprivileged system-Qt frontend under `/usr/libexec/fic`, private inherited status/action channel. Parent must reap frontend before successful handoff; no bundled xcb runtime reuse.
+* Optional systemd start gate, not authentication or DM. Manual handoff changes no policy/PAM/incident state; systemd starts DM after successful gate exit.
+* Auto-handoff needs trusted current-boot first apply/lifecycle/readiness and renderer-ready acknowledgement. Systemd READY is only display progress.
+* Root VT/IPC/power broker; dedicated unprivileged system Qt frontend, inherited private channel, trusted plugin paths, seat0 DRM via sealed memfd. Cleanup requires renderer reap, keyboard/display/VT modes and termios restoration, broker-only cgroup proof.
+* Oneshot/RemainAfterExit, DM Requires/After managed alias drop-in; Wants fic without After/Requires fic. Helper preserves vendor/admin units and refuses unproven detach/removal. No Delegate=yes needed.
 
 ## Completed / changed areas
 
-* Strict shared readiness serializer/parser; real access client schema mismatch fixed. First startup result stored in daemon memory, independent of periodic apply.
-* Headless controller/provider, console tty7 gate, bounded systemd observer/logind power actions, unit and checked activation/deactivation helper.
-* Optional DEB/RPM package with explicit upgrade/removal/recovery dispatch; offline removal supported. Template accepts protected root:fic 0640; installed /etc drop-in stays root:root 0644.
-* Unit/real transport tests, generated maintainer script tests, guarded disposable VM status fixture, real PAM account probe and S1–S8 harness. Authoritative documentation: `fic-prelogin/README.md`.
+* Strict shared status producer/parser, daemon startup result, access client schema fix, headless controller/helper, optional DEB/RPM lifecycle.
+* Qt fullscreen/status/actions, UID/GID/FD/environment isolation, supervision/console fallback, cgroup proof, failed-unit removal, packaging/plugin dependencies and relevant tests/docs.
+* Mode-unproven status cannot claim ordinary login allowed; OFF/PASSIVE PAM neutrality unchanged.
+* Native crash regression fixed: Qt SIGKILL left K_OFF while broker remained alive; broker now restores captured keyboard/VT modes before text recovery.
 
 ## Validation
 
-* Fresh Debian 12 full configure/build PASS; full CTest excluding root-sensitive mutation_journal_tests 168/168 PASS; mutation_journal_tests separately under UID1000 PASS. Logs `/tmp/fic-prelogin-debian12-build/{full-build,full-tests,journal-tests}.log`.
-* Executable RED-before against base access client rejects real serializer's allow response; new client GREEN. VM S8 RED exposed inverse ordering edge and harness masking; corrected S1–S8 + reinstall/remove/purge PASS.
-* Disposable Debian12 QEMU/TCG VM: real systemd/LightDM alias graph with test sleep ExecStart override PASS. Actual LightDM and autologin PAM account stacks: OFF/PASSIVE neutral without daemon; ACTIVE missing daemon/ISOLATE deny, READY allow; local root recovery PASS. Logs `systemd-vm-tests.log`, `pam-vm-tests.log`. No host security changes.
-* Headless targeted configure/build/IPC tests Debian13, Ubuntu24.04/26.04, ALT p11 PASS; Ubuntu26 needs libpam0g-dev installed in disposable image. DEB/RPM artifacts built through production functions; DEB VM lifecycle uses force-depends because base binaries were staged independently, not installed as a fic package.
-* Generated package scripts and shell syntax PASS; git diff --check PASS.
+* Fresh Debian12 full configure/build PASS. Container commands: `cmake --build /build -j3`, `ctest --test-dir /build -E '^mutation_journal_tests$' --output-on-failure`: 170/170 PASS. Mutation journal executable separately under UID1000 PASS.
+* RED-before baseline controller and shared status implementations fail new readiness/mode assertions; current tests GREEN. Evidence `build-prelogin-validation/final/{red/,build-final.log,ctest-final.log,journal-final.log}`.
+* Configure/build + controller/IPC/process/offscreen Qt tests Debian13, Ubuntu24.04/26.04, ALT p11 PASS; final broker rebuilds PASS. Ubuntu26 PAM dev installed only in disposable image. Standalone graphics OFF with Qt discovery disabled configure/build PASS.
+* Final DEB/RPM built through production functions; ELF/plugin-owner dependencies and ALT package names/unit paths checked. Generated maintainer dispatch/failure tests, shell syntax, git diff --check PASS.
+* Guarded Debian12 VM: actual Qt EGLFS/KMS, evdev keyboard/mouse, manual/error UI, auto handoff, daemon loss, renderer crash/text recovery, leftover cgroup process denial, missing DRM, stock LightDM/Xorg/GTK greeter/restart, confirmed reboot and PowerOff during fixture APPLYING, broker SIGKILL/actual VT1 recovery, remove/purge/reinstall PASS. PAM/severity hashes unchanged. Logs `build-prelogin-validation/vm/{graphics-vt-fixed,graphics-remaining-final,graphics-poweroff-final}.log`, `serial.log` (kernel S5 power down). VM is powered off.
+* Previous headless stage: real systemd S1–S8, installed LightDM/autologin PAM account probes, root recovery PASS; old /tmp logs lost on WSL restart. Current broader tests revalidate changed components.
 
-## Remaining
+## Remaining / limitations
 
-* Implement/test Qt frontend, broker supervision, trusted plugin paths, console fallback and DRM/stock-DM handoff. No graphics/GPU E2E claim yet; distro VM matrix beyond Debian12 unavailable.
-* Disposable VM assets: ignored `build-prelogin-validation/vm/`; loopback SSH 2222/QMP4444; Docker `fic-prelogin-vm:debian12`, running `fic-prelogin-vm`. Dedicated SSH key inside ignored directory. DMI/marker required before guest mutation.
-* Current builds `/tmp/fic-prelogin-debian12-build`, `/tmp/fic-prelogin-cross`. Graphics draft in `/tmp/fic-prelogin-graphics-draft` has not been applied or validated.
+* Native evidence only Debian12 QEMU/TCG virtio-gpu, Mesa LLVMpipe, system Qt6.4, stock LightDM/GTK. No hardware GPU or other distro/DM E2E claim.
+* VM startup states use guarded read-only production-serializer fixture; no real full policy apply E2E. Optional DEB uses force-depends because daemon/PAM binaries are staged without a fic dpkg record; full base-package install/dependency lifecycle unproven.
+* Root/external writer snapshot races and hardware driver behavior remain outside universal guarantees; see authoritative `fic-prelogin/README.md`.
+* Ignored VM/build assets persist in `build-prelogin-validation/`; Docker `fic-prelogin-vm` exited after PowerOff. Never alter host DM/PAM/VT/security state for validation.

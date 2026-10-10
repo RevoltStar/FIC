@@ -382,3 +382,8 @@ The tuning inputs are:
   `CONTAINER_MEMORY_SWAP_MB`: explicit container limits;
 - `FIC_BUILD_NICE` and `FIC_BUILD_IONICE_PRIORITY`: scheduling priorities,
   default `10` and `7`.
+
+Optional `fic-prelogin` uses system Qt6 EGLFS/KMS, independently of the bundled
+`fic-gui` runtime. Its ELF dependencies and the actual owners of EGLFS/KMS plugins
+are retained in DEB metadata. Lifecycle/recovery and validation limits:
+[Pre-Login Gate](../../fic-prelogin/README.md).

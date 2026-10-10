@@ -1456,7 +1456,7 @@ build_fic_gui_package() {
 detect_prelogin_depends() {
     local package_root="$1"
     local work output depends
-    local binaries=("$package_root/opt/fic/bin/fic-prelogin" "$package_root/opt/fic/bin/fic-prelogin-integration")
+    local binaries=("$package_root/opt/fic/bin/fic-prelogin" "$package_root/opt/fic/bin/fic-prelogin-integration" "$package_root/usr/libexec/fic/fic-prelogin-frontend")
     work="$(mktemp -d "$STAGING_BASE/prelogin-shlibdeps-XXXXXX")"
     mkdir -p "$work/debian"
     cat > "$work/debian/control" <<'EOF'
@@ -1475,16 +1475,35 @@ EOF
     printf '%s\n' "$depends"
 }
 
+detect_prelogin_plugin_depends() {
+    local plugins plugin owner
+    plugins="$(find_qt_plugin_dir)"
+    for plugin in platforms/libqeglfs.so egldeviceintegrations/libqeglfs-kms-integration.so; do
+        [ -f "$plugins/$plugin" ] || { echo "Missing system Qt EGLFS/KMS plugin: $plugin" >&2; return 1; }
+        owner="$(fic_gui_package_owner deb "$plugins/$plugin")" || return 1
+        printf '%s, ' "$owner"
+    done
+}
+
 build_fic_prelogin_package() {
     local package_name=fic-prelogin
-    local package_root output_deb binary_depends
+    local package_root output_deb binary_depends plugin_depends
     package_root="$(init_package_root "$package_name")"
     output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
     install_cmake_component "$FIC_PRELOGIN_BUILD_DIR" fic-prelogin "$package_root"
     binary_depends="$(detect_prelogin_depends "$package_root")" || return 1
+    plugin_depends="$(detect_prelogin_plugin_depends)" || return 1
+    plugin_depends="${plugin_depends%, }"
     write_control_file "$package_root" "$package_name" \
-        "$(join_depends "$binary_depends" "fic (= ${PACKAGE_VERSION})" "systemd")" \
+        "$(join_depends "$binary_depends" "$plugin_depends" "fic (= ${PACKAGE_VERSION})" "systemd" "dbus" "passwd" "fonts-dejavu-core")" \
         "FIC optional local pre-login systemd gate"
+    cat > "$package_root/DEBIAN/preinst" <<'EOF'
+#!/bin/sh
+set -eu
+if ! getent passwd fic-prelogin >/dev/null; then
+    useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin fic-prelogin
+fi
+EOF
     cat > "$package_root/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -eu
@@ -1505,7 +1524,7 @@ case "$1" in
     remove|deconfigure|upgrade) /opt/fic/bin/fic-prelogin-integration deactivate ;;
 esac
 EOF
-    chmod 0755 "$package_root/DEBIAN/postinst" "$package_root/DEBIAN/prerm"
+    chmod 0755 "$package_root/DEBIAN/preinst" "$package_root/DEBIAN/postinst" "$package_root/DEBIAN/prerm"
     build_deb_package "$package_root" "$output_deb" || return 1
     printf '%s\n' "$output_deb"
 }

@@ -13,6 +13,15 @@ target_link_libraries(prelogin_daemon_fixture PRIVATE fic-prelogin-core)
 add_executable(prelogin_pam_probe fic/incident/PreLoginPamProbe.cpp)
 target_include_directories(prelogin_pam_probe PRIVATE ${FIC_ACCESS_PAM_INCLUDE_DIR})
 target_link_libraries(prelogin_pam_probe PRIVATE ${FIC_ACCESS_PAM_LIBRARY})
+if(FIC_PRELOGIN_GRAPHICS)
+    add_executable(prelogin_frontend_process_tests fic/incident/PreLoginFrontendProcessTests.cpp)
+    target_link_libraries(prelogin_frontend_process_tests PRIVATE fic-prelogin-core)
+    add_test(NAME prelogin_frontend_process_tests COMMAND prelogin_frontend_process_tests)
+    add_executable(prelogin_qt_view_tests fic/incident/QtPreLoginViewTests.cpp)
+    target_link_libraries(prelogin_qt_view_tests PRIVATE fic-prelogin-view)
+    add_test(NAME prelogin_qt_view_tests COMMAND prelogin_qt_view_tests)
+    set_tests_properties(prelogin_qt_view_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endif()
 
 # Several tests compile daemon sources directly instead of consuming
 # fic-platform, so they need the generated part of the public platform header.

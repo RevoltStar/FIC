@@ -1373,5 +1373,8 @@ cmake --build build-fic
 Опциональный пакет `fic-prelogin` удерживает штатный DM через systemd до ручного
 или доказанного автоматического handoff. Это отдельный экран, не authentication
 provider; handoff не отключает PAM и не меняет Incident Response.
+Графический frontend использует системный Qt EGLFS/KMS от отдельного
+непривилегированного пользователя; broker подтверждает его завершение перед
+освобождением DM. При отсутствии DRM доступен текстовый recovery на tty7.
 Контракт status API, lifecycle установки/удаления и recovery описаны в
 [`fic-prelogin/README.md`](../fic-prelogin/README.md).

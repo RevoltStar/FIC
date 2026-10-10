@@ -54,6 +54,16 @@ struct Manager {
         return found;
     }
     void reload() { require(sd_bus_call_method(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1", "org.freedesktop.systemd1.Manager", "Reload", nullptr, nullptr, "") >= 0, "systemd reload failed"); }
+    bool processesEmpty(const char* name) {
+        sd_bus_message* reply = nullptr;
+        require(sd_bus_call_method(bus, "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager", "GetUnitProcesses", nullptr, &reply, "s", name) >= 0,
+            "cannot prove prelogin cgroup process state");
+        const int entered = sd_bus_message_enter_container(reply, 'a', "(sus)");
+        const bool empty = entered > 0 && sd_bus_message_at_end(reply, 0) > 0;
+        sd_bus_message_unref(reply);
+        return empty;
+    }
 };
 ProcessResult execute(const fs::path& program, const std::vector<std::string>& args) {
     safe(program, false);
@@ -88,8 +98,12 @@ void stopGate(Manager& manager, const std::string& gate) {
         "refusing to stop unproven prelogin supervision");
     const auto systemctl = fs::exists("/usr/bin/systemctl") ? "/usr/bin/systemctl" : "/bin/systemctl";
     require(execute(systemctl, {"stop", "fic-prelogin.service"}).success(), "prelogin cleanup job failed");
+    const auto state = manager.text(gate, "ActiveState");
     require(manager.pid(gate, "MainPID") == 0 && manager.pid(gate, "ControlPID") == 0 &&
-        manager.text(gate, "ActiveState") == "inactive", "prelogin cleanup is not proven");
+        (state == "inactive" || state == "failed") &&
+        (manager.text(gate, "ControlGroup", "org.freedesktop.systemd1.Service").empty() ||
+         manager.processesEmpty("fic-prelogin.service")),
+        "prelogin cleanup is not proven");
 }
 }
 int main(int argc, char** argv) {
