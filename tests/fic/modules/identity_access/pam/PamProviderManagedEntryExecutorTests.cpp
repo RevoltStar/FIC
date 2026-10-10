@@ -545,16 +545,16 @@ void testRoutingDecision() {
                 PamPolicyFeature::PasswordMinLength),
         "faillock must not route pwquality features");
 
-    // ALT Linux: passwdqc assignments stay legacy (Step 7C never touches
+    // ALT Linux: static passwdqc assignments use managed entries (the route covers
     // the passwdqc topology).
     PamProviderDescriptor passwdqc;
     passwdqc.kind = PamProviderKind::PamPasswdqc;
     passwdqc.name = "pam_passwdqc";
     const auto passwdqcMin = assignmentBinding(
         PamPolicyFeature::PasswdqcStrengthThresholds, "min");
-    require(!usesPamProviderManagedEntry(passwdqc, pwqualityCapability,
+    require(usesPamProviderManagedEntry(passwdqc, pwqualityCapability,
                 passwdqcMin, PamPolicyFeature::PasswdqcStrengthThresholds),
-        "passwdqc must stay on the legacy path");
+        "static passwdqc must use the managed path");
 
     // Typed placement contract (TOTAL helper, no silent End fallback):
     // faillock/pwquality scalars are last-wins → EOF; the pwhistory
@@ -628,10 +628,10 @@ void testRoutingDecision() {
     require(!pamProviderManagedEntryPlacement(provider, capability,
                 minLength, PamPolicyFeature::PasswordMinLength).has_value(),
         "an unrouted faillock feature must have NO placement contract");
-    require(!pamProviderManagedEntryPlacement(passwdqc, pwqualityCapability,
+    require(pamProviderManagedEntryPlacement(passwdqc, pwqualityCapability,
                 passwdqcMin,
                 PamPolicyFeature::PasswdqcStrengthThresholds).has_value(),
-        "passwdqc must have NO placement contract");
+        "static passwdqc must have EOF placement");
 
     // ROUTING EQUALITY INVARIANT: usesPamProviderManagedEntry is a thin
     // wrapper — for the representative matrix its result must be exactly

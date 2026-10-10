@@ -35,6 +35,71 @@ Policy → backend → MutationRecord → persistent MutationJournal
   завершается ошибкой, а `Prepared`-запись остаётся активной на диске и
   безопасно разрешается rollback executor'ом.
 
+## ALT passwdqc managed-provider rollback
+
+На ALT p11 `PamPasswdqc` в режиме `ProviderConfigFile` с topology
+`StaticVerifyOnly` использует общий managed-entry lifecycle и EOF-блок в
+`/etc/passwdqc.conf`. Enrollment `Supported` определяется тем же typed route
+`pamProviderManagedEntryPlacement()`, который используется apply, orphan
+inspection и package release; отдельного whitelist enrollment нет.
+
+| Policy | Native key | Contextual enrollment |
+| --- | --- | --- |
+| `passwdqc_strength_thresholds` | `min` | `Supported` |
+| `passwdqc_passphrase_words` | `passphrase` | `Supported` |
+| `passwdqc_match_length` | `match` | `Supported` |
+| `passwdqc_similar_password` | `similar` | `Supported` |
+| `passwdqc_retry_count` | `retry` | `Supported` |
+| `password_quality_enforce_for_root` | `enforce` (`everyone` / `users`) | `Supported` |
+
+Canonical body определяется provider identity: **только** `pam_passwdqc`
+использует `key=value` без пробелов. Parser, entry executor, ownership proof и
+journal validation используют один общий контракт; остальные provider grammar
+сохраняют `key = value`. `enforce` является assignment, а не set-only flag;
+маршрут `pam_pwquality/enforce_for_root` остаётся прежним.
+
+Один `FIC_PAM_PROVIDER_BLOCK` содержит независимые journal-bound
+`FIC_PAM_ENTRY`. EOF корневого файла обеспечивает приоритет над предыдущими
+присваиваниями, включая вложенные `config=`. Apply проверяет effective state
+и PAM capability/semantic postcondition перед `Applied`. Legacy destructive
+`PasswdqcConfigFile::setValue()` на этом маршруте не вызывается.
+
+Откат освобождает доказанную запись FIC, не восстанавливает snapshot: после
+него эффективно актуальное стороннее значение или native default. Сторонние
+байты сохраняются при refresh, EOF relocation, rollback и package release.
+Существующие CAS/fsync, Prepared recovery, ABA/drift/orphan guards, контейнерное
+владение и shared interprocess lock переиспользуются. Отсутствующий primary
+не создаётся: native fallback safety для этого случая не доказана.
+
+Native integration gate: `tests/integration/pam-c2/passwdqc_rollback_gate_alt.py`.
+Driver собирается с `-DFIC_TARGET_PLATFORM=alt-p11` и проверяет production
+capability/semantic state; `passwdqc_native_probe.c` использует distro
+`passwdqc_params_load`, а не evaluator FIC. Gate допускает только одноразовый
+ALT Docker container. Логи, package versions, native parse exit codes,
+PASS-матрица и sha256 сохраняются в переданном evidence directory.
+
+Для воспроизведения подготовьте disposable ALT builder из
+`packaging/rpm/Dockerfile` с установленным `libpasswdqc-devel` (apt preparation
+выполняется только внутри контейнера). Пример при наличии такого builder:
+
+```bash
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/build-passwdqc-evidence:/evidence" \
+  -e EVID=/evidence fic-rpm-builder:alt-p11 \
+  bash /src/tests/integration/pam-c2/passwdqc_rollback_gate_alt.sh
+docker build -f tests/integration/pam-c2/Dockerfile.passwdqc-runtime \
+  -t fic-passwdqc-runtime:alt-p11 .
+docker run --rm -v "$PWD:/src:ro" -v "$PWD/build-passwdqc-evidence:/evidence" \
+  fic-passwdqc-runtime:alt-p11 python3 \
+  /src/tests/integration/pam-c2/passwdqc_rollback_gate_alt.py \
+  /evidence/driver /evidence/native-probe /evidence/runtime
+```
+
+Runtime image использует ту же чистую ALT p11 base, что
+`packaging/rpm/Dockerfile.runtime-test`; compiler/CMake/FIC daemon в нём не
+устанавливаются. CA bundle для bootstrap HTTPS берётся из ALT builder,
+проверка TLS не отключается. Builder/runtime — два окружения одной платформы.
+
+
 ## FSTAB: намеренно non-reverting lifecycle
 
 Все 11 зарегистрированных политик `OSS/Fstab` имеют явный
@@ -2036,8 +2101,8 @@ Contextual enrollment: `effectiveRollbackEnrollment(policy, deps)`
 сохраняет static enrollment всех существующих backend'ов; для
 IDENTITY_ACCESS/PAM опционных политик разрешает текущий platform binding
 и только реально managed ProviderConfigFile политику делает Supported.
-Debian 12 pwhistory (ModuleArguments), ALT pwhistory (AltTcbManaged) и
-passwdqc остаются вне provider rollback; неизвестная будущая PAM policy
+Debian 12 pwhistory (ModuleArguments) и ALT pwhistory (AltTcbManaged)
+остаются вне provider rollback; неизвестная будущая PAM policy
 сохраняет static fail-closed ответ (Unsupported). Caller и executor
 используют одну shared enrollment модель.
 

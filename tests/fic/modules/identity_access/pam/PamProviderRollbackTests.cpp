@@ -1,6 +1,8 @@
 #include "modules/identity_access/pam/PamProviderRollback.h"
 
 #include "modules/identity_access/pam/PamProviderManagedBlock.h"
+#include "modules/identity_access/pam/PamProviderManagedEntryExecutor.h"
+#include "modules/identity_access/pam/PasswdqcConfigFile.h"
 #include "modules/identity_access/pam/PamProviderManagedBlockFile.h"
 #include "platform/PlatformProfile.h"
 #include "rollback/MutationJournal.h"
@@ -8,6 +10,7 @@
 
 #include <fic/core/fs/AtomicFileWriter.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1034,10 +1037,8 @@ bool containsPath(const std::vector<std::filesystem::path>& paths,
     return false;
 }
 
-// ALT p11-shaped profile: only the faillock ProviderConfigFile capability
-// actually routes a managed Step 7 policy. passwdqc (ProviderConfigFile,
-// legacy Assignment-only route) and the AltTcbManaged pwhistory are NOT
-// managed provider domains and must never be enumerated as primaries.
+// ALT profile: faillock and static passwdqc route managed policies;
+// AltTcbManaged pwhistory retains its separately owned configuration.
 void testManagedPrimaryPathsRouteAwareAltProfile() {
     TempDir temp;
     const std::filesystem::path faillockPath =
@@ -1058,12 +1059,12 @@ void testManagedPrimaryPathsRouteAwareAltProfile() {
         fic::platform::PamTopologyStrategyKind::AltTcbManaged));
     const std::vector<std::filesystem::path> primaries =
         pamProviderManagedPrimaryPaths(platform);
-    require(primaries.size() == 1,
-            "ALT profile: exactly one managed provider primary (faillock)");
+    require(primaries.size() == 2,
+            "ALT profile: faillock and passwdqc managed primaries");
     require(primaries.front() == faillockPath,
             "ALT profile: the faillock primary is enumerated");
-    require(!containsPath(primaries, passwdqcPath),
-            "ALT profile: passwdqc.conf is NOT a managed provider primary");
+    require(containsPath(primaries, passwdqcPath),
+            "ALT profile: passwdqc.conf is a managed provider primary");
     require(!containsPath(primaries, pwhistoryPath),
             "ALT profile: fic-pwhistory.conf is NOT a managed provider "
             "primary");
@@ -1135,7 +1136,7 @@ void testManagedPrimaryPathsRouteAwareDebianProfiles() {
 
 // The container provenance proof uses the SAME shared managed-domain
 // predicate as the primary enumeration: a ProviderConfigFile capability
-// WITHOUT a managed Step 7 route (ALT passwdqc / ALT pwhistory
+// WITHOUT a managed route (unsupported passwdqc topology / ALT pwhistory
 // AltTcbManaged) can never confirm container provenance — Conflict before
 // any journal path read/mutation. The managed faillock capability stays
 // provable (positive control).
@@ -1150,6 +1151,7 @@ void testContainerUnmanagedCapabilityConflict() {
         capability.configurationMode =
             PamCapabilityConfigurationMode::ProviderConfigFile;
         capability.configPath = passwdqcPath;
+        capability.topology = fic::platform::PamTopologyStrategyKind::AltTcbManaged;
         harness.platform.capabilities.push_back(capability);
         writeFile(passwdqcPath, kForeign);
         const fic::rollback::MutationId id = prepareContainerRecordAt(
@@ -1212,8 +1214,78 @@ void testContainerUnmanagedCapabilityConflict() {
     }
 }
 
+void testPasswdqcSixPolicyLifecycle() {
+    for (bool reverse : {false, true}) {
+        Harness harness;
+        harness.platform.capabilities.clear();
+        PamCapabilityConfig capability;
+        capability.capability = fic::platform::PamCapability::PasswordQuality;
+        capability.provider = PamProviderKind::PamPasswdqc;
+        capability.configPath = harness.configPath;
+        capability.topology = fic::platform::PamTopologyStrategyKind::StaticVerifyOnly;
+        harness.platform.capabilities.push_back(capability);
+        const std::string foreign = "# admin\nmin=disabled,24,11,8,7\nmatch=2\npassphrase=3\nsimilar=permit\nretry=2\nenforce=users\n";
+        writeFile(harness.configPath, foreign);
+        const std::vector<std::pair<std::string, std::string>> values = {
+            {"min", "disabled,24,11,8,7"}, {"passphrase", "4"},
+            {"match", "5"}, {"similar", "deny"}, {"retry", "4"}, {"enforce", "everyone"}};
+        std::vector<std::string> policies;
+        std::string error;
+        for (const auto& [key, value] : values) {
+            const auto& descriptor = pamProviderDescriptor(PamProviderKind::PamPasswdqc);
+            const auto binding = std::find_if(descriptor.policies.begin(), descriptor.policies.end(),
+                [&](const auto& b) { return b.option == key; });
+            require(binding != descriptor.policies.end(), "passwdqc native binding missing");
+            const auto placement = pamProviderManagedEntryPlacement(descriptor, capability, *binding, binding->feature);
+            require(placement == PamProviderBlockPlacementRequest::End, "passwdqc EOF route missing");
+            PamProviderManagedEntryRequest request;
+            request.provider = PamProviderKind::PamPasswdqc; request.providerName = descriptor.name;
+            request.policyName = pamProviderManagedFeaturePolicyName(binding->feature);
+            policies.push_back(request.policyName);
+            request.managedKey = key; request.nativeValue = value; request.configPath = harness.configPath;
+            auto semantic = [&](const std::string& expected, std::string& diagnostic) {
+                return PasswdqcConfigFile::hasEffectiveValue(harness.configPath, key, expected, diagnostic);
+            };
+            PamProviderManagedEntryOutcome outcome;
+            require(PamProviderManagedEntryExecutor::apply(request, harness.journal, semantic, outcome, error), error);
+            require(PamProviderManagedEntryExecutor::apply(request, harness.journal, semantic, outcome, error) &&
+                outcome == PamProviderManagedEntryOutcome::AppliedNoOp, "passwdqc repeated apply not idempotent: " + error);
+            require(readFile(harness.configPath).find(key + "=" + value + "\n") != std::string::npos,
+                "passwdqc canonical serializer mismatch");
+        }
+        require(parsePamProviderManagedBlock(readFile(harness.configPath)).view.entries.size() == 6,
+            "six policies must share one container");
+        writeFile(harness.configPath, readFile(harness.configPath) + "# admin later\n");
+        if (reverse) std::reverse(policies.begin(), policies.end());
+        for (const auto& name : policies) {
+            const auto records = harness.journal.activeRecords({"IDENTITY_ACCESS", "PAM", name});
+            require(records.size() == 1, "passwdqc independent provenance missing");
+            const auto& record = records.front();
+            const auto& undo = std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload);
+            const auto result = undoPamProviderManagedEntry(harness.options(), harness.journal, record, undo);
+            require(result.ok, "passwdqc ownership release failed: " + result.message);
+            require(harness.journal.setStatus(record.id, MutationStatus::RolledBack, error), error);
+            require(inspectUnrecordedPamProviderManagedState(harness.options(), name).ok,
+                "passwdqc repeated rollback orphan guard failed");
+        }
+        require(readFile(harness.configPath) == foreign + "# admin later\n", "passwdqc foreign bytes changed");
+    }
+    PamProviderEntrySpec invalid;
+    invalid.provider = "pam_passwdqc"; invalid.policy = "passwdqc_match_length";
+    invalid.managedKey = "match"; invalid.value = "5 invalid"; invalid.mutationId = 1;
+    require(!setPamProviderManagedEntry("match=2\n", invalid,
+                PamProviderBlockPlacementRequest::End).ok,
+            "passwdqc mutation spec accepted noncanonical native whitespace");
+    // A provider-specific format may never weaken another provider's grammar.
+    std::string key, value;
+    require(parseCanonicalPamProviderEntryBody("match=5", key, value, "pam_passwdqc"), "native passwdqc rejected");
+    require(!parseCanonicalPamProviderEntryBody("match = 5", key, value, "pam_passwdqc"), "spaced passwdqc accepted");
+    require(!parseCanonicalPamProviderEntryBody("match=5", key, value, "pam_pwquality"), "pwquality grammar weakened");
+}
+
 int main() {
     try {
+        testPasswdqcSixPolicyLifecycle();
         testAppliedExactRelease();
         testAppliedMissingIsNothingToDo();
         testBodyDriftConflict();

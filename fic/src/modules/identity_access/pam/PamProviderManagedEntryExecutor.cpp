@@ -66,7 +66,7 @@ MutationRecord buildEntryRecord(const PamProviderManagedEntryRequest& request,
         UndoRemovePamProviderManagedEntry{
             request.policyName, request.providerName,
             request.configPath.string(), request.managedKey,
-            pamProviderEntryBody(request.managedKey, request.nativeValue),
+            pamProviderEntryBody(request.managedKey, request.nativeValue, request.providerName),
             previousBody, placementToContract(request.placement)}};
     return record;
 }
@@ -167,7 +167,7 @@ bool durableTargetNativeValue(const UndoRemovePamProviderManagedEntry& payload,
     std::string& nativeValue, std::string& error) {
     std::string key;
     std::string value;
-    if (!parseCanonicalPamProviderEntryBody(payload.appliedBody, key, value) ||
+    if (!parseCanonicalPamProviderEntryBody(payload.appliedBody, key, value, payload.providerName) ||
         key != payload.managedKey) {
         error = "journal record applied body '" + payload.appliedBody +
             "' is not a canonical body for the managed key '" +
@@ -421,7 +421,7 @@ bool refreshProvenOwnedEntry(
     const auto* payload = entryPayload(entryRecord);
     const MutationId id = entryRecord.id;
     const std::string desiredBody =
-        pamProviderEntryBody(request.managedKey, request.nativeValue);
+        pamProviderEntryBody(request.managedKey, request.nativeValue, request.providerName);
     MutationId refreshedId = 0;
     if (!journal.prepareMutation(
             buildEntryRecord(request, payload->appliedBody), refreshedId,
@@ -539,7 +539,7 @@ bool applyFreshCreatedContainer(
         targetNative = request.nativeValue;
     }
     const std::string targetBody =
-        pamProviderEntryBody(request.managedKey, targetNative);
+        pamProviderEntryBody(request.managedKey, targetNative, request.providerName);
     MutationId entryId = 0;
     if (entryRecord.has_value()) {
         entryId = entryRecord->id; // recovery: SAME durable record id
@@ -586,7 +586,7 @@ bool applyFreshCreatedContainer(
         return false;
     }
     const std::string desiredBody =
-        pamProviderEntryBody(request.managedKey, request.nativeValue);
+        pamProviderEntryBody(request.managedKey, request.nativeValue, request.providerName);
     if (desiredBody == targetBody) {
         return true;
     }
@@ -635,7 +635,7 @@ bool applyFreshEntryExistingContainer(
         return false;
     }
     const std::string desiredBody =
-        pamProviderEntryBody(request.managedKey, request.nativeValue);
+        pamProviderEntryBody(request.managedKey, request.nativeValue, request.providerName);
     if (!proveEntryState(request, desiredBody, entryId, error)) {
         return false;
     }
@@ -748,7 +748,7 @@ bool applyProvenOwnedOrFailedRecord(
     const auto* payload = entryPayload(entryRecord);
     const MutationId id = entryRecord.id;
     const std::string desiredBody =
-        pamProviderEntryBody(request.managedKey, request.nativeValue);
+        pamProviderEntryBody(request.managedKey, request.nativeValue, request.providerName);
     // Native value of the PROVEN journal body (payload->appliedBody); used
     // for relocation writes and no-op semantics — the state being proven
     // here is the journaled body, not an assumed one.
@@ -895,7 +895,7 @@ bool applyActiveEntryRecord(
     const auto* payload = entryPayload(entryRecord);
     const MutationId id = entryRecord.id;
     const std::string desiredBody =
-        pamProviderEntryBody(request.managedKey, request.nativeValue);
+        pamProviderEntryBody(request.managedKey, request.nativeValue, request.providerName);
     if (contractToPlacement(payload->placement) != request.placement) {
         error = "placement contract of the active journal record " +
             std::to_string(id) + " does not match the request (fail closed)";
@@ -1208,8 +1208,8 @@ pamProviderManagedEntryPlacement(
             }
             return std::nullopt;
         default:
-            // pam_passwdqc (Assignment binding "enforce") and all other
-            // providers stay legacy.
+            // Assignment bindings (including passwdqc enforce) route below;
+            // unknown flag providers stay legacy.
             return std::nullopt;
         }
     }
@@ -1226,6 +1226,23 @@ pamProviderManagedEntryPlacement(
                 FailedAuthenticationUnlockTime:
             // faillock.conf scalar assignments have last-wins sequential
             // semantics → EOF.
+            return PamProviderBlockPlacementRequest::End;
+        default:
+            return std::nullopt;
+        }
+    case fic::platform::PamProviderKind::PamPasswdqc:
+        if (capability.topology !=
+                fic::platform::PamTopologyStrategyKind::StaticVerifyOnly)
+            return std::nullopt;
+        switch (feature) {
+        case fic::platform::PamPolicyFeature::PasswdqcStrengthThresholds:
+        case fic::platform::PamPolicyFeature::PasswdqcPassphraseWords:
+        case fic::platform::PamPolicyFeature::PasswdqcMatchLength:
+        case fic::platform::PamPolicyFeature::PasswdqcSimilarPassword:
+        case fic::platform::PamPolicyFeature::PasswdqcRetryCount:
+        case fic::platform::PamPolicyFeature::PasswordQualityEnforceForRoot:
+            // Native sequential parsing includes config=; EOF root assignments
+            // override all earlier assignments and nested config directives.
             return PamProviderBlockPlacementRequest::End;
         default:
             return std::nullopt;
@@ -1273,7 +1290,6 @@ pamProviderManagedEntryPlacement(
         }
         return std::nullopt;
     default:
-        // pam_passwdqc (ALT password-quality topology),
         // tally/tally2/cracklib/pam_unix remember stay legacy.
         return std::nullopt;
     }

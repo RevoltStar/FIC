@@ -1772,6 +1772,30 @@ add_executable(fic-pam-provider-rollback-driver EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    # Native passwdqc gate also verifies production capability/semantic proof.
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManagerFactory.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwhistoryConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamAuthUpdateTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamFaillockTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamSlotAttachValidator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
 )
 target_include_directories(fic-pam-provider-rollback-driver PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src

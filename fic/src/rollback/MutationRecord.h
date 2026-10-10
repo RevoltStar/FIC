@@ -251,7 +251,7 @@ struct UndoRemovePamProviderManagedEntry {
     std::string providerName; // PAM provider identity (physical block marker)
     std::string configPath;   // primary provider configuration resource
     std::string managedKey;   // managed key inside the canonical body
-    std::string appliedBody;  // exact canonical body "<key> = <value>"
+    std::string appliedBody;  // provider-specific canonical assignment body
     std::string previousAppliedBody; // empty = fresh create
     PamProviderBlockPlacementContract placement =
         PamProviderBlockPlacementContract::End;

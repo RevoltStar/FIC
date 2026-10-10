@@ -1125,8 +1125,33 @@ void testRollbackFailedPreviousSuppressionSetIsHistoricalAtWriteTime() {
 
 } // namespace
 
+void testPasswdqcCanonicalJournalBody() {
+    for (bool spaced : {false, true}) {
+        TempJournal temp; MutationJournal journal(temp.path);
+        std::string error; require(journal.load(error), error);
+        auto payload = validPayload();
+        payload.policyName = "passwdqc_match_length";
+        payload.providerName = "pam_passwdqc";
+        payload.configPath = "/etc/passwdqc.conf";
+        payload.managedKey = "match";
+        payload.appliedBody = spaced ? "match = 5" : "match=5";
+        MutationId id = 0;
+        require(journal.prepareMutation(recordWithPayload(payload), id, error) == !spaced,
+            "passwdqc journal must accept only native canonical body: " + error);
+        if (!spaced) {
+            require(journal.setStatus(id, MutationStatus::Applied, error), error);
+            MutationJournal reloaded(temp.path); require(reloaded.load(error), error);
+            require(reloaded.records().size() == 1, "passwdqc journal roundtrip lost entry");
+            payload.previousAppliedBody = "match = 5"; payload.appliedBody = "match=6";
+            require(!journal.prepareMutation(recordWithPayload(payload), id, error),
+                "passwdqc refresh accepted spaced previous body");
+        }
+    }
+}
+
 int main() {
     try {
+        testPasswdqcCanonicalJournalBody();
         testRoundTrip();
         testPrepareValidation();
         testPamCapabilityPayloadUnchanged();

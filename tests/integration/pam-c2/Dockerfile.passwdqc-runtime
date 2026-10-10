@@ -1,0 +1,15 @@
+# Clean native ALT runtime for passwdqc rollback gates (no compiler/CMake).
+# Same distribution base as packaging/rpm/Dockerfile.runtime-test.
+FROM registry.altlinux.org/p11/alt:latest
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+# Bootstrap HTTPS trust from the existing ALT builder CA bundle; do not disable TLS verification.
+COPY --from=fic-rpm-builder:alt-p11 /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
+    && sed -i '/^#rpm \[p11\] http:/s/^#//' /etc/apt/sources.list.d/yandex.list \
+    && sed -i 's,http:,https:,g' /etc/apt/sources.list.d/*.list \
+    && mkdir -p /var/cache/apt/archives/partial /var/lib/apt/lists/partial \
+    && env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY apt-get -o Acquire::https::CaInfo=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem update \
+    && env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY apt-get -o Acquire::https::CaInfo=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem install -y \
+       python3 libpasswdqc pam0_passwdqc pam-config libstdc++6 libcrypto3 \
+    && apt-get clean
+CMD ["bash"]

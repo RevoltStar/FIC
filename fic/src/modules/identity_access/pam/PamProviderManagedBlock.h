@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <algorithm>
 #include <vector>
 
 // Step 7A: FIC-owned managed block for SHARED PAM provider configuration
@@ -36,7 +37,8 @@
 // * <id> is a canonical decimal mutation id (> 0, no leading zeros, no
 //   sign; the physical mutation id MUST equal the journal MutationRecord.id
 //   of the mutation that wrote the entry — ABA protection);
-// * the entry body is EXACTLY "<key> = <value>" (single line);
+// * assignment bodies are provider-specific canonical lines: passwdqc
+//   "<key>=<value>", other providers "<key> = <value>";
 // * the canonical structural portion admits NOTHING else: no blank lines,
 //   no comments, no unknown FIC-like markers;
 // * any line anywhere in the file mentioning the reserved "FIC_PAM_"-marker
@@ -128,7 +130,7 @@ inline bool pamProviderValueFreeOfControls(const std::string& value) {
         value.find('\0') == std::string::npos;
 }
 
-// Canonical entry body: "<key> = <value>". The single shared canonical
+// Canonical entry body: passwdqc uses "<key>=<value>"; other providers use "<key> = <value>". The single shared canonical
 // validator of the body grammar: used by the physical parser, the mutation
 // spec validation, the journal undo-payload validation and the ownership
 // expectations, so that no path can accept a body any other path would
@@ -136,8 +138,9 @@ inline bool pamProviderValueFreeOfControls(const std::string& value) {
 // NUL ('#' truncates PAM key-value parsing: such a value could never be
 // proven effective).
 inline std::string pamProviderEntryBody(const std::string& key,
-                                        const std::string& value) {
-    return key + " = " + value;
+                                        const std::string& value,
+                                        const std::string& provider = {}) {
+    return key + (provider == "pam_passwdqc" ? "=" : " = ") + value;
 }
 
 inline bool isValidPamProviderEntryValue(const std::string& value) {
@@ -152,13 +155,19 @@ inline bool isValidPamProviderEntryValue(const std::string& value) {
 
 inline bool parseCanonicalPamProviderEntryBody(const std::string& body,
                                                std::string& key,
-                                               std::string& value) {
-    const std::size_t separator = body.find(" = ");
+                                               std::string& value,
+                                               const std::string& provider = {}) {
+    const std::string delimiter = provider == "pam_passwdqc" ? "=" : " = ";
+    const std::size_t separator = body.find(delimiter);
     if (separator == std::string::npos) {
         return false;
     }
+    if (provider == "pam_passwdqc" &&
+        std::any_of(body.begin(), body.end(), [](unsigned char ch) {
+            return std::isspace(ch) != 0;
+        })) return false;
     key = body.substr(0, separator);
-    value = body.substr(separator + 3);
+    value = body.substr(separator + delimiter.size());
     return isValidPamProviderManagedKey(key) &&
         isValidPamProviderEntryValue(value);
 }
@@ -296,7 +305,7 @@ namespace fic::identity::pam {
 struct PamProviderManagedEntry {
     std::string policy;      // FIC policy identity token
     std::string managedKey;  // managed key (also the body prefix)
-    std::string body;        // exact canonical body line "<key> = <value>"
+    std::string body;        // exact provider-specific canonical assignment body
     std::uint64_t mutationId = 0; // physical mutation id == journal record id
     // Step 7E: typed body kind of the entry (assignment / enabled flag /
     // disabled flag sentinel). The ownership tuple (policy, key) is
@@ -451,7 +460,7 @@ struct PamProviderOwnershipExpectation {
     std::string provider;    // provider identity token of the block
     std::string policy;      // FIC policy identity token
     std::string managedKey;  // managed key
-    std::string body;        // canonical applied body "<key> = <value>"
+    std::string body;        // provider-specific canonical applied assignment body
     std::string previousBody; // canonical previous body; empty = fresh create
     std::uint64_t mutationId = 0; // journal MutationRecord.id
 };

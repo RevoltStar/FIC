@@ -113,7 +113,7 @@ struct RollbackExecutorDeps {
 // routing helper the apply path uses (pamProviderManagedEntryPlacement):
 // only a really managed ProviderConfigFile policy on the current platform
 // becomes Supported. A Debian 12 pwhistory ModuleArguments policy, an ALT
-// AltTcbManaged pwhistory policy and passwdqc stay outside; an unknown
+// AltTcbManaged pwhistory policy stays outside; an unknown
 // future PAM policy never receives a default-positive enrollment. Caller
 // and executor MUST use this one shared model (never two diverging
 // enrollment decisions).

@@ -53,7 +53,7 @@ struct PamProviderManagedEntryRequest {
         fic::platform::PamProviderKind::PamFaillock;
     std::string providerName;
     // Managed key and desired native value; the canonical entry body is
-    // "<managedKey> = <nativeValue>".
+    // provider-specific: passwdqc "<managedKey>=<nativeValue>", otherwise spaced.
     std::string managedKey;
     std::string nativeValue;
     // Shared provider primary configuration path.
@@ -77,8 +77,9 @@ struct PamProviderManagedEntryRequest {
 // nine pam_pwquality scalars; Step 7D: pam_pwhistory password_history_depth
 // on the ProviderConfigFile + PamAuthUpdate platforms — Debian 12
 // ModuleArguments and ALT AltTcbManaged pwhistory stay on their existing
-// Step 6/legacy paths). Everything else (module-argument policies, flags —
-// even_deny_root and enforce_for_root stay Step 7E — pam_passwdqc/ALT
+// Step 6/legacy paths; passwdqc has six StaticVerifyOnly assignments).
+// Everything else (module-argument policies, flags —
+// even_deny_root and enforce_for_root stay Step 7E — unsupported
 // topology paths, tally/tally2/cracklib/pam_unix remember) stays on the
 // existing legacy path.
 // THIN WRAPPER: the decision is fully delegated to
@@ -111,6 +112,7 @@ bool usesPamProviderManagedEntry(
 //     + ProviderConfigFile + PamAuthUpdate              → Beginning
 //     (upstream pam_modutil_search_key FIRST-MATCH semantics: the FIC BOF
 //     entry outranks every later foreign remember assignment).
+//   * PamPasswdqc + six assignment features + StaticVerifyOnly → End.
 // Everything else → nullopt.
 std::optional<PamProviderBlockPlacementRequest> pamProviderManagedEntryPlacement(
     const PamProviderDescriptor& provider,

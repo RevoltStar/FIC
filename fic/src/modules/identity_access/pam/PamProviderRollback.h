@@ -178,7 +178,7 @@ const char* pamProviderManagedFeaturePolicyName(
 // so a nullopt capability-level configTopology is the NORMAL routed shape
 // (explicit capability.configTopology is only an override, see
 // validatePamProviderConfigTopology). ProviderConfigFile-shaped
-// capabilities WITHOUT a managed route (ALT passwdqc, ALT AltTcbManaged
+// capabilities WITHOUT a managed route (ALT AltTcbManaged
 // pwhistory) are never enumerated.
 std::optional<std::filesystem::path> pamProviderManagedPrimaryPath(
     const fic::platform::PamCapabilityConfig& capability);

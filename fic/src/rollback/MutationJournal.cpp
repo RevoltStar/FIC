@@ -458,7 +458,7 @@ bool validatePamProviderManagedEntryUndoPayload(
     std::string appliedKey;
     std::string appliedValue;
     if (!parseCanonicalPamProviderEntryBody(payload.appliedBody, appliedKey,
-                                            appliedValue) ||
+                                            appliedValue, payload.providerName) ||
         appliedKey != payload.managedKey) {
         error = "remove_pam_provider_managed_entry undo requires a "
                 "canonical applied body of exactly the managed key";
@@ -471,7 +471,7 @@ bool validatePamProviderManagedEntryUndoPayload(
         std::string previousKey;
         std::string previousValue;
         if (!parseCanonicalPamProviderEntryBody(
-                payload.previousAppliedBody, previousKey, previousValue) ||
+                payload.previousAppliedBody, previousKey, previousValue, payload.providerName) ||
             previousKey != payload.managedKey ||
             payload.previousAppliedBody == payload.appliedBody) {
             error = "remove_pam_provider_managed_entry undo requires an "

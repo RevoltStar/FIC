@@ -152,15 +152,16 @@ bool parseBlockBeginMarker(const std::string& line,
 }
 
 // Canonical entry body parse via the SINGLE shared canonical validator
-// (exact "<key> = <value>" with a valid key and a trimmed value free of
+// (provider-specific assignment with a valid key and a trimmed value free of
 // '#', CR, LF and NUL). Anything deviating from the canonical serialization
 // FIC renders fails closed.
-bool parseEntryBody(const std::string& line,
+bool parseEntryBody(const std::string& provider,
+                    const std::string& line,
                     std::string& key,
                     std::string& body,
                     std::string& error) {
     std::string value;
-    if (!parseCanonicalPamProviderEntryBody(line, key, value)) {
+    if (!parseCanonicalPamProviderEntryBody(line, key, value, provider)) {
         error = "строка внутри FIC PAM provider entry не является canonical "
                 "assignment: " + line;
         return false;
@@ -314,7 +315,10 @@ bool validateEntrySpec(const PamProviderEntrySpec& spec,
     }
     // Shared canonical value rule (same validator the physical parser and
     // the journal payload validation use).
-    if (!isValidPamProviderEntryValue(spec.value)) {
+    std::string canonicalKey, canonicalValue;
+    if (!parseCanonicalPamProviderEntryBody(
+            pamProviderEntryBody(spec.managedKey, spec.value, spec.provider),
+            canonicalKey, canonicalValue, spec.provider)) {
         error = "invalid managed value for FIC PAM managed entry " +
             spec.managedKey;
         return false;
@@ -349,15 +353,17 @@ namespace {
 // and the DISABLED flag sentinel body — in every case with EXACTLY the
 // expectation's managed key (never a prefix compare).
 bool ownershipBodyMatchesKey(const std::string& body,
-                             const std::string& managedKey) {
+                             const std::string& managedKey,
+                             const std::string& provider) {
     if (!isValidPamProviderManagedKey(managedKey)) {
         return false;
     }
     std::string parsedKey;
     std::string parsedValue;
-    if (parseCanonicalPamProviderEntryBody(body, parsedKey, parsedValue)) {
+    if (parseCanonicalPamProviderEntryBody(body, parsedKey, parsedValue, provider)) {
         return parsedKey == managedKey;
     }
+    if (provider == "pam_passwdqc") return false;
     if (body == managedKey) {
         return true;
     }
@@ -384,14 +390,14 @@ bool validateOwnershipExpectation(
     // prefix compare: "deny_extra = 5" must never validate against
     // managedKey "deny".
     if (!ownershipBodyMatchesKey(expectation.body,
-                                 expectation.managedKey)) {
+                                 expectation.managedKey, expectation.provider)) {
         error = "FIC PAM ownership expectation requires a canonical "
                 "applied body of exactly the managed key";
         return false;
     }
     if (!expectation.previousBody.empty()) {
         if (!ownershipBodyMatchesKey(expectation.previousBody,
-                                     expectation.managedKey) ||
+                                     expectation.managedKey, expectation.provider) ||
             expectation.previousBody == expectation.body) {
             error = "FIC PAM ownership expectation requires a canonical "
                     "previous body of the same managed key, different from "
@@ -749,7 +755,7 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
             // as the body line of an entry inside the block (it is the
             // FIC-owned inert disabled-state anchor).
             std::string sentinelKey;
-            if (insideBlock && insideEntry && !entryBodySeen &&
+            if (provider != "pam_passwdqc" && insideBlock && insideEntry && !entryBodySeen &&
                 parseCanonicalPamProviderFlagDisabledBody(
                     physicalLineContent(lines[index]), sentinelKey)) {
                 current.managedKey = sentinelKey;
@@ -782,7 +788,7 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
             // Step 7A grammar), exact bare managed key (enabled flag) — the
             // disabled sentinel was handled in the reserved-namespace
             // branch above.
-            if (parseEntryBody(bodyLine, parsedKey, parsedBody,
+            if (parseEntryBody(provider, bodyLine, parsedKey, parsedBody,
                                result.error)) {
                 current.managedKey = parsedKey;
                 current.body = parsedBody;
@@ -790,7 +796,7 @@ PamProviderBlockParseResult parsePamProviderManagedBlock(
                 entryBodySeen = true;
                 continue;
             }
-            if (isValidPamProviderManagedKey(bodyLine)) {
+            if (provider != "pam_passwdqc" && isValidPamProviderManagedKey(bodyLine)) {
                 current.managedKey = bodyLine;
                 current.body = bodyLine;
                 current.kind = PamProviderManagedEntryKind::FlagEnabled;
@@ -1019,7 +1025,7 @@ PamProviderMutationResult setPamProviderManagedEntry(
 
     std::vector<PamProviderManagedEntry> entries = parse.view.entries;
     const std::string newBody =
-        pamProviderEntryBody(spec.managedKey, spec.value);
+        pamProviderEntryBody(spec.managedKey, spec.value, spec.provider);
     PamProviderManagedEntry* existing = nullptr;
     for (PamProviderManagedEntry& entry : entries) {
         if (entry.policy == spec.policy &&

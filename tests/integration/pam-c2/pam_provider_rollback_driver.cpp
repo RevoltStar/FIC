@@ -13,9 +13,17 @@
 #include "modules/identity_access/pam/PamProviderManagedFlagExecutor.h"
 #include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include "modules/identity_access/pam/PamProviderRollback.h"
+#include "modules/identity_access/pam/PasswdqcConfigFile.h"
+#include "modules/identity_access/pam/PamCapabilityVerifier.h"
+#include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
+#include "modules/identity_access/pam/PamConfiguration.h"
+#include "modules/identity_access/pam/PamProviderManagedLock.h"
+#include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "platform/PlatformProfile.h"
 #include "rollback/MutationJournal.h"
 
+#include <fic/core/fs/AtomicFileWriter.h>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -96,6 +104,8 @@ struct Context {
         std::string error;
         std::filesystem::create_directories(
             std::filesystem::path(kJournalPath).parent_path());
+        PamProviderManagedLock::setLockFilePathForTests(
+            std::filesystem::path(kJournalPath).parent_path() / "managed-provider.lock");
         if (!journal.initializeOrLoad(error)) {
             std::cerr << "journal init failed: " << error << "\n";
             std::exit(2);
@@ -177,6 +187,19 @@ bool verifyEffectiveEntry(const Context& context,
                           const std::string& key,
                           const std::string& expectedNativeValue,
                           std::string& error) {
+    if (capability.provider == fp::PamProviderKind::PamPasswdqc) {
+        if (!PasswdqcConfigFile::hasEffectiveValue(capability.configPath,
+                key, expectedNativeValue, error)) return false;
+        PamConfiguration configuration(context.profile.pam);
+        PamCapabilityVerification proof;
+        if (!PamCapabilityVerifier::verify(configuration, context.profile.pam,
+                scopeConfig(context.profile.pam, capability.scope)->services,
+                capability.capability, capability.provider, proof)) {
+            error = formatPamCapabilityVerification(proof); return false;
+        }
+        return PamProviderSemanticVerifier::verifyOption(proof.inspection,
+            capability, key, expectedNativeValue, error);
+    }
     const std::string content = readFile(capability.configPath);
     const std::vector<std::string> occurrences =
         activeOccurrences(content, key);
@@ -277,10 +300,32 @@ int cmdApply(Context& context, const std::string& providerName,
     request.placement = placement;
     request.absentDecision =
         pamProviderAbsentContainerDecision(*descriptor);
+    // Integration-only fault injection over production atomic/CAS primitives.
+    const char* faultValue = std::getenv("FIC_PROVIDER_GATE_FAULT");
+    const std::string fault = faultValue ? faultValue : "";
+    if (fault == "primary-cas") {
+        AtomicFileWriter::setPreInstallHookForTests(
+            [path = capability->configPath.string()](const std::string& target) {
+                if (target == path) {
+                    std::ofstream admin(path, std::ios::app); admin << "# concurrent admin\n";
+                }
+            });
+    }
+    if (fault == "primary-fsync" || fault == "journal-fsync") {
+        const std::string target = fault == "primary-fsync"
+            ? capability->configPath.string() : kJournalPath;
+        AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [target](const std::string& path) { return path != target; });
+    }
     PamProviderManagedEntryOutcome outcome;
     if (!PamProviderManagedEntryExecutor::apply(
             request, context.journal,
             [&](const std::string& expectedNativeValue, std::string& error) {
+                if (fault == "semantic") { error = "injected post-write semantic failure"; return false; }
+                if (fault == "applied-fsync") {
+                    AtomicFileWriter::setDirectoryFsyncHookForTests(
+                        [](const std::string& path) { return path != kJournalPath; });
+                }
                 return verifyEffectiveEntry(context, *capability, placement,
                                             binding->option,
                                             expectedNativeValue, error);
@@ -444,6 +489,12 @@ int cmdDisableFlag(Context& context, const std::string& providerName,
 
 int cmdRelease(Context& context, PamProviderPackageRelease::Mode mode) {
     PamProviderPackageRelease::Options options;
+    options.lockFilePath = PamProviderManagedLock::lockFilePath();
+    if (const char* fault = std::getenv("FIC_PROVIDER_GATE_FAULT");
+        fault && std::string(fault) == "journal-fsync") {
+        AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [](const std::string& path) { return path != kJournalPath; });
+    }
     PamProviderPackageRelease release(context.journal, context.profile.pam,
                                       options);
     PamProviderPackageRelease::Report report;
@@ -481,6 +532,12 @@ int main(int argc, char** argv) {
     }
     Context context;
     const std::string command = argv[1];
+    if (command == "hold-lock" && argc == 2) {
+        PamProviderManagedLock::Handle lock; std::string error;
+        if (!PamProviderManagedLock::tryAcquire(lock, error)) return 1;
+        std::cout << "locked" << std::endl;
+        std::cin.get(); return 0;
+    }
     if (command == "report" && argc == 2) {
         return cmdReport(context);
     }

@@ -2,29 +2,32 @@
 
 ## Current base
 
-* main; task base 067e887. This snapshot accompanies the FSTAB enrollment commit.
+* main; task base f392306. Snapshot accompanies passwdqc rollback commit.
 
 ## Current task
 
-* Completed explicit non-reverting rollback enrollment for the 11 OSS/Fstab policies registered in daemon/main_function.cpp.
+* Completed managed-provider rollback for all six ALT passwdqc assignment policies.
 
 ## Accepted architecture / invariants
 
-* Known FSTAB policies are NotEnrolled: disabling or removing FIC preserves /etc/fstab and current mount parameters.
-* Unknown OSS/Fstab policy is Unsupported (fail-closed). No apply/FSTAB implementation or other rollback contracts changed.
+* ProviderConfigFile + PamPasswdqc + StaticVerifyOnly uses shared managed-entry executor and EOF placement. Enrollment, orphan guards and package release share typed routing and canonical policy mapping.
+* Only pam_passwdqc serializes/parses key=value; other providers retain strict spaced assignments. Journal bodies and ownership proofs use the same provider identity. No schema migration/second rollback engine.
+* Missing primary remains fail-closed; no automatic creation. Rollback releases proven ownership and preserves current foreign bytes/values. Production capability/semantic postcondition remains mandatory.
 
 ## Completed / changed areas
 
-* RollbackExecutor.cpp: exact whitelist of 11 existing policies.
-* RollbackExecutorTests.cpp: static/contextual enrollment and disable behavior for all 11 and an unknown future policy.
-* docs/rollback.md: explicit lifecycle contract.
+* Managed block/parser/spec, entry executor, canonical policy mapping and journal validation extended; pwquality root flag route and other existing PAM contracts preserved.
+* Six-policy lifecycle/enrollment/strict journal regression tests; package primary enumeration and malformed passwdqc preflight updated.
+* Dedicated native ALT gate/probe/runtime Dockerfile, existing production driver extended with capability/semantic proof and integration-only fault injection. docs/rollback.md updated.
 
 ## Validation
 
-* Debian12 container: cmake --build /build --target rollback_executor_tests -j2 PASS; ctest --test-dir /build -R '^rollback_executor_tests$' --output-on-failure PASS (1/1).
-* Build log: build-prelogin-validation/final/fstab-rollback-build.log.
-* git diff --check PASS.
+* Debian12 full build PASS; final directly affected tests 8/8 PASS. Related selection 31/32 as root, with journal suite subsequently PASS under UID65534.
+* Full CTest excluding separately checked root-sensitive journal suite: 169/170 initially; sole Git safe.directory infrastructure failure rerun PASS. All 171 distinct tests passed with suitable invocations; initial broad CTest exit was nonzero.
+* Native ALT builder and clean runtime: six native parser/effective/rollback tests, joint/reverse order, config= before/after, refresh, byte preservation, ABA/drift/duplicate/orphan, CAS/shared lock, Prepared/Applied/primary fsync recovery, partial release retry PASS. Real read-only-primary atomic write failure PASS in both.
+* bash -n gate and git diff --check PASS. Evidence/report: build-prelogin-validation/passwdqc-alt/REPORT.md; logs/matrices retained outside deleted containers.
 
-## Remaining
+## Remaining / limitations
 
-* No remaining task work. No real policy apply, host mount changes or native package removal performed; scope is enrollment and regression checks.
+* Native libpasswdqc parser and production PAM capability/semantic inspection verified; no real password-change conversation or host policy apply performed.
+* Two ALT p11 environments, not a multi-release ALT matrix. Builder/runtime pam-config versions differ; see evidence. Gate runner requires native libpasswdqc-devel in builder.

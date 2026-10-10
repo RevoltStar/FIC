@@ -708,7 +708,7 @@ PamProviderRollbackResult undoFlagUnlocked(
 // (pamProviderContainerRollbackRouteForPayload) and the managed primary
 // enumeration (pamProviderManagedPrimaryPath) — the two domain models can
 // never drift apart (e.g. ALT p11: faillock is a managed ProviderConfigFile
-// domain, while passwdqc and the AltTcbManaged pwhistory stay outside it
+// domain, while AltTcbManaged pwhistory stays outside it
 // despite being ProviderConfigFile-shaped).
 bool capabilityHasManagedProviderRoute(
     const PamProviderDescriptor& descriptor,
@@ -762,6 +762,11 @@ pamProviderManagedPolicyNames() {
          fic::platform::PamPolicyFeature::PasswordMinDigits},
         {"password_min_other",
          fic::platform::PamPolicyFeature::PasswordMinOther},
+        {"passwdqc_strength_thresholds", fic::platform::PamPolicyFeature::PasswdqcStrengthThresholds},
+        {"passwdqc_passphrase_words", fic::platform::PamPolicyFeature::PasswdqcPassphraseWords},
+        {"passwdqc_match_length", fic::platform::PamPolicyFeature::PasswdqcMatchLength},
+        {"passwdqc_similar_password", fic::platform::PamPolicyFeature::PasswdqcSimilarPassword},
+        {"passwdqc_retry_count", fic::platform::PamPolicyFeature::PasswdqcRetryCount},
         {"password_history_depth",
          fic::platform::PamPolicyFeature::PasswordHistoryDepth},
         {"password_history_enforce_for_root",
@@ -888,7 +893,7 @@ std::optional<std::filesystem::path> pamProviderManagedPrimaryPath(
     // follow-up): a ProviderConfigFile capability is a managed primary ONLY
     // when its typed descriptor actually routes at least one managed policy
     // binding (pamProviderManagedEntryPlacement). Shared predicate (SSOT
-    // with pamProviderContainerRollbackRouteForPayload) — ALT passwdqc and
+    // with pamProviderContainerRollbackRouteForPayload) — unsupported routes and
     // the ALT AltTcbManaged pwhistory are never enumerated as managed
     // provider primaries.
     const PamProviderDescriptor descriptor =

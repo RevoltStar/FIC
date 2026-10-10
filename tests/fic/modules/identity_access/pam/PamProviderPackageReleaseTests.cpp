@@ -1147,13 +1147,9 @@ void testEmptyOrphanProviderBlockRejectedAtPreflight() {
             "Stage B must not mutate the journal");
 }
 
-// Step 7F security follow-up: the package provider domain is route-aware.
-// ALT-shaped platform: the managed faillock primary is scanned; the
-// passwdqc capability (ProviderConfigFile but NO managed Step 7 route) is
-// NOT part of the known provider primaries — even non-canonical
-// reserved-namespace bytes in its config must not fail (or otherwise
-// affect) the release, and its file stays byte-identical.
-void testUnmanagedAltCapabilityPathExcludedFromScan() {
+// ALT passwdqc primary participates in package scan: malformed reserved
+// markers fail preflight without writes, while clean foreign files survive.
+void testManagedAltPasswdqcPathScanned() {
     Harness harness;
     harness.platform.capabilities.clear();
     PamCapabilityConfig faillock;
@@ -1183,17 +1179,18 @@ void testUnmanagedAltCapabilityPathExcludedFromScan() {
                                       harness.options());
     PamProviderPackageRelease::Report report;
     std::string error;
-    require(release.run(PamProviderPackageRelease::Mode::Preflight, report,
-                        error),
-            "the unmanaged passwdqc path must not participate in the "
-            "provider primary scan: " + error);
+    require(!release.run(PamProviderPackageRelease::Mode::Preflight, report,
+                         error),
+            "malformed passwdqc managed namespace must refuse package release");
+    require(readFile(passwdqcPath) == foreignPasswdqc, "preflight changed passwdqc");
+    writeFile(passwdqcPath, "# admin\nmatch=2\n");
     require(release.run(PamProviderPackageRelease::Mode::Release, report,
                         error),
-            "clean ALT-shaped release with an unmanaged capability: " +
+            "clean ALT-shaped release including passwdqc: " +
                 error);
     require(!report.changedSystemState, "release mutates nothing");
-    require(readFile(passwdqcPath) == foreignPasswdqc,
-            "passwdqc.conf stays byte-identical");
+    require(readFile(passwdqcPath) == "# admin\nmatch=2\n",
+            "clean passwdqc.conf stays byte-identical");
     require(readFile(harness.configPath) == kForeign,
             "managed faillock primary stays byte-identical");
 }
@@ -1223,7 +1220,7 @@ int main() {
         testPreparedPreviousWrapperAuthorityAccepted();
         testIndependentActiveContainerStillProcessed();
         testEmptyOrphanProviderBlockRejectedAtPreflight();
-        testUnmanagedAltCapabilityPathExcludedFromScan();
+        testManagedAltPasswdqcPathScanned();
     } catch (const std::exception& error) {
         std::cerr << "PamProviderPackageReleaseTests failed: " << error.what()
                   << '\n';

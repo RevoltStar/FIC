@@ -810,6 +810,28 @@ void testNotEnrolledPolicyKeepsLegacyDisable() {
 // NotEnrolled lifecycle: disable stops future enforcement and preserves the
 // account aging state that exists at the moment of disable. No journal
 // provenance, no chage undo, no baseline exists for them by design.
+void testPasswdqcContextualEnrollment() {
+    RollbackExecutorDeps deps;
+    fic::platform::PamCapabilityConfig quality;
+    quality.capability = fic::platform::PamCapability::PasswordQuality;
+    quality.provider = fic::platform::PamProviderKind::PamPasswdqc;
+    quality.topology = fic::platform::PamTopologyStrategyKind::StaticVerifyOnly;
+    quality.configPath = "/etc/passwdqc.conf";
+    deps.pamPlatform.capabilities.push_back(quality);
+    for (const std::string& name : {"passwdqc_strength_thresholds",
+            "passwdqc_passphrase_words", "passwdqc_match_length",
+            "passwdqc_similar_password", "passwdqc_retry_count",
+            "password_quality_enforce_for_root"}) {
+        require(effectiveRollbackEnrollment({"IDENTITY_ACCESS", "PAM", name}, deps) ==
+                    RollbackEnrollment::Supported,
+                "ALT passwdqc policy must use shared managed enrollment: " + name);
+    }
+    deps.pamPlatform.capabilities.front().configurationMode =
+        fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
+    require(effectiveRollbackEnrollment({"IDENTITY_ACCESS", "PAM", "passwdqc_match_length"}, deps) ==
+                RollbackEnrollment::NotEnrolled, "module arguments must not mutate provider primary");
+}
+
 void testFstabNonRevertingLifecycle() {
     for (const std::string& name : {
              "fstab_tmp_profile",
@@ -3008,6 +3030,7 @@ int main(int argc, char** argv) {
     } tests[] = {
         {"enrollment matrix", testEnrollmentMatrix},
         {"FSTAB non-reverting lifecycle", testFstabNonRevertingLifecycle},
+        {"passwdqc contextual enrollment", testPasswdqcContextualEnrollment},
         {"USER_CREATION executor ownership release",
          testUserCreationExecutorOwnershipRelease},
         {"USER_CREATION Prepared previous-side rollback retry",

@@ -1004,7 +1004,7 @@ RollbackEnrollment effectiveRollbackEnrollment(const PolicyRef& policy,
             }
             // A known managed policy whose route is ABSENT on the current
             // platform (D12 pwhistory ModuleArguments, ALT pwhistory
-            // AltTcbManaged, passwdqc) keeps its legacy disable behavior:
+            // AltTcbManaged) keeps its legacy disable behavior:
             // NotEnrolled, never a disable-refusing Unsupported.
             return RollbackEnrollment::NotEnrolled;
         }
