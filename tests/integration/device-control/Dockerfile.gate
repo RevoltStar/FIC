@@ -1,0 +1,11 @@
+ARG BUILDER=fic-rpm-builder:alt-p11
+FROM ${BUILDER}
+USER root
+RUN if test -e /etc/altlinux-release; then \
+      sed -i 's,http:,https:,g' /etc/apt/sources.list.d/*.list && \
+      mkdir -p /var/cache/apt/archives/partial /var/lib/apt/lists/partial && \
+      apt-get -o Acquire::https::CaInfo=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem update && \
+      apt-get -o Acquire::https::CaInfo=/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem install -y ctest udev python3-modules-sqlite3 && apt-get clean; \
+    else \
+      apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libpam0g-dev udev && rm -rf /var/lib/apt/lists/*; \
+    fi

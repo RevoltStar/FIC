@@ -540,6 +540,15 @@ target_link_libraries(device_tree_snapshot_tests PRIVATE
 )
 add_test(NAME device_tree_snapshot_tests COMMAND device_tree_snapshot_tests)
 
+add_executable(device_category_policy_tests
+    fic-dick/device/DeviceCategoryPolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/device/DeviceTreeSnapshot.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/policy/DevicePolicyCompiler.cpp
+)
+target_include_directories(device_category_policy_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-dick/src)
+target_link_libraries(device_category_policy_tests PRIVATE fic-device-db fic-core fic-ipc)
+add_test(NAME device_category_policy_tests COMMAND device_category_policy_tests)
+
 add_executable(device_policy_compiler_tests
     fic-dick/policy/DevicePolicyCompilerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/policy/DevicePolicyCompiler.cpp
@@ -2680,7 +2689,7 @@ target_include_directories(device_incident_event_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/include
 )
 target_link_libraries(device_incident_event_tests PRIVATE
-    fic-core Threads::Threads)
+    fic-core fic-ipc Threads::Threads)
 add_test(NAME device_incident_event_tests COMMAND device_incident_event_tests)
 
 add_executable(device_incident_response_compat_tests
@@ -2851,6 +2860,7 @@ set(FIC_UNIT_TESTS
     session_identity_resolver_tests
     session_selection_tests
     device_tree_revision_tests
+    device_category_policy_tests
     device_tree_snapshot_tests
     device_policy_compiler_tests
     device_lifecycle_tests

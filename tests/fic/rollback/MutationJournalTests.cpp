@@ -586,7 +586,6 @@ void testStatusAndBackendStringRoundTrip() {
     for (const MutationBackend backend : {MutationBackend::Sysctl,
                                           MutationBackend::Sudo,
                                           MutationBackend::Firewall,
-                                          MutationBackend::DeviceControl,
                                           MutationBackend::UserCreation}) {
         MutationBackend parsed = MutationBackend::Sysctl;
         require(mutationBackendFromString(mutationBackendToString(backend), parsed),

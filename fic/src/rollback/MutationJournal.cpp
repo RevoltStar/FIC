@@ -213,9 +213,6 @@ json serializeUndoAction(const UndoAction& action) {
     } else if (const auto* firewallPolicy =
                    std::get_if<UndoRemoveFirewallPolicy>(&action.payload)) {
         value["policy"] = firewallPolicy->policyName;
-    } else if (const auto* feature =
-                   std::get_if<UndoDisableDeviceFeature>(&action.payload)) {
-        value["feature"] = feature->feature;
     } else if (const auto* grubSetting =
                    std::get_if<UndoRemoveGrubManagedSetting>(&action.payload)) {
         value["key"] = grubSetting->key;
@@ -1080,17 +1077,6 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
-    if (actionName == "disable_device_feature" &&
-        backend == MutationBackend::DeviceControl) {
-        UndoDisableDeviceFeature payload;
-        payload.feature = value.value("feature", "");
-        if (payload.feature.empty()) {
-            error = "disable_device_feature undo requires a feature";
-            return false;
-        }
-        action.payload = std::move(payload);
-        return true;
-    }
     if (actionName == "remove_grub_managed_setting" &&
         backend == MutationBackend::Grub) {
         UndoRemoveGrubManagedSetting payload;
@@ -1628,7 +1614,6 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::Sudo: return "sudo";
     case MutationBackend::Ssh: return "ssh";
     case MutationBackend::Firewall: return "firewall";
-    case MutationBackend::DeviceControl: return "device_control";
     case MutationBackend::Grub: return "grub";
     case MutationBackend::Sssd: return "sssd";
     case MutationBackend::Kerberos: return "kerberos";
@@ -1644,7 +1629,6 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "sudo") { backend = MutationBackend::Sudo; return true; }
     if (value == "ssh") { backend = MutationBackend::Ssh; return true; }
     if (value == "firewall") { backend = MutationBackend::Firewall; return true; }
-    if (value == "device_control") { backend = MutationBackend::DeviceControl; return true; }
     if (value == "grub") { backend = MutationBackend::Grub; return true; }
     if (value == "sssd") { backend = MutationBackend::Sssd; return true; }
     if (value == "kerberos") { backend = MutationBackend::Kerberos; return true; }
@@ -1674,9 +1658,6 @@ std::string undoActionTypeName(const UndoAction& action) {
     }
     if (std::holds_alternative<UndoRemoveFirewallPolicy>(action.payload)) {
         return "remove_firewall_policy";
-    }
-    if (std::holds_alternative<UndoDisableDeviceFeature>(action.payload)) {
-        return "disable_device_feature";
     }
     if (std::holds_alternative<UndoRemoveGrubManagedSetting>(action.payload)) {
         return "remove_grub_managed_setting";

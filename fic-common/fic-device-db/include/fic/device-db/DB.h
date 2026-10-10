@@ -25,10 +25,18 @@ struct DBOptions {
     bool lockDebugEnabled = true;
 };
 
+struct KnownDeviceIdentity {
+    std::string device_hash;
+    std::string subsystem;
+    std::map<std::string, std::string> attributes;
+};
+
 struct DeviceCategoryPolicyState {
-    bool block_usb_storage = false;
-    bool block_printers_scanners = false;
-    bool block_optical_drives = false;
+    std::string block_usb_storage = "disabled";
+    std::string block_printers_scanners = "disabled";
+    std::string block_optical_drives = "disabled";
+    std::map<std::string, std::int64_t> epochs;
+    std::map<std::string, std::vector<KnownDeviceIdentity>> known;
 };
 
 class ExclusivePidLock;

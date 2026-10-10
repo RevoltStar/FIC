@@ -31,7 +31,6 @@ enum class MutationBackend {
     Sudo,
     Ssh,
     Firewall,
-    DeviceControl,
     Grub,
     Sssd,
     Kerberos,
@@ -151,10 +150,6 @@ struct UndoRemoveIdentityLoginDefsManagedPolicy {
 
 struct UndoRemoveFirewallPolicy {
     std::string policyName;   // FIC-managed nftables policy table
-};
-
-struct UndoDisableDeviceFeature {
-    std::string feature;      // DC category-level desired state feature
 };
 
 // SSSD ownership-release payload for the FIC-owned drop-in
@@ -298,7 +293,6 @@ using UndoPayload = std::variant<
     UndoRemoveSshManagedPolicy,
     UndoRemoveUserCreationManagedPolicy,
     UndoRemoveFirewallPolicy,
-    UndoDisableDeviceFeature,
     UndoRemoveGrubManagedSetting,
     UndoRemoveSssdManagedSetting,
     UndoRestoreKerberosScalar,

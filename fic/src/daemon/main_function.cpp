@@ -265,32 +265,7 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
         }
 
         fic::rollback::RollbackExecutorDeps rollbackDeps =
-            fic::rollback::productionRollbackDeps(
-                platform, executables,
-                [&policyRegistry](const std::string& feature,
-                                  std::string& featureError) {
-                    auto enabled = [&](const std::string& name) {
-                        if (name == feature) {
-                            return false;
-                        }
-                        Policy* devicePolicy =
-                            getPolicyClass(policyRegistry, "DC", name);
-                        return devicePolicy != nullptr && devicePolicy->isEnabled();
-                    };
-                    const json response = fic::ipc::Client(
-                        fic::ipc::Endpoint::DeviceDaemon).request({
-                        {"command", "device_regenerate_policy"},
-                        {"block_usb_storage", enabled("block_usb_storage")},
-                        {"block_printers_scanners", enabled("block_printers_scanners")},
-                        {"block_optical_drives", enabled("block_optical_drives")}
-                    });
-                    if (!response.value("ok", false)) {
-                        featureError = response.value(
-                            "message", "unknown device daemon error");
-                        return false;
-                    }
-                    return true;
-                });
+            fic::rollback::productionRollbackDeps(platform, executables);
         rollbackDeps.pamManagerFactory =
             [&platform, &executables](
                 const fic::platform::PamCapabilityConfig& capability,

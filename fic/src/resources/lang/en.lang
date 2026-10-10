@@ -65,9 +65,9 @@
 [module:DC][policy:block_usb_storage]=Block USB storage
 [module:DC][policy:block_printers_scanners]=Block printers and scanners
 [module:DC][policy:block_optical_drives]=Block optical drives
-[module:DC][policy:block_usb_storage][description]=Blocks USB storage devices unless a more specific allowing rule is assigned to the concrete device.
-[module:DC][policy:block_printers_scanners][description]=Blocks USB printers and scanners unless a more specific allowing rule is assigned to the concrete device.
-[module:DC][policy:block_optical_drives][description]=Blocks optical drives unless a more specific allowing rule is assigned to the concrete device.
+[module:DC][policy:block_usb_storage][description]=all: absolute category deny. new: deny physical identities unknown at epoch start; explicit rules take priority. Disabling does not reconnect physically deactivated devices.
+[module:DC][policy:block_printers_scanners][description]=all: absolute category deny. new: deny physical identities unknown at epoch start; explicit rules take priority. Disabling does not reconnect physically deactivated devices.
+[module:DC][policy:block_optical_drives][description]=all: absolute category deny. new: deny physical identities unknown at epoch start; explicit rules take priority. Disabling does not reconnect physically deactivated devices.
 
 # Identity and access: PAM
 [module:IDENTITY_ACCESS][policy:password_min_length]=Minimum password length

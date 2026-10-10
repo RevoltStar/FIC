@@ -2,32 +2,36 @@
 
 ## Current base
 
-* main; task base f392306. Snapshot accompanies passwdqc rollback commit.
+* main; task base `76273c79781fd783c777b0577be316221d8c4270`.
+* Snapshot accompanies the completed DC new/all lifecycle commit; actual HEAD: `git log -1`.
 
 ## Current task
 
-* Completed managed-provider rollback for all six ALT passwdqc assignment policies.
+* Completed three DC category policies new/all and removed exclusive DC rollback.
 
 ## Accepted architecture / invariants
 
-* ProviderConfigFile + PamPasswdqc + StaticVerifyOnly uses shared managed-entry executor and EOF placement. Enrollment, orphan guards and package release share typed routing and canonical policy mapping.
-* Only pam_passwdqc serializes/parses key=value; other providers retain strict spaced assignments. Journal bodies and ownership proofs use the same provider identity. No schema migration/second rollback engine.
-* Missing primary remains fail-closed; no automatic creation. Rollback releases proven ownership and preserves current foreign bytes/values. Production capability/semantic postcondition remains mandatory.
+* all is absolute category DENY; explicit identity/placement precedes new; hierarchy/default follow. DISABLE removes category intent without deleting device rules or physical undo.
+* Schema 2 uses disabled/new/all and durable known identity/attribute snapshots independent of occurrence deletion. BEGIN IMMEDIATE + FULL synchronization captures epoch on disabled/all → new; identical new, restart/crash/reconnect/regeneration preserve epoch.
+* USB physical parent serial/vendor/product and block WWN/serial match safely in runtime/snapshot/compiler. Missing/unsafe identity cannot receive known exception. Partition/USB interface occurrence does not define a new physical identity.
+* DC.conf is authoritative; successful reload precedes full three-mode sync, including all DISABLE. Failed sync preserves config and pending desired revision for periodic/startup repair. Current-device enforcement uses current udev inventory and bounded existing sysfs backend; no global trigger.
+* Three known categories NotEnrolled, unknown DC policy Unsupported. Exclusive DeviceControl journal/undo/backend removed; other rollback contracts preserved.
 
 ## Completed / changed areas
 
-* Managed block/parser/spec, entry executor, canonical policy mapping and journal validation extended; pwquality root flag route and other existing PAM contracts preserved.
-* Six-policy lifecycle/enrollment/strict journal regression tests; package primary enumeration and malformed passwdqc preflight updated.
-* Dedicated native ALT gate/probe/runtime Dockerfile, existing production driver extended with capability/semantic proof and integration-only fault injection. docs/rollback.md updated.
+* Shared device DB/schema/category helpers; fic DC/orchestration; fic-dick collector, IPC/audit, effective policy, snapshot/compiler/enforcement; config/localization.
+* CMake/CI regressions and existing DC static/VM tests; reusable Docker/native gate.
+* `docs/device-control-validation.md` contains commands, tested image IDs, precedence/transition tables and evidence boundaries. `docs/rollback.md` and fic-dick README updated.
 
 ## Validation
 
-* Debian12 full build PASS; final directly affected tests 8/8 PASS. Related selection 31/32 as root, with journal suite subsequently PASS under UID65534.
-* Full CTest excluding separately checked root-sensitive journal suite: 169/170 initially; sole Git safe.directory infrastructure failure rerun PASS. All 171 distinct tests passed with suitable invocations; initial broad CTest exit was nonzero.
-* Native ALT builder and clean runtime: six native parser/effective/rollback tests, joint/reverse order, config= before/after, refresh, byte preservation, ABA/drift/duplicate/orphan, CAS/shared lock, Prepared/Applied/primary fsync recovery, partial release retry PASS. Real read-only-primary atomic write failure PASS in both.
-* bash -n gate and git diff --check PASS. Evidence/report: build-prelogin-validation/passwdqc-alt/REPORT.md; logs/matrices retained outside deleted containers.
+* Five distro Docker matrix PASS: ALT p11, Debian12/13, Ubuntu24.04/26.04. Each production build + 10/10 targeted tests + real CLI/IPC/SQLite fault/crash/periodic gates + native udev parser/matcher.
+* Debian12 full project build PASS; final full CTest 171/171 PASS excluding permission-sensitive mutation_journal_tests. Journal suite separately PASS UID65534.
+* Earlier process_cancellation cleanup assertion was flaky: isolated and final full reruns PASS; no unrelated ProcessExecutor changes.
+* git diff --check PASS.
 
-## Remaining / limitations
+## Remaining / limits
 
-* Native libpasswdqc parser and production PAM capability/semantic inspection verified; no real password-change conversation or host policy apply performed.
-* Two ALT p11 environments, not a multi-release ALT matrix. Builder/runtime pam-config versions differ; see evidence. Gate runner requires native libpasswdqc-devel in builder.
+* Physical hardware and real udevd/systemd reboot E2E untested. Activation/inventory fixtures are distinguished from native udevadm test, which does not execute RUN; sysfs writes occur only in test fixtures.
+* Reported device identifiers are not cryptographic authentication. Disabling/all → new does not reconnect physically deactivated devices; reconnect/rescan may be necessary.
+* No schema/config/journal migration or obsolete-format compatibility added.

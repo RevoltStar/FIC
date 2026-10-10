@@ -145,7 +145,7 @@ int main()
     assert(historySnapshot.entries.size() > currentSnapshot.entries.size());
 
     DeviceCategoryPolicyState categories;
-    categories.block_usb_storage = true;
+    categories.block_usb_storage = "all";
     assert(database.updateDeviceCategoryPolicyState(categories));
     const auto response = fic::device_control::device_tree_snapshot_response(
         database,
@@ -160,7 +160,7 @@ int main()
     assert((*currentJson)["parent_id"] == root.id);
     assert((*currentJson)["attributes"]["ID_BUS"] == "usb");
     assert((*currentJson)["effective_control_level"] == "blocked");
-    assert((*currentJson)["effective_source"] == "dc:block_usb_storage");
+    assert((*currentJson)["effective_source"] == "dc:block_usb_storage:all");
     assert(findJsonDevice(response, oldId) == nullptr);
 
     DeviceInfo identityOverride = current;
@@ -181,9 +181,8 @@ int main()
     const nlohmann::json* identityJson =
         findJsonDevice(identityResponse, currentId);
     assert(identityJson != nullptr);
-    assert((*identityJson)["effective_control_level"] == "permanent");
-    assert((*identityJson)["effective_source"] ==
-           "identity:" + std::to_string(identityOverrideId));
+    assert((*identityJson)["effective_control_level"] == "blocked");
+    assert((*identityJson)["effective_source"] == "dc:block_usb_storage:all");
     assert(findJsonDevice(identityResponse, identityOverrideId) == nullptr);
 
     const auto historyResponse = fic::device_control::device_tree_snapshot_response(

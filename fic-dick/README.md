@@ -61,28 +61,40 @@ Read-only команда `device_tree_revision` возвращает целоч�
 изменилось.
 
 Общие настройки DC (`block_usb_storage`, `block_printers_scanners`,
-`block_optical_drives`) применяются к устройствам при их подключении или
-переподключении. Они намеренно не отключают устройства, которые уже были
-подключены в момент изменения настройки администратором.
+`block_optical_drives`) имеют select value `all` (default) или `new` и
+независимый статус `ENABLE`/`DISABLE`. `fic` передаёт все три эффективных режима
+(`disabled`/`new`/`all`) одним root-authenticated IPC request. После успешного
+registry reload startup/periodic и административные операции выполняют этот
+reconcile, даже если все три политики DISABLE. Ошибка sync не отменяет уже
+сохранённую конфигурацию; последующий проход повторяет desired state.
 
-Каждая из этих политик имеет фиксированное внутреннее значение `true`;
-единственным переключателем поведения является ее статус `ENABLE`/`DISABLE`.
-После изменения статуса `fic` синхронно передает полное состояние категорий в
-device API. `fic-dick` сохраняет его в `device_policy_state`, после чего
-compiler читает desired policy только из SQLite.
+Вход в `new` из disabled/all транзакционно сохраняет долговечный snapshot
+identities и увеличивает epoch. `new` → `new`, restart, reboot, regeneration
+и reconnect эпоху не сбрасывают. Snapshot переживает удаление occurrences.
+Известность определяется физическими serial/vendor/product или WWN;
+USB interface использует физического родителя. Неполные/небезопасные identity
+attributes не дают known exception; filesystem/partition UUID не заменяет
+physical identity. Это модель сообщаемых устройством identifiers, без
+криптографической аутентификации USB descriptors.
+
+`all` охватывает подключённые устройства: после публикации rules daemon читает
+актуальный udev inventory и выполняет ограниченный sysfs DENY только для
+соответствующей категории, проверяя результат. Глобальный trigger не нужен.
+Неподтверждённый enforcement возвращает ошибку и не подтверждает active revision.
+Переход к new/DISABLE не отменяет физическую деактивацию: нужен reconnect/rescan.
 
 ## Компиляция и активация policy
 
 `DevicePolicyCompiler` читает один snapshot `devices.db` и детерминированно
 генерирует `/etc/udev/rules.d/99-fic-devices.rules`. Приоритет решения:
 
-1. direct identity для `ignore_hierarchy=true`;
-2. direct placement по точному `ENV{DEVPATH}`;
-3. категорийная DC policy;
+1. абсолютный category `all` DENY;
+2. direct identity для `ignore_hierarchy=true`, затем direct placement;
+3. category `new` DENY для неизвестной epoch identity;
 4. ближайший explicit `children_control` предка;
 5. global default `ALLOW`.
 
-`PERMANENT` и `IGNORE` разрешают подключение; `PERMANENT` дополнительно
+`PERMANENT` и `IGNORE` разрешают подключение после проверки category `all`; `PERMANENT` дополнительно
 проверяется daemon при исчезновении identity. `IGNORE` не распространяется на
 потомков. Для `children_control=inherit` правило не генерируется.
 
@@ -205,7 +217,7 @@ Udev event stream не является единственным источни�
 текущего udev/sysfs inventory. Поэтому потеря runtime event во время downtime
 или overflow восстанавливается full reconciliation.
 
-Изменение policy не деактивирует уже подключённое устройство. Новый generated
+Изменение явной per-device policy не деактивирует уже подключённое устройство. Category `all` имеет отдельный проверяемый enforcement для подключённых устройств. Новый generated
 файл гарантированно используется при следующем подходящем `add/change`.
 
 ## Режим check-permanent
@@ -389,7 +401,7 @@ Unit вызывает:
 Существующая база идентифицируется через SQLite `application_id=0x46494344`, а
 версия схемы хранится в `user_version`. Схема поддерживает `children_control` и
 `device_policy_state` с desired/active revisions и статусами DC-категорий.
-Schema 1 является первой и единственной поддерживаемой версией. Команда
+Поддерживается schema 2 с режимами категорий и долговечными epoch snapshots. Прежняя boolean schema 1 отклоняется без миграции. Команда
 `fic-dick --maintenance initialize-db` создаёт отсутствующую или пустую базу
 сразу с полным текущим layout, metadata и baseline rows. Существующая непустая
 база не изменяется и принимается только при точном совпадении `application_id`,

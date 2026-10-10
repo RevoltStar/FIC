@@ -80,13 +80,22 @@ constexpr const char* SCHEMA_SQL =
     "    id INTEGER PRIMARY KEY CHECK(id = 1),"
     "    desired_revision INTEGER NOT NULL DEFAULT 0,"
     "    active_revision INTEGER NOT NULL DEFAULT 0,"
-    "    block_usb_storage BOOLEAN NOT NULL DEFAULT 0,"
-    "    block_printers_scanners BOOLEAN NOT NULL DEFAULT 0,"
-    "    block_optical_drives BOOLEAN NOT NULL DEFAULT 0"
+    "    block_usb_storage TEXT NOT NULL DEFAULT 'disabled' CHECK(block_usb_storage IN ('disabled','new','all')),"
+    "    block_printers_scanners TEXT NOT NULL DEFAULT 'disabled' CHECK(block_printers_scanners IN ('disabled','new','all')),"
+    "    block_optical_drives TEXT NOT NULL DEFAULT 'disabled' CHECK(block_optical_drives IN ('disabled','new','all')),"
+    "    usb_epoch INTEGER NOT NULL DEFAULT 0,"
+    "    printers_epoch INTEGER NOT NULL DEFAULT 0,"
+    "    optical_epoch INTEGER NOT NULL DEFAULT 0"
     ");"
-    "INSERT OR IGNORE INTO device_policy_state "
-    "(id, desired_revision, active_revision, block_usb_storage, "
-    "block_printers_scanners, block_optical_drives) VALUES (1, 0, 0, 0, 0, 0);"
+    "INSERT OR IGNORE INTO device_policy_state (id) VALUES (1);"
+    // Independent of occurrences: deleting inventory cannot erase epoch membership.
+    "CREATE TABLE category_known_identities ("
+    "category TEXT NOT NULL, device_hash TEXT NOT NULL, subsystem TEXT NOT NULL,"
+    "PRIMARY KEY(category,device_hash,subsystem));"
+    "CREATE TABLE category_known_attributes ("
+    "category TEXT NOT NULL, device_hash TEXT NOT NULL, subsystem TEXT NOT NULL,"
+    "attribute_name TEXT NOT NULL, attribute_value TEXT NOT NULL,"
+    "PRIMARY KEY(category,device_hash,subsystem,attribute_name));"
     "CREATE TRIGGER IF NOT EXISTS device_tree_revision_devices_insert "
     "AFTER INSERT ON devices BEGIN "
     "    UPDATE device_tree_state SET revision = revision + 1 WHERE id = 1;"
@@ -239,7 +248,7 @@ bool hasExpectedApplicationTables(sqlite3* database, std::string& error) {
     }
     std::set<std::string> required = {
         "devices", "device_attributes", "device_events", "device_tree_state",
-        "device_policy_state"
+        "device_policy_state", "category_known_identities", "category_known_attributes"
     };
     if (actual != required) {
         error = "device database contains a missing or unknown application table";
@@ -304,7 +313,14 @@ bool hasExpectedTableLayout(sqlite3* database, std::string& error) {
         }, error) &&
         tableHasExactColumns(database, "device_policy_state", {
             "id", "desired_revision", "active_revision", "block_usb_storage",
-            "block_printers_scanners", "block_optical_drives"
+            "block_printers_scanners", "block_optical_drives",
+            "usb_epoch", "printers_epoch", "optical_epoch"
+        }, error) &&
+        tableHasExactColumns(database, "category_known_identities", {
+            "category", "device_hash", "subsystem"
+        }, error) &&
+        tableHasExactColumns(database, "category_known_attributes", {
+            "category", "device_hash", "subsystem", "attribute_name", "attribute_value"
         }, error);
 }
 
@@ -706,7 +722,7 @@ bool DB::initializeDatabase() {
                 std::to_string(fic::version::DEVICE_DB_APPLICATION_ID) + ";" +
             "PRAGMA user_version=" +
                 std::to_string(fic::version::DEVICE_DB_SCHEMA_VERSION) + ";";
-        if (!executeSql(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", lastError_) ||
+        if (!executeSql(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;", lastError_) ||
             !executeSql(db, "BEGIN IMMEDIATE;", lastError_) ||
             !executeSql(db, SCHEMA_SQL, lastError_) ||
             !executeSql(db, INDEX_SQL, lastError_) ||
@@ -725,7 +741,7 @@ bool DB::initializeDatabase() {
         log("Device database schema verification failed: " + lastError_, logLevel::FATAL);
         return false;
     }
-    if (!executeSql(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;", lastError_)) {
+    if (!executeSql(db, "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;", lastError_)) {
         log("Failed to configure device database runtime pragmas: " + lastError_, logLevel::FATAL);
         return false;
     }
@@ -942,21 +958,11 @@ bool DB::getDeviceTreeSnapshot(int rootId,
                     std::string(sqlite3_errmsg(db)));
     }
 
-    if (sqlite3_prepare_v2(db,
-            "SELECT block_usb_storage,block_printers_scanners,"
-            "block_optical_drives FROM device_policy_state WHERE id = 1",
-            -1, &statement, nullptr) != SQLITE_OK) {
-        return fail("failed to prepare category policy snapshot: " +
-                    std::string(sqlite3_errmsg(db)));
+    try {
+        candidate.categoryPolicy = getDeviceCategoryPolicyState();
+    } catch (const std::exception& exception) {
+        return fail(exception.what());
     }
-    if (sqlite3_step(statement) != SQLITE_ROW) {
-        sqlite3_finalize(statement);
-        return fail("device category policy state is missing");
-    }
-    candidate.categoryPolicy.block_usb_storage = sqlite3_column_int(statement, 0) != 0;
-    candidate.categoryPolicy.block_printers_scanners = sqlite3_column_int(statement, 1) != 0;
-    candidate.categoryPolicy.block_optical_drives = sqlite3_column_int(statement, 2) != 0;
-    sqlite3_finalize(statement);
 
     if (!executeSql(db, "COMMIT;", error)) {
         return fail("failed to commit device tree snapshot: " + error);
@@ -1009,40 +1015,97 @@ bool DB::setActivePolicyRevision(std::int64_t revision)
 
 DeviceCategoryPolicyState DB::getDeviceCategoryPolicyState()
 {
-    const char* sql =
-        "SELECT block_usb_storage, block_printers_scanners, block_optical_drives "
-        "FROM device_policy_state WHERE id = 1";
-    sqlite3_stmt* stmt = nullptr;
-    DeviceCategoryPolicyState state;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) == SQLITE_OK &&
-        sqlite3_step(stmt) == SQLITE_ROW) {
-        state.block_usb_storage = sqlite3_column_int(stmt, 0) != 0;
-        state.block_printers_scanners = sqlite3_column_int(stmt, 1) != 0;
-        state.block_optical_drives = sqlite3_column_int(stmt, 2) != 0;
+    sqlite3_stmt* statement = nullptr;
+    const auto text = [](sqlite3_stmt* row, int column) -> std::string {
+        const auto* value = sqlite3_column_text(row, column);
+        return value ? reinterpret_cast<const char*>(value) : "";
+    };
+    const auto prepare = [&](const char* sql) {
+        if (sqlite3_prepare_v2(db, sql, -1, &statement, nullptr) != SQLITE_OK)
+            throw std::runtime_error("cannot read category state: " + std::string(sqlite3_errmsg(db)));
+    };
+    prepare("SELECT block_usb_storage,block_printers_scanners,block_optical_drives,"
+            "usb_epoch,printers_epoch,optical_epoch FROM device_policy_state WHERE id=1");
+    if (sqlite3_step(statement) != SQLITE_ROW) {
+        sqlite3_finalize(statement);
+        throw std::runtime_error("category state is missing");
     }
-    sqlite3_finalize(stmt);
+    DeviceCategoryPolicyState state;
+    state.block_usb_storage = text(statement, 0);
+    state.block_printers_scanners = text(statement, 1);
+    state.block_optical_drives = text(statement, 2);
+    const char* categories[] = {"block_usb_storage", "block_printers_scanners", "block_optical_drives"};
+    const std::string modes[] = {state.block_usb_storage, state.block_printers_scanners, state.block_optical_drives};
+    for (int i = 0; i < 3; ++i) {
+        state.epochs[categories[i]] = sqlite3_column_int64(statement, i + 3);
+        if (sqlite3_column_type(statement, i + 3) != SQLITE_INTEGER ||
+            state.epochs[categories[i]] < 0 || (modes[i] == "new" && state.epochs[categories[i]] == 0)) {
+            sqlite3_finalize(statement);
+            throw std::runtime_error("invalid category epoch in database");
+        }
+        if (modes[i] != "disabled" && modes[i] != "new" && modes[i] != "all") {
+            sqlite3_finalize(statement);
+            throw std::runtime_error("invalid category mode in database");
+        }
+    }
+    sqlite3_finalize(statement);
+    prepare("SELECT k.category,k.device_hash,k.subsystem,a.attribute_name,a.attribute_value "
+            "FROM category_known_identities k LEFT JOIN category_known_attributes a "
+            "USING(category,device_hash,subsystem) ORDER BY k.category,k.device_hash,k.subsystem,a.attribute_name");
+    int step;
+    while ((step = sqlite3_step(statement)) == SQLITE_ROW) {
+        auto& identities = state.known[text(statement, 0)];
+        const auto hash = text(statement, 1), subsystem = text(statement, 2);
+        if (identities.empty() || identities.back().device_hash != hash || identities.back().subsystem != subsystem)
+            identities.push_back({hash, subsystem, {}});
+        if (sqlite3_column_type(statement, 3) != SQLITE_NULL)
+            identities.back().attributes.emplace(text(statement, 3), text(statement, 4));
+    }
+    sqlite3_finalize(statement);
+    if (step != SQLITE_DONE) throw std::runtime_error("cannot read epoch identities");
     return state;
 }
 
 bool DB::updateDeviceCategoryPolicyState(const DeviceCategoryPolicyState& state)
 {
-    const char* sql =
-        "UPDATE device_policy_state SET "
-        "desired_revision = desired_revision + CASE WHEN "
-        "block_usb_storage != ?1 OR block_printers_scanners != ?2 OR "
-        "block_optical_drives != ?3 THEN 1 ELSE 0 END, "
-        "block_usb_storage = ?1, block_printers_scanners = ?2, "
-        "block_optical_drives = ?3 WHERE id = 1";
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-        return false;
+    const std::string modes[] = {state.block_usb_storage, state.block_printers_scanners, state.block_optical_drives};
+    for (const auto& mode : modes)
+        if (mode != "disabled" && mode != "new" && mode != "all") return false;
+    // Serializes epoch capture against concurrent inventory writes on every connection.
+    if (!executeSql(db, "BEGIN IMMEDIATE", lastError_)) return false;
+    const auto fail = [&]() { std::string ignored; executeSql(db, "ROLLBACK", ignored); return false; };
+    DeviceCategoryPolicyState previous;
+    try { previous = getDeviceCategoryPolicyState(); } catch (const std::exception& e) { lastError_ = e.what(); return fail(); }
+    const std::string old[] = {previous.block_usb_storage, previous.block_printers_scanners, previous.block_optical_drives};
+    const char* names[] = {"block_usb_storage", "block_printers_scanners", "block_optical_drives"};
+    const char* epochs[] = {"usb_epoch", "printers_epoch", "optical_epoch"};
+    bool changed = false;
+    for (int i = 0; i < 3; ++i) {
+        if (modes[i] == old[i]) continue;
+        changed = true;
+        const std::string category = names[i];
+        if (modes[i] == "new") {
+            const std::string capture =
+                "DELETE FROM category_known_attributes WHERE category='" + category + "';"
+                "DELETE FROM category_known_identities WHERE category='" + category + "';"
+                "INSERT INTO category_known_identities SELECT DISTINCT '" + category + "',device_hash,subsystem FROM devices;"
+                "INSERT INTO category_known_attributes SELECT '" + category + "',d.device_hash,d.subsystem,a.attribute_name,a.attribute_value "
+                "FROM devices d JOIN device_attributes a ON a.device_id=d.id "
+                "WHERE d.id=(SELECT MAX(x.id) FROM devices x WHERE x.device_hash=d.device_hash AND x.subsystem=d.subsystem "
+                "AND EXISTS(SELECT 1 FROM device_attributes proof WHERE proof.device_id=x.id "
+                "AND proof.attribute_name IN ('ID_SERIAL_SHORT','ID_WWN','FIC_PHYSICAL_SERIAL') AND proof.attribute_value!='')) "
+                "AND a.attribute_value IS NOT NULL;";
+            if (!executeSql(db, capture, lastError_)) return fail();
+        }
+        const std::string update = "UPDATE device_policy_state SET " + category + "='" + modes[i] + "'" +
+            (modes[i] == "new" ? "," + std::string(epochs[i]) + "=" + epochs[i] + "+1" : "") + " WHERE id=1;";
+        if (!executeSql(db, update, lastError_)) return fail();
     }
-    sqlite3_bind_int(stmt, 1, state.block_usb_storage ? 1 : 0);
-    sqlite3_bind_int(stmt, 2, state.block_printers_scanners ? 1 : 0);
-    sqlite3_bind_int(stmt, 3, state.block_optical_drives ? 1 : 0);
-    const bool success = sqlite3_step(stmt) == SQLITE_DONE;
-    sqlite3_finalize(stmt);
-    return success;
+    if (changed && !executeSql(db,
+            "UPDATE device_policy_state SET desired_revision=desired_revision+1 WHERE id=1;"
+            "UPDATE device_tree_state SET revision=revision+1 WHERE id=1;", lastError_)) return fail();
+    if (!executeSql(db, "COMMIT", lastError_)) return fail();
+    return true;
 }
 
 DeviceInfo DB::getDeviceByPathAndBootId(const std::string& devpath, const std::string& boot_id){

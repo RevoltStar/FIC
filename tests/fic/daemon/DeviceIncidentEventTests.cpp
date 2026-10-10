@@ -83,6 +83,24 @@ int main() {
         require(fic::core::FicRuntimePaths::initialize(paths, error), error);
     }
 
+    {
+        dir.writeDcConf("_schema_version=1\n");
+        std::vector<std::unique_ptr<Policy>> categories;
+        categories.push_back(std::make_unique<DC_block_usb_storage>());
+        categories.push_back(std::make_unique<DC_block_printers_scanners>());
+        categories.push_back(std::make_unique<DC_block_optical_drives>());
+        for (const auto& policy : categories) {
+            require(policy->getDefaultValue() == "all", "DC default must be all");
+            require(policy->validate("all") && policy->validate("new") &&
+                    !policy->validate("true") && !policy->validate("disabled"),
+                    "category value must be independent from ENABLE/DISABLE");
+            const auto editor = policy->getPolicyTypeValue().getEditorSpec();
+            require(editor.editor == "combobox" &&
+                    editor.possibleValues == std::vector<std::string>{"all", "new"},
+                    "CLI/GUI metadata must expose all/new select");
+        }
+    }
+
     // G1: ENABLE + STANDARD -> the configured severity.
     {
         dir.writeDcConf(

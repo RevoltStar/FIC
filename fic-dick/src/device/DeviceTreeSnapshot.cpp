@@ -1,6 +1,7 @@
 #include "DeviceTreeSnapshot.h"
 
 #include <fic/device-db/DB.h>
+#include <fic/device-db/DeviceCategoryPolicy.h>
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/ipc/FicIpcTransport.h>
 
@@ -24,66 +25,6 @@ struct EffectivePolicy {
     std::string reason = "default allow";
 };
 
-std::string attribute_value(const std::map<std::string, std::string>& attributes,
-                            const std::string& name) {
-    const auto it = attributes.find(name);
-    return it == attributes.end() ? "" : it->second;
-}
-
-bool contains(const std::string& value, const std::string& needle) {
-    return value.find(needle) != std::string::npos;
-}
-
-bool starts_with(const std::string& value, const std::string& prefix) {
-    return value.rfind(prefix, 0) == 0;
-}
-
-std::optional<EffectivePolicy> category_policy(
-    const DeviceInfo& device,
-    const std::map<std::string, std::string>& attributes,
-    const DeviceCategoryPolicyState& settings) {
-    const std::string idBus = attribute_value(attributes, "ID_BUS");
-    const std::string devtype = attribute_value(attributes, "DEVTYPE");
-    const std::string type = attribute_value(attributes, "TYPE");
-    const std::string interfaces = attribute_value(attributes, "ID_USB_INTERFACES");
-    const std::string modalias = attribute_value(attributes, "MODALIAS");
-
-    bool usbStorage = false;
-    if (device.subsystem == "block") {
-        usbStorage = idBus == "usb" || contains(device.devpath, "/usb");
-    } else if (device.subsystem == "usb") {
-        usbStorage = starts_with(type, "8/") || contains(interfaces, ":080") ||
-            contains(interfaces, ":08");
-    } else {
-        usbStorage = devtype == "disk" && idBus == "usb";
-    }
-    if (settings.block_usb_storage && usbStorage) {
-        return EffectivePolicy{"blocked", "dc:block_usb_storage", device.id,
-                               "USB storage is blocked by DC settings"};
-    }
-
-    const bool printerOrScanner =
-        (device.subsystem == "usb" || idBus == "usb") &&
-        (starts_with(type, "7/") || starts_with(type, "6/") ||
-         contains(interfaces, ":070") || contains(interfaces, ":07") ||
-         contains(interfaces, ":060") || contains(interfaces, ":06") ||
-         contains(modalias, "ic07") || contains(modalias, "ic06"));
-    if (settings.block_printers_scanners && printerOrScanner) {
-        return EffectivePolicy{"blocked", "dc:block_printers_scanners", device.id,
-                               "printers/scanners are blocked by DC settings"};
-    }
-
-    const bool optical = device.subsystem == "block" &&
-        (!attribute_value(attributes, "ID_CDROM").empty() ||
-         !attribute_value(attributes, "ID_CDROM_CD").empty() ||
-         attribute_value(attributes, "ID_TYPE") == "cd");
-    if (settings.block_optical_drives && optical) {
-        return EffectivePolicy{"blocked", "dc:block_optical_drives", device.id,
-                               "optical drives are blocked by DC settings"};
-    }
-    return std::nullopt;
-}
-
 std::string identity_key(const DeviceInfo& device) {
     return device.device_hash + '\0' + device.subsystem;
 }
@@ -96,6 +37,11 @@ bool effective_policy(
     EffectivePolicy& policy,
     std::string& error) {
     const DeviceInfo& device = entry.device;
+    if (const auto denial = categoryDenial(categories, device, entry.attributes, true)) {
+        policy = {"blocked", "dc:" + denial->category + ":" + denial->mode,
+                  device.id, "absolute category all DENY"};
+        return true;
+    }
     const auto identity = identities.find(identity_key(device));
     if (identity != identities.end()) {
         for (const DeviceInfo* occurrence : identity->second) {
@@ -114,8 +60,9 @@ bool effective_policy(
                   "explicit placement rule"};
         return true;
     }
-    if (const auto category = category_policy(device, entry.attributes, categories)) {
-        policy = *category;
+    if (const auto category = categoryDenial(categories, device, entry.attributes, false)) {
+        policy = {"blocked", "dc:" + category->category + ":" + category->mode,
+                  device.id, "identity absent from category epoch"};
         return true;
     }
 

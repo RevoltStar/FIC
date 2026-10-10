@@ -52,7 +52,8 @@ json device_audit_request_fields(const json& request) {
     }
 
     for (const char* field : {
-             "action", "devpath", "subsystem", "control_level", "children_control"}) {
+             "action", "devpath", "subsystem", "control_level", "children_control",
+             "block_usb_storage", "block_printers_scanners", "block_optical_drives"}) {
         if (request.contains(field) && request[field].is_string()) {
             fields[field] = request[field].get<std::string>();
         }
@@ -63,8 +64,7 @@ json device_audit_request_fields(const json& request) {
         }
     }
     for (const char* field : {
-             "ignore_hierarchy", "block_usb_storage", "block_printers_scanners",
-             "block_optical_drives"}) {
+             "ignore_hierarchy"}) {
         if (request.contains(field) && request[field].is_boolean()) {
             fields[field] = request[field].get<bool>();
         }

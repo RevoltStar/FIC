@@ -85,7 +85,7 @@ test_policy_state_persists_after_fic_daemon_restart() {
     enabled=$(remote_sudo "$REMOTE_FIC_CLI policy isenable DC block_usb_storage" | tail -n 1 | tr -d '\r')
     value=$(remote_sudo "$REMOTE_FIC_CLI policy value DC block_usb_storage" | tail -n 1 | tr -d '\r')
     expect_eq "$enabled" "true" "DC block_usb_storage enabled state must survive fic restart" || return
-    expect_eq "$value" "true" "DC block_usb_storage fixed value must remain true after fic restart"
+    expect_eq "$value" "all" "DC block_usb_storage value must remain all after fic restart"
 }
 
 run_persistence_suite() {

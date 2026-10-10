@@ -123,7 +123,7 @@ int main()
     assert(db.addDeviceAttribute(escapedIdentity.id, "ID_SERIAL", "quoted\"\\serial"));
     assert(db.updateDeviceControl(
         escapedIdentity.id, "ignored", true, true, "inherit"));
-    assert(db.updateDeviceCategoryPolicyState({true, false, false}));
+    assert(db.updateDeviceCategoryPolicyState({"all", "disabled", "disabled"}));
 
     DevicePolicyCompiler compiler({"/opt/fic/bin/fic-dick"});
     const DevicePolicyCompilation first = compiler.compile(db);
@@ -153,7 +153,7 @@ int main()
     assert(first.rules.find("ACTION==\"remove\"") < first.rules.find("# ADD/CHANGE FILTER"));
     assert(first.rules.find("fic-dick enforce") != std::string::npos);
     assert(first.rules.find("fic-dick udev") != std::string::npos);
-    assert(first.rules.find("dc:block_usb_storage") != std::string::npos);
+    assert(first.rules.find("block_usb_storage:all") != std::string::npos);
 
     std::string escaped;
     assert(DevicePolicyCompiler::escapeUdevValue("serial\"\\\n, rule", escaped, error));
@@ -164,7 +164,8 @@ int main()
     assert(activator.activate(first.rules, error));
     assert(readFile(active) == first.rules);
     assert(!fs::exists(active.string() + ".tmp"));
-    if (fs::is_regular_file("/usr/bin/udevadm")) {
+    const auto udevHelp = ProcessExecutor::execute("/usr/bin/udevadm", {"--help"});
+    if (udevHelp.success() && udevHelp.standardOutput.find("verify") != std::string::npos) {
         const ProcessResult verification = ProcessExecutor::execute(
             "/usr/bin/udevadm", {"verify", active.string()});
         assert(verification.success());

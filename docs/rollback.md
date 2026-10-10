@@ -825,9 +825,6 @@ I/O), это ошибка загрузки — fail closed. Существующ
   `GROUPS=`: он очищает membership-массив, даже если `useradd -D` показывает
   stale display state от предыдущего непустого assignment.
   DebianAdduser empty state владеет только `ADD_EXTRA_GROUPS=0`.
-* `UndoDisableDeviceFeature{feature}` — отключение category-level desired
-  state DC и пересборка `99-fic-devices.rules` через device daemon;
-  per-device пользовательские правила не затрагиваются.
 * `UndoRemoveGrubManagedSetting{key, appliedValue}` — GRUB
   ownership-release rollback (см. раздел «GRUB rollback (OSS/Grub)»);
   payload доказывает только FIC-владение (key, appliedValue), топология
@@ -1969,8 +1966,6 @@ no effect on users who are in the group specified by exempt_group».
   * `NET/SshEdit` (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
     `ssh_pubkey_auth`, `ssh_use_pam`);
   * `FIREWALL/HostFiltering` (`block_ftp`, `block_rdp`, `custom_rules`);
-  * `DC/DeviceControl` category features (`block_usb_storage`,
-    `block_printers_scanners`, `block_optical_drives`);
   * `OSS/Grub` (`grub_timeout`, `grub_cmdline_linux`,
     `grub_disable_recovery` — явный whitelist, см. раздел
     «GRUB rollback (OSS/Grub)»);
@@ -1990,7 +1985,7 @@ no effect on users who are in the group specified by exempt_group».
   rollback-enrolled submodule — будущая SUDO/FIREWALL policy никогда не
   становится автоматически rollback-Supported без собственной journal
   integration и undo-действия;
-* `NotEnrolled` — перечисленные выше известные политики `OSS/Fstab`
+* `NotEnrolled` — три известные category policies `DC/DeviceControl` и перечисленные выше известные политики `OSS/Fstab`
   (см. «FSTAB: намеренно non-reverting lifecycle») и остальные модули. В частности,
   `DAC/Mode_and_Owner/mode_and_owner_profiles` использует release-only
   lifecycle: `disable` меняет только status и не меняет filesystem metadata.
@@ -2160,3 +2155,24 @@ release блокирует удаление до любых C2 мутаций). 
 payload'а в `UndoAction`, ветки в `RollbackExecutor` и записи мутации в
 момент фактического изменения ресурса — без изменений в `Policy` и без
 новых виртуальных методов.
+
+## Device Control: desired-state lifecycle
+
+`block_usb_storage`, `block_printers_scanners`, `block_optical_drives` используют
+`NotEnrolled`: DC undo/backend/journal action удалены. Отключение сохраняет
+DISABLE, reload registry и синхронизирует все три режима с fic-dick. Ошибка
+синхронизации не отменяет persistent status; startup/periodic reconcile повторяет
+полный desired state, включая случай всех DISABLE. Явные device rules сохраняются.
+
+`all` — абсолютный категорийный DENY; `new` — DENY физических identities,
+неизвестных на начало текущей эпохи, после явных identity/placement rules и
+перед hierarchy/default. Переход disabled/all → new создаёт атомарный snapshot;
+new → new, reconnect и restart сохраняют эпоху. Snapshot не зависит от удаления
+occurrences. Неполный serial/WWN не даёт known exception; filesystem UUID не
+является physical identity. devices.db schema 2 отклоняет прежнюю boolean schema,
+без миграции.
+
+Публикация rules и проверка enforcement предшествуют active revision. При
+ошибке desired state остаётся в SQLite для повторного reconcile. Отключение,
+all → new и удаление FIC не отменяют физические `authorized=0`, SCSI `delete=1`
+и PCI `remove=1`: может потребоваться reconnect/rescan.

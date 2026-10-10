@@ -1,6 +1,8 @@
 #include "USBInfoCollector.h"
 
 #include <string>
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 namespace {
@@ -60,6 +62,26 @@ std::map<std::string, std::string> USBInfoCollector::extra_device_attributes() c
     std::map<std::string, std::string> attributes;
     if (!function.empty()) {
         attributes["FIC_USB_FUNCTION"] = function;
+    }
+    if (devtype == "usb_interface" || devtype == "usb_device") {
+        // Physical parent fields do not participate in the legacy occurrence
+        // hash. They prove category epoch membership independently of ports.
+        const auto devpath = get_env_value("DEVPATH");
+        auto current = (std::filesystem::path("/sys") / devpath.substr(devpath.empty() ? 0 : 1)).lexically_normal();
+        if (devpath.rfind("/devices/", 0) == 0 && current.string().rfind("/sys/devices/", 0) == 0) {
+            while (current.string().rfind("/sys/devices/", 0) == 0) {
+                std::ifstream vendor(current / "idVendor"), model(current / "idProduct"), serial(current / "serial");
+                std::string v, m, n;
+                if (std::getline(vendor, v) && std::getline(model, m)) {
+                    std::getline(serial, n);
+                    attributes["FIC_PHYSICAL_VENDOR"] = v;
+                    attributes["FIC_PHYSICAL_MODEL"] = m;
+                    attributes["FIC_PHYSICAL_SERIAL"] = n;
+                    break;
+                }
+                current = current.parent_path();
+            }
+        }
     }
     if (devtype == "usb_interface") {
         attributes["FIC_USB_IDENTITY_SCOPE"] = "interface";

@@ -103,7 +103,8 @@ def main():
             "BEGIN TRANSACTION" in db_source,
             "database snapshot must read the recursive tree and attributes transactionally")
     fic_daemon_source = read_text(fic_daemon)
-    require('"device_regenerate_policy"' in fic_daemon_source,
+    require("DC::reconcile" in fic_daemon_source and
+            '"device_regenerate_policy"' in read_text(dc_policy),
             "fic daemon must synchronize DC policy changes with device desired state")
     event_handler = daemon_source[
         daemon_source.find("json process_device_event"):
@@ -207,13 +208,10 @@ def main():
             "device page must not force the old overlapping 660 px tree column")
 
     dc_policy_source = read_text(dc_policy)
-    require('std::make_unique<FixedPolicyTypeValue>("true")' in dc_policy_source,
-            "DC policies must expose the intrinsic fixed value true")
-    # Only the detector-severity policy may expose a value list, and it must be
-    # the severity token list, never a configurable true/false toggle.
-    require(
-        dc_policy_source.count("PossibleListPolicyTypeValue") == 1,
-        "only permanent_device_missing_severity may expose a value list")
+    require('std::vector<std::string>{"all", "new"}' in dc_policy_source,
+            "DC category policies must expose all/new select values")
+    require(dc_policy_source.count("PossibleListPolicyTypeValue") == 2,
+            "category mode and detector severity must expose distinct select lists")
     require(
         '{"STANDARD", "NONE", "SOFT", "HARD", "ISOLATE"}' in dc_policy_source,
         "the detector severity list must be the severity tokens")
@@ -228,8 +226,8 @@ def main():
         "block_printers_scanners",
         "block_optical_drives",
     ]:
-        require(dc_config_values.get(f"{policy}.value") == "true",
-                f"{policy} seed value must match its intrinsic fixed value")
+        require(dc_config_values.get(f"{policy}.value") == "all",
+                f"{policy} seed value must be all")
 
     udev_source = read_text(udev_collector)
     require("/devices/virtual/block/" in udev_source, "virtual block devices must be accepted")

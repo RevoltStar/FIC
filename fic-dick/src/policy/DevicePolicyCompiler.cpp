@@ -1,4 +1,5 @@
 #include "DevicePolicyCompiler.h"
+#include <fic/device-db/DeviceCategoryPolicy.h>
 
 #include <fic/core/process/ProcessExecutor.h>
 
@@ -202,7 +203,9 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
         return result;
     }
 
-    std::vector<DeviceInfo> devices = db.getAllDevices();
+    const auto inventory = db.getAllDevicesChecked();
+    if (!inventory.ok) { result.error = inventory.error; return result; }
+    std::vector<DeviceInfo> devices = inventory.devices;
     const DeviceCategoryPolicyState categories = db.getDeviceCategoryPolicyState();
     std::sort(devices.begin(), devices.end(), [](const DeviceInfo& left, const DeviceInfo& right) {
         if (pathDepth(left.devpath) != pathDepth(right.devpath)) {
@@ -237,7 +240,8 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
     out << "ENV{DEVPATH}==\"\", GOTO=\"fic_devices_notify\"\n\n";
     out << "# DEFAULT ENV VARIABLES\n";
     out << "ENV{FIC_DEVICE_LEVEL}=\"UNKNOWN\", ENV{FIC_INHERITED_LEVEL}=\"UNKNOWN\", "
-           "ENV{FIC_DIRECT_MATCH}=\"0\", ENV{FIC_POLICY_SOURCE}=\"global-default\"\n\n";
+           "ENV{FIC_DIRECT_MATCH}=\"0\", ENV{FIC_CATEGORY_HARD}=\"\", ENV{FIC_CATEGORY_NEW}=\"\", "
+           "ENV{FIC_EFFECTIVE_LEVEL}=\"\", ENV{FIC_CONNECTION_LEVEL}=\"\", ENV{FIC_POLICY_SOURCE}=\"global-default\"\n\n";
 
     out << "# INHERITED RULES\n";
     for (const DeviceInfo& device : devices) {
@@ -256,21 +260,46 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
     }
 
     out << "\n# CATEGORY RULES\n";
-    if (categories.block_usb_storage) {
-        out << "SUBSYSTEM==\"block\", ENV{ID_BUS}==\"usb\", "
-               "ENV{FIC_INHERITED_LEVEL}=\"DENY\", ENV{FIC_POLICY_SOURCE}=\"dc:block_usb_storage\"\n";
-        out << "SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:08*\", "
-               "ENV{FIC_INHERITED_LEVEL}=\"DENY\", ENV{FIC_POLICY_SOURCE}=\"dc:block_usb_storage\"\n";
-    }
-    if (categories.block_printers_scanners) {
-        out << "SUBSYSTEM==\"usb\", ENV{ID_USB_INTERFACES}==\"*:06*|*:07*\", "
-               "ENV{FIC_INHERITED_LEVEL}=\"DENY\", ENV{FIC_POLICY_SOURCE}=\"dc:block_printers_scanners\"\n";
-        out << "SUBSYSTEM==\"usb\", ENV{INTERFACE}==\"6/*|7/*\", "
-               "ENV{FIC_INHERITED_LEVEL}=\"DENY\", ENV{FIC_POLICY_SOURCE}=\"dc:block_printers_scanners\"\n";
-    }
-    if (categories.block_optical_drives) {
-        out << "SUBSYSTEM==\"block\", ENV{ID_CDROM}==\"1\", "
-               "ENV{FIC_INHERITED_LEVEL}=\"DENY\", ENV{FIC_POLICY_SOURCE}=\"dc:block_optical_drives\"\n";
+    for (const auto& [category, predicates] : categoryPredicates()) {
+        const auto mode = categoryMode(categories, category);
+        if (mode == "disabled") continue;
+        const std::string token = category;
+        out << "ENV{FIC_KNOWN_" << token << "}=\"0\"\n";
+        if (mode == "new") {
+            const auto known = categories.known.find(category);
+            if (known != categories.known.end()) {
+                std::set<std::string> emitted;
+                for (const auto& identity : known->second) {
+                    const auto identityTerms = physicalIdentityTerms(identity.subsystem, identity.attributes);
+                    if (!identityTerms) continue; // Category-scoped unknown DENY.
+                    for (const auto* usbType : {"usb_device", "usb_interface"}) {
+                        if (identity.subsystem != "usb" && std::string(usbType) != "usb_device") continue;
+                        std::vector<std::string> terms{"SUBSYSTEM==\"" + identity.subsystem + "\""};
+                        if (identity.subsystem == "usb") terms.push_back("ENV{DEVTYPE}==\"" + std::string(usbType) + "\"");
+                        for (const auto& [key, value] : *identityTerms) {
+                            std::string match;
+                            if (identity.subsystem == "usb") {
+                                if (std::string(usbType) == "usb_interface") match = "ATTRS{" + key + "}";
+                                else match = "ENV{" + std::string(key == "serial" ? "ID_SERIAL_SHORT" : key == "idVendor" ? "ID_VENDOR_ID" : "ID_MODEL_ID") + "}";
+                            } else match = "ENV{" + key + "}";
+                            terms.push_back(match + "==\"" + value + "\"");
+                        }
+                        terms.push_back("ENV{FIC_KNOWN_" + token + "}=\"1\"");
+                        const auto rule = joinRule(terms);
+                        if (emitted.insert(rule).second) out << rule;
+                    }
+                }
+            }
+        }
+        for (const auto& predicate : predicates) {
+            std::vector<std::string> terms{"SUBSYSTEM==\"" + predicate.subsystem + "\""};
+            for (const auto& [key, value] : predicate.attributes)
+                terms.push_back("ENV{" + key + "}==\"" + value + "\"");
+            if (mode == "new") terms.push_back("ENV{FIC_KNOWN_" + token + "}!=\"1\"");
+            terms.push_back("ENV{FIC_CATEGORY_" + std::string(mode == "all" ? "HARD" : "NEW") + "}==\"\"");
+            terms.push_back("ENV{FIC_CATEGORY_" + std::string(mode == "all" ? "HARD" : "NEW") + "}=\"" + category + ":" + mode + "\"");
+            out << joinRule(terms);
+        }
     }
 
     out << "\n# DIRECT PLACEMENT RULES\n";
@@ -291,10 +320,18 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
 
     out << "\n# DIRECT IDENTITY RULES\n";
     std::map<std::string, std::string> compiledIdentities;
-    for (const DeviceInfo& device : devices) {
+    auto identityDevices = devices;
+    std::sort(identityDevices.begin(), identityDevices.end(), [](const auto& left, const auto& right) {
+        return left.id < right.id;
+    });
+    std::set<std::pair<std::string, std::string>> selectedIdentities;
+    for (const DeviceInfo& device : identityDevices) {
         if (!device.control_explicit || !device.ignore_hierarchy) {
             continue;
         }
+        // Runtime/snapshot resolve the first explicit occurrence by ascending
+        // id. Preserve that priority and its source id in generated rules.
+        if (!selectedIdentities.emplace(device.device_hash, device.subsystem).second) continue;
         std::vector<IdentityTerm> identity;
         std::string identityError;
         if (!identityTerms(device, db.getDeviceAttributes(device.id), identity, identityError)) {
@@ -335,10 +372,14 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
 
     out << "\n# POLICY DECISION\n";
     out << "ENV{FIC_DIRECT_MATCH}==\"1\", ENV{FIC_EFFECTIVE_LEVEL}=\"$env{FIC_DEVICE_LEVEL}\"\n";
-    out << "ENV{FIC_DIRECT_MATCH}!=\"1\", ENV{FIC_INHERITED_LEVEL}!=\"UNKNOWN\", "
+    out << "ENV{FIC_DIRECT_MATCH}!=\"1\", ENV{FIC_CATEGORY_NEW}!=\"\", "
+           "ENV{FIC_EFFECTIVE_LEVEL}=\"DENY\", ENV{FIC_POLICY_SOURCE}=\"dc:$env{FIC_CATEGORY_NEW}\"\n";
+    out << "ENV{FIC_DIRECT_MATCH}!=\"1\", ENV{FIC_CATEGORY_NEW}==\"\", ENV{FIC_INHERITED_LEVEL}!=\"UNKNOWN\", "
            "ENV{FIC_EFFECTIVE_LEVEL}=\"$env{FIC_INHERITED_LEVEL}\"\n";
     out << "ENV{FIC_EFFECTIVE_LEVEL}==\"\", ENV{FIC_EFFECTIVE_LEVEL}=\"ALLOW\", "
            "ENV{FIC_POLICY_SOURCE}=\"global-default\"\n";
+    out << "ENV{FIC_CATEGORY_HARD}!=\"\", ENV{FIC_EFFECTIVE_LEVEL}=\"DENY\", "
+           "ENV{FIC_POLICY_SOURCE}=\"dc:$env{FIC_CATEGORY_HARD}\"\n";
     out << "ENV{FIC_EFFECTIVE_LEVEL}==\"PERMANENT\", ENV{FIC_CONNECTION_LEVEL}=\"ALLOW\"\n";
     out << "ENV{FIC_EFFECTIVE_LEVEL}==\"IGNORE\", ENV{FIC_CONNECTION_LEVEL}=\"ALLOW\"\n";
     out << "ENV{FIC_CONNECTION_LEVEL}==\"\", ENV{FIC_CONNECTION_LEVEL}=\"$env{FIC_EFFECTIVE_LEVEL}\"\n\n";

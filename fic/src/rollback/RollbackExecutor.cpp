@@ -515,36 +515,6 @@ MutationRollbackOutcome undoFirewallPolicyMutation(
     return outcome;
 }
 
-MutationRollbackOutcome undoDeviceFeature(
-    const RollbackExecutorDeps& deps,
-    const MutationRecord& record,
-    const UndoDisableDeviceFeature& undo) {
-    MutationRollbackOutcome outcome;
-    outcome.id = record.id;
-    outcome.resource = record.resource;
-    if (!isDcCategoryFeature(undo.feature)) {
-        outcome.status = RollbackStatus::Unsupported;
-        outcome.message = "Автоматический откат DC feature '" + undo.feature +
-                          "' не поддерживается";
-        return outcome;
-    }
-    if (!deps.disableDeviceFeature) {
-        outcome.status = RollbackStatus::Failed;
-        outcome.message = "DC undo backend не настроен";
-        return outcome;
-    }
-    std::string error;
-    if (!deps.disableDeviceFeature(undo.feature, error)) {
-        outcome.status = RollbackStatus::Failed;
-        outcome.message = "Не удалось отключить DC feature '" + undo.feature +
-                          "': " + error;
-        return outcome;
-    }
-    outcome.status = RollbackStatus::Success;
-    outcome.message = "DC feature '" + undo.feature + "' отключена";
-    return outcome;
-}
-
 MutationRollbackOutcome undoSssdSetting(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record,
@@ -823,10 +793,6 @@ MutationRollbackOutcome undoMutation(
             std::get_if<UndoRemoveFirewallPolicy>(&record.undo.payload)) {
         return undoFirewallPolicyMutation(deps, record, *firewallPolicy);
     }
-    if (const auto* feature =
-            std::get_if<UndoDisableDeviceFeature>(&record.undo.payload)) {
-        return undoDeviceFeature(deps, record, *feature);
-    }
     MutationRollbackOutcome outcome;
     outcome.id = record.id;
     outcome.resource = record.resource;
@@ -968,7 +934,7 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
     }
     if (policy.moduleName == "DC" && policy.submoduleName == "DeviceControl") {
         return isDcCategoryFeature(policy.policyName)
-            ? RollbackEnrollment::Supported
+            ? RollbackEnrollment::NotEnrolled
             : RollbackEnrollment::Unsupported;
     }
     return RollbackEnrollment::NotEnrolled;
@@ -1447,9 +1413,7 @@ RollbackReport rollbackPolicyBeforeDisable(
 
 RollbackExecutorDeps productionRollbackDeps(
     const fic::platform::PlatformProfile& platform,
-    const fic::platform::PlatformExecutableResolver& executables,
-    std::function<bool(const std::string& feature, std::string& error)>
-        disableDeviceFeature) {
+    const fic::platform::PlatformExecutableResolver& executables) {
     RollbackExecutorDeps deps;
     deps.userCreationPlatform = platform.userCreation;
     deps.passwordAgingPlatform = platform.passwordAging;
@@ -1523,7 +1487,6 @@ RollbackExecutorDeps productionRollbackDeps(
             return backend.removePolicy(policyName, error);
         };
 
-    deps.disableDeviceFeature = std::move(disableDeviceFeature);
 
     // C2 joint password topology rollback wiring (see PamRollbackOptions):
     // the rollback transition goes through the production coordinator over

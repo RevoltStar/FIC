@@ -338,8 +338,8 @@ void testEnrollmentMatrix() {
                 RollbackEnrollment::Unsupported,
             "unknown future firewall policy must not be auto-enrolled");
     require(rollbackEnrollment({"DC", "DeviceControl", "block_usb_storage"}) ==
-                RollbackEnrollment::Supported,
-            "DC category features must be enrolled");
+                RollbackEnrollment::NotEnrolled,
+            "DC category features intentionally do not revert");
     require(rollbackEnrollment({"DC", "DeviceControl", "unknown_feature"}) ==
                 RollbackEnrollment::Unsupported,
             "unknown DC features must refuse automatic rollback");
@@ -1714,47 +1714,15 @@ void testFirewallUndoFailureFailsClosed() {
             "failed rollback must be persisted as rollback_failed");
 }
 
-void testDeviceFeatureUndoInvokesBackend() {
-    const PolicyRef policy{"DC", "DeviceControl", "block_usb_storage"};
+void testDeviceCategoriesAreNotEnrolled() {
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    recordApplied(policy, "block_usb_storage",
-                  UndoAction{MutationBackend::DeviceControl,
-                             UndoDisableDeviceFeature{"block_usb_storage"}});
-
-    std::string disabledFeature;
     RollbackExecutorDeps deps;
-    deps.disableDeviceFeature = [&disabledFeature](const std::string& feature,
-                                                   std::string&) {
-        disabledFeature = feature;
-        return true;
-    };
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(policy, "block_usb_storage", deps);
-    require(report.status == RollbackStatus::Success, report.message);
-    require(disabledFeature == "block_usb_storage",
-            "DC undo must disable the recorded feature");
-}
-
-void testDeviceFeatureUndoUnknownFeatureIsUnsupported() {
-    const PolicyRef policy{"DC", "DeviceControl", "future_feature"};
-    TempJournal journal;
-    JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    recordApplied(policy, "future_feature",
-                  UndoAction{MutationBackend::DeviceControl,
-                             UndoDisableDeviceFeature{"future_feature"}});
-
-    RollbackExecutorDeps deps;
-    deps.disableDeviceFeature = [](const std::string&, std::string&) {
-        return true;
-    };
-
-    const RollbackReport report =
-        rollbackPolicyBeforeDisable(policy, "future_feature", deps);
-    require(report.status == RollbackStatus::Unsupported,
-            "unknown DC feature undo must be unsupported: " + report.message);
-    require(!report.rollbackCompleted(), "unsupported undo must refuse disable");
+    for (const auto* name : {"block_usb_storage", "block_printers_scanners", "block_optical_drives"}) {
+        const PolicyRef policy{"DC", "DeviceControl", name};
+        require(rollbackEnrollment(policy) == RollbackEnrollment::NotEnrolled, name);
+        require(rollbackPolicyBeforeDisable(policy, name, deps).rollbackCompleted(), name);
+    }
 }
 // Mode_and_Owner is a release-only desired-state controller.  Disabling it
 // must not enter the rollback system or mutate filesystem metadata.
@@ -3130,9 +3098,7 @@ int main(int argc, char** argv) {
          testSshRollbackCompensationRacePreservesExternalEdit},
         {"ssh rollback refused on concurrent modification",
          testSshRollbackRefusedOnConcurrentModification},
-        {"device feature undo invokes backend", testDeviceFeatureUndoInvokesBackend},
-        {"device feature undo unknown feature is unsupported",
-         testDeviceFeatureUndoUnknownFeatureIsUnsupported},
+        {"device categories intentionally not enrolled", testDeviceCategoriesAreNotEnrolled},
         {"mode-and-owner profiles is not rollback enrolled",
          testModeAndOwnerProfilesIsNotRollbackEnrolled},
         {"journal update failure fails closed", testJournalUpdateFailureFailsClosed},

@@ -63,9 +63,9 @@ int main()
         assert(computer.children_control == "inherit");
         const DeviceCategoryPolicyState categories =
             database.getDeviceCategoryPolicyState();
-        assert(!categories.block_usb_storage);
-        assert(!categories.block_printers_scanners);
-        assert(!categories.block_optical_drives);
+        assert(categories.block_usb_storage == "disabled");
+        assert(categories.block_printers_scanners == "disabled");
+        assert(categories.block_optical_drives == "disabled");
         assert(database.getDeviceTreeRevision() == initialRevision);
 
         DeviceInfo device;

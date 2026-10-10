@@ -103,8 +103,6 @@ struct RollbackExecutorDeps {
     std::function<KerberosRollbackOptions()> kerberosOptions;
     // FIREWALL undo: reconcile the nftables state without the given policy.
     std::function<bool(const std::string& policyName, std::string& error)> undoFirewallPolicy;
-    // DC undo: disable one category feature via the device daemon.
-    std::function<bool(const std::string& feature, std::string& error)> disableDeviceFeature;
 };
 
 // Step 7F: contextual (platform-aware) enrollment. Preserves the static
@@ -124,9 +122,7 @@ RollbackEnrollment effectiveRollbackEnrollment(const PolicyRef& policy,
 // platform executable resolver.
 RollbackExecutorDeps productionRollbackDeps(
     const fic::platform::PlatformProfile& platform,
-    const fic::platform::PlatformExecutableResolver& executables,
-    std::function<bool(const std::string& feature, std::string& error)>
-        disableDeviceFeature);
+    const fic::platform::PlatformExecutableResolver& executables);
 
 // Rolls back all active mutations of the given policy. Must be called while
 // the policy is still ENABLE and before the policy status flips to DISABLE.

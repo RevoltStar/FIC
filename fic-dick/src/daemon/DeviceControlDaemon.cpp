@@ -1,3 +1,5 @@
+#include "enforcement/DeviceEnforcerSysfs.h"
+#include <fic/device-db/DeviceCategoryPolicy.h>
 #include "DeviceControlDaemon.h"
 #include "daemon/DeviceAudit.h"
 #include "daemon/PermanentDeviceIncident.h"
@@ -222,6 +224,8 @@ std::vector<DeviceInfo> device_path_to_root(DB& db,
 
 std::optional<std::string> find_udevadm();
 
+bool enforce_connected_category_denials(DB& db, std::string& error);
+
 bool regenerate_device_policy(DB& db, const std::string& reason, std::string& error) {
     log_device("device policy compilation started: " + reason, logLevel::INFO);
     DevicePolicyCompiler compiler({
@@ -251,8 +255,15 @@ bool regenerate_device_policy(DB& db, const std::string& reason, std::string& er
     }
     log_device("device policy activation and udev reload succeeded", logLevel::INFO);
 
+    if (!enforce_connected_category_denials(db, error)) {
+        if (!db.setActivePolicyRevision(-1)) error += "; cannot persist unconfirmed active revision";
+        log_device("current category DENY enforcement unconfirmed: " + error, logLevel::ERROR);
+        return false;
+    }
+
     const std::int64_t desiredRevision = db.getDesiredPolicyRevision();
-    if (desiredRevision < 0 || !db.setActivePolicyRevision(desiredRevision)) {
+    if (desiredRevision < 0 || (db.getActivePolicyRevision() != desiredRevision &&
+        !db.setActivePolicyRevision(desiredRevision))) {
         error = "active udev rules were published but active policy revision could not be recorded";
         log_device(error, logLevel::ERROR);
         return false;
@@ -275,87 +286,21 @@ std::string attribute_value(const std::map<std::string, std::string>& attributes
     return it == attributes.end() ? "" : it->second;
 }
 
-bool contains(const std::string& value, const std::string& needle) {
-    return value.find(needle) != std::string::npos;
-}
-
-bool starts_with(const std::string& value, const std::string& prefix) {
-    return value.rfind(prefix, 0) == 0;
-}
-
-bool is_usb_storage_device(const DeviceInfo& device,
-                           const std::map<std::string, std::string>& attributes) {
-    const std::string idBus = attribute_value(attributes, "ID_BUS");
-    const std::string devtype = attribute_value(attributes, "DEVTYPE");
-    const std::string type = attribute_value(attributes, "TYPE");
-    const std::string interfaces = attribute_value(attributes, "ID_USB_INTERFACES");
-
-    if (device.subsystem == "block") {
-        return idBus == "usb" || contains(device.devpath, "/usb");
-    }
-
-    if (device.subsystem == "usb") {
-        return starts_with(type, "8/") || contains(interfaces, ":080") || contains(interfaces, ":08");
-    }
-
-    return devtype == "disk" && idBus == "usb";
-}
-
-bool is_printer_or_scanner(const DeviceInfo& device,
-                           const std::map<std::string, std::string>& attributes) {
-    const std::string type = attribute_value(attributes, "TYPE");
-    const std::string interfaces = attribute_value(attributes, "ID_USB_INTERFACES");
-    const std::string modalias = attribute_value(attributes, "MODALIAS");
-
-    if (device.subsystem != "usb" && attribute_value(attributes, "ID_BUS") != "usb") {
-        return false;
-    }
-
-    return starts_with(type, "7/") || starts_with(type, "6/") ||
-           contains(interfaces, ":070") || contains(interfaces, ":07") ||
-           contains(interfaces, ":060") || contains(interfaces, ":06") ||
-           contains(modalias, "ic07") || contains(modalias, "ic06");
-}
-
-bool is_optical_drive(const DeviceInfo& device,
-                      const std::map<std::string, std::string>& attributes) {
-    if (device.subsystem != "block") {
-        return false;
-    }
-
-    return !attribute_value(attributes, "ID_CDROM").empty() ||
-           !attribute_value(attributes, "ID_CDROM_CD").empty() ||
-           attribute_value(attributes, "ID_TYPE") == "cd";
-}
-
-std::optional<EffectivePolicy> dc_category_policy(DB& db, const DeviceInfo& device) {
-    const DeviceCategoryPolicyState settings = db.getDeviceCategoryPolicyState();
-    if (!settings.block_usb_storage && !settings.block_printers_scanners &&
-        !settings.block_optical_drives) {
-        return std::nullopt;
-    }
-
-    const std::map<std::string, std::string> attributes = db.getDeviceAttributes(device.id);
-    if (settings.block_usb_storage && is_usb_storage_device(device, attributes)) {
-        return EffectivePolicy{"blocked", "dc:block_usb_storage", device.id, "USB storage is blocked by DC settings"};
-    }
-    if (settings.block_printers_scanners && is_printer_or_scanner(device, attributes)) {
-        return EffectivePolicy{"blocked", "dc:block_printers_scanners", device.id, "printers/scanners are blocked by DC settings"};
-    }
-    if (settings.block_optical_drives && is_optical_drive(device, attributes)) {
-        return EffectivePolicy{"blocked", "dc:block_optical_drives", device.id, "optical drives are blocked by DC settings"};
-    }
-
-    return std::nullopt;
-}
 
 EffectivePolicy effective_policy(DB& db,
                                  DeviceInfo device,
-                                 const std::optional<ControlOverride>& override = std::nullopt) {
+                                 const std::optional<ControlOverride>& override = std::nullopt,
+                                 const std::optional<DeviceIdentityTerms>& liveAttributes = std::nullopt) {
     device = with_override(device, override);
-    if (device.id <= 0) {
-        return {};
-    }
+    const auto categories = db.getDeviceCategoryPolicyState();
+    const auto attributes = liveAttributes ? *liveAttributes : db.getDeviceAttributes(device.id);
+    const auto category = [&](bool hardOnly) -> std::optional<EffectivePolicy> {
+        const auto denial = categoryDenial(categories, device, attributes, hardOnly);
+        if (!denial) return std::nullopt;
+        return EffectivePolicy{"blocked", "dc:" + denial->category + ":" + denial->mode,
+            device.id, denial->mode == "all" ? "absolute category all DENY" : "identity absent from category epoch"};
+    };
+    if (const auto hard = category(true)) return *hard;
 
     const std::vector<DeviceInfo> path = device_path_to_root(db, device, override);
 
@@ -376,7 +321,7 @@ EffectivePolicy effective_policy(DB& db,
                                "explicit placement rule"};
     }
 
-    if (std::optional<EffectivePolicy> categoryPolicy = dc_category_policy(db, device)) {
+    if (std::optional<EffectivePolicy> categoryPolicy = category(false)) {
         return categoryPolicy.value();
     }
 
@@ -437,6 +382,48 @@ bool deny_enforcement_observed(const DeviceInfo& device, std::string& details) {
     }
     details = "device sysfs path still exists after generated deny rule";
     return false;
+}
+
+std::vector<DeviceEventEnvelope> parse_udevadm_export_db(const std::string& text);
+std::unique_ptr<UDEVInfoCollector> create_collector_for_subsystem(const std::string& subsystem);
+
+// Enumerate actual current udev state before bounded enforcement. Stale DB
+// paths are never sufficient to authorize a write to a replacement device.
+bool enforce_connected_category_denials(DB& db, std::string& error) {
+    const auto inventory = db.getAllDevicesChecked();
+    if (!inventory.ok) { error = inventory.error; return false; }
+    const auto udevadm = find_udevadm();
+    if (!udevadm) { error = "udevadm unavailable for current-device proof"; return false; }
+    ProcessOptions options;
+    options.timeout = std::chrono::milliseconds(10000);
+    options.maxOutputBytes = 16 * 1024 * 1024;
+    const auto exported = ProcessExecutor::execute(*udevadm, {"info", "--export-db"}, options);
+    if (!exported.success()) { error = "current udev inventory unavailable: " + exported.standardError; return false; }
+    const auto state = db.getDeviceCategoryPolicyState();
+    for (const auto& event : parse_udevadm_export_db(exported.standardOutput)) {
+        auto collector = create_collector_for_subsystem(event.subsystem);
+        collector->set_udev_env(event.env);
+        collector->collect_udev_params();
+        const auto attributes = collector->collect_all_udev_attributes();
+        DeviceInfo live = db.getDeviceByDevpathSubsystemAndBootId(event.devpath, event.subsystem, current_boot_id());
+        live.subsystem = event.subsystem;
+        live.devpath = event.devpath;
+        live.device_hash = collector->create_hash();
+        if (live.id <= 0) live.control_explicit = false;
+        const bool mustDeny = categoryDenial(state, live, attributes, false).has_value() &&
+                              effective_policy(db, live, std::nullopt, attributes).level == "blocked";
+        if (!mustDeny) continue;
+        if (live.devpath.rfind("/devices/", 0) != 0) {
+            error = "category DENY has unsafe device path"; return false;
+        }
+        std::string details;
+        if (deny_enforcement_observed(live, details)) continue;
+        if (!internal::enforceDenyThroughSysfs(live.subsystem, live.devpath, {}, details) ||
+            !deny_enforcement_observed(live, details)) {
+            error = live.devpath + ": " + details; return false;
+        }
+    }
+    return true;
 }
 
 // Reports the established permanent-device violation to the main fic daemon.
@@ -1341,9 +1328,9 @@ json handle_request(
         }
         DB db(DeviceRuntimePaths::get().databaseOptions());
         const DeviceCategoryPolicyState categories{
-            request.value("block_usb_storage", false),
-            request.value("block_printers_scanners", false),
-            request.value("block_optical_drives", false)
+            request.at("block_usb_storage").get<std::string>(),
+            request.at("block_printers_scanners").get<std::string>(),
+            request.at("block_optical_drives").get<std::string>()
         };
         if (!db.initializeDatabase() ||
             !db.updateDeviceCategoryPolicyState(categories)) {
@@ -1390,8 +1377,7 @@ bool validate_device_request_schema(const json& request, std::string& error) {
         }
     }
     for (const char* field : {
-             "include_disconnected", "ignore_hierarchy", "block_usb_storage",
-             "block_printers_scanners", "block_optical_drives"}) {
+             "include_disconnected", "ignore_hierarchy"}) {
         if (request.contains(field) && !request[field].is_boolean()) {
             error = std::string("request.") + field + " must be a boolean";
             return false;
@@ -1431,8 +1417,9 @@ bool validate_device_request_schema(const json& request, std::string& error) {
         for (const char* field : {
                  "block_usb_storage", "block_printers_scanners",
                  "block_optical_drives"}) {
-            if (!request.contains(field) || !request[field].is_boolean()) {
-                error = std::string("request.") + field + " must be present and boolean";
+            if (!request.contains(field) || !request[field].is_string() ||
+                (request[field] != "disabled" && request[field] != "new" && request[field] != "all")) {
+                error = std::string("request.") + field + " must be disabled, new or all";
                 return false;
             }
         }

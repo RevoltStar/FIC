@@ -1,3 +1,4 @@
+#include "modules/dc/DC.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -617,19 +618,23 @@ bool run_daemon_apply_all_pass(
     std::string firewallError;
     const bool firewallOk = fic::firewall::reconcileFirewall(
         executables, firewallError);
+    std::string deviceError;
+    const bool deviceOk = DC::reconcile(deviceError);
     const bool ok = isPolicyApplySuccessful(summary, "all", "") &&
-        desktopGlobalConfigOk && firewallOk;
+        desktopGlobalConfigOk && firewallOk && deviceOk;
     json result = {
         {"ok", ok},
         {"registry_reload", true},
         {"desktop_global_configuration", desktopGlobalConfigOk},
         {"firewall_reconciliation", firewallOk},
+        {"device_reconciliation", deviceOk},
         {"incident_severity", fic::core::incidentSeverityToken(policyIncident)}
     };
     if (!desktopGlobalConfigError.empty()) {
         result["desktop_global_configuration_error"] =
             desktopGlobalConfigError;
     }
+    if (!deviceError.empty()) result["device_error"] = deviceError;
     if (!firewallError.empty()) {
         result["firewall_error"] = firewallError;
     }
@@ -763,87 +768,11 @@ json handle_request(json request,
     const std::string value = request.value("value", "");
 
     auto regenerateDevicePolicyIfNeeded = [&](bool required) -> std::optional<json> {
-        if (!required) {
-            return std::nullopt;
-        }
-        auto enabled = [&](const std::string& name) {
-            Policy* devicePolicy = getPolicyClass(policyRegistry, "DC", name);
-            return devicePolicy != nullptr && devicePolicy->isEnabled();
-        };
-
-        // Rollback provenance: before the device daemon enforces desired
-        // states, record Prepared mutations for every active DC feature so
-        // that disable_policy can roll the generated policy back. Fail closed
-        // when the journal cannot record provenance.
-        std::vector<std::pair<std::string, fic::rollback::MutationId>> prepared;
-        auto discardPrepared = [&prepared]() {
-            for (const auto& [feature, id] : prepared) {
-                std::string discardError;
-                (void)fic::rollback::discardMutation(id, discardError);
-            }
-        };
-        for (const std::string& feature :
-             {"block_usb_storage", "block_printers_scanners",
-              "block_optical_drives"}) {
-            if (!enabled(feature)) {
-                continue;
-            }
-            Policy* devicePolicy = getPolicyClass(policyRegistry, "DC", feature);
-            if (devicePolicy == nullptr) {
-                continue;
-            }
-            const PolicyRef policyRef{
-                devicePolicy->moduleName, devicePolicy->submoduleName,
-                devicePolicy->policyName};
-            fic::rollback::MutationId mutationId = 0;
-            std::string journalError;
-            fic::rollback::UndoAction undo{
-                fic::rollback::MutationBackend::DeviceControl,
-                fic::rollback::UndoDisableDeviceFeature{feature}};
-            if (!fic::rollback::recordPreparedMutation(
-                    policyRef, feature, undo, mutationId, journalError)) {
-                discardPrepared();
-                return fic::ipc::make_error_response(
-                    "device policy was not regenerated because the mutation "
-                    "journal could not record provenance: " + journalError);
-            }
-            prepared.emplace_back(feature, mutationId);
-        }
-
-        const json response = fic::ipc::Client(fic::ipc::Endpoint::DeviceDaemon).request({
-            {"command", "device_regenerate_policy"},
-            {"block_usb_storage", enabled("block_usb_storage")},
-            {"block_printers_scanners", enabled("block_printers_scanners")},
-            {"block_optical_drives", enabled("block_optical_drives")}
-        });
-        if (response.value("ok", false)) {
-            // Provenance commit failure after a successful device daemon
-            // mutation must not be masked as a successful apply (fail
-            // closed): the Prepared records stay active on disk and remain
-            // safely resolvable by the rollback executor.
-            std::string commitFailures;
-            for (const auto& [feature, id] : prepared) {
-                std::string commitError;
-                if (!fic::rollback::commitMutation(id, commitError)) {
-                    if (!commitFailures.empty()) {
-                        commitFailures += "; ";
-                    }
-                    commitFailures += feature + ": " + commitError;
-                }
-            }
-            if (!commitFailures.empty()) {
-                std::cerr << "Failed to commit mutation journal records: "
-                          << commitFailures << std::endl;
-                return fic::ipc::make_error_response(
-                    "device policy was regenerated, but the mutation journal "
-                    "could not commit provenance: " + commitFailures);
-            }
-            return std::nullopt;
-        }
-        discardPrepared();
-        return fic::ipc::make_error_response(
-            "DC configuration was saved, but generated device policy was not activated: " +
-            response.value("message", "unknown device daemon error"));
+        if (!required) return std::nullopt;
+        std::string error;
+        if (!DC::reconcile(error)) return fic::ipc::make_error_response(
+            "DC configuration is persistent, but device policy reconciliation failed: " + error);
+        return std::nullopt;
     };
     DesktopGlobalReconcileReport latestGlobalReport;
     auto reloadRegistryAndGlobalConfig =
@@ -999,6 +928,7 @@ json handle_request(json request,
                     reloadError.value());
             }
             PolicyApplySummary summary = applyAllPolicies(policyRegistry);
+            if (auto failure = regenerateDevicePolicyIfNeeded(true)) return *failure;
             fic::incident::PolicyIncidentReporter(incidentController()).report(
                 policyRegistry, summary, "manual apply_all");
             const bool ok = isPolicyApplySuccessful(summary, "all", "") &&
@@ -1023,6 +953,7 @@ json handle_request(json request,
                     reloadError.value());
             }
             PolicyApplySummary summary = applyModulePolicies(policyRegistry, module);
+            if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) return *failure;
             fic::incident::PolicyIncidentReporter(incidentController()).report(
                 policyRegistry, summary, "manual apply_module " + module);
             const bool ok = isPolicyApplySuccessful(summary, module, "all") &&

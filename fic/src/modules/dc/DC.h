@@ -14,6 +14,7 @@ protected:
     
 public:
     bool apply () override;
+    static bool reconcile(std::string& error);
 };
 
 class DC_block_usb_storage : public DC

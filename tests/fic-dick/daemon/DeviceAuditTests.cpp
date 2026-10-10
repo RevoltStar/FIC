@@ -28,7 +28,7 @@ int main() {
         {"parent_id", 12},
         {"control_level", malicious},
         {"ignore_hierarchy", true},
-        {"block_usb_storage", false},
+        {"block_usb_storage", "disabled"},
         {"env", {{"SECRET", "must-not-be-audited"}}}
     };
     const json response = {{"ok", false}, {"message", "invalid control level"}};
@@ -64,8 +64,8 @@ int main() {
     assert(parsed["request"]["parent_id"] == 12);
     assert(parsed["request"]["ignore_hierarchy"].is_boolean());
     assert(parsed["request"]["ignore_hierarchy"] == true);
-    assert(parsed["request"]["block_usb_storage"].is_boolean());
-    assert(parsed["request"]["block_usb_storage"] == false);
+    assert(parsed["request"]["block_usb_storage"].is_string());
+    assert(parsed["request"]["block_usb_storage"] == "disabled");
     assert(!parsed["request"].contains("env"));
     assert(parsed["peer"]["available"] == true);
     assert(parsed["peer"]["uid"] == 2001);

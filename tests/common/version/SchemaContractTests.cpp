@@ -310,6 +310,21 @@ void testDatabaseContract(const fs::path& root) {
         assert(database.lastError().find("unsupported") != std::string::npos);
     }
 
+    const DBOptions booleanSchema = optionsFor(root, "boolean-schema-v1");
+    fs::copy_file(fresh.databaseFile, booleanSchema.databaseFile);
+    executeSql(booleanSchema.databaseFile,
+        "PRAGMA user_version=1; DROP TABLE category_known_attributes; DROP TABLE category_known_identities;"
+        "DROP TABLE device_policy_state; CREATE TABLE device_policy_state("
+        "id INTEGER PRIMARY KEY,desired_revision INTEGER,active_revision INTEGER,"
+        "block_usb_storage BOOLEAN,block_printers_scanners BOOLEAN,block_optical_drives BOOLEAN);"
+        "INSERT INTO device_policy_state VALUES(1,0,0,1,0,0);");
+    {
+        DB database(booleanSchema);
+        assert(!database.initializeDatabase());
+        assert(database.lastError().find("unsupported") != std::string::npos);
+        assert(readPragma(booleanSchema.databaseFile, "user_version") == 1);
+    }
+
     const DBOptions future = optionsFor(root, "future");
     fs::copy_file(fresh.databaseFile, future.databaseFile);
     executeSql(
