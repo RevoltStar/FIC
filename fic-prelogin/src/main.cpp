@@ -148,7 +148,7 @@ int main(int argc, char** argv) {
                 const auto action = graphics.action();
                 if (action) controller.request(*action);
                 if (controller.finished()) break;
-                if (!graphics.running() || (!graphics.ready() && std::chrono::steady_clock::now() - graphicsStarted > std::chrono::seconds(15))) {
+                if (!graphics.running() || (!graphics.ready() && std::chrono::steady_clock::now() - graphicsStarted > std::chrono::seconds(60))) {
                     graphics.cleanup(graphicsError);
                     std::cerr << "Qt EGLFS/KMS unavailable: " << graphicsError << "; interactive console fallback\n";
                     graphical = false;

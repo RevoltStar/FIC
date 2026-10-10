@@ -113,6 +113,8 @@ Seat0 primary DRM node выбирается через libsystemd sd-device enum
 без environment-selected file и без persistent/transient status files.
 Qt работает без X11/Wayland/window manager. Единственное fullscreen окно
 использует primary output; поддержка multi-GPU/multi-monitor не подтверждена.
+Broker ожидает подтверждение готовности renderer до 60 секунд, после чего
+переходит к текстовому fallback. Лимит одинаков для всех дистрибутивов.
 Режим/severity с отсутствующим proof обозначаются в UI как неподтверждённые.
 Длинная diagnostic прокручивается отдельно: manual/power buttons не исчезают.
 Power confirmation имеет default «Нет»; пароля/root shell/user session нет.

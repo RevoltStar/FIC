@@ -2,36 +2,31 @@
 
 ## Current base
 
-* main; task base `76273c79781fd783c777b0577be316221d8c4270`.
-* Snapshot accompanies the completed DC new/all lifecycle commit; actual HEAD: `git log -1`.
+* Branch: main; HEAD `f6b8a4745e91646ba83f4042d343700de41ab21a` (completed DC new/all lifecycle).
 
 ## Current task
 
-* Completed three DC category policies new/all and removed exclusive DC rollback.
+* Completed: increase prelogin renderer readiness timeout from 15 to 60 seconds for all distributions.
 
 ## Accepted architecture / invariants
 
-* all is absolute category DENY; explicit identity/placement precedes new; hierarchy/default follow. DISABLE removes category intent without deleting device rules or physical undo.
-* Schema 2 uses disabled/new/all and durable known identity/attribute snapshots independent of occurrence deletion. BEGIN IMMEDIATE + FULL synchronization captures epoch on disabled/all → new; identical new, restart/crash/reconnect/regeneration preserve epoch.
-* USB physical parent serial/vendor/product and block WWN/serial match safely in runtime/snapshot/compiler. Missing/unsafe identity cannot receive known exception. Partition/USB interface occurrence does not define a new physical identity.
-* DC.conf is authoritative; successful reload precedes full three-mode sync, including all DISABLE. Failed sync preserves config and pending desired revision for periodic/startup repair. Current-device enforcement uses current udev inventory and bounded existing sysfs backend; no global trigger.
-* Three known categories NotEnrolled, unknown DC policy Unsupported. Exclusive DeviceControl journal/undo/backend removed; other rollback contracts preserved.
+* Only renderer startup wait changes; five-second DE handoff countdown and existing cleanup/fallback behavior remain separate.
+* Remote ALT VM uses Bochs DRM and LLVMpipe; a cold boot with diagnostic 60-second binary reached renderer readiness 32.95 seconds after DRM selection, 36.81 seconds after service start. Remote PAM startup errors are separate.
 
 ## Completed / changed areas
 
-* Shared device DB/schema/category helpers; fic DC/orchestration; fic-dick collector, IPC/audit, effective policy, snapshot/compiler/enforcement; config/localization.
-* CMake/CI regressions and existing DC static/VM tests; reusable Docker/native gate.
-* `docs/device-control-validation.md` contains commands, tested image IDs, precedence/transition tables and evidence boundaries. `docs/rollback.md` and fic-dick README updated.
+* `fic-prelogin/src/main.cpp`: readiness timeout 60 seconds.
+* `fic-prelogin/README.md`: documented timeout and common distribution behavior.
 
 ## Validation
 
-* Five distro Docker matrix PASS: ALT p11, Debian12/13, Ubuntu24.04/26.04. Each production build + 10/10 targeted tests + real CLI/IPC/SQLite fault/crash/periodic gates + native udev parser/matcher.
-* Debian12 full project build PASS; final full CTest 171/171 PASS excluding permission-sensitive mutation_journal_tests. Journal suite separately PASS UID65534.
-* Earlier process_cancellation cleanup assertion was flaky: isolated and final full reruns PASS; no unrelated ProcessExecutor changes.
-* git diff --check PASS.
+* Debian12 Docker environment (`fic-deb-builder:debian12-final`): `cmake --build /build --target fic-prelogin -j2` PASS.
+* `ctest --test-dir /build -R "^prelogin_.*tests$" --output-on-failure`: 4/4 PASS (controller, frontend process, Qt view, package lifecycle).
+* Local legacy `build-check` has no fic-prelogin target; validation used existing container build instead.
+* `git diff --check` PASS.
 
 ## Remaining / limits
 
-* Physical hardware and real udevd/systemd reboot E2E untested. Activation/inventory fixtures are distinguished from native udevadm test, which does not execute RUN; sysfs writes occur only in test fixtures.
-* Reported device identifiers are not cryptographic authentication. Disabling/all → new does not reconnect physically deactivated devices; reconnect/rescan may be necessary.
-* No schema/config/journal migration or obsolete-format compatibility added.
+* Source-built binary not deployed to remote machine. Remote machine retains temporary diagnostic binary with 60-second limit; original in `/var/tmp/fic-prelogin-diagnosis/fic-prelogin.original`. Package reinstall replaces that temporary change.
+* Cold-boot runtime evidence used diagnostic patched installed binary, not this source build. Hardware/full distro matrix not rerun for this timeout-only change.
+* Remote startup PAM errors and cleanup message hiding original fallback cause remain outside this task.
