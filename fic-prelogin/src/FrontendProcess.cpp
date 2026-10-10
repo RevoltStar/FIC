@@ -129,9 +129,15 @@ bool FrontendProcess::awaitExit(int milliseconds) {
 }
 void FrontendProcess::forceReap() {
     if(child_<=0)return;
-    ::kill(child_,SIGKILL);
-    while(::waitpid(child_,&status_,0)<0 && errno==EINTR){}
-    child_=-1;
+    if (::kill(child_,SIGKILL)<0 && errno!=ESRCH) {
+        protocolFailed_=true;
+        std::cerr << "cannot terminate graphics frontend: errno=" << errno << '\n';
+        return; // Never block waiting for a child we could not signal.
+    }
+    if (!awaitExit(3000)) {
+        protocolFailed_=true;
+        std::cerr << "graphics frontend did not exit after SIGKILL\n";
+    }
 }
 bool FrontendProcess::cleanup(std::string& error) {
     if(child_<=0 && channel_<0)return true; // Frontend was never started.

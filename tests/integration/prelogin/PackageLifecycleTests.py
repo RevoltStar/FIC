@@ -44,3 +44,7 @@ with tempfile.TemporaryDirectory(prefix='fic-prelogin-platform-') as directory:
     result = subprocess.run(['bash', '-c', code, 'prelogin-check', str(rpm.resolve()), directory], text=True, capture_output=True, check=True)
     assert '-DFIC_TARGET_PLATFORM=alt-p11' in result.stdout.splitlines(), result.stdout
 print('ALT standalone prelogin receives target platform PASS')
+
+service = (root / "fic-prelogin/resources/fic-prelogin.service.in").read_text()
+capabilities = re.search(r"^CapabilityBoundingSet=(.*)$", service, re.M).group(1).split()
+assert "CAP_KILL" in capabilities, "broker must signal renderer after UID drop"

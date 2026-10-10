@@ -55,7 +55,7 @@ int seatConfiguration() {
     sd_device_enumerator_unref(devices);
     if(card.empty())return -1;
     int fd=memfd_create("fic-prelogin-kms",MFD_CLOEXEC|MFD_ALLOW_SEALING);if(fd<0)return -1;
-    const auto json=nlohmann::json{{"device",card}}.dump();
+    const auto json=nlohmann::json{{"device",card},{"hwcursor",false}}.dump();
     if(::write(fd,json.data(),json.size())!=static_cast<ssize_t>(json.size()) ||
         ::fcntl(fd,F_ADD_SEALS,F_SEAL_WRITE|F_SEAL_GROW|F_SEAL_SHRINK|F_SEAL_SEAL)<0) {::close(fd);return -1;}
     ::lseek(fd,0,SEEK_SET);
@@ -75,6 +75,7 @@ int main(int argc,char** argv) {
     ::clearenv(); ::setenv("LANG","C.UTF-8",1); ::setenv("HOME","/nonexistent",1);
     ::setenv("QT_QPA_PLATFORM","eglfs",1); ::setenv("QT_QPA_EGLFS_INTEGRATION","eglfs_kms",1);
     ::setenv("QT_QPA_EGLFS_ALWAYS_SET_MODE","1",1);
+    ::setenv("QT_STYLE_OVERRIDE","Fusion",1); // Avoid desktop style plugins and their helpers.
     // Limit plugin search before QPA initialization; the executable directory is also package-owned.
     if(!trusted(graphicsPaths::PLUGINS,true) ||
         !trusted(std::filesystem::path(graphicsPaths::PLUGINS)/"platforms/libqeglfs.so",false) ||
@@ -110,7 +111,7 @@ int main(int argc,char** argv) {
         // can strand an initial KMS page flip. Exclude socket notifiers from
         // this dispatcher pass; QPA initialization may run nested dispatch.
         QEventLoop initialFrame;
-        while(initialFrame.processEvents(QEventLoop::ExcludeSocketNotifiers)) {}
+        initialFrame.processEvents(QEventLoop::ExcludeSocketNotifiers);
         const char ready='V';
         if(::send(3,&ready,1,MSG_NOSIGNAL)!=1) return 1;
         std::cerr<<"fic-prelogin frontend: uid="<<::geteuid()<<" qpa=eglfs integration=eglfs_kms\n";

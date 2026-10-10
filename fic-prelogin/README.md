@@ -92,9 +92,13 @@ supplementary groups `video`, `render`, `input` и `xgrp` на ALT p11; graphics
 lifetime renderer; все прочие broker fd закрываются перед pinned `fexecve`.
 Синхронный ProcessExecutor не используется для renderer, поскольку не поддерживает
 asynchronous status/action channel и service-length cleanup lifecycle.
+Broker сохраняет `CAP_KILL` для завершения renderer с другим UID; ошибка
+сигнала или превышение срока ожидания не допускают успешного handoff.
 
 Используется **системный Qt6 Widgets**, `QT_QPA_PLATFORM=eglfs`,
-`QT_QPA_EGLFS_INTEGRATION=eglfs_kms`. Qt/loader environment очищается; plugin
+`QT_QPA_EGLFS_INTEGRATION=eglfs_kms`. Используются стиль Fusion и программный
+курсор, без desktop style helpers и зависимости от аппаратного DRM cursor.
+Qt/loader environment очищается; plugin
 search ограничен compile-time системным каталогом с root-owned/non-writable
 parents и проверкой EGLFS/KMS plugin files. Bundled `fic-gui` runtime не
 используется. Package dependencies вычисляются из actual ELF и владельцев
