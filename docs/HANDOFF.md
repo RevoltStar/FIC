@@ -2,34 +2,32 @@
 
 ## Current base
 
-* `main`, `8cc07ea64cfd1ba4e8ed3bf79a7153ea100692e4`; current prelogin fixes uncommitted.
+* `main`, `cd2ca68`; current packaging fix uncommitted.
 
 ## Current task
 
-* Completed requested ALT-only xgrp frontend access and visible five-second automatic handoff countdown. No additional cleanup/refactor requested.
+* Fixed missing graphics on ALT production standalone prelogin build. Native graphical startup awaits next boot; active user desktop preserved.
 
 ## Accepted architecture / invariants
 
-* Gate is systemd/UI only; no authentication or direct DM start. Manual/power actions remain immediate and cleanup still requires renderer reap, VT restore and cgroup proof.
-* Auto countdown begins only with verified current-boot startup success/readiness and renderer-ready. Monotonic clock; loss of eligibility or daemon PID change resets it. Status rechecked before exit; countdown is never readiness proof.
-* Existing private view schema unchanged: countdown text uses startup field; also shown on text VT.
-* ALT target adds xgrp to clamped video/render/input groups. Root/fic administrative groups remain excluded. Other targets do not add xgrp.
+* Five-second automatic handoff applies to all distributions; only xgrp frontend group is ALT-specific.
+* Countdown requires verified startup success and renderer readiness. No relaxation of PAM provenance or startup failure handling.
 
-## Changed areas / completed
+## Completed / changed areas
 
-* fic-prelogin CMake/generated graphics paths, FrontendProcess, controller, console rendering, README; controller regression tests use injected clock.
-* RPM built for installed version 0.0.0~aplha-1.altp11 and installed on 172.17.1.107; current LightDM PID1747 unchanged, fic/sshd active. UID495 with matching groups971/972/973/977 passes DRM R/W access check without opening device/changing VT.
-* Remote host remains configured PASSIVE. Earlier remote repairs restored missing DAC values and ALT PAM topology via maintenance managers; those were not repository source changes.
+* RPM build_project now passes FIC_TARGET_PLATFORM=alt-p11 to standalone fic-prelogin as well as daemon. Previous root CMake builds masked this missing packaging flag; production binary excluded xgrp and Qt could not open root:xgrp DRM device.
+* PackageLifecycleTests.py exercises actual production build dispatch with stub compiler tools and RPM architecture lookup.
+* Built optional RPM through production build_project/build_fic_prelogin_package and installed on 172.17.1.107. Broker SHA256 439509578b4ac2d7aef6d00ed27e3db388d2cb8c06a82cc56919e039cc5ac775 matches build.
+* Restored previously managed ALT faillock/password-history topology using existing maintenance commands. Startup now applied69/disabled31/failed0, ok=true. No journal deletion or provenance bypass. Cause of topology disappearing after reinstall remains unestablished.
 
 ## Validation
 
-* Debian12 configure/build affected targets + prelogin CTest: 4/4 PASS. Full incremental build and CTest excluding unchanged root-sensitive mutation_journal_tests: 170/170 PASS. Logs build-prelogin-validation/final/countdown-*.log.
-* ALT configure/build broker/frontend/integration/controller/Qt tests PASS; optional RPM build PASS. Generated ALT_XGRP true on ALT, false on Debian. Logs build-prelogin-validation/cross/altp11/countdown-*.log.
-* Controller checks five-second boundary, countdown reset on daemon loss/PID/renderer change, immediate manual handoff, mode/severity eligibility. git diff --check PASS.
-* Native installed helper verify PASS; broker hash matches ALT build, one current RPM record; device permission check with frontend identity PASS. No DM restart or host reboot performed.
+* python3 tests/integration/prelogin/PackageLifecycleTests.py . PASS; bash -n packaging/rpm/build-fic-alt-p11-rpm.sh PASS; git diff --check PASS.
+* Actual ALT production standalone configure/build/package PASS; generated ALT_XGRP=true. Artifacts/logs build-prelogin-validation/alt-production/.
+* Fresh native SSH and sudo PASS; integration verify PASS; fic/sshd/display-manager active; DM PID2227 preserved. One RPM record; installed broker hash matches new build.
 
 ## Remaining / limitations
 
-* Full graphical startup/countdown/handoff on ALT awaits next boot; only device permission checked live. Current user desktop was preserved.
-* RPM --replacepkgs returned erase failed for same-version reinstall although new files/metadata installed. One current package record, correct new broker hash and helper integration verified; do not describe RPM command as exit0.
-* Remote backup /root/fic-prelogin-recovery-20261010-countdown. Ignore build/VM assets. No source commit/push requested for this task.
+* Qt DRM rendering and countdown during native boot have not been observed after this fix. No reboot or active desktop interruption performed.
+* Same-version RPM replacement returned erase failed (exit1), although correct new binary and metadata installed; do not describe RPM transaction as successful exit0.
+* Remote recovery backup /root/fic-graphics-recovery-20261010 contains PAM, mutation journal and old broker. Host remains PASSIVE. No commit/push requested.

@@ -241,7 +241,7 @@ build_project() {
         "-DFIC_TMPFILES_DIR=$TMPFILES_DIR"
     )
 
-    if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
+    if [ "$source_dir" = "$FIC_SRC_DIR" ] || [ "$source_dir" = "$FIC_PRELOGIN_SRC_DIR" ]; then
         cmake_args+=(
             "-DFIC_TARGET_PLATFORM=alt-p11"
         )

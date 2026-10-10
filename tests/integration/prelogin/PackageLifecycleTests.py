@@ -35,3 +35,12 @@ with tempfile.TemporaryDirectory(prefix='fic-prelogin-package-') as directory:
                 env = dict(os.environ, FIXTURE_EXIT='23')
                 assert subprocess.run(['sh', str(target), case], env=env).returncode == 23, (name, case, 'hidden helper failure')
 print('DEB generated lifecycle dispatch, upgrade and failure propagation PASS')
+
+# Exercise production standalone build dispatch, not a root configure which
+# already knows the target platform. Stub compiler tools and RPM architecture lookup.
+rpm = root / 'packaging/rpm/build-fic-alt-p11-rpm.sh'
+with tempfile.TemporaryDirectory(prefix='fic-prelogin-platform-') as directory:
+    code = 'rpm() { printf x86_64; }\nsource "$1" 0.0.0-aplha\ncmake() { printf "%s\\n" "$@"; }\nbuild_project "$FIC_PRELOGIN_SRC_DIR" "$2"\n'
+    result = subprocess.run(['bash', '-c', code, 'prelogin-check', str(rpm.resolve()), directory], text=True, capture_output=True, check=True)
+    assert '-DFIC_TARGET_PLATFORM=alt-p11' in result.stdout.splitlines(), result.stdout
+print('ALT standalone prelogin receives target platform PASS')
