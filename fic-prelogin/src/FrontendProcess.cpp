@@ -29,11 +29,14 @@ bool FrontendProcess::start(std::string& error) {
     if(!ficGroup || gid==ficGroup->gr_gid) {error="frontend account cannot belong to administrative fic group";return false;}
     const gid_t ficGid=ficGroup->gr_gid;
     std::vector<gid_t> groups;
-    for(const auto name:{"video","render","input"}) {
+    std::vector<const char*> groupNames{"video","render","input"};
+    if (graphicsPaths::ALT_XGRP) groupNames.push_back("xgrp");
+    for(const auto name:groupNames) {
         const auto* group=::getgrnam(name);
         if(group && group->gr_gid!=0 && group->gr_gid!=ficGid) groups.push_back(group->gr_gid);
     }
-    if(!::getgrnam("video") || !::getgrnam("input")) {
+    if(!::getgrnam("video") || !::getgrnam("input") ||
+       (graphicsPaths::ALT_XGRP && !::getgrnam("xgrp"))) {
         error="graphics video/input groups are unavailable";return false;
     }
     // Package path and every canonical parent must be root-owned/non-writable.
@@ -110,6 +113,8 @@ void FrontendProcess::render(const PreLoginController& controller) {
         startup=s.completed?(s.applyOk?"Первое применение: успешно":"Первое применение: ошибка"):
             s.started?"Первое применение: выполняется":"Первое применение: ещё не началось";
     } else if(!o.systemd.text.empty()) detail=o.systemd.text+"\n"+detail;
+    if (const auto seconds = controller.countdownSeconds())
+        startup += "\nПереход к системному DE через " + std::to_string(*seconds) + " секунд...";
     const auto data=ipc::json{{"state",uiStateToken(controller.state())},{"detail",detail},{"mode",mode},{"severity",severity},{"startup",startup}}.dump();
     if(channel_>=0 && ::send(channel_,data.data(),data.size(),MSG_DONTWAIT|MSG_NOSIGNAL)<0 && errno!=EAGAIN && errno!=EINTR)
         protocolFailed_=true;

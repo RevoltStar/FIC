@@ -54,6 +54,8 @@ public:
             const auto& s = *observation.verified;
             text += s.access.state + " / " + s.access.mode + " / " + s.access.severity + "\n" + s.diagnostic;
         } else text += observation.systemd.text + "\n" + observation.error;
+        if (const auto seconds = controller.countdownSeconds())
+            text += "\nПереход к системному DE через " + std::to_string(*seconds) + " секунд...";
         text += "\nПерейти к системному DM: Enter или handoff\nПерезагрузить: reboot; выключить: poweroff\n";
         if (text != last_) {
             last_ = text;

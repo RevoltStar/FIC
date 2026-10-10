@@ -13,6 +13,7 @@
 using namespace fic::prelogin;
 namespace {
 void require(bool condition, const std::string& error) { if (!condition) throw std::runtime_error(error); }
+std::chrono::steady_clock::time_point testNow{};
 const std::string boot = "11111111-1111-4111-8111-111111111111";
 struct Provider : StatusProvider { Observation value; int reads = 0; Observation read() override { ++reads; return value; } };
 struct Gui : GuiLifecycle { int closes = 0; bool ok = true, ready = true; bool readyForHandoff() const override { return ready; } bool cleanup(std::string& error) override { ++closes; if (!ok) error = "cleanup failed"; return ok; } };
@@ -27,8 +28,9 @@ fic::ipc::PreLoginStatus success() {
 }
 void lifecycle() {
     { Provider p; Gui g; Power w; p.value.verified = success(); g.ready = false;
-      PreLoginController c(p,g,w,boot); c.poll(); require(!c.finished(), "auto-handoff before renderer ready");
-      g.ready = true; c.poll(); require(c.finished() && c.exitCode()==0, "renderer readiness didn't release auto handoff"); }
+      PreLoginController c(p,g,w,boot,[]{return testNow;}); c.poll(); require(!c.finished(), "auto-handoff before renderer ready");
+      g.ready = true; c.poll(); require(c.countdownSeconds()==5, "countdown not started after renderer ready");
+      testNow += std::chrono::seconds(5); c.poll(); require(c.finished() && c.exitCode()==0, "renderer readiness didn't release auto handoff"); }
 
     for (const auto state : {"INITIALIZING", "APPLYING", "READY", "DEGRADED", "STOPPING", "missing", "crashed"}) {
         Provider provider; Gui gui; Power power;
@@ -38,7 +40,7 @@ void lifecycle() {
             provider.value.verified = s;
         }
         const auto before = provider.value;
-        PreLoginController controller(provider, gui, power, boot);
+        PreLoginController controller(provider, gui, power, boot,[]{return testNow;});
         controller.poll(); require(!controller.finished(), "failed/unavailable startup auto-handoff");
         controller.request(Action::Handoff); controller.request(Action::Handoff); controller.poll();
         require(controller.finished() && controller.exitCode() == 0 && gui.closes == 1 && power.actions.empty(),
@@ -47,26 +49,39 @@ void lifecycle() {
                 "handoff altered severity");
     }
     { Provider p; Gui g; Power w; p.value.systemd = {true, 123, "active", "running", "READY=1"};
-      PreLoginController c(p,g,w,boot); c.poll(); require(!c.finished(), "systemd READY auto-handoff"); }
+      PreLoginController c(p,g,w,boot,[]{return testNow;}); c.poll(); require(!c.finished(), "systemd READY auto-handoff"); }
     { Provider p; Gui g; Power w; p.value.verified = success();
-      PreLoginController c(p,g,w,boot); c.poll(); require(c.finished() && c.exitCode()==0, "verified success didn't hand off"); }
+      PreLoginController c(p,g,w,boot,[]{return testNow;}); c.poll(); require(c.countdownSeconds()==5 && !c.finished(), "success skipped countdown");
+      testNow += std::chrono::milliseconds(4999); c.poll(); require(c.countdownSeconds()==1 && !c.finished(), "handoff before five seconds");
+      testNow += std::chrono::milliseconds(1); c.poll(); require(c.finished() && c.exitCode()==0, "verified success didn't hand off"); }
     { Provider p; Gui g; Power w; p.value.verified = success(); p.value.verified->bootId = "22222222-2222-4222-8222-222222222222";
-      PreLoginController c(p,g,w,boot); c.poll(); require(!c.finished() && !c.observation().verified, "stale boot adopted"); }
+      PreLoginController c(p,g,w,boot,[]{return testNow;}); c.poll(); require(!c.finished() && !c.observation().verified, "stale boot adopted"); }
     { Provider p; Gui g; Power w; g.ok = false;
-      PreLoginController c(p,g,w,boot); c.request(Action::Handoff); require(c.finished() && c.exitCode()!=0, "cleanup false success"); }
+      PreLoginController c(p,g,w,boot,[]{return testNow;}); c.request(Action::Handoff); require(c.finished() && c.exitCode()!=0, "cleanup false success"); }
     for (const auto action : {Action::Reboot, Action::PowerOff}) {
-        Provider p; Gui g; Power w; PreLoginController c(p,g,w,boot); c.request(action);
+        Provider p; Gui g; Power w; PreLoginController c(p,g,w,boot,[]{return testNow;}); c.request(action);
         require(g.closes==1 && w.actions==std::vector<Action>{action}, "power action wasn't cleanup-first and restricted");
     }
     for (const auto mode : {"ACTIVE", "PASSIVE", "OFF"}) {
         for (const auto severity : {"UNLOCKED", "SOFT", "STANDARD", "HARD", "ISOLATE"}) {
             auto s = success(); s.access.mode = mode; s.access.severity = severity;
             s.access.loginAllowed = fic::ipc::computedLoginAllowed(s.access);
-            Provider p; Gui g; Power w; p.value.verified = s; PreLoginController c(p,g,w,boot); c.poll();
+            Provider p; Gui g; Power w; p.value.verified = s; PreLoginController c(p,g,w,boot,[]{return testNow;}); c.poll();
             const bool allowed = std::string(mode)!="ACTIVE" || std::string(severity)=="UNLOCKED" || std::string(severity)=="SOFT";
+            testNow += std::chrono::seconds(5); c.poll();
             require(c.finished()==allowed, "mode/severity auto contract");
         }
     }
+    { Provider p; Gui g; Power w; p.value.verified=success();
+      PreLoginController c(p,g,w,boot,[]{return testNow;}); c.poll();
+      testNow += std::chrono::seconds(4); p.value.verified.reset(); c.poll();
+      require(!c.countdownSeconds() && !c.finished(), "daemon loss retained countdown");
+      p.value.verified=success(); c.poll(); require(c.countdownSeconds()==5, "readiness recovery did not restart countdown");
+      testNow += std::chrono::seconds(4); p.value.verified->daemonPid++; c.poll();
+      require(c.countdownSeconds()==5, "new daemon inherited countdown");
+      g.ready=false; c.poll(); require(!c.countdownSeconds(), "renderer loss retained countdown");
+      g.ready=true; c.poll(); c.request(Action::Handoff);
+      require(c.finished() && c.exitCode()==0, "manual handoff waits for countdown"); }
     std::cout << "L1-L8 L12-L22 lifecycle/manual/auto/cleanup/power PASS\n";
 }
 class Socket {

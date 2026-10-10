@@ -87,7 +87,7 @@ Root broker остаётся `/opt/fic/bin/fic-prelogin`; графический
 (`nologin`, `/nonexistent`). Frontend получает только private inherited
 SOCK_SEQPACKET fd, данные для отображения и три local actions. Administrative
 socket не наследуется; `fic` group не передаётся. Broker ограничивает
-supplementary groups `video`, `render`, `input`; graphics account metadata
+supplementary groups `video`, `render`, `input` и `xgrp` на ALT p11; graphics account metadata
 проверяется до запуска. Общий systemd cgroup и parent-death signal ограничивают
 lifetime renderer; все прочие broker fd закрываются перед pinned `fexecve`.
 Синхронный ProcessExecutor не используется для renderer, поскольку не поддерживает
@@ -112,6 +112,12 @@ Qt работает без X11/Wayland/window manager. Единственное 
 Режим/severity с отсутствующим proof обозначаются в UI как неподтверждённые.
 Длинная diagnostic прокручивается отдельно: manual/power buttons не исчезают.
 Power confirmation имеет default «Нет»; пароля/root shell/user session нет.
+
+После подтверждённого startup success и renderer-ready начинается видимый
+пятисекундный отсчёт «Переход к системному DE через X секунд...». Он использует
+monotonic clock; потеря readiness/renderer либо смена daemon PID сбрасывает
+отсчёт. Перед auto-handoff статус проверяется повторно. Manual/power actions
+не ждут таймер. Отсчёт отображается также в текстовом fallback.
 
 Renderer-ready barrier удерживает auto-handoff до готовности QPA; manual action
 остаётся независимым от daemon. При handoff broker прекращает polling,

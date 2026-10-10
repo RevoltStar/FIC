@@ -1,5 +1,6 @@
 #pragma once
 namespace fic::prelogin::graphicsPaths {
+inline constexpr bool ALT_XGRP = @FIC_PRELOGIN_ALT_XGRP@;
 inline constexpr const char* FRONTEND = "@FIC_PRELOGIN_FRONTEND_BINDIR@/fic-prelogin-frontend";
 inline constexpr const char* PLUGINS = "@FIC_PRELOGIN_QT_PLUGIN_DIR@";
 }
