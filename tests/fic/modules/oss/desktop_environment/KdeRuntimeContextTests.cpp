@@ -555,7 +555,7 @@ void testSessionExecutorOverridesAreConstrained() {
     }
 }
 
-void testKdeBackendUsesLockerSelectedGraph() {
+void testKdeBackendUsesLockerSelectedGraph(int toolVersion) {
     FakeBus bus;
     auto runtimeResolver = std::make_shared<KdeScreenLockerRuntimeContextResolver>(
         resolver(bus, environment({{"HOME", "/home/user"},
@@ -566,13 +566,15 @@ void testKdeBackendUsesLockerSelectedGraph() {
     int writes = 0;
     KdeBackend backend(session(), sessionContext(), topo(KdeSessionTopology::Unique),
         {runtimeResolver,
-         [](const std::vector<std::string>& paths) {
+         [toolVersion](const std::vector<std::string>& paths) {
              require(!paths.empty() &&
                          std::all_of(paths.begin(), paths.end(),
                              [](const auto& path) {
                                  return !path.empty() && path.front() == '/';
                              }),
                      "KDE executable lookup accepted a non-absolute path");
+             if (paths.front().find("config6") != std::string::npos && toolVersion == 5)
+                 return std::string{};
              return paths.front();
          },
          [&](const UserSession& target, const SessionContext&,
@@ -597,6 +599,8 @@ void testKdeBackendUsesLockerSelectedGraph() {
              require(environment.find("PATH") == environment.end() &&
                          environment.find("LD_PRELOAD") == environment.end(),
                      "unsafe variable reached KDE command overrides");
+             require(executable.find("config" + std::to_string(toolVersion)) != std::string::npos,
+                     "KDE selected the wrong native tool version");
              if (executable.find("kwriteconfig") != std::string::npos) {
                  ++writes;
                  lockerGraph[arguments[arguments.size() - 2]] = arguments.back();
@@ -605,14 +609,13 @@ void testKdeBackendUsesLockerSelectedGraph() {
              return result;
          }});
     std::string error;
-    require(!backend.writeConfig("kscreenlockerrc", "Daemon", "Lock", "false", error) &&
-            writes == 0 && error.find("native conditional write/ownership-safe rollback is not proven") != std::string::npos,
-            "KDE writer ran without conditional mutation authority");
+    require(backend.writeConfig("kscreenlockerrc", "Daemon", "Lock", "false", error) &&
+            writes == 1, "KDE native writer failed");
     std::string value;
     require(backend.readConfig("kscreenlockerrc", "Daemon", "Lock", value, error), error);
-    require(value == "true" && lockerGraph["Lock"] == "true" &&
+    require(value == "false" && lockerGraph["Lock"] == "false" &&
                 defaultGraph["Lock"] == "false",
-            "KDE read selected the wrong graph or the refused write modified state");
+            "KDE write/read selected the wrong graph");
     require(backend.callDbusMethod("org.kde.screensaver", "/ScreenSaver",
                 "org.kde.screensaver", "configure", error), error);
 }
@@ -643,7 +646,8 @@ void testKdeBackendRejectsOwnerReplacementAfterConfigure() {
 
 int main() {
     testProductionReaderAcceptsRootOwnedProcMetadata();
-    testKdeBackendUsesLockerSelectedGraph();
+    testKdeBackendUsesLockerSelectedGraph(6);
+    testKdeBackendUsesLockerSelectedGraph(5);
     testKdeBackendRejectsOwnerReplacementAfterConfigure();
     testResolverSuccessPresenceAndAllowlist();
     testResolverFailures();

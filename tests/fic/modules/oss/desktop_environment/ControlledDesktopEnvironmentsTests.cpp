@@ -65,8 +65,8 @@ int main() {
     std::filesystem::create_directories(root / "data");
     auto& facade = fic::rollback::DaemonMutationJournal::instance();
     facade.setOverridePath(root / "data/mutations.json");
-    require(!OSS_controlled_desktop_environments().apply(),
-            "uncommitted nonempty scope was accepted");
+    require(OSS_controlled_desktop_environments().apply(),
+            "valid declaration incorrectly requires checkpoint");
     auto* journal = facade.tryGet(error);
     require(journal != nullptr, error);
     fic::rollback::ScopeTransition transition(*journal);
@@ -76,8 +76,8 @@ int main() {
     const auto failure = [](std::string& e) { e = "injected release conflict"; return false; };
     require(!transition.reconcile({"KDE"}, verified, verified, failure, verified, error),
             "release failure was accepted");
-    require(!OSS_controlled_desktop_environments().apply(),
-            "partial transition was accepted by Required prerequisite");
+    require(OSS_controlled_desktop_environments().apply(),
+            "global partial state incorrectly invalidated declaration");
     facade.resetOverride();
     std::filesystem::remove_all(root);
     return 0;

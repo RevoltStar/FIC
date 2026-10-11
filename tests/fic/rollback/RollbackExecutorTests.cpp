@@ -110,6 +110,32 @@ MutationId recordApplied(const PolicyRef& policy,
 }
 
 // ---------------------------------------------------------------- sysctl ----
+void testSessionOnlyMediaDisableDoesNotRollback() {
+    const PolicyRef media{"OSS","DesktopEnvironment","disable_kde_lock_screen_media_controls"};
+    RollbackExecutorDeps deps;
+    deps.releaseDesktopOwner = [](const PolicyRef&,MutationJournal&,std::string&,bool) {
+        throw std::runtime_error("SessionOnly disable invoked physical rollback"); return false;
+    };
+    require(rollbackEnrollment(media)==RollbackEnrollment::NotEnrolled &&
+            effectiveRollbackEnrollment(media,deps)==RollbackEnrollment::NotEnrolled &&
+            rollbackPolicyBeforeDisable(media,"",deps).rollbackCompleted(),
+            "media disable must succeed without undoing user settings");
+}
+
+void testSessionOnlyScreenlockDisableWithoutGlobalOwnership() {
+    TempJournal tree;
+    JournalOverride override(tree.tree.root / "mutations.json");
+    const PolicyRef timeout{"OSS","DesktopEnvironment","screenlock_timeout"};
+    RollbackExecutorDeps deps;
+    int calls = 0;
+    deps.releaseDesktopOwner = [&](const PolicyRef& owner, MutationJournal& journal, std::string&, bool) {
+        require(owner==timeout && journal.records().empty(), "SessionOnly gained physical journal records");
+        ++calls; return true;
+    };
+    require(rollbackPolicyBeforeDisable(timeout,"",deps).rollbackCompleted() && calls==2,
+            "absence of GNOME/FLY ownership blocked SessionOnly screenlock disable");
+}
+
 void testDesktopJointOwnerRelease() {
     TempJournal tree;
     JournalOverride override(tree.tree.root / "mutations.json");
@@ -404,14 +430,14 @@ void testEnrollmentMatrix() {
                 RollbackEnrollment::Unsupported,
             "unknown DC features must refuse automatic rollback");
     for (const auto* name : {"controlled_desktop_environments",
-                             "absence_of_uncontrolled_desktop_environments"})
+                             "absence_of_uncontrolled_desktop_environments",
+                             "disable_kde_lock_screen_media_controls"})
         require(rollbackEnrollment({"OSS", "DesktopEnvironment", name}) ==
                     RollbackEnrollment::NotEnrolled,
                 "DE intent/compliance must not claim physical policy rollback");
     require(rollbackEnrollment({"OSS", "DesktopEnvironment", "screenlock_timeout"}) == RollbackEnrollment::Supported,
-            "screenlock global journaled mutations must enroll with explicit refusal of unsafe session writes");
-    for (const auto* name : {"disable_kde_lock_screen_media_controls",
-                             "unknown_desktop_policy"})
+            "screenlock global mutations enroll; session writes have no inverse");
+    for (const auto* name : {"unknown_desktop_policy"})
         require(rollbackEnrollment({"OSS", "DesktopEnvironment", name}) ==
                     RollbackEnrollment::Unsupported,
                 "incomplete or unknown DE rollback must fail closed, not abandon ownership");
@@ -3172,6 +3198,8 @@ int main(int argc, char** argv) {
          testSshRollbackCompensationRacePreservesExternalEdit},
         {"ssh rollback refused on concurrent modification",
          testSshRollbackRefusedOnConcurrentModification},
+        {"SessionOnly timeout disable without global ownership", testSessionOnlyScreenlockDisableWithoutGlobalOwnership},
+        {"SessionOnly media disable does not rollback", testSessionOnlyMediaDisableDoesNotRollback},
         {"device categories intentionally not enrolled", testDeviceCategoriesAreNotEnrolled},
         {"mode-and-owner profiles is not rollback enrolled",
          testModeAndOwnerProfilesIsNotRollbackEnrolled},

@@ -625,7 +625,12 @@ bool initPolicyRegistry(
         std::make_shared<SystemGraphicalSessionInventory>(executables);
     cafArr.push_back(std::move(controlledDesktops));
     cafArr.push_back(std::make_unique<OSS_screenlock_timeout>(
-        *controlledDesktopsScope, graphicalSessions));
+        *controlledDesktopsScope, graphicalSessions, [&registry, &executables] {
+            DesktopGlobalConfigReconciler coordinator({
+                std::make_shared<GnomeSystemBackend>(executables),
+                std::make_shared<FlySystemBackend>()});
+            return coordinator.reconcile(registry);
+        }));
     auto dmInventory = std::make_shared<SystemDisplayManagerInventory>(executables, platform.displayManager);
     auto dmBackend = std::make_shared<DisplayManagerConfigTransaction>(executables, platform.displayManager);
     auto controlledDm = std::make_unique<OSS_controlled_display_managers>(dmInventory, dmBackend);

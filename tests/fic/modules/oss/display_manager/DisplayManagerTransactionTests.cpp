@@ -74,6 +74,25 @@ void filesystemLifecycle(){
     require(f.backend->reconcile("GDM",true,reopened,error),error);
     require(f.backend->reconcile("GDM",false,reopened,error),error);
 }
+void alreadyDisabledStillOwned() {
+    Fixture f("already-disabled"); std::string error;
+    const std::map<std::string,std::pair<fs::path,std::string>> cases = {
+        {"SDDM", {f.config.sddmConfigPath,"[Autologin]\nUser=\nRelogin=false\n"}},
+        {"GDM", {f.config.gdmConfigCandidates[0],"[daemon]\nAutomaticLoginEnable=false\nTimedLoginEnable=false\n"}},
+        {"LIGHTDM", {f.config.lightDmConfigPath,"[Seat:*]\nautologin-user=\nautologin-guest=false\n"}}
+    };
+    for (const auto& [dm, fixture] : cases) {
+        const auto& [path, original] = fixture;
+        put(path,original);
+        require(f.backend->reconcile(dm,true,f.journal,error),error);
+        require(get(path).find(original) == 0 && get(path) != original,
+                "already disabled foreign state skipped FIC enrollment: " + dm);
+        require(f.backend->verifyApplied(dm,f.journal,error),error);
+        require(f.backend->reconcile(dm,false,f.journal,error),error);
+        require(get(path)==original,"release changed already-disabled administrator state");
+    }
+}
+
 void conflicts(){
     Fixture f("conflicts");std::string error;
     put(f.config.gdmConfigCandidates[0],"[daemon]\nAutomaticLogin=admin\n");
@@ -262,13 +281,14 @@ void scopeLifecycle(){
         require(!scope.reconcile(ban,error)&&!scope.apply(),"empty DM scope committed");}
     configure("[\"SDDM\",\"GDM\"]");
     {OSS_controlled_display_managers scope(f.inventory,f.backend,&f.journal);OSS_disable_autologin ban(scope,f.inventory,f.backend,&f.journal);
-        require(!ban.apply(),"alternate entrypoint enrolled uncommitted scope");
+        require(scope.apply() && !fs::exists(f.config.gdmConfigCandidates[0]),"scope validation mutated files");
+        require(ban.apply(),"dependent apply did not reconcile fresh scope");
         require(scope.reconcile(ban,error),error);require(scope.apply()&&ban.apply(),"committed DM scope refused");
         ScopeTransition de(f.journal);ScopeTransitionState state;require(de.state(state,error)&&!state.id,"DM checkpoint confused with DE");}
     configure("[\"SDDM\"]");
     {OSS_controlled_display_managers scope(f.inventory,f.backend,&f.journal);OSS_disable_autologin ban(scope,f.inventory,f.backend,&f.journal);
         require(fs::exists(f.config.gdmConfigCandidates[0]),"saving scope released old manager");
-        require(!scope.apply(),"new intent falsely committed");
+        require(scope.apply() && fs::exists(f.config.gdmConfigCandidates[0]),"scope validation released GDM");
         require(scope.reconcile(ban,error),error);require(!fs::exists(f.config.gdmConfigCandidates[0]),"removed GDM ownership remains");
         OSS_absence_of_uncontrolled_display_managers compliance(scope,f.inventory);
         require(compliance.evaluate(f.inventory->value,error),"installed unused outside scope rejected");
@@ -281,7 +301,7 @@ void scopeLifecycle(){
     configure("[\"SDDM\",\"GDM\"]");
     {OSS_controlled_display_managers scope(f.inventory,f.backend,&f.journal);OSS_disable_autologin ban(scope,f.inventory,f.backend,&f.journal);
         require(scope.reconcile(ban,error),error);require(fs::exists(f.config.gdmConfigCandidates[0]),"added GDM absent");
-        f.inspectHook=[&]{configure("[\"LIGHTDM\"]");};require(!scope.reconcile(ban,error),"intent change committed stale target");require(!scope.apply(),"partial state authorized Required");}
+        f.inspectHook=[&]{configure("[\"LIGHTDM\"]");};require(!scope.reconcile(ban,error),"intent change committed stale target");require(scope.apply(),"partial global state invalidated declaration");}
     configure("[\"SDDM\"]","DISABLE");
     {PolicyRegistry registry;require(registry.addModule("OSS",ModuleView::Standard,0,error),error);
         auto scope=std::make_unique<OSS_controlled_display_managers>(f.inventory,f.backend,&f.journal);auto* s=scope.get();
@@ -303,6 +323,6 @@ int main(){try{
     require(type.validate("")&&type.postProcessingValue("")=="[]","empty typed scope invalid");
     require(type.postProcessingValue("sddm,GDM,lightdm")=="[\"GDM\",\"LIGHTDM\",\"SDDM\"]","canonical list invalid");
     require(!type.validate("SDDM,SDDM")&&!type.validate("GDM3")&&!type.validate("weird")&&!type.validate("SDDM,"),"invalid tokens accepted");
-    filesystemLifecycle();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();scopeLifecycle();
+    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();scopeLifecycle();
     std::cout<<"PASS: DM transaction, ownership, native failure, crash recovery, scope and inventory contracts\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

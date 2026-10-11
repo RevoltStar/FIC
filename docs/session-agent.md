@@ -314,13 +314,22 @@ screen-lock values, including
 `org.gnome.desktop.lockdown disable-lock-screen=false`. This limitation does not
 weaken verification of the persistent profile for new sessions.
 
-For normal apply the daemon installs the same report as explicit per-pass
-context on every session-aware policy. Multi-DE policies evaluate each desktop
-separately: verified desktops may still receive best-effort runtime convergence,
-while missing coverage or a failed relevant backend makes the policy result
-fail. `apply_policy` and `apply_module` use policy/module-scoped report success,
-so an unrelated backend failure does not reject a successful targeted request;
-full apply and startup retain overall failure if any backend failed.
+For normal apply, screenlock_timeout invokes the shared system coordinator before
+session convergence. Scope apply itself validates only. Saving graphical scope
+through the administrative handler separately runs the relevant submodule;
+startup, periodic and reload use the same dependent policy execution path.
+GNOME/FLY global requirements use MutationJournal, safe inverse release and
+recovery; a committed global checkpoint does not prove all user sessions.
+KDE/XFCE have no journal or rollback: all applicable sessions must succeed, no
+applicable sessions is SUCCESS, exclusion/disable leaves existing user values.
+New session_ready events and periodic passes apply enabled SessionOnly policies.
+Media-controls disable is NotEnrolled and does not invert kscreenlockerrc.
+KConfig Kiosk/immutable keys and XFCE system locking are forbidden security
+boundaries; no user ownership markers are created. LXQt screen locking is
+Unsupported until a real supported backend exists. FLY persistent verification
+is distinct from live runtime NOT_VERIFIED; fly-wmfunc failure is a convergence
+warning after verified system enforcement. The complete physical release
+contract is in [graphical-scope-transactions.md](graphical-scope-transactions.md).
 
 The session-event listener is mandatory startup infrastructure. `fic.service`
 remains `Type=notify`, `NotifyAccess=main`, and `TimeoutStartSec=600s`;

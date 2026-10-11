@@ -9,6 +9,12 @@ public:
 
     const char* name() const override { return "FLY"; }
 
+    bool setValue(
+        const std::string& key,
+        const std::string& value,
+        std::string& error
+    ) const;
+
 };
 
 #endif // FLY_BACKEND_H

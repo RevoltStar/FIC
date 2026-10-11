@@ -292,15 +292,9 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
             if (!configured.count(desktop) || applicable == SessionApplicability::NotApplicable) {
                 continue;
             }
-            // Session-only setters currently have no native conditional
-            // mutation contract. Refuse BEFORE releasing any global state.
-            // They cannot grant a successful scope checkpoint, even when an
-            // agent is temporarily absent or a setting happens to match.
-            if (applicable == SessionApplicability::Unsupported ||
-                sessionAware->enforcementMode(desktop) != EnforcementMode::MandatoryGlobal) {
-                return failStageA("DE transition cannot prove ownership-safe session enforcement: " +
-                    formatPolicyRef(owner) + "/" + DesktopEnvironmentBackend::kindName(desktop));
-            }
+            // SessionOnly convergence is independent of the global checkpoint.
+            if (sessionAware->enforcementMode(desktop) != EnforcementMode::MandatoryGlobal)
+                continue;
             if (!report.resultFor(owner, desktop).hasRequirement) {
                 return failStageA(
                     "MandatoryGlobal policy has no global requirement coverage: " +
@@ -310,8 +304,7 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         }
     }
 
-    // Only this coordinator authorizes a pending target; ordinary policy and
-    // session entrypoints still require a committed checkpoint. Complete all
+    // Global checkpoint covers only system resources. Complete all
     // preflights before any protected resource changes, preserving owners.
     const auto preflight = [&](std::string& error) {
         for (const auto& backend : backends_) {

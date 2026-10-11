@@ -1,9 +1,6 @@
 #include "modules/oss/desktop_environment/policies/OSS_controlled_desktop_environments.h"
 
 #include "modules/oss/desktop_environment/ControlledDesktopEnvironmentsPolicyTypeValue.h"
-#include "rollback/DaemonMutationJournal.h"
-#include "rollback/ScopeTransition.h"
-#include <algorithm>
 
 OSS_controlled_desktop_environments::OSS_controlled_desktop_environments()
     : DesktopEnvironment()
@@ -29,16 +26,8 @@ bool OSS_controlled_desktop_environments::readyForApply(std::string& error)
         error = "controlled_desktop_environments is empty (UNCONFIGURED)";
         return false;
     }
-    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
-    if (!journal) {
-        if (error.empty()) error = "DE scope journal is unavailable";
-        return false;
-    }
-    std::vector<std::string> configured;
-    for (const auto kind : controlled)
-        configured.emplace_back(DesktopEnvironmentBackend::kindName(kind));
-    std::sort(configured.begin(), configured.end());
-    return fic::rollback::ScopeTransition(*journal).requireCommitted(configured, error);
+    error.clear();
+    return true;
 }
 
 bool OSS_controlled_desktop_environments::controlledDesktopEnvironments(

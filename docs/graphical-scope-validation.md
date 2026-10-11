@@ -1,13 +1,12 @@
 # Graphical scope validation
 
-Task base: `e279c46eb79335b624ac3e00559d051dcd1526bb`.
-DE commit: `521599b07bd1cb924b345c474fee98a3cf7d37f6`.
-DM commit title: `Add controlled display manager scope and rollback-safe autologin enforcement`.
-This report accompanies that second task commit; its SHA is reported after commit creation.
+Follow-up base: `a0f5ff85341e609f889342f51231f1c8e1a6de6c`.
+Current follow-up restores native SessionOnly KDE/XFCE and FLY convergence,
+retains global GNOME/FLY/DM inverse release, and makes scope apply validation-only.
 
 The lasting contract is in [graphical-scope-transactions.md](graphical-scope-transactions.md).
-Configured intent does not grant physical ownership. Committed scope authorizes
-consumers only after resource verification; partial/failed transitions preserve
+Configured intent does not grant physical ownership. Committed global scope confirms system resource verification, independently of
+SessionOnly convergence; scope declarations validate without it. Partial/failed transitions preserve
 recoverable provenance, not an assertion of continuing protection.
 
 ```mermaid
@@ -35,10 +34,10 @@ removal gates and defaults/localization. The old unjournaled DM writers are remo
 | Backend / policy | Contract | Validation boundary |
 | --- | --- | --- |
 | GNOME root settings | Supported joint exact key/lock/artifact inverse | Native dconf/GSettings containers; live GNOME Shell NOT VERIFIED |
-| FLY root settings | Persistent inverse implemented; enforcement refuses unproven runtime | Filesystem/fault tests; native FLY NOT VERIFIED |
-| KDE / XFCE user settings | Strict fail-closed; unavailable atomic setters refuse mutation | Contract tests; live sessions NOT VERIFIED |
+| FLY root settings | Persistent ensure/inverse; live runtime NOT_VERIFIED | Filesystem/fault tests; native FLY NOT VERIFIED |
+| KDE / XFCE user settings | SessionOnly native setters/readback; no rollback or journal | Contract tests; live sessions NOT VERIFIED |
 | DE scope / compliance | NotEnrolled | Logical checkpoint / Required tests |
-| KDE media controls | Unsupported rollback; setter unavailable | Fail-closed tests |
+| KDE media controls | NotEnrolled; native apply restored | Fail-closed tests |
 | SDDM / GDM / LightDM autologin | Supported joint exact owned-block release | Native persistent inspection; live DM NOT VERIFIED |
 | DM scope / compliance | NotEnrolled | Logical checkpoint / Required tests |
 | Unknown routes/actions/policies | Unsupported / fail-closed | Journal and rollback tests |
@@ -53,7 +52,26 @@ containers are preserved. Prepared is durable before publication; actual native
 verification and fsync precede Applied. Root CAS plus FIC-locking retains the
 accepted final-proof-to-rename/unlink race against unrelated writers.
 
-## Evidence
+## Follow-up evidence
+
+* Full Debian12 Docker configure/build and CTest PASS; final commands/results
+  are recorded in HANDOFF. Regression tests cover SessionOnly aggregation/new
+  sessions, scoped planner selection/Required blocking, scope transition matrix,
+  fresh dependent apply, native setters/readback, media NotEnrolled disable,
+  GNOME/FLY recovery and foreign-state preservation, and DM already-disabled
+  administrator configuration still acquiring/releasing a FIC block.
+* Native GNOME dconf/GSettings journal lifecycle PASS on Debian12, Ubuntu24.04
+  and ALT p11 snapshots with installed real packages. ALT's stock dconf profile
+  and database tree are preserved separately inside a disposable container to
+  isolate the probe's fixture; two initial harness refusals are not backend
+  failures. Production guards remain intact.
+* Native DM persistent loader/journal ensure/recovery/release PASS on Debian12,
+  Ubuntu24.04 and ALT p11. No manager is launched or restarted.
+* Current evidence: ignored `build-prelogin-validation/dm-evidence/session-followup-*`.
+  Actual KDE/XFCE/FLY sessions and live DM/GNOME Shell remain NOT VERIFIED;
+  Astra native tests are deferred to the administrator. No host mutation.
+
+## Previous DE/DM evidence (before this follow-up)
 
 DE evidence was completed before the first commit: full Debian12 build,
 173/173 CTest, native GNOME lifecycle on Debian12/13 and Ubuntu24/26. No host

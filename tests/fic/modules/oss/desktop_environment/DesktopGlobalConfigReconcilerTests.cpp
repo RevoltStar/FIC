@@ -35,7 +35,7 @@ public:
     std::string backend = "gnome", key = "key", value = "true";
     DesktopEnvironmentKind kind = DesktopEnvironmentKind::Gnome;
     EnforcementMode mode = EnforcementMode::MandatoryGlobal;
-    bool capability = true, generation = true;
+    bool capability = true, generation = true, sessionOnlyRoute = false;
     PolicyRef ownerOverride;
     explicit Contributor(const std::filesystem::path& root, const std::string& name) {
         moduleName = "OSS"; submoduleName = "DesktopEnvironment"; policyName = name;
@@ -55,6 +55,7 @@ public:
     SessionReconcileResult reconcileSession(const SessionReconcileContext&, const PolicyGlobalEnforcementResult&) override { return {}; }
     bool globalDesktopPolicyContributions(std::vector<GlobalDesktopPolicyContribution>& out, std::string& error) override {
         if (!generation) { error = "generation failed"; return false; }
+        if (sessionOnlyRoute) return true;
         out.push_back({backend, kind, ownerOverride.policyName.empty() ?
             PolicyRef{moduleName, submoduleName, policyName} : ownerOverride, {key}, value}); return true;
     }
@@ -147,6 +148,38 @@ void transitions() {
     require(!f.apply().successful() && f.state().phase == "failed" && f.state().committed == std::vector<std::string>{"GNOME"}, "empty target lost previous checkpoint");
     require(writes == f.gnome->writes + f.fly->writes, "UNCONFIGURED mutated resources");
 }
+void sessionScopeTransitions() {
+    using Kind = DesktopEnvironmentKind;
+    const std::vector<std::pair<DesktopEnvironmentSet, DesktopEnvironmentSet>> cases = {
+        {{Kind::Kde,Kind::Gnome},{Kind::Gnome}},
+        {{Kind::Kde,Kind::Gnome},{Kind::Kde}},
+        {{Kind::Kde,Kind::Xfce},{Kind::Kde}},
+        {{Kind::Kde},{Kind::Kde,Kind::Gnome}},
+        {{Kind::Kde,Kind::Xfce},{Kind::Gnome}},
+        {{Kind::Gnome,Kind::Fly},{Kind::Gnome}},
+        {{Kind::Kde},{Kind::Xfce}},
+        {{Kind::Gnome},{Kind::Kde,Kind::Gnome}},
+        {{Kind::Gnome},{Kind::Gnome,Kind::Fly}}
+    };
+    for (const auto& [previous,target] : cases) {
+        Fixture f;
+        const auto configure = [&](const DesktopEnvironmentSet& value) {
+            f.scope->target=value;
+            f.first->sessionOnlyRoute = !value.count(Kind::Gnome);
+            f.first->kind = f.first->sessionOnlyRoute ? Kind::Kde : Kind::Gnome;
+            f.first->mode = f.first->sessionOnlyRoute ? EnforcementMode::SessionOnly : EnforcementMode::MandatoryGlobal;
+            f.second->sessionOnlyRoute = !value.count(Kind::Fly);
+            f.second->kind = f.second->sessionOnlyRoute ? Kind::Xfce : Kind::Fly;
+            f.second->backend = "fly";
+            f.second->mode = f.second->sessionOnlyRoute ? EnforcementMode::SessionOnly : EnforcementMode::MandatoryGlobal;
+        };
+        configure(previous); require(f.apply().successful(), "initial mixed checkpoint failed");
+        configure(target); require(f.apply().successful() && f.state().phase == "committed", "SessionOnly wedged global checkpoint");
+        require(f.gnome->owned.empty() == !target.count(Kind::Gnome), "GNOME ensure/release mismatch");
+        require(f.fly->owned.empty() == !target.count(Kind::Fly), "FLY ensure/release mismatch");
+    }
+}
+
 void refusals() {
     for (const std::string mode : {"disabled", "invalid", "conflict", "owner", "backend", "desktop", "key", "capability", "generation", "session", "preflight", "duplicate", "runtime"}) {
         Fixture f(mode != "capability");
@@ -185,4 +218,4 @@ void partialRecovery() {
     require(!f.apply().successful() && f.state().phase == "partial", "external intent version change committed");
 }
 }
-int main() { transitions(); refusals(); partialRecovery(); }
+int main() { transitions(); sessionScopeTransitions(); refusals(); partialRecovery(); }

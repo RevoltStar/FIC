@@ -1984,13 +1984,17 @@ records. Primary PolicyRef не заменяет payload owner set: освобо
 shared record. Scope checkpoint инвалидируется до физического release; после
 успешного изменения configuration/registry требуется verified reconciliation.
 
-Scope и compliance имеют `NotEnrolled`. `disable_kde_lock_screen_media_controls`
-и неизвестные DE policies имеют `Unsupported`. KDE/XFCE setters не выполняют
-изменений без native conditional mutation/exclusion; их требования блокируют
-scope transition до изменения root resources. Новое применение FLY также
-блокируется из-за отсутствия runtime effectiveness proof в текущем backend;
-его proven persistent records можно безопасно освободить независимо от scope.
-Нельзя трактовать Supported root rollback как поддержку session mutation.
+Scope, compliance и `disable_kde_lock_screen_media_controls` имеют `NotEnrolled`.
+Неизвестные DE policies остаются `Unsupported`. KDE/XFCE — SessionOnly: native
+apply/readback выполняются без MutationJournal, CAS или исторического rollback.
+При исключении DE либо disable пользовательские значения сохраняются; повторное
+включение применяет настройки ко всем текущим подходящим сессиям.
+`screenlock_timeout` остаётся Supported на уровне политики: disable освобождает
+только доказанно принадлежащие GNOME/FLY root resources; KDE/XFCE не откатываются.
+Отсутствие global ownership после SessionOnly apply не препятствует disable.
+FLY проверяет системный theme.master (`persistent_configuration=VERIFIED`), но
+live runtime не подтверждает (`runtime_effect=NOT_VERIFIED`). Ошибка сессии не
+откатывает системные изменения и не инвалидирует global checkpoint.
 
 При uninstall root-only `desktop-prerm-prepare preflight|release` preflights
 пустые targets всех backends, затем использует тот же typed release независимо
@@ -2019,7 +2023,7 @@ unproven legacy state и orphan markers не усыновляются.
     `grub_disable_recovery` — явный whitelist, см. раздел
     «GRUB rollback (OSS/Grub)»);
   * `OSS/DesktopEnvironment/screenlock_timeout` — joint owner release разрешённых
-    root mutations; unavailable session/FLY enforcement явно отказывает apply
+    GNOME/FLY root mutations; KDE/XFCE session writes намеренно не откатываются
     (см. «DE: joint ownership и scope transitions»);
   * `IDENTITY_ACCESS/PAM` — только три capability activation policies,
     перечисленные выше;
@@ -2033,12 +2037,11 @@ unproven legacy state и orphan markers не усыновляются.
 * `Unsupported` — модуль в системе rollback, но автоматический откат не
   реализован: `sudo_require_authentication` (чужие NOPASSWD/PASSWD specs),
   `exclusive_firewall_control` (уничтожает внешнее состояние), DC
-  non-category policies, `OSS/DesktopEnvironment/disable_kde_lock_screen_media_controls`
-  и **любая неизвестная политика** внутри
+  non-category policies и **любая неизвестная политика** внутри
   rollback-enrolled submodule — будущая SUDO/FIREWALL policy никогда не
   становится автоматически rollback-Supported без собственной journal
   integration и undo-действия;
-* `NotEnrolled` — DE scope/compliance, три известные category policies `DC/DeviceControl` и перечисленные выше известные политики `OSS/Fstab`
+* `NotEnrolled` — DE scope/compliance и KDE media controls, три известные category policies `DC/DeviceControl` и перечисленные выше известные политики `OSS/Fstab`
   (см. «FSTAB: намеренно non-reverting lifecycle») и остальные модули. В частности,
   `DAC/Mode_and_Owner/mode_and_owner_profiles` использует release-only
   lifecycle: `disable` меняет только status и не меняет filesystem metadata.

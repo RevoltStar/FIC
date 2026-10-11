@@ -170,6 +170,34 @@ bool hasDiagnostic(
         });
 }
 
+void testGraphicalSubmoduleApply(const std::filesystem::path& root) {
+    for (const bool enabled : {true,false}) {
+        writeModuleConfig(root,"OSS",{{"controlled_desktop_environments",enabled},
+            {"screenlock_timeout",true},{"disable_kde_lock_screen_media_controls",true},
+            {"unrelated_fstab",true},{"disable_autologin",true}});
+        const PolicyRef scope{"OSS","DesktopEnvironment","controlled_desktop_environments"};
+        const PolicyRef timeout{"OSS","DesktopEnvironment","screenlock_timeout"};
+        const PolicyRef media{"OSS","DesktopEnvironment","disable_kde_lock_screen_media_controls"};
+        PolicyBehavior declaration,physical,session,unrelated,dm;
+        std::vector<std::string> order;
+        PolicyList policies;
+        policies.push_back(std::make_unique<TestPolicy>(scope,declaration,order));
+        policies.push_back(std::make_unique<TestPolicy>(timeout,physical,order,std::vector<PolicyDependency>{required(scope)}));
+        policies.push_back(std::make_unique<TestPolicy>(media,session,order,std::vector<PolicyDependency>{required(scope)}));
+        policies.push_back(std::make_unique<TestPolicy>(PolicyRef{"OSS","Fstab","unrelated_fstab"},unrelated,order));
+        policies.push_back(std::make_unique<TestPolicy>(PolicyRef{"OSS","DisplayManager","disable_autologin"},dm,order));
+        auto registry=buildRegistry(std::move(policies));
+        applyPolicy(registry,"OSS","controlled_desktop_environments");
+        require(physical.calls==0 && session.calls==0 && unrelated.calls==0 && dm.calls==0,
+                "direct scope apply expanded physical dependents");
+        const auto summary=applySubmodulePolicies(registry,"OSS","DesktopEnvironment");
+        require(unrelated.calls==0 && dm.calls==0,"scoped apply touched unrelated OSS or DM policies");
+        require((physical.calls==1)==enabled && (session.calls==1)==enabled,
+                "scoped apply bypassed Required disabled scope or skipped enabled dependents");
+        require(summary.hasFailures()==!enabled,"scoped apply masked dependency failure");
+    }
+}
+
 void testRequiredDependencies(const std::filesystem::path& root) {
     writeModuleConfig(root, "AUDIT", {{"a", true}, {"b", true}});
     PolicyBehavior a;
@@ -1262,6 +1290,7 @@ int main() {
 
     try {
         testRequiredDependencies(root);
+        testGraphicalSubmoduleApply(root);
         testRecommendedDependencies(root);
         testConditionalDependencies(root);
         testConditionalExcludedModule(root);

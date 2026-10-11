@@ -72,10 +72,10 @@ assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main
 assert "std::make_shared<GnomeSystemBackend>(executables)" in main
 assert "std::make_shared<FlySystemBackend>()" in main
 assert "{gnomeSystemBackend, flySystemBackend}" in main
-assert main.count("desktopGlobalConfig.reconcile") >= 3
-assert "install_desktop_global_report" in main
-assert "latestGlobalReport.successfulForPolicy" in main
-assert "latestGlobalReport.successfulForModule" in main
+assert "reconcileGlobal_()" in screenlock
+assert "setGlobalEnforcementResults(report.resultsFor" in screenlock
+assert "applySubmodulePolicies" in main
+assert 'response["saved"] = true' in main
 assert "PolicyCapability::GlobalDesktopConfiguration" in global_reconciler
 assert "DesktopGlobalReconcileReport" in global_reconciler
 assert "report.backends" in global_reconciler
@@ -117,11 +117,11 @@ for forbidden in ("std::ifstream", "std::ofstream", "current.themerc",
 for forbidden in ("current.themerc", "std::ifstream", "std::ofstream",
                   "getpwuid"):
     assert forbidden not in fly_session
-assert "FLYWM_UPDATE_VAL" not in fly_session
-assert "setValue(" not in fly_session
+assert "FLYWM_UPDATE_VAL" in fly_session
+assert "setValue(" in fly_session
 fly_runtime = (root / "fic/src/modules/oss/desktop_environment/policies/FlyScreenLockTimeoutHandler.h").read_text()
-assert "unjournaled FLYWM_UPDATE_VAL is refused" in fly_runtime
-assert "backend.setValue(" not in fly_runtime
+assert 'backend.setValue("ScreenSaverDelay"' in fly_runtime
+assert "ScreenSaverDBUS" not in fly_runtime
 gnome_runtime = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
 assert "backend.setSetting(" not in gnome_runtime
 assert "qt6-declarative-devel" in (
@@ -232,7 +232,7 @@ assert "xfce4-screensaver-command" in xfce_session
 assert '{"--query"}' in xfce_session
 for forbidden in ("pgrep", "pidof", "/proc/", "XfceSystemBackend"):
     assert forbidden not in xfce_session
-assert "XFCE scalar mutation unavailable" in xfce_session
+assert '"--create", "--type", type, "--set", value' in xfce_session
 assert '"--property", property, "--set"' not in xfce_session
 assert "getPropertyState" in xfce_session and "getPropertyState" in xfce_handler
 assert "::getProperty(" not in xfce_session
@@ -246,7 +246,7 @@ assert "xfcePropertyTypeName(actual.type)" in xfce_handler
 assert "XfcePropertyStateKind::Absent" in xfce_handler
 assert "kind == XfcePropertyStateKind::Absent" in xfce_handler
 assert '"/saver/fullscreen-inhibit", "bool", "false"' in xfce_handler
-assert "native conditional write/ownership-safe rollback is not proven" in xfce_session
+assert "MutationJournal" not in xfce_session
 assert '"--property", property, "--set"' not in xfce_session
 assert "getPropertyState" in xfce_session and "getPropertyState" in xfce_handler
 assert "::getProperty(" not in xfce_session
@@ -323,3 +323,14 @@ for localization in (ru_lang, en_lang):
 for profile in (root / "fic/src/platform/profiles").glob("*.cpp"):
     assert "controlled_desktop_environments" not in profile.read_text()
 print("desktop environment architecture static checks: OK")
+
+# Scope validation cannot call physical coordinators, even through daemon pre-processing.
+for path in ("desktop_environment", "display_manager"):
+    scope = (root / f"fic/src/modules/oss/{path}/policies/OSS_controlled_{'desktop_environments' if path == 'desktop_environment' else 'display_managers'}.cpp").read_text()
+    validate = scope[scope.index("::ready" ):scope.index("\n}", scope.index("::ready"))]
+    assert "requireCommitted" not in validate and "reconcile(" not in validate
+reload = main[main.index("auto reloadRegistryAndGlobalConfig"):main.index("    try {", main.index("auto reloadRegistryAndGlobalConfig"))]
+assert "desktopGlobalConfig.reconcile" not in reload
+assert "reconcileDisplayManagerScope" not in reload
+assert "!requireAllBackends" in reload
+assert "MutationJournal" not in (root / "fic/src/modules/oss/desktop_environment/backends/KdeBackend.cpp").read_text()

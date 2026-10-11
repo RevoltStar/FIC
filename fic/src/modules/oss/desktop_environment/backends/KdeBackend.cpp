@@ -107,16 +107,44 @@ bool KdeBackend::writeConfig(
 ) const
 {
     if (!ensureRuntimeContext(error)) return false;
-    // kwriteconfig has no expected-value argument. A preceding kreadconfig
-    // call and a FIC lock do not exclude a user's concurrent writer. Until
-    // a conditional native transaction exists, neither apply nor release may
-    // mutate this session scalar or create ownership of a foreign value.
-    (void)file;
-    (void)groups;
-    (void)key;
-    (void)value;
-    error = "KDE scalar mutation unavailable: native conditional write/ownership-safe rollback is not proven";
-    return false;
+    const KConfigTools tools = [&]() {
+        for (const int version : {6, 5}) {
+            const std::string suffix = std::to_string(version);
+            const std::string writer = dependencies_.findExecutable({
+                "/usr/bin/kwriteconfig" + suffix,
+                "/bin/kwriteconfig" + suffix});
+            const std::string reader = dependencies_.findExecutable({
+                "/usr/bin/kreadconfig" + suffix,
+                "/bin/kreadconfig" + suffix});
+            if (!writer.empty() && !reader.empty()) return KConfigTools{writer, reader};
+        }
+        return KConfigTools{};
+    }();
+    if (tools.writer.empty()) {
+        error = "kwriteconfig and kreadconfig were not found";
+        return false;
+    }
+
+    std::vector<std::string> arguments{
+        "--file", file
+    };
+
+    for (const std::string& group : groups) {
+        arguments.push_back("--group");
+        arguments.push_back(group);
+    }
+
+    arguments.push_back("--key");
+    arguments.push_back(key);
+    arguments.push_back(value);
+
+    std::string output;
+    return executeWithKConfigEnvironment(
+        tools.writer,
+        arguments,
+        output,
+        error
+    );
 }
 
 bool KdeBackend::readConfig(

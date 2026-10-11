@@ -8,14 +8,11 @@
 
 namespace fly_screen_lock_timeout {
 template <typename Backend>
-bool applyTimeout(const Backend&, int,
+bool applyTimeout(const Backend& backend, int timeoutMinutes,
                   std::string& error)
 {
-    // The available FLYWM_UPDATE_VAL call mutates session state without a
-    // proven readback/conditional inverse. Persistent enforcement belongs to
-    // the system backend; do not invent successful runtime convergence.
-    error = "FLY runtime verification is unavailable; unjournaled FLYWM_UPDATE_VAL is refused";
-    return false;
+    const std::string timeoutSeconds = std::to_string(timeoutMinutes * 60);
+    return backend.setValue("ScreenSaverDelay", timeoutSeconds, error);
 }
 }
 

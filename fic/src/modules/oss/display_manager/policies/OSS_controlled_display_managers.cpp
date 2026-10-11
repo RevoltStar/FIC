@@ -16,11 +16,10 @@ bool OSS_controlled_display_managers::configured(std::vector<std::string>& targe
     error.clear();return true;
 }
 bool OSS_controlled_display_managers::ready(std::string& error){
-    std::string path;AtomicTargetState version;
-    if(!captureConfigurationVersion(path,version,error))return false;
-    std::vector<std::string> target;if(!configured(target,error))return false;
-    auto* journal=journal_?journal_:DaemonMutationJournal::instance().tryGet(error);if(!journal)return false;
-    return ScopeTransition(*journal,ScopeTransition::Domain::DisplayManager).requireCommitted(target,error);
+    std::vector<std::string> target;
+    if (!configured(target,error)) return false;
+    if (target.empty()) { error="controlled_display_managers is empty (UNCONFIGURED)"; return false; }
+    error.clear(); return true;
 }
 bool OSS_controlled_display_managers::apply(){std::string error;if(ready(error))return true;log(error,logLevel::ERROR);return false;}
 bool OSS_controlled_display_managers::reconcile(Policy& autologin,std::string& error){

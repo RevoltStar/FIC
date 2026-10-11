@@ -841,7 +841,8 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
     }
     if (policy.moduleName == "OSS" && policy.submoduleName == "DesktopEnvironment") {
         if (policy.policyName == "controlled_desktop_environments" ||
-            policy.policyName == "absence_of_uncontrolled_desktop_environments")
+            policy.policyName == "absence_of_uncontrolled_desktop_environments" ||
+            policy.policyName == "disable_kde_lock_screen_media_controls")
             return RollbackEnrollment::NotEnrolled;
         if (policy.policyName == "screenlock_timeout") return RollbackEnrollment::Supported;
         return RollbackEnrollment::Unsupported;

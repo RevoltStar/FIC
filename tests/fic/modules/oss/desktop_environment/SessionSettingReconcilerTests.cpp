@@ -348,18 +348,17 @@ void testFlyRuntimeOnlyConvergence() {
     {
         FakeFlySession session;
         std::string error;
-        require(!fly_screen_lock_timeout::applyTimeout(session, 5, error) &&
-                error.find("unjournaled FLYWM_UPDATE_VAL is refused") != std::string::npos &&
-                session.calls.empty(), "unproven FLY runtime update was executed");
+        require(fly_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                session.calls == std::vector<std::string>{"ScreenSaverDelay=300"},
+                "FLY runtime convergence must update only delay");
     }
     {
         FakeFlySession session;
         session.failAt = 1;
         std::string error;
         require(!fly_screen_lock_timeout::applyTimeout(session, 5, error) &&
-                    error.find("unjournaled FLYWM_UPDATE_VAL is refused") != std::string::npos &&
-                    session.calls.empty(),
-                "unproven FLY runtime mutation was not refused before execution");
+                    error == "runtime update failed" && session.calls.size() == 1,
+                "FLY failed runtime update falsely succeeded");
     }
 }
 

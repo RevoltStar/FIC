@@ -1,4 +1,5 @@
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
+#include "rollback/ScopeTransition.h"
 #include "modules/oss/desktop_environment/policies/OSS_screenlock_timeout.h"
 #include "modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.h"
 #include "modules/oss/desktop_environment/policies/FlyScreenLockTimeoutHandler.h"
@@ -319,6 +320,30 @@ SessionReconcileContext contextFor(const ClassifiedGraphicalSession& session) {
     return {session, emptySnapshot, true};
 }
 
+void testDependentApplyAndSessionFailureCheckpoint() {
+    Scope scope; scope.desktops={DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Lxqt};
+    auto inventory=std::make_shared<EmptyInventory>();
+    writeConfig("5");
+    fic::rollback::MutationJournal journal(configPath.parent_path().parent_path()/"dependent-journal.json");
+    std::string error; require(journal.initializeOrLoad(error),error);
+    int reconciliations=0;
+    OSS_screenlock_timeout policy(scope,inventory,[&] {
+        ++reconciliations;
+        const auto verified=[](std::string&) { return true; };
+        require(fic::rollback::ScopeTransition(journal).reconcile({"GNOME","LXQT"},verified,verified,verified,verified,error),error);
+        DesktopGlobalReconcileReport report;
+        report.policies[{"OSS","DesktopEnvironment","screenlock_timeout"}][DesktopEnvironmentKind::Gnome]={true,true,{"gnome"},{}};
+        return report;
+    });
+    require(!policy.apply() && reconciliations==1 && policy.lastGlobalReport() && policy.lastGlobalReport()->successful(),"dependent skipped reconciliation or unsupported LXQt falsely succeeded");
+    require(fic::rollback::ScopeTransition(journal).requireCommitted({"GNOME","LXQT"},error),
+            "session failure undid successful global checkpoint");
+    scope.desktops={DesktopEnvironmentKind::Kde};
+    require(policy.apply(),"KDE no-session apply failed");
+    scope.desktops={DesktopEnvironmentKind::Xfce};
+    require(policy.apply(),"XFCE no-session apply failed");
+}
+
 void testFactoryUsesCanonicalDesktopIdentity() {
     // Ключевой regression: canonical identity — session.desktop,
     // а не строка session.context.desktop.
@@ -379,6 +404,7 @@ int main() {
         testModesCapabilitiesAndContributions();
         testInvalidValueAndReconcilerReport();
         testFactoryUsesCanonicalDesktopIdentity();
+        testDependentApplyAndSessionFailureCheckpoint();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;

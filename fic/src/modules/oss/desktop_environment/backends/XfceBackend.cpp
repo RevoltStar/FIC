@@ -142,15 +142,24 @@ bool XfceBackend::setProperty(
     std::string& error
 ) const
 {
-    // Xfconf SetProperty has no expected value/version. Separate Get/Set
-    // calls cannot prevent overwriting a later user edit. Fail before any
-    // external command; no journal record may claim a mutation did occur.
-    (void)channel;
-    (void)property;
-    (void)type;
-    (void)value;
-    error = "XFCE scalar mutation unavailable: native conditional write/ownership-safe rollback is not proven";
-    return false;
+    const std::string xfconfQuery = findCommand({
+        "/usr/bin/xfconf-query", "/bin/xfconf-query"});
+    if (xfconfQuery.empty()) {
+        error = "xfconf-query was not found";
+        return false;
+    }
+
+    // Always a typed mutation: `--create --type` rewrites the storage type of
+    // an existing property in place, which is the repair primitive for wrong
+    // storage types. A plain `--set` preserves the existing type.
+    std::string output;
+    return runCommand(
+        xfconfQuery,
+        {"--channel", channel, "--property", property,
+         "--create", "--type", type, "--set", value},
+        output,
+        error
+    );
 }
 
 bool XfceBackend::getPropertyState(

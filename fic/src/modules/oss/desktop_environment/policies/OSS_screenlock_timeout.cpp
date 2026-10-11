@@ -2,6 +2,7 @@
 
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/policies/ScreenLockTimeoutHandler.h"
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -9,13 +10,34 @@
 
 OSS_screenlock_timeout::OSS_screenlock_timeout(
     ControlledDesktopEnvironmentScope& scope,
-    std::shared_ptr<GraphicalSessionInventory> inventory)
-    : SessionAwareDesktopEnvironmentPolicy(scope, std::move(inventory))
+    std::shared_ptr<GraphicalSessionInventory> inventory,
+    std::function<DesktopGlobalReconcileReport()> reconcileGlobal)
+    : SessionAwareDesktopEnvironmentPolicy(scope, std::move(inventory)),
+      reconcileGlobal_(std::move(reconcileGlobal))
 {
     this->policyName = "screenlock_timeout";
     addRequiredDependency({"OSS", "DesktopEnvironment",
                            "controlled_desktop_environments"});
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1, 20, 5);
+}
+
+bool OSS_screenlock_timeout::apply()
+{
+    if (reconcileGlobal_) {
+        lastGlobalReport_ = reconcileGlobal_();
+        const auto& report = *lastGlobalReport_;
+        setGlobalEnforcementResults(report.resultsFor({moduleName, submoduleName, policyName}));
+        if (!report.successful()) {
+            log(report.diagnostic(), logLevel::ERROR);
+            return false;
+        }
+    }
+    std::string error;
+    if (reconcileGlobal_ && sessionApplicability(DesktopEnvironmentKind::Fly, error) == SessionApplicability::Applicable) {
+        // Verification boundary must remain visible even with ordinary logging disabled.
+        std::cout << "FLY persistent_configuration=VERIFIED; runtime_effect=NOT_VERIFIED" << std::endl;
+    }
+    return SessionAwareDesktopEnvironmentPolicy::apply();
 }
 
 bool OSS_screenlock_timeout::prepare(std::string& error)

@@ -4,6 +4,8 @@
 #include "modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 
+#include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -14,7 +16,12 @@ class OSS_screenlock_timeout final
 public:
     explicit OSS_screenlock_timeout(
         ControlledDesktopEnvironmentScope& scope,
-        std::shared_ptr<GraphicalSessionInventory> inventory);
+        std::shared_ptr<GraphicalSessionInventory> inventory,
+        std::function<DesktopGlobalReconcileReport()> reconcileGlobal = {});
+    bool apply() override;
+    const DesktopGlobalReconcileReport* lastGlobalReport() const {
+        return lastGlobalReport_ ? &*lastGlobalReport_ : nullptr;
+    }
 
     std::vector<PolicyCapability> capabilities() const override {
         return {PolicyCapability::SessionAware,
@@ -35,6 +42,8 @@ protected:
 private:
     bool configuredTimeoutMinutes(int& value, std::string& error);
     int timeoutMinutes_ = 0;
+    std::function<DesktopGlobalReconcileReport()> reconcileGlobal_;
+    std::optional<DesktopGlobalReconcileReport> lastGlobalReport_;
 };
 
 #endif // OSS_SCREENLOCK_TIMEOUT_H

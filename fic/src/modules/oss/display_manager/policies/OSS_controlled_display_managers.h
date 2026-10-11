@@ -8,6 +8,7 @@ public:
     virtual ~ControlledDisplayManagerScope() = default;
     virtual bool configured(std::vector<std::string>&,std::string&) = 0;
     virtual bool ready(std::string&) = 0;
+    virtual bool reconcile(Policy&, std::string&) = 0;
 };
 class OSS_controlled_display_managers final : public DisplayManager, public ControlledDisplayManagerScope {
 public:
@@ -16,7 +17,7 @@ public:
     bool apply() override;
     bool configured(std::vector<std::string>&,std::string&) override;
     bool ready(std::string&) override;
-    bool reconcile(Policy& autologin,std::string& error);
+    bool reconcile(Policy& autologin,std::string& error) override;
 private:
     std::shared_ptr<DisplayManagerInventory> inventory_;
     std::shared_ptr<DisplayManagerConfigTransaction> backend_;

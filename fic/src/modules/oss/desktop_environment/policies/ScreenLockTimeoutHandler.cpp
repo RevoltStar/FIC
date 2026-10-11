@@ -27,8 +27,8 @@ std::unique_ptr<ScreenLockTimeoutHandler> ScreenLockTimeoutHandlerFactory::creat
     case DesktopEnvironmentKind::Xfce:
         return std::make_unique<XfceScreenLockTimeoutHandler>(
             context.target.session, context.target.context);
-    case DesktopEnvironmentKind::Lxqt:
     case DesktopEnvironmentKind::Unknown:
+    default: // Inventory-only desktops (including LXQt) have no supported locker.
         return nullptr;
     }
     return nullptr;

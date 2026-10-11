@@ -57,6 +57,7 @@ public:
     }
     EnforcementMode mode = EnforcementMode::SessionOnly;
     bool reconcileOk = true;
+    std::string failSession;
     bool prepareOk = true;
     int reconciled = 0;
     std::vector<std::string> operations;
@@ -80,7 +81,9 @@ protected:
         targetIds.push_back(context.target.session.id);
         snapshotSizes.push_back(context.sessions.size());
         inventoryCompleteFlags.push_back(context.inventoryComplete);
-        if (!reconcileOk) error = "session failure"; return reconcileOk;
+        const bool ok = reconcileOk && context.target.session.id != failSession;
+        if (!ok) error = "session failure";
+        return ok;
     }
 };
 
@@ -151,6 +154,28 @@ int main() {
 
     TestPolicy unconfigured(scope, inventory);
     require(!unconfigured.apply(), "empty controlled scope succeeded");
+
+    for (const auto desktop : {DesktopEnvironmentKind::Kde, DesktopEnvironmentKind::Xfce}) {
+        scope.value = {desktop};
+        inventory->value.clear();
+        TestPolicy noSessions(scope, inventory);
+        require(noSessions.apply() && noSessions.reconciled == 0, "no applicable sessions failed");
+        inventory->value = {session(desktop)};
+        TestPolicy single(scope, inventory);
+        require(single.apply() && single.reconciled == 1, "single session failed");
+        auto second = session(desktop); second.session.id = "8"; second.session.uid = 1001;
+        auto third = session(desktop); third.session.id = "9"; third.session.uid = 1002;
+        inventory->value = {session(desktop), second, third};
+        TestPolicy multiple(scope, inventory);
+        require(multiple.apply() && multiple.reconciled == 3, "independent sessions not all handled");
+        TestPolicy partial(scope, inventory); partial.failSession = "8";
+        require(!partial.apply() && partial.targetIds == std::vector<std::string>{"7", "8", "9"},
+                "single session failure stopped remaining sessions or falsely succeeded");
+        TestPolicy newlyReady(scope, inventory);
+        require(newlyReady.reconcileSession(contextFor(third, inventory->value, true), {}).status ==
+                SessionReconcileStatus::SessionOnlyConverged && newlyReady.targetIds == std::vector<std::string>{"9"},
+                "new SessionOnly session not applied immediately");
+    }
 
     scope.value = {DesktopEnvironmentKind::Gnome};
     inventory->value = {session(DesktopEnvironmentKind::Lxqt)};

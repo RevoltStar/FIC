@@ -14,6 +14,8 @@ PolicyApplySummary applyPolicy(
 PolicyApplySummary applyModulePolicies(
     PolicyRegistry& policyRegistry,
     std::string module);
+PolicyApplySummary applySubmodulePolicies(PolicyRegistry&, const std::string& module,
+                                         const std::string& submodule);
 PolicyApplySummary applyAllPolicies(PolicyRegistry& policyRegistry);
 PolicyApplySummary applyAllPoliciesExceptModule(
     PolicyRegistry& policyRegistry,

@@ -351,19 +351,6 @@ json policy_apply_summary_json(const PolicyApplySummary& summary) {
     };
 }
 
-void install_desktop_global_report(
-    PolicyRegistry& registry,
-    const DesktopGlobalReconcileReport& report)
-{
-    for (Policy* policy : registry.capabilityPolicies(
-             PolicyCapability::SessionAware)) {
-        auto* sessionAware = dynamic_cast<SessionAwarePolicy*>(policy);
-        if (sessionAware == nullptr) continue;
-        sessionAware->setGlobalEnforcementResults(report.resultsFor({
-            policy->moduleName, policy->submoduleName, policy->policyName}));
-    }
-}
-
 // The daemon owns the single IncidentController instance. Every detector -
 // policy failures, device events, administrative actions - reports through it,
 // so there is exactly one runtime owner of the shared incident state.
@@ -609,16 +596,20 @@ bool run_daemon_apply_all_pass(
         write_audit_log(event);
         return false;
     }
-    std::string dmError;
-    const bool dmOk = reconcileDisplayManagerScope(policyRegistry, dmError);
-    const DesktopGlobalReconcileReport desktopGlobalReport =
-        desktopGlobalConfig.reconcile(policyRegistry);
-    install_desktop_global_report(policyRegistry, desktopGlobalReport);
-    const bool desktopGlobalConfigOk = desktopGlobalReport.successful();
-    const std::string desktopGlobalConfigError =
-        desktopGlobalReport.diagnostic();
     const PolicyApplySummary summary = applyAllPoliciesExceptModule(
         policyRegistry, "FIREWALL");
+    const auto policyOk = [&](const std::string& name) {
+        for (const auto& result : summary.getResults())
+            if (result.moduleName == "OSS" && result.policyName == name)
+                return !result.isFailure();
+        return true;
+    };
+    auto* screenlock = dynamic_cast<OSS_screenlock_timeout*>(policyRegistry.findPolicy(
+        {"OSS","DesktopEnvironment","screenlock_timeout"}));
+    const auto* globalReport = screenlock ? screenlock->lastGlobalReport() : nullptr;
+    const bool desktopGlobalConfigOk = globalReport ? globalReport->successful()
+        : screenlock && !screenlock->isEnabled();
+    const bool dmOk = policyOk("disable_autologin");
     // Policy failures are reported once, from the finished execution summary,
     // through the single incident controller. A failed registry reload above
     // returned early, so no incident is derived from a stale registry.
@@ -637,17 +628,21 @@ bool run_daemon_apply_all_pass(
         {"ok", ok},
         {"registry_reload", true},
         {"desktop_global_configuration", desktopGlobalConfigOk},
+        {"desktop_policy_application", policyOk("screenlock_timeout")},
         {"display_manager_configuration", dmOk},
         {"display_manager_live_runtime", "NOT_VERIFIED"},
         {"firewall_reconciliation", firewallOk},
         {"device_reconciliation", deviceOk},
         {"incident_severity", fic::core::incidentSeverityToken(policyIncident)}
     };
-    if (!dmOk) result["display_manager_configuration_error"] = dmError;
-    if (!desktopGlobalConfigError.empty()) {
-        result["desktop_global_configuration_error"] =
-            desktopGlobalConfigError;
+    if (!dmOk) {
+        auto* ban = dynamic_cast<OSS_disable_autologin*>(policyRegistry.findPolicy(
+            {"OSS","DisplayManager","disable_autologin"}));
+        result["display_manager_configuration_error"] = ban && !ban->reconciliationError().empty()
+            ? ban->reconciliationError() : "Required DM dependency was not applied";
     }
+    if (globalReport && !globalReport->successful())
+        result["desktop_global_configuration_error"] = globalReport->diagnostic();
     if (!deviceError.empty()) result["device_error"] = deviceError;
     if (!firewallError.empty()) {
         result["firewall_error"] = firewallError;
@@ -788,7 +783,6 @@ json handle_request(json request,
             "DC configuration is persistent, but device policy reconciliation failed: " + error);
         return std::nullopt;
     };
-    DesktopGlobalReconcileReport latestGlobalReport;
     auto reloadRegistryAndGlobalConfig =
         [&](bool requireAllBackends = true, bool reconcileDesktop = true) -> std::optional<std::string> {
         std::string reloadError;
@@ -800,17 +794,25 @@ json handle_request(json request,
                     ? std::string("unknown initialization error")
                     : reloadError);
         }
-        if (!reconcileDesktop) return std::nullopt;
-        std::string dmError;
-        const bool dmOk = reconcileDisplayManagerScope(policyRegistry, dmError);
-        if (!dmOk && requireAllBackends) return "display manager reconciliation failed: " + dmError;
-        latestGlobalReport = desktopGlobalConfig.reconcile(policyRegistry);
-        install_desktop_global_report(policyRegistry, latestGlobalReport);
-        if (!latestGlobalReport.requirementsValid ||
-            (requireAllBackends && !latestGlobalReport.successful())) {
-            return "desktop global configuration reconciliation failed: " +
-                latestGlobalReport.diagnostic();
+        // Manual apply runs physical work only through its requested dependents.
+        if (!reconcileDesktop || !requireAllBackends) return std::nullopt;
+        std::vector<std::string> graphicalSubmodules;
+        if (command == "reload_config") {
+            graphicalSubmodules = {"DesktopEnvironment", "DisplayManager"};
+        } else if (module == "OSS") {
+            Policy* changed = getPolicyClass(policyRegistry, module, policy);
+            if (changed && (changed->submoduleName == "DesktopEnvironment" ||
+                            changed->submoduleName == "DisplayManager"))
+                graphicalSubmodules.push_back(changed->submoduleName);
         }
+        std::string graphicalError;
+        for (const auto& submodule : graphicalSubmodules) {
+            const auto summary = applySubmodulePolicies(policyRegistry, "OSS", submodule);
+            fic::incident::PolicyIncidentReporter(incidentController()).report(
+                policyRegistry, summary, "configuration apply " + std::string(submodule));
+            if (summary.hasFailures()) graphicalError += "graphical policy apply failed: " + std::string(submodule) + "; ";
+        }
+        if (!graphicalError.empty()) return graphicalError;
         return std::nullopt;
     };
 
@@ -883,13 +885,23 @@ json handle_request(json request,
             }
             bool ok = set(policyRegistry, module, policy, value);
             if (ok) {
-                if (auto reloadError = reloadRegistryAndGlobalConfig(
-                        true, !(module == "OSS" &&
-                                (policy == "controlled_desktop_environments" ||
-                                 policy == "controlled_display_managers")))) {
-                    return fic::ipc::make_error_response(
-                        "policy value was saved, but reconciliation failed: " +
-                        reloadError.value());
+                const bool scopeMutation = module == "OSS" &&
+                    (policy == "controlled_desktop_environments" || policy == "controlled_display_managers");
+                if (auto reloadError = reloadRegistryAndGlobalConfig(true, !scopeMutation)) {
+                    return json{{"ok", false}, {"saved", true}, {"applied", false},
+                        {"message", "policy value was saved, but reconciliation failed: " + *reloadError}};
+                }
+                if (scopeMutation) {
+                    const auto summary = applySubmodulePolicies(policyRegistry, "OSS",
+                        policy == "controlled_desktop_environments" ? "DesktopEnvironment" : "DisplayManager");
+                    fic::incident::PolicyIncidentReporter(incidentController()).report(
+                        policyRegistry, summary, "saved graphical scope apply");
+                    const bool applied = !summary.hasFailures();
+                    auto response = policy_apply_summary_json(summary, applied,
+                        applied ? "policy value saved; scoped policies applied" : "policy value saved; scoped policy apply failed");
+                    response["saved"] = true;
+                    response["applied"] = applied;
+                    return response;
                 }
                 if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
                     return failure.value();
@@ -952,8 +964,7 @@ json handle_request(json request,
             if (auto failure = regenerateDevicePolicyIfNeeded(true)) return *failure;
             fic::incident::PolicyIncidentReporter(incidentController()).report(
                 policyRegistry, summary, "manual apply_all");
-            const bool ok = isPolicyApplySuccessful(summary, "all", "") &&
-                latestGlobalReport.successful();
+            const bool ok = isPolicyApplySuccessful(summary, "all", "");
             return policy_apply_summary_json(
                 summary,
                 ok,
@@ -977,8 +988,7 @@ json handle_request(json request,
             if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) return *failure;
             fic::incident::PolicyIncidentReporter(incidentController()).report(
                 policyRegistry, summary, "manual apply_module " + module);
-            const bool ok = isPolicyApplySuccessful(summary, module, "all") &&
-                latestGlobalReport.successfulForModule(module);
+            const bool ok = isPolicyApplySuccessful(summary, module, "all");
             return policy_apply_summary_json(
                 summary,
                 ok,
@@ -1002,13 +1012,7 @@ json handle_request(json request,
                 applyPolicy(policyRegistry, module, policy);
             fic::incident::PolicyIncidentReporter(incidentController()).report(
                 policyRegistry, summary, "manual apply_policy " + module + "/" + policy);
-            Policy* requested = getPolicyClass(policyRegistry, module, policy);
-            const bool globalOk = requested == nullptr ||
-                latestGlobalReport.successfulForPolicy({
-                    requested->moduleName, requested->submoduleName,
-                    requested->policyName});
-            const bool ok = isPolicyApplySuccessful(summary, module, policy) &&
-                globalOk;
+            const bool ok = isPolicyApplySuccessful(summary, module, policy);
             return policy_apply_summary_json(
                 summary,
                 ok,

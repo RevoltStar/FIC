@@ -4,27 +4,29 @@ DE and DM use independent checkpoints in the same MutationJournal.
 
 ## Authority and state
 
-Configured scope is intent in OSS.conf. `set_value` for the scope only saves
-that intent and reloads the registry. It neither mutates OS resources nor
-commits a scope transition. Empty scope is savable, but enabled apply returns
-UNCONFIGURED.
+Configured scope is intent in OSS.conf. The scope policy's setter saves data;
+its apply validates ENABLE and a typed nonempty list, without journal access,
+native commands, session enumeration or physical reconciliation. Empty intent
+is savable but enabled apply returns UNCONFIGURED.
 
-MutationJournal holds both logical checkpoints and independent physical
-provenance. `scope/de` belongs only to
-`OSS/DesktopEnvironment/controlled_desktop_environments`. Its sorted canonical
-committed_scope/target_scope and phase pending/failed/partial/committed are
-validated on write, status change and reload. Applied plus phase committed
-is the only authorization for ordinary dependent apply. Prepared/failed/partial
-retain the last committed checkpoint; they do not assert that its protection
-remains effective. Checkpoints grant no physical ownership.
+After a successful administrative scope save and registry reload, the daemon
+runs a separate internal apply of the corresponding graphical submodule through
+the existing serialized planner. It reports `saved` and `applied` separately;
+failed apply preserves the new intent. There is no external CLI or self IPC.
+Direct apply of only the scope performs validation only, including daemon
+pre-processing. Startup, periodic, reload and manual dependent apply use the
+same physical coordinators. Required dependencies and reverse-disable guards
+remain; compliance is an independent observer of current inventory.
 
-`screenlock_timeout`, `disable_kde_lock_screen_media_controls` and
-`absence_of_uncontrolled_desktop_environments` have Required scope dependencies.
-The existing planner/reverse graph blocks missing/disabled/failed dependencies
-and refuses scope disable while a consumer is enabled. Direct session and
-compliance entrypoints also require a matching committed checkpoint. Compliance
-is observational: an excluded running DE can violate it after a successful
-release; it does not reverse administrative intent or terminate sessions.
+MutationJournal retains independent `scope/de` and `scope/dm` global checkpoints
+and physical provenance. Prepared/failed/partial retain the previous committed
+checkpoint; checkpoints grant no physical ownership. A committed checkpoint
+means system resources were reconciled and verified, **not** that all present
+or future user sessions converged. SessionOnly failure does not invalidate it.
+
+`screenlock_timeout`, `disable_kde_lock_screen_media_controls` and DE compliance
+require the DE declaration. `disable_autologin` and DM compliance require the
+DM declaration. Neither declaration requires an already committed checkpoint.
 
 ## Transition
 
@@ -38,8 +40,8 @@ ownership, verifies native/resource state and durability, then commits.
 All administrative/apply/session events run synchronously through the daemon.
 Cached module entries must still match a captured current config snapshot at
 collection. Every config snapshot is checked again before commit; an external
-change leaves the transition partial and requires registry reload/retry. Scope
-set_value never starts this sequence.
+change leaves the transition partial and requires registry reload/retry. The
+data setter does not start this sequence; the administrative handler subsequently executes the relevant submodule as a distinct apply stage.
 
 Failures retain intent and provenance. Preflight failures preserve physical
 state and the previous committed checkpoint. Physical/native/fsync/commit
@@ -108,31 +110,37 @@ Other lines/groups/newline state remain intact. The marker binds ID+resource;
 snapshot CAS/FIC locking and exact applied/original proofs protect update,
 release and crash retry. A missing FLY master is not fabricated.
 
-The current FLY backend cannot prove effective runtime enforcement. Production
-scope transitions with a nonempty FLY policy requirement fail before physical
-writes. Its journaled persistent inverse remains usable for independent release;
-no FLYWM_UPDATE_VAL call writes untracked session state.
+FLY ensure and release operate on the installed system theme master and verify
+that exact persistent source. `persistent_configuration=VERIFIED` is reported
+separately from `runtime_effect=NOT_VERIFIED`, independently of ordinary log
+filtering. A session-scoped `fly-wmfunc FLYWM_UPDATE_VAL ScreenSaverDelay N*60`
+is a convergence helper; failure is a MandatoryGlobal runtime warning, not a
+false proof or reversal of persistent enforcement. User theme files are untouched.
 
-KDE/XFCE setters also fail closed before any native writer. Existing KDE
-owner/PID/UID/procfs/environment/topology checks and typed XFCE reads remain.
-Session-only requirements cannot yield a successful scope checkpoint while
-conditional mutation/equivalent exclusion is unavailable, including when an
-agent is absent. There are no newly created untracked session changes to undo.
-Unproven legacy user/system changes are never adopted or restored.
+KDE/XFCE are SessionOnly. They enumerate all applicable current sessions,
+perform native setters/readback and return FAIL if any applicable session fails;
+no applicable sessions means SUCCESS for a valid configured policy. New
+`session_ready` events apply enabled relevant policies; periodic apply repairs
+drift. KDE retains unique D-Bus owner/PID/UID, procfs environment and same-UID
+topology checks, native kwriteconfig5/6+kreadconfig5/6, unconditional configure
+reload and final readback. XFCE retains typed inspection and typed property repair.
+They create no MutationJournal records or user ownership markers and perform no
+rollback. Excluding KDE/XFCE stops future enforcement; prior user values remain.
 
-The inspected [kwriteconfig source](https://github.com/KDE/kconfig/blob/master/src/kreadconfig/kwriteconfig.cpp)
-and [Xfconf D-Bus contract](https://github.com/xfce-mirror/xfconf/blob/master/common/xfconf-dbus.xml.in)
-provide separate writes without expected-value/version operands. This describes
-the current backend limitation, not an assertion that every future native
-mechanism is impossible.
+KConfig Kiosk/immutable keys and XFCE system XML/locking are forbidden as FIC
+security boundaries: the user controls their configuration source graph, including
+XDG_CONFIG_DIRS. Native conditional inverse/CAS is therefore not required for
+these deliberately non-reverting writes. LXQt remains recognized by inventory
+and compliance but screenlock_timeout explicitly reports Unsupported; there is
+no no-op locker backend.
 
 ## Enrollment and package removal
 
 | Policy/backend | Current contract |
 | --- | --- |
 | Scope and compliance | NotEnrolled; logical checkpoints do not mutate OS settings |
-| screenlock_timeout | Supported joint rollback for permitted journaled root mutations; unavailable session/FLY enforcement explicitly refuses apply |
-| disable_kde_lock_screen_media_controls | Unsupported rollback; its native session setter is unavailable |
+| screenlock_timeout | Supported joint rollback for GNOME/FLY; KDE/XFCE physical routes are intentionally NotEnrolled |
+| disable_kde_lock_screen_media_controls | NotEnrolled; disabling leaves current user settings unchanged |
 | Unknown DE policies/actions/routes | Unsupported/fail-closed |
 
 Owner release invalidates the successful scope checkpoint before physical
@@ -165,8 +173,9 @@ inspection is not live-session or package-manager erase proof.
 ## Display manager scope
 
 `controlled_display_managers` accepts SDDM, GDM and LIGHTDM. Configured intent
-is saved without physical reconciliation. Empty intent is UNCONFIGURED on
-apply. `disable_autologin` and the observational
+is saved by the setter; the administrative handler separately applies the DM
+submodule. Scope apply validates only; disable_autologin invokes reconciliation.
+Empty intent is UNCONFIGURED on apply. `disable_autologin` and the observational
 `absence_of_uncontrolled_display_managers` have Required scope dependencies.
 The coordinator validates current configuration versions and complete installed,
 selected and running inventory before it prepares `scope/dm`. It preflights all
@@ -184,7 +193,9 @@ arbitrary path or snapshot of administrator configuration. One exact FIC block
 at the primary file's end clears SDDM User, disables GDM AutomaticLoginEnable
 and TimedLoginEnable, or clears LightDM autologin-user and disables
 autologin-guest for every applicable seat. Session names and administrator
-bytes are preserved. Orphan markers and changed owned blocks refuse mutation.
+bytes are preserved. A FIC-owned block is always created for each installed
+controlled DM even if foreign administrator settings already disable autologin.
+There is no no-op enrollment optimization. Orphan markers and changed owned blocks refuse mutation.
 Release removes only the proven block; a created empty file is unlinked only
 when its original creation inode still matches. A replacement is detached and
 preserved. Prepared precedes publication; fsync and native inspection precede

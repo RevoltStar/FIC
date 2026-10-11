@@ -62,6 +62,16 @@ PolicyApplySummary applyModulePolicies(
     return PolicyExecutionPlanner(policyRegistry).execute(request);
 }
 
+PolicyApplySummary applySubmodulePolicies(PolicyRegistry& registry,
+                                         const std::string& module,
+                                         const std::string& submodule) {
+    PolicyExecutionRequest request;
+    for (const auto& ref : registry.policyRefs())
+        if (ref.moduleName == module && ref.submoduleName == submodule)
+            request.requestedRoots.push_back(ref);
+    return PolicyExecutionPlanner(registry).execute(request);
+}
+
 PolicyApplySummary applyAllPolicies(PolicyRegistry& policyRegistry) {
     PolicyExecutionRequest request;
     for (const auto& [moduleName, policyModule] : policyRegistry) {

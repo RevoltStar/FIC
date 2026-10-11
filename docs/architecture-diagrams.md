@@ -1522,6 +1522,16 @@ runtime-каталог `root:root 0755` и сокет `root:fic 0660`. Груп�
 выполняются только через daemon API.
 # Desktop-session reconciliation contract
 
+DE/DM scope apply validates configured intent only; dependent screenlock_timeout
+and disable_autologin invoke physical reconciliation. Administrative scope save
+and subsequent internal submodule apply have separate saved/applied results.
+Committed global scope proves system resources, not all user sessions. KDE/XFCE
+native apply is SessionOnly with no journal/rollback; scope exclusion preserves
+user values. Media-control disable is NotEnrolled. KConfig Kiosk, XFCE global
+locking and user ownership markers are not used. FLY proves persistent theme.master
+but reports live runtime NOT_VERIFIED. DM always enrolls its own autologin block,
+even for already disabled administrator configuration; release removes only it.
+
 `controlled_desktop_environments` is an explicit typed administrative scope;
 an empty value is `UNCONFIGURED`. It is never derived from installed packages,
 desktop files, or the platform profile. For an ordinary DE policy, a desktop
@@ -1553,8 +1563,8 @@ administrator profile. The profile parser supports the documented dconf source
 types (`user-db:`, `service-db:`, `system-db:`, `file-db:`) with whitespace and
 inline `#` comments while preserving foreign administrator lines byte-for-byte;
 non-writable-first, unknown-source, and duplicate-`system-db:fic` profiles fail
-closed. Existing FIC settings and locks are merge-only and
-survive `DISABLE`. `DesktopSystemBackend` is the sole global
+closed. FIC key/lock changes carry exact journal-backed inverse deltas and
+are safely released on disable or exclusion, preserving foreign settings. `DesktopSystemBackend` is the sole global
 enforcement path; policies only contribute requirements. Normal apply and
 targeted `session_ready` invoke the same reconciler before session convergence.
 Once authoritative
@@ -1578,10 +1588,10 @@ their values and verifies effective protected system state. Backend failures are
 aggregated into a structured report containing backend and policy/desktop
 results. Policy compliance depends only on its relevant backends, so unrelated
 failures do not block its runtime convergence. The overall full-pass result
-still fails if any backend failed. Owners are not persistent backend state. Missing requirements are
-not deletion commands: `DISABLE` stops checking/enforcement and leaves existing
-configuration unchanged. Rollback, provenance, and cleanup semantics are out of
-scope. See [the global desktop lifecycle contract](session-agent.md) for details.
+still fails if a relevant backend failed. Physical owner sets persist in
+MutationJournal. Missing global requirements trigger ownership-safe release;
+SessionOnly exclusion stops enforcement and leaves user settings unchanged.
+See [graphical-scope-transactions.md](graphical-scope-transactions.md).
 GNOME verification runs `dconf update` when source or compiled state needs it,
 then requires exact `gsettings get` values and `gsettings writable=false` for
 all four screen-lock keys — `idle-delay`, `lock-enabled`, `lock-delay`, and
@@ -1602,8 +1612,8 @@ must stay world-readable regular root-owned files, so root-only `gsettings`
 success cannot mask state that ordinary desktop users cannot read. Existing sessions may
 need relogin to load a newly changed profile, so their separate session-runtime
 convergence (which also enforces `disable-lock-screen=false`) remains best
-effort. Rollback, provenance, and stale cleanup remain
-outside this contract.
+effort. Exact inverse release, provenance and crash recovery are described in
+[graphical-scope-transactions.md](graphical-scope-transactions.md).
 
 `FlySystemBackend` is registered as backend `"fly"` with typed identity `Fly`.
 It securely merge-updates and verifies the authoritative

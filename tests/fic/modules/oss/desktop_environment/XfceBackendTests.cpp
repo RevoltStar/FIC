@@ -54,16 +54,15 @@ struct FakeCommands {
     }
 };
 
-void testSetPropertyRefusesUnconditionalMutation() {
+void testSetPropertyTypedMutation() {
     FakeCommands commands;
     XfceBackend backend({}, {}, commands.dependencies());
     std::string error;
-    require(!backend.setProperty(
-                "xfce4-screensaver", "/saver/fullscreen-inhibit",
-                "bool", "false", error), "unsafe XFCE mutation was accepted");
-    require(commands.arguments.empty() &&
-            error.find("native conditional write/ownership-safe rollback is not proven") != std::string::npos,
-            "XFCE refusal executed a writer or hid the safety boundary");
+    require(backend.setProperty("xfce4-screensaver", "/saver/fullscreen-inhibit",
+                "bool", "false", error), error);
+    require(commands.arguments == std::vector<std::vector<std::string>>{{
+        "--channel", "xfce4-screensaver", "--property", "/saver/fullscreen-inhibit",
+        "--create", "--type", "bool", "--set", "false"}}, "typed native mutation not used");
 }
 
 void testSetPropertyFailureHasNoUntypedFallback() {
@@ -76,8 +75,8 @@ void testSetPropertyFailureHasNoUntypedFallback() {
                 "int", "5", error),
             "failing XFCE property mutation reported success");
     require(!error.empty(), "XFCE property mutation failure hid the error");
-    require(commands.arguments.empty(),
-            "XFCE strict refusal attempted an unconditional fallback");
+    require(commands.arguments.size() == 1,
+            "XFCE writer attempted an untyped fallback");
 }
 
 void testAvailabilityOnlyQueriesExistingLocker() {
@@ -227,7 +226,7 @@ void testGetPropertyStateFailsClosedOnHelperFailure() {
 } // namespace
 
 int main() {
-    testSetPropertyRefusesUnconditionalMutation();
+    testSetPropertyTypedMutation();
     testSetPropertyFailureHasNoUntypedFallback();
     testAvailabilityOnlyQueriesExistingLocker();
     testGetPropertyStateUsesTrustedHelperAndParsesTypes();
