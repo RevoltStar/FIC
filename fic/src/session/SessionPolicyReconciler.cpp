@@ -38,6 +38,38 @@ PolicyApplySummary reconcileSessionReadyPolicies(
             success = outcome.successful();
             warning = outcome.status == SessionReconcileStatus::MandatoryGlobalRuntimeWarning;
             diagnostic = outcome.diagnostic;
+            // Attribute by the contributor's validated owner map, augmented only
+            // by this policy's own applicable MandatoryGlobal declarations. An
+            // incomplete Stage A must not turn a known obligation into SUCCESS.
+            auto globals = globalReport.resultsFor(owner);
+            for (const auto desktop : {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Fly,
+                                       DesktopEnvironmentKind::Kde, DesktopEnvironmentKind::Xfce,
+                                       DesktopEnvironmentKind::Lxqt}) {
+                std::string applicabilityError;
+                if (sessionAware->enforcementMode(desktop) == EnforcementMode::MandatoryGlobal &&
+                    sessionAware->sessionApplicability(desktop, applicabilityError) == SessionApplicability::Applicable)
+                    globals[desktop].hasRequirement = true;
+            }
+            std::string globalFailures;
+            for (const auto& [desktop, global] : globals) {
+                if (!global.hasRequirement || global.verified) continue;
+                if (!globalFailures.empty()) globalFailures += "; ";
+                globalFailures += std::string(DesktopEnvironmentBackend::kindName(desktop)) +
+                    " phase=" + globalReport.phase + ": " +
+                    (global.diagnostic.empty() ?
+                        (globalReport.stageADiagnostic.empty() ? "own mandatory global requirement not verified" :
+                         "own mandatory global requirement not verified; checkpoint: " + globalReport.stageADiagnostic) : global.diagnostic);
+            }
+            if (!globalFailures.empty()) {
+                // Session reconciliation has already run. Keep its independent
+                // outcome explicitly; never rollback its successful settings.
+                diagnostic = globalFailures + "; session_reconciliation " +
+                    (success ? "SUCCESS" : "FAILED") +
+                    (diagnostic.empty() ? "" : ": " + diagnostic);
+                success = false;
+                warning = false;
+            }
+
         } else {
             const auto capabilities = policy.capabilities();
             if (std::find(capabilities.begin(),capabilities.end(),PolicyCapability::SessionAware) == capabilities.end() &&

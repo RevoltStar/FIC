@@ -307,6 +307,7 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
     // Global checkpoint covers only system resources. Complete all
     // preflights before any protected resource changes, preserving owners.
     const auto preflight = [&](std::string& error) {
+        report.phase = "global_preflight";
         for (const auto& backend : backends_) {
             auto& result = report.backends.at(backend->backendName());
             if (!desiredByBackend.at(backend->backendName()).empty() &&
@@ -320,6 +321,7 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         return true;
     };
     const auto reconcile = [&](bool nonempty, std::string& error) {
+        report.phase = nonempty ? "global_ensure" : "global_release";
         for (const auto& backend : backends_) {
             const auto& desired = desiredByBackend.at(backend->backendName());
             if (desired.empty() == nonempty) continue;
@@ -332,6 +334,7 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         return true;
     };
     const auto verify = [&](std::string& error) {
+        report.phase = "global_verify";
         for (const auto& [path, version] : configurationVersions)
             if (!AtomicFileWriter::targetStateMatches(path, version, &error)) {
                 error = "configured DE intent changed during transition: " + error; return false;

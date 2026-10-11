@@ -1,35 +1,32 @@
 # FIC handoff
 
 ## Current base
-* Branch main; task base `52dbe7baac1fa91d6fff5b1c5d5503596936ee26`.
-* This snapshot accompanies `Fix session-ready incident reporting and unrelated FLY preflight failures`.
+* Branch main; task base `21ea260c2fe1f417c431195bc64640208e4e2a78`.
+* This snapshot accompanies `Account for global DE enforcement failures in session-ready incidents`.
 
 ## Current task
-* Session-ready incident reporting and independent inactive FLY preflight complete. No next implementation stage planned.
+* Owned global DE/session-ready aggregation completed; no next implementation stage planned.
 
 ## Accepted architecture / invariants
-* KDE/XFCE remain SessionOnly, no journal/CAS/rollback or user ownership markers; scope exclusion/disable retains user settings. GNOME/FLY remain MandatoryGlobal with exact journal inverse, full preflight, fsync, recovery and ownership-safe release. Root CAS/FIC locking retain the accepted residual non-cooperating-writer race.
-* DE/DM scope apply remains pure configured validation. Required/reverse guards, media NotEnrolled, screenlock_timeout Supported only for global routes, LXQt Unsupported and DM mandatory owned block/Supported rollback unchanged. No KConfig Kiosk/XFCE locking.
-* Trusted session-ready worker uses the existing current inventory snapshot and validated target context. Planner own-execution override changes only targeted policy execution; dependency expansion, conditions, caching, disabled and Required guards remain ordinary planner semantics.
-* One aggregate PolicyIncidentReporter report uses the daemon's existing IncidentController, each enabled failed policy's own severity, common max/audit/notify/active-response/dedup. NotApplicable/converged and MandatoryGlobalRuntimeWarning do not activate violations. SessionOnly success does not inherit unrelated global failures.
-* Without validated target context, ordinary SessionAware roots are omitted; enabled compliance evaluates authoritative current inventory only. Invalid ingress packets still fail validation before the worker. No full OSS/all-session apply or duplicated global reconciliation.
-* Inactive FLY with neither requirements nor active ownership performs safe read-only marker absence proof. Foreign layout does not require Variables/ScreenSaverDelay syntax. Orphan markers/unsafe metadata/symlinks fail; active ownership or requirements retain the full strict scalar/CAS/recovery/release path.
+* One global reconciliation, one inventory snapshot, one planner summary/result per actual PolicyRef and one PolicyIncidentReporter call per event. Required guards, dependent severity, severity max/dedup and ingress validation remain unchanged.
+* Attribution uses the validated report owner map plus the owner's own applicable MandatoryGlobal declarations. Incomplete contribution collection cannot grant success for an unproved own obligation; foreign errors alone cannot establish ownership.
+* Independent KDE/XFCE SessionOnly reconciliation still runs. Global FAILED retains its separate session SUCCESS/FAILED diagnostic; no adapter rollback or journal mutations. MandatoryGlobalRuntimeWarning alone remains Applied/WARN.
+* GNOME/FLY ownership-safe journal/CAS/recovery, root CAS residual race, SessionOnly/NotEnrolled, scope pure validation, LXQt Unsupported and DM contracts unchanged.
 
 ## Completed / changed areas
-* main.cpp bridges session_ready to session/SessionPolicyReconciler.{h,cpp}; one structured per-policy audit summary retains session ID/UID/DE/phase/cause. Compliance violations now use the same immediate incident pipeline, including unavailable/unclassified contexts proved by current inventory.
-* policy/execution/PolicyExecutionPlanner.{h,cpp}: optional own executor with identity/status validation; ordinary execution and exception handling preserved. Required-blocked results retain dependent ownership and failure origin.
-* FlySystemBackend.cpp: protected optional read supports safely absent parents for inactive preflight; no scalar parsing or writes for untouched foreign files. All existing ancestors are checked; active provenance cannot be ignored.
-* New session_ready_incident_tests uses real planner/reporter/controller with mock sinks/containment. Covers success/fail/severity max/repeat dedup, disabled/NotApplicable/warnings, global failure ownership, Required blocking, immediate enabled compliance, unvalidated target, independent exception continuation and empty diagnostics. FLY and real-coordinator regressions cover unrelated layout, orphan/ownership/recovery/security preservation. CI/static checks and contract docs updated.
+* SessionPolicyReconciler aggregates every owned global DE result, including DEs different from the new session, with the targeted outcome.
+* DesktopGlobalConfigReconciler retains the actual global_preflight/global_ensure/global_release/global_verify phase without changing physical execution.
+* Real planner/reporter/controller regressions cover GNOME failure plus KDE success, FLY failure plus XFCE success, both failures, both verified globals, early/incomplete preflight, release/verify, foreign ownership, NotApplicable, HARD severity, disabled owners and dedup. Existing Required/warning/untrusted-context/compliance cases retained.
+* Coordinator phase regressions and static architecture guards updated; graphical-scope-transactions.md documents aggregation/attribution.
 
 ## Validation
-* Docker Debian12 `cmake -S /src -B /build -DFIC_TARGET_PLATFORM=debian-12` PASS; full `cmake --build /build -j4` PASS (all components and test targets).
-* Full `ctest --test-dir /build --output-on-failure`: **175/175 PASS**, 76.82s. After final empty-diagnostic and extra unsafe-path guards: full build plus **17/17 targeted PASS**, 13.08s, covering sessions/incident/planner/DE/FLY/GNOME/rollback/DM. Tests drop DAC_OVERRIDE/DAC_READ_SEARCH and set Git safe.directory=/src.
-* Native GNOME dconf/GSettings journal filesystem lifecycle PASS on the cached real Debian12 package snapshot. Native SDDM/GDM/LightDM persistent inspection/restart-of-journal/release PASS; no manager start/restart. FLY temporary filesystem/CAS/recovery tests PASS. No host /etc, remote machine or real session changes.
-* Initial incident fixture failures were secure-state parent permissions/ownership and assumptions about the existing bounded audit reason; corrected without weakening production guards. Each cause is in its result message/diagnostics and aggregate notify reason; existing audit truncation rules remain unchanged.
-* Evidence under ignored build-prelogin-validation/dm-evidence/session-ready-fly-*. Automatic approval review timeouts occurred before execution; permitted retries succeeded. Temporary native snapshot removed; preexisting containers/images retained.
-* `git diff --check` PASS.
+* Docker Debian12 full configure/build PASS. Full CTest **175/175 PASS**, 181.46s.
+* After final added severity/disabled regressions: rebuilt session_ready_incident_tests; targeted CTest **9/9 PASS**, 48.85s (session-ready, global coordinator, GNOME/FLY, screenlock, rollback executor, DM).
+* Updated desktop architecture static checks run directly: PASS. git diff --check PASS.
+* Native GNOME/dconf lifecycle probes PASS in disposable Debian12, Ubuntu24 and ALT p11 snapshots. ALT stock /etc/dconf preserved under /tmp inside the disposable overlay to isolate the native fixture. Native Debian12 DM persistent inspection/journal restart/release PASS; no manager start/restart.
+* Ubuntu24 and ALT related GNOME/FLY/coordinator/session-ready gates PASS (current Debian-built regression binaries against those native environments; no claim of distro-native rebuild).
+* Evidence: ignored build-prelogin-validation/dm-evidence/global-session-*. No host /etc or remote machine modifications.
 
 ## Remaining / limits
 * No unfinished implementation components.
-* Real logind/desktop/active containment runtime and native Astra FLY compatibility NOT VERIFIED; administrator performs Astra checks later. Pipeline tests prove real incident decisions with mocks, not physical user/session blocking.
-* Root CAS residual race and bounded audit fields remain existing contracts; no stronger guarantee claimed.
+* Real graphical sessions, live DM runtime, physical containment and native Astra FLY NOT VERIFIED. Pipeline tests use real incident decisions with mock containment; FLY uses filesystem fixtures.

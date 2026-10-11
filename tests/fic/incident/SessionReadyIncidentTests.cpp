@@ -48,7 +48,7 @@ struct SessionPolicy final : SessionAwareDesktopEnvironmentPolicy {
     bool relevantTo(DesktopEnvironmentKind) const override { return relevant; }
     EnforcementMode modeFor(DesktopEnvironmentKind desktop) const override {
         if(unsupported)return EnforcementMode::Unsupported;
-        return desktop==DesktopEnvironmentKind::Gnome?EnforcementMode::MandatoryGlobal:EnforcementMode::SessionOnly; }
+        return (desktop==DesktopEnvironmentKind::Gnome||desktop==DesktopEnvironmentKind::Fly)?EnforcementMode::MandatoryGlobal:EnforcementMode::SessionOnly; }
     bool reconcileControlledSession(const SessionReconcileContext&,std::string& error) override {
         ++calls;if(throws)throw std::runtime_error("native exception");if(!nativeOk&&!emptyError)error=policyName+" native failure";return nativeOk; }
 };
@@ -63,12 +63,12 @@ struct Fixture {
     std::vector<ClassifiedGraphicalSession> snapshot;
     DesktopGlobalReconcileReport global;
     std::vector<std::string> audits,notificationReasons; int notifications=0;
-    Fixture(bool aEnabled=true,bool bEnabled=false,bool compliance=false,bool scopeEnabled=true)
+    Fixture(bool aEnabled=true,bool bEnabled=false,bool compliance=false,bool scopeEnabled=true,const char* severity="SOFT")
         :controller(IncidentStateStore(root/("state"+std::to_string(++sequence))),sessions,std::make_shared<Network>()) {
         const auto state=root/("state"+std::to_string(sequence));std::ofstream(state)<<"UNLOCKED\n";::chmod(state.c_str(),0640);
         std::ofstream(root/"config/OSS.conf")<<"controlled_desktop_environments.status="<<(scopeEnabled?"ENABLE":"DISABLE")
             <<"\ncontrolled_desktop_environments.violation_severity=NONE\nscreenlock_timeout.status="<<(aEnabled?"ENABLE":"DISABLE")
-            <<"\nscreenlock_timeout.violation_severity=SOFT\ndisable_kde_lock_screen_media_controls.status="<<(bEnabled?"ENABLE":"DISABLE")
+            <<"\nscreenlock_timeout.violation_severity="<<severity<<"\ndisable_kde_lock_screen_media_controls.status="<<(bEnabled?"ENABLE":"DISABLE")
             <<"\ndisable_kde_lock_screen_media_controls.violation_severity=HARD\nabsence_of_uncontrolled_desktop_environments.status="<<(compliance?"ENABLE":"DISABLE")
             <<"\nabsence_of_uncontrolled_desktop_environments.violation_severity=HARD\n";
         std::string error;require(registry.addModule("OSS",ModuleView::Standard,0,error),error);
@@ -99,6 +99,45 @@ const PolicyApplyResult& find(const PolicyApplySummary& summary,const std::strin
     throw std::runtime_error("missing policy result: "+name);
 }
 void scenarios() {
+    {Fixture f(true,false,false,true,"HARD");f.scope->target.insert(DesktopEnvironmentKind::Gnome);
+        require(f.run().hasFailures()&&f.controller.status().severity==IncidentSeverity::Hard&&f.notifications==1,
+                "screenlock global failure ignored own HARD severity");}
+    {Fixture f(false);f.global.policies[{"OSS","DesktopEnvironment","screenlock_timeout"}][DesktopEnvironmentKind::Gnome]={true,false,{"gnome"},"disabled owner failure"};
+        require(!f.run().hasFailures()&&f.notifications==0&&f.a->calls==0,"disabled global owner caused incident");}
+
+    for (const auto phase : {"global_preflight","global_ensure","global_release","global_verify"}) {
+        Fixture f; f.scope->target.insert(DesktopEnvironmentKind::Gnome);
+        f.global.phase=phase; f.global.requirementsValid=false; f.global.stageADiagnostic="GNOME injected failure";
+        const auto summary=f.run();const auto& r=find(summary,"screenlock_timeout");
+        require(r.isFailure()&&f.a->calls==1&&f.notifications==1&&f.controller.status().severity==IncidentSeverity::Soft,
+                "owned GNOME failure lost after successful KDE apply");
+        require(r.message.find(phase)!=std::string::npos&&r.message.find("session_reconciliation SUCCESS")!=std::string::npos,
+                "actual global phase or successful session result lost");
+        f.run();require(f.notifications==1&&f.a->calls==2,"global failure repeat not deduplicated");
+    }
+    for (bool globalOK : {false,true}) for (bool sessionOK : {false,true}) {
+        Fixture f;f.scope->target.insert(DesktopEnvironmentKind::Gnome);f.a->nativeOk=sessionOK;
+        f.global.policies[{"OSS","DesktopEnvironment","screenlock_timeout"}][DesktopEnvironmentKind::Gnome]=
+            {true,globalOK,{"gnome"},globalOK?"":"GNOME verify failed"};
+        const auto summary=f.run();const auto& r=find(summary,"screenlock_timeout");
+        require(r.isFailure()==(!globalOK||!sessionOK)&&f.a->calls==1&&f.notifications==(!globalOK||!sessionOK),"global/session matrix failed");
+        if(!globalOK)require(r.message.find("GNOME verify failed")!=std::string::npos,"global cause lost");
+        if(!sessionOK)require(r.message.find("native failure")!=std::string::npos,"session cause lost");
+    }
+    {Fixture f;f.target.desktop=DesktopEnvironmentKind::Xfce;f.snapshot={f.target};
+        f.scope->target={DesktopEnvironmentKind::Xfce,DesktopEnvironmentKind::Fly};
+        f.global.policies[{"OSS","DesktopEnvironment","screenlock_timeout"}][DesktopEnvironmentKind::Fly]={true,false,{"fly"},"FLY ensure failed"};
+        auto summary=f.run();require(summary.hasFailures()&&f.a->calls==1&&f.notifications==1&&find(summary,"screenlock_timeout").message.find("FLY")!=std::string::npos,"FLY failure lost after XFCE success");}
+    {Fixture f;f.scope->target.insert(DesktopEnvironmentKind::Gnome);f.scope->target.insert(DesktopEnvironmentKind::Fly);
+        for(auto de:{DesktopEnvironmentKind::Gnome,DesktopEnvironmentKind::Fly})
+            f.global.policies[{"OSS","DesktopEnvironment","screenlock_timeout"}][de]={true,true,{},""};
+        require(!f.run().hasFailures()&&f.a->calls==1&&f.notifications==0,"verified global requirements caused incident");}
+    {Fixture f;f.a->relevant=false;
+        f.global.policies[{"OSS","DesktopEnvironment","screenlock_timeout"}][DesktopEnvironmentKind::Gnome]={true,false,{"gnome"},"owned failure"};
+        require(f.run().hasFailures()&&f.a->calls==0&&f.notifications==1,"NotApplicable target hid owned global failure");}
+    {Fixture f(true,true);f.global.policies[{"OSS","DesktopEnvironment","disable_kde_lock_screen_media_controls"}][DesktopEnvironmentKind::Gnome]={true,false,{"gnome"},"foreign failure"};
+        auto summary=f.run();require(!find(summary,"screenlock_timeout").isFailure()&&find(summary,"disable_kde_lock_screen_media_controls").isFailure()&&f.controller.status().severity==IncidentSeverity::Hard&&f.notifications==1,"global ownership or HARD severity lost");}
+
     {Fixture f;auto s=f.run();require(!s.hasFailures()&&f.a->calls==1&&f.audits.empty()&&f.notifications==0,"success raised incident");}
     {Fixture f;f.a->nativeOk=false;auto s=f.run();require(s.hasFailures()&&f.controller.status().severity==IncidentSeverity::Soft&&f.notifications==1&&f.audits.size()==1,"session failure did not reach common reporter");
         require(f.audits[0].find("session=7 uid=1000 desktop=KDE")!=std::string::npos&&f.audits[0].find("native failure")!=std::string::npos,"incident lost context or cause: "+f.audits[0]);}

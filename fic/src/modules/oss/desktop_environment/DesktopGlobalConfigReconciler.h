@@ -97,6 +97,8 @@ struct DesktopGlobalBackendResult {
 struct DesktopGlobalReconcileReport {
     bool requirementsValid = true;
     std::string stageADiagnostic;
+    // Actual coordinator phase; retained even when ownership collection is incomplete.
+    std::string phase = "global_preflight";
     std::map<std::string, DesktopGlobalBackendResult> backends;
     std::map<PolicyRef, PolicyGlobalEnforcementResults> policies;
 

@@ -72,6 +72,14 @@ targeted = main[main.index("void reconcile_session_ready("):
                 main.index("} // namespace", main.index("void reconcile_session_ready("))]
 assert targeted.index("desktopGlobalConfig.reconcile") < targeted.index("reconcilePolicies(&reconcileContext")
 assert "globalReport.resultFor(owner,context->target.desktop)" in session_reconciler
+assert "globalReport.resultsFor(owner)" in session_reconciler
+assert "sessionAware->sessionApplicability(desktop" in session_reconciler
+assert "sessionAware->enforcementMode(desktop) == EnforcementMode::MandatoryGlobal" in session_reconciler
+assert "globalReport.phase" in session_reconciler
+assert "session_reconciliation " in session_reconciler
+assert "MutationJournal" not in session_reconciler
+assert "releasePolicy(" not in session_reconciler
+assert "DesktopGlobalConfigReconciler(" not in session_reconciler
 assert "globalEnforcementVerified" not in targeted
 assert '"phase", "desktop_global_configuration"' in targeted
 assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main

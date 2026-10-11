@@ -42,6 +42,16 @@ proof failures become Failed policy results. Converged and NotApplicable results
 are Applied for incident reporting; MandatoryGlobalRuntimeWarning remains an
 Applied result with WARN diagnostics, never an incident on its own. An unrelated
 global failure does not invalidate successful SessionOnly reconciliation.
+For each owner the targeted executor aggregates all owned global requirements
+from the already computed report with the session outcome, including globals
+for a different DE. Own applicable MandatoryGlobal declarations also prevent
+false success when Stage A stops before collecting complete contributions.
+A missing proof is diagnosed as an unverified own obligation, with checkpoint
+context; a foreign failure alone cannot create ownership. Actual coordinator
+phases (global_preflight/ensure/release/verify) survive in the report. Independent
+session SUCCESS is retained explicitly alongside global FAILED; the adapter
+neither retries global reconciliation nor rolls back session settings or journal
+provenance.
 
 One aggregate PolicyIncidentReporter call feeds the existing IncidentController,
 severity max, audit, notification deduplication and active response. Diagnostics

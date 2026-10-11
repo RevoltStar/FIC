@@ -219,6 +219,17 @@ void refusals() {
         require(!f.apply().successful() && f.gnome->writes + f.fly->writes == 0, "preflight mutated state: " + mode);
     }
 }
+void reportPhases() {
+    for (const auto phase : {"global_preflight", "global_ensure", "global_release", "global_verify"}) {
+        Fixture f;
+        if (std::string(phase)=="global_preflight") f.gnome->preflightOK=false;
+        if (std::string(phase)=="global_ensure") f.gnome->writeOK=false;
+        if (std::string(phase)=="global_release") f.fly->writeOK=false;
+        if (std::string(phase)=="global_verify") f.gnome->verifyOK=false;
+        const auto report=f.apply();
+        require(!report.successful()&&report.phase==phase,"global report lost actual coordinator phase");
+    }
+}
 void partialRecovery() {
     Fixture f; require(f.apply().successful(), "initial commit");
     f.scope->target = {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Fly};
@@ -238,4 +249,4 @@ void partialRecovery() {
     require(!f.apply().successful() && f.state().phase == "partial", "external intent version change committed");
 }
 }
-int main() { unrelatedFlyDoesNotBlockGnome(); transitions(); sessionScopeTransitions(); refusals(); partialRecovery(); }
+int main() { unrelatedFlyDoesNotBlockGnome(); transitions(); sessionScopeTransitions(); refusals(); reportPhases(); partialRecovery(); }
