@@ -13,6 +13,9 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.userCreation.useraddDefaultsLookup =
         UseraddDefaultsLookupSemantics::ExactKey;
     profile.executables.entries = {
+        {ExecutableId::Sddm, {"/usr/bin/sddm"}, false},
+        {ExecutableId::Gdm, {"/usr/sbin/gdm3", "/usr/sbin/gdm"}, false},
+        {ExecutableId::LightDm, {"/usr/sbin/lightdm"}, false},
         {
             ExecutableId::Sshd,
             {"/usr/sbin/sshd", "/usr/bin/sshd"}
@@ -171,6 +174,12 @@ PlatformProfile makeBuildPlatformProfile() {
     // the platform keeps configurationMode=ProviderConfigFile with NO
     // module-argument evidence.
     profile.pam.passwordTopologyRuntimeMutable = true;
+    profile.executables.entries.push_back({ExecutableId::PackageQuery, profile.packageManager.queryCandidates, false});
+    profile.displayManager.packageManagerKind = profile.packageManager.kind;
+    profile.displayManager.defaultDisplayManagerPath = "/etc/X11/default-display-manager";
+    profile.displayManager.gdmRuntimeConfigPath = "/run/gdm3/custom.conf";
+    profile.displayManager.sddmConfigDirectories = {"/usr/lib/sddm/sddm.conf.d", "/etc/sddm.conf.d"};
+    profile.displayManager.lightDmConfigDirectories = {"/usr/share/lightdm/lightdm.conf.d", "/usr/local/share/lightdm/lightdm.conf.d", "/etc/xdg/lightdm/lightdm.conf.d", "/etc/lightdm/lightdm.conf.d"};
     profile.displayManager.sddmConfigPath = "/etc/sddm.conf";
     profile.displayManager.lightDmConfigPath = "/etc/lightdm/lightdm.conf";
     profile.displayManager.gdmConfigCandidates = {

@@ -38,7 +38,8 @@ enum class MutationBackend {
     UserCreation,
     IdentityLoginDefs,
     Scope,
-    Desktop
+    Desktop,
+    DisplayManager
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -331,6 +332,19 @@ struct UndoOwnDesktopArtifact {
     std::uint64_t inode = 0;
 };
 
+// Fixed trusted DM route; no path or foreign-file snapshot.
+struct UndoRemoveDisplayManagerBlock {
+    std::string manager;
+    unsigned route = 0;
+    std::vector<std::string> seats;
+    bool createdFile = false;
+    std::uint64_t creationDevice = 0;
+    std::uint64_t creationInode = 0;
+    std::string separator;
+    bool hadApplied = false;
+    std::string phase = "ensure";
+};
+
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoReleaseSudoScopedDefaults,
@@ -347,7 +361,8 @@ using UndoPayload = std::variant<
     UndoRemoveIdentityLoginDefsManagedPolicy,
     ScopeTransitionCheckpoint,
     UndoRestoreDesktopScalar,
-    UndoOwnDesktopArtifact>;
+    UndoOwnDesktopArtifact,
+    UndoRemoveDisplayManagerBlock>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;
@@ -370,6 +385,9 @@ struct MutationRecord {
                status == MutationStatus::RollbackFailed;
     }
 };
+
+// Shared pure schema guard for backend preflight and journal admission.
+bool validateDisplayManagerMutationRecord(const MutationRecord&, std::string& error);
 
 std::string mutationStatusToString(MutationStatus status);
 bool mutationStatusFromString(const std::string& value, MutationStatus& status);

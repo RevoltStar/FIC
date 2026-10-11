@@ -160,7 +160,7 @@ std::function<void()>& beforeFinalJournalProofHook() {
 
 bool validScopeCheckpoint(const ScopeTransitionCheckpoint& checkpoint,
                           std::string& error) {
-    const std::set<std::string> known{"FLY", "GNOME", "KDE", "XFCE", "LXQT"};
+    const std::set<std::string> known{"FLY", "GNOME", "KDE", "XFCE", "LXQT", "SDDM", "GDM", "LIGHTDM"};
     const auto valid = [&](const std::vector<std::string>& scope) {
         return std::is_sorted(scope.begin(), scope.end()) &&
             std::adjacent_find(scope.begin(), scope.end()) == scope.end() &&
@@ -171,7 +171,7 @@ bool validScopeCheckpoint(const ScopeTransitionCheckpoint& checkpoint,
         (checkpoint.phase != "pending" && checkpoint.phase != "failed" &&
          checkpoint.phase != "partial" && checkpoint.phase != "committed") ||
         (checkpoint.phase == "committed" && checkpoint.targetScope.empty())) {
-        error = "invalid canonical DE scope checkpoint";
+        error = "invalid canonical graphical scope checkpoint";
         return false;
     }
     return true;
@@ -179,12 +179,46 @@ bool validScopeCheckpoint(const ScopeTransitionCheckpoint& checkpoint,
 
 bool validScopeRecord(const MutationRecord& record, std::string& error) {
     const auto* checkpoint = std::get_if<ScopeTransitionCheckpoint>(&record.undo.payload);
-    if (record.undo.backend != MutationBackend::Scope || checkpoint == nullptr || record.policy !=
-            PolicyRef{"OSS", "DesktopEnvironment", "controlled_desktop_environments"} ||
-        record.resource != "scope/de" || !validScopeCheckpoint(*checkpoint, error) ||
+    const bool dm = record.resource == "scope/dm";
+    const PolicyRef expected{"OSS", dm ? "DisplayManager" : "DesktopEnvironment",
+        dm ? "controlled_display_managers" : "controlled_desktop_environments"};
+    const std::set<std::string> known = dm ? std::set<std::string>{"SDDM", "GDM", "LIGHTDM"}
+        : std::set<std::string>{"FLY", "GNOME", "KDE", "XFCE", "LXQT"};
+    if (record.undo.backend != MutationBackend::Scope || !checkpoint || record.policy != expected ||
+        record.resource != (dm ? "scope/dm" : "scope/de") || !validScopeCheckpoint(*checkpoint, error) ||
+        !std::all_of(checkpoint->committedScope.begin(), checkpoint->committedScope.end(), [&](const auto& x){return known.count(x);}) ||
+        !std::all_of(checkpoint->targetScope.begin(), checkpoint->targetScope.end(), [&](const auto& x){return known.count(x);}) ||
         (record.status == MutationStatus::Applied && checkpoint->phase != "committed")) {
-        error = "invalid DE scope checkpoint identity or payload: " + error;
-        return false;
+        error = "invalid graphical scope checkpoint identity or payload: " + error; return false;
+    }
+    return true;
+}
+
+bool validDmRecord(const MutationRecord& record, std::string& error) {
+    const auto* p = std::get_if<UndoRemoveDisplayManagerBlock>(&record.undo.payload);
+    if (!p || record.undo.backend != MutationBackend::DisplayManager ||
+        record.policy != PolicyRef{"OSS", "DisplayManager", "disable_autologin"} ||
+        (p->manager != "SDDM" && p->manager != "GDM" && p->manager != "LIGHTDM") ||
+        record.resource != "DM/" + p->manager + "/autologin" || p->route != 0 ||
+        (p->phase != "ensure" && p->phase != "release") ||
+        (p->separator != "" && p->separator != "\n") ||
+        (p->createdFile && !p->separator.empty()) ||
+        (!p->createdFile && (p->creationDevice || p->creationInode)) ||
+        (record.status == MutationStatus::Applied && p->createdFile && !p->creationInode) ||
+        (p->manager != "LIGHTDM" && !p->seats.empty()) ||
+        (p->manager == "LIGHTDM" && (p->seats.empty() || p->seats.size() > 128 ||
+            !std::binary_search(p->seats.begin(),p->seats.end(),std::string("Seat:*")) ||
+            !std::is_sorted(p->seats.begin(), p->seats.end()) ||
+            std::adjacent_find(p->seats.begin(), p->seats.end()) != p->seats.end())) ||
+        (record.status == MutationStatus::Applied && (!p->hadApplied || p->phase != "ensure"))) {
+        error = "invalid DM block ownership identity/lifecycle"; return false;
+    }
+    for (const auto& seat : p->seats) {
+        if ((seat != "SeatDefaults" && seat.compare(0, 5, "Seat:") != 0) || seat.size() > 128 ||
+            seat.find_first_of("\r\n[]\0", 0, 5) != std::string::npos ||
+            !std::all_of(seat.begin(), seat.end(), [](unsigned char c){return c >= 32 && c < 127;})) {
+            error = "invalid DM seat route"; return false;
+        }
     }
     return true;
 }
@@ -298,7 +332,12 @@ json serializeUndoAction(const UndoAction& action) {
     // the backend inside the undo object to validate payload/backend
     // consistency on load (fail closed).
     value["backend"] = mutationBackendToString(action.backend);
-    if (const auto* artifact = std::get_if<UndoOwnDesktopArtifact>(&action.payload)) {
+    if (const auto* dm = std::get_if<UndoRemoveDisplayManagerBlock>(&action.payload)) {
+        value["manager"] = dm->manager; value["route"] = dm->route; value["seats"] = dm->seats;
+        value["created_file"] = dm->createdFile; value["separator"] = dm->separator;
+        value["creation_device"] = dm->creationDevice; value["creation_inode"] = dm->creationInode;
+        value["had_applied"] = dm->hadApplied; value["phase"] = dm->phase;
+    } else if (const auto* artifact = std::get_if<UndoOwnDesktopArtifact>(&action.payload)) {
         value["kind"] = artifact->kind; value["phase"] = artifact->phase;
         value["had_applied"] = artifact->hadApplied;
         value["device"] = artifact->device; value["inode"] = artifact->inode;
@@ -1074,6 +1113,25 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(scalar);
         return true;
     }
+    if (backend == MutationBackend::DisplayManager && actionName == "remove_display_manager_block") {
+        for (const auto* field : {"manager", "separator", "phase"})
+            if (!value.contains(field) || !value[field].is_string()) { error = "malformed DM block"; return false; }
+        if (!value.contains("route") || !value["route"].is_number_unsigned() || value["route"] != 0u ||
+            !value.contains("creation_device") || !value["creation_device"].is_number_unsigned() ||
+            !value.contains("creation_inode") || !value["creation_inode"].is_number_unsigned() ||
+            !value.contains("seats") || !value["seats"].is_array() ||
+            !value.contains("created_file") || !value["created_file"].is_boolean() ||
+            !value.contains("had_applied") || !value["had_applied"].is_boolean()) {
+            error = "malformed DM block lifecycle"; return false;
+        }
+        UndoRemoveDisplayManagerBlock dm;
+        dm.manager = value["manager"].get<std::string>(); dm.route = value["route"].get<unsigned>();
+        dm.seats = value["seats"].get<std::vector<std::string>>();
+        dm.creationDevice = value["creation_device"].get<std::uint64_t>(); dm.creationInode = value["creation_inode"].get<std::uint64_t>();
+        dm.createdFile = value["created_file"].get<bool>(); dm.separator = value["separator"].get<std::string>();
+        dm.hadApplied = value["had_applied"].get<bool>(); dm.phase = value["phase"].get<std::string>();
+        action.payload = std::move(dm); return true;
+    }
     if (backend == MutationBackend::Scope && actionName == "scope_transition_checkpoint") {
         if (!value.contains("committed_scope") || !value["committed_scope"].is_array() ||
             !value.contains("target_scope") || !value["target_scope"].is_array() ||
@@ -1800,6 +1858,8 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
     if (record.undo.backend == MutationBackend::Scope &&
         !validScopeRecord(record, error)) return false;
 
+    if ((record.undo.backend == MutationBackend::DisplayManager || std::holds_alternative<UndoRemoveDisplayManagerBlock>(record.undo.payload)) &&
+        !validDmRecord(record, error)) return false;
     record.createdAtEpoch = value.value("created_at_epoch", std::int64_t{0});
     record.updatedAtEpoch = value.value("updated_at_epoch", std::int64_t{0});
     record.error = value.value("error", std::string());
@@ -1823,6 +1883,10 @@ std::vector<std::string> activePamFlagSuppressionAuthority(
         return preparedPamFlagSuppressionAuthority(flag);
     }
     return flag.suppressionIds;
+}
+
+bool validateDisplayManagerMutationRecord(const MutationRecord& record, std::string& error) {
+    return validDmRecord(record,error);
 }
 
 std::string mutationStatusToString(MutationStatus status) {
@@ -1859,6 +1923,7 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::IdentityLoginDefs: return "identity_login_defs";
     case MutationBackend::Scope: return "scope";
     case MutationBackend::Desktop: return "desktop";
+    case MutationBackend::DisplayManager: return "display_manager";
     }
     return "unknown";
 }
@@ -1876,10 +1941,12 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "identity_login_defs") { backend = MutationBackend::IdentityLoginDefs; return true; }
     if (value == "scope") { backend = MutationBackend::Scope; return true; }
     if (value == "desktop") { backend = MutationBackend::Desktop; return true; }
+    if (value == "display_manager") { backend = MutationBackend::DisplayManager; return true; }
     return false;
 }
 
 std::string undoActionTypeName(const UndoAction& action) {
+    if (std::holds_alternative<UndoRemoveDisplayManagerBlock>(action.payload)) return "remove_display_manager_block";
     if (std::holds_alternative<UndoOwnDesktopArtifact>(action.payload))
         return "own_desktop_artifact";
     if (std::holds_alternative<UndoRestoreDesktopScalar>(action.payload))
@@ -2803,6 +2870,22 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             error = "GNOME artifact refresh loses or invents ownership"; return false;
         }
     }
+    if ((record.undo.backend == MutationBackend::DisplayManager || std::holds_alternative<UndoRemoveDisplayManagerBlock>(record.undo.payload)) &&
+        !validDmRecord(record, error)) return false;
+    if (const auto* incoming = std::get_if<UndoRemoveDisplayManagerBlock>(&record.undo.payload)) {
+        const UndoRemoveDisplayManagerBlock* previous = nullptr;
+        for (const auto& existing : records_)
+            if (existing.isActive() && existing.resource == record.resource && existing.undo.backend == MutationBackend::DisplayManager)
+                previous = std::get_if<UndoRemoveDisplayManagerBlock>(&existing.undo.payload);
+        if ((!previous && (incoming->hadApplied || incoming->phase != "ensure" || incoming->creationDevice || incoming->creationInode)) ||
+            (previous && (incoming->manager != previous->manager || incoming->route != previous->route ||
+                incoming->seats != previous->seats || incoming->createdFile != previous->createdFile ||
+                incoming->separator != previous->separator || (previous->hadApplied && (!incoming->hadApplied ||
+                    incoming->creationDevice != previous->creationDevice || incoming->creationInode != previous->creationInode)) ||
+                (previous->phase == "release" && incoming->phase != "release")))) {
+            error = "DM refresh loses or invents ownership"; return false;
+        }
+    }
     // Record consistency before ANY refresh/insert: for GRUB the logical
     // identity carries the managed key, so the payload MUST agree with it
     // (record.resource == undo.key). The payload itself must satisfy the
@@ -3602,6 +3685,8 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
         *record = previous;
         return false;
     }
+    if ((record->undo.backend == MutationBackend::DisplayManager || std::holds_alternative<UndoRemoveDisplayManagerBlock>(record->undo.payload)) &&
+        !validDmRecord(*record, error)) { *record = previous; return false; }
     record->error = message;
     record->updatedAtEpoch = currentEpochSeconds();
     const PersistOutcome outcome = persist(error);

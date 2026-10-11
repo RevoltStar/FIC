@@ -23,7 +23,9 @@ class ScopeTransition {
 public:
     using Operation = std::function<bool(std::string&)>;
 
-    explicit ScopeTransition(MutationJournal& journal) : journal_(journal) {}
+    enum class Domain { Desktop, DisplayManager };
+    explicit ScopeTransition(MutationJournal& journal, Domain domain = Domain::Desktop)
+        : journal_(journal), domain_(domain) {}
     bool state(ScopeTransitionState& state, std::string& error) const;
     bool requireCommitted(const std::vector<std::string>& configured,
                           std::string& error) const;
@@ -37,6 +39,7 @@ public:
 
 private:
     MutationJournal& journal_;
+    Domain domain_;
 };
 
 } // namespace fic::rollback

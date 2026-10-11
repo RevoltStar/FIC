@@ -105,6 +105,7 @@ struct RollbackExecutorDeps {
     std::function<bool(const std::string& policyName, std::string& error)> undoFirewallPolicy;
     // Joint owner release across ALL active DE records, not activeRecords(owner).
     std::function<bool(const PolicyRef&, MutationJournal&, std::string&, bool)> releaseDesktopOwner;
+    std::function<bool(MutationJournal&, std::string&, bool)> releaseDisplayManagers;
 };
 
 // Step 7F: contextual (platform-aware) enrollment. Preserves the static

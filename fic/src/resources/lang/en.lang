@@ -921,3 +921,8 @@ Where possible, a lock against modification is applied
 [devices:class][subsystem:usb][class:FF|00|03]=[Специфичное для производителя] [Устройство Google]
 [devices:class][subsystem:usb][class:FF|FF|FF]=[Специфичное для производителя] [Индивидуальное устройство]
 # END GENERATED DEVICE CLASS LOCALIZATION
+
+[module:OSS][policy:controlled_display_managers]=Controlled display managers
+[module:OSS][policy:controlled_display_managers][description]=Administrative DM scope. Empty scope is UNCONFIGURED; apply commits verified enforcement and ownership release.
+[module:OSS][policy:absence_of_uncontrolled_display_managers]=Absence of uncontrolled display managers
+[module:OSS][policy:absence_of_uncontrolled_display_managers][description]=Check selected/running DMs; installed inactive managers outside scope are permitted.

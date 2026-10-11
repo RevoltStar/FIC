@@ -1,7 +1,6 @@
-# Transactional DE scope and ownership-safe release
+# Transactional graphical scope and ownership-safe release
 
-DM is independent and is reserved for the second task commit. This document
-specifies the DE contract; it does not claim DM implementation.
+DE and DM use independent checkpoints in the same MutationJournal.
 
 ## Authority and state
 
@@ -162,3 +161,58 @@ foreign lock/database preservation, restart and cleanup. Native GNOME Shell,
 FLY runtime and live KDE/XFCE sessions are NOT VERIFIED. The current checked
 image/package matrix and exact test results belong in HANDOFF; native package
 inspection is not live-session or package-manager erase proof.
+
+## Display manager scope
+
+`controlled_display_managers` accepts SDDM, GDM and LIGHTDM. Configured intent
+is saved without physical reconciliation. Empty intent is UNCONFIGURED on
+apply. `disable_autologin` and the observational
+`absence_of_uncontrolled_display_managers` have Required scope dependencies.
+The coordinator validates current configuration versions and complete installed,
+selected and running inventory before it prepares `scope/dm`. It preflights all
+targets and releases, enforces installed controlled managers, releases obsolete
+owners, verifies actual Applied records and resolved releases, and rechecks
+inventory and intent before committing. Unknown selected/running managers fail
+compliance; inactive installed managers outside scope do not. Unsupported custom
+configuration routes fail closed. Direct policy apply cannot bypass the
+coordinator or authorize a hypothetical staged mutation.
+
+Physical DM provenance contains a manager, fixed route, exact marker identity,
+LightDM seat set, inserted separator, creation ownership and pinned creation
+device/inode, prior Applied authority and ensure/release phase. It contains no
+arbitrary path or snapshot of administrator configuration. One exact FIC block
+at the primary file's end clears SDDM User, disables GDM AutomaticLoginEnable
+and TimedLoginEnable, or clears LightDM autologin-user and disables
+autologin-guest for every applicable seat. Session names and administrator
+bytes are preserved. Orphan markers and changed owned blocks refuse mutation.
+Release removes only the proven block; a created empty file is unlinked only
+when its original creation inode still matches. A replacement is detached and
+preserved. Prepared precedes publication; fsync and native inspection precede
+Applied. Recovery finishes an interrupted release before fresh enrollment.
+
+SDDM verification follows the installed 0.19–0.21 native ConfigReader tokenizer
+and loading order, with package version proof. GDM uses native GKeyFile and
+checks the platform's higher-priority runtime configuration. LightDM uses
+native `--show-config`, including wildcard/specific seats and source routes.
+No display manager is started or restarted by reconciliation. SUCCESS confirms
+**native persistent configuration**. It explicitly reports
+`live_runtime=NOT_VERIFIED`, since a running manager may cache old settings.
+This boundary is included in administrative apply output, independently of
+ordinary log filtering; it does not claim live-session enforcement.
+
+Compiled paths are distribution-specific. ALT SDDM uses
+`/etc/X11/sddm/sddm.conf` and `/usr/share/sddm/conf.d`; Debian/Ubuntu use
+`/etc/sddm.conf` and `/usr/lib/sddm/sddm.conf.d`. Debian/Ubuntu GDM runtime input
+is `/run/gdm3/custom.conf`; ALT uses `/var/run/gdm/custom.conf`. For that
+read-only runtime input, a root-owned `/var/run` directory or its standard
+root-owned alias to the protected `/run` directory is re-proved before use and
+closure. Other aliases fail closed. Mutation targets still reject symlinks.
+Inputs and directory membership are re-proved after native inspection, so
+inspection-time changes cannot authorize stale protection.
+
+Scope/compliance are NotEnrolled; disable_autologin has joint Supported rollback.
+Unknown DM policies and generic individual DM undo actions are Unsupported.
+`fic --maintenance dm-prerm-prepare preflight|release` releases proven owners
+independently of current scope or manager selection. Package removal preflights
+before stopping writers and releases before PAM detach; failure blocks removal.
+The root CAS/FIC-lock residual race described above also applies to DM files.

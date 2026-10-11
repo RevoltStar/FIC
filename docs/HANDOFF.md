@@ -1,45 +1,40 @@
 # FIC handoff
 
 ## Current base
-* Branch main; DE task base `e279c46eb79335b624ac3e00559d051dcd1526bb`.
-* This snapshot accompanies the first task commit: `Implement transactional DE scope reconciliation and ownership-safe rollback`.
+* main. Original task base `e279c46eb79335b624ac3e00559d051dcd1526bb`.
+* DE commit `521599b07bd1cb924b345c474fee98a3cf7d37f6`: `Implement transactional DE scope reconciliation and ownership-safe rollback`.
+* This snapshot accompanies the second/final task commit: `Add controlled display manager scope and rollback-safe autologin enforcement`.
 
 ## Current task
-* DE implementation and repository validation complete within the explicit fail-closed backend limits below. DM has not been started.
-* Next pass: DM from original attachment fd35e451-1ff5-4136-9215-2e827582de71, second and final task commit `Add controlled display manager scope and rollback-safe autologin enforcement`.
+* DE/DM transactional scope implementation complete within the accepted native persistent/live runtime boundary. No next refactor or migration planned.
 
-## Accepted architecture / invariants
-* Configured intent, committed scope checkpoint and pending/failed/partial state live alongside independent physical provenance in MutationJournal. Only matching Applied/committed scope authorizes dependent apply.
-* Scope set_value saves intent and reloads registry; it does not mutate OS resources. Required dependencies guard ordinary, direct-session and compliance paths.
-* Root resources use AtomicFileWriter snapshot CAS + FIC locking, with documented residual final-proof-to-rename/unlink/rmdir race against writers ignoring FIC locks. No whole foreign-file snapshots, legacy ownership adoption or migration.
-* KDE/XFCE setters strictly fail closed before native mutation. Current FLY has no runtime effectiveness proof: nonempty production enforcement is refused before physical writes. Its persistent inverse is implemented; do not claim native FLY/session enforcement.
+## Accepted invariants
+* Configured intent saves/reloads without protected reconciliation; independent scope/de and scope/dm checkpoints share MutationJournal. Only matching Applied/committed scope authorizes Required consumers; logical scope grants no physical ownership.
+* Exact owned delta/block/artifact rollback, no foreign whole-file snapshots or legacy adoption. Unknown policy/action/route fails closed. Root CAS + FIC locks retain the documented residual race against unrelated writers.
+* No automatic DM restart. User accepted native persistent verification as SUCCESS, with live_runtime=NOT_VERIFIED separately visible in apply message/verification and startup audit, independent of log filtering.
+* KDE/XFCE atomic setters remain unavailable/fail-closed; FLY persistent inverse exists but runtime enforcement refuses unproven effectiveness.
 
 ## Completed
-* Production coordinator collects complete per-key owner sets, preflights all backends, prepares transition, ensures targets, releases obsolete owners, verifies native/resource/durability state and current configuration snapshots, then commits. Failures retain recoverable checkpoint/provenance.
-* GNOME exact key/lock inverse and native cache compilation/verification; fixed-route creation provenance for files, groups, profile entry, cache and all missing directories. ID markers, directory device/inode, secure staging and restart/abort recovery. Cleanup preserves foreign contents and detaches transferred containers; unrelated databases remain untouched.
-* FLY exact persistent scalar inverse preserves foreign bytes/groups/CRLF. Journaled refresh/release and interrupted-operation recovery use snapshot CAS and owner proofs.
-* Joint policy rollback preserves surviving owners even when primary owner is removed. Generic individual DE record undo is refused. Scope checkpoint is invalidated before release.
-* Root-only desktop-prerm-prepare preflight/release uses the same coordinator independently of current policy/scope/session. Debian/RPM removal gates preflight before writer stop, release before PAM detach; failures refuse removal.
-* Journal schema/status guards, Required/coordinator/intent-version tests, filesystem/native/cache/fsync/journal fault tests, abrupt fork-exit staging resume/abort tests, generated package-hook gates and native GNOME probe updated.
-
-## Changed areas
-* DE policies/backends/coordinator, daemon orchestration, MutationJournal/ScopeTransition/RollbackExecutor.
-* Minimal shared read-only configuration snapshot access, tests/CMake, DEB/RPM removal hooks.
-* Authoritative contract: docs/graphical-scope-transactions.md; rollback enrollment: docs/rollback.md.
+* DM typed SDDM/GDM/LIGHTDM scope, installed/selected/running inventory, known executable identity/custom-route refusal, observational compliance, Required/reverse guards.
+* Coordinator preflights all targets/releases, prepares, ensures/releases, verifies actual Applied ownership and resolved release, then rechecks inventory/config versions before commit. Direct ban apply is read-only/guarded.
+* DM journal stores fixed manager/route/seats/separator/creation inode/hadApplied/phase. Exact ID block release preserves foreign bytes and transferred files. Prepared-before-publication, native/fsync-before-Applied, interrupted release completes before new identity enrollment. Huge route wraparound and corrupt load/status/refresh rejected.
+* Native SDDM tokenizer/version, GDM GKeyFile/runtime flags and LightDM --show-config/source/seat checks. Actual compiled distro paths fixed: ALT SDDM /etc/X11/sddm/sddm.conf + /usr/share/sddm/conf.d; GDM /var/run/gdm/custom.conf. Read-only stock root-owned /var/run -> /run alias explicitly re-proved; mutation symlink refusal unchanged. Inputs re-proved after native inspection.
+* Joint rollback/package preflight+release before PAM detach. Generated DEB/RPM failure gates preserve foreign state. Old unchecked DM writers removed.
+* Scope/journal/daemon/platform/default/localization/CMake/packaging tests and authoritative docs updated. Detailed matrix/report: docs/graphical-scope-validation.md; contract: docs/graphical-scope-transactions.md.
 
 ## Validation
-* Debian12 builder `fic-deb-builder:debian12-final`; source mounted readonly at /src, build at /build (`build-prelogin-validation/final`). Full configure/build PASS, latest full build log `de-scope-full-build-final.log`.
-* Latest full `ctest --test-dir /build --output-on-failure`: **173/173 PASS**, 125.61s, log `de-scope-full-ctest-final.log`. Container drops DAC_OVERRIDE/DAC_READ_SEARCH so permission-failure tests are meaningful; Git safe.directory=/src accommodates readonly mount ownership.
-* MutationJournal and RollbackExecutor additionally PASS as UID65534. Generated desktop package removal checks, PAM packaging checks and prelogin package lifecycle tests PASS; shell syntax checks PASS. git diff --check PASS.
-* Actual native dconf/GSettings existing/created-container lifecycle, shared-owner release, restart, foreign edits/locks/databases and cleanup PASS with latest binary on four disposable root containers:
-  * Debian12: dconf 0.40.0-4, schemas43.0-1 (`fic-de-native-gnome:debian12-check`).
-  * Debian13: dconf 0.40.0-5, schemas48.0-1 (`fic-de-native-gnome:debian13-check`).
-  * Ubuntu24.04: dconf 0.40.0-4ubuntu0.1, schemas46.1-0ubuntu1 (`fic-de-native-gnome:ubuntu2404-check`).
-  * Ubuntu26.04: dconf 0.49.0-4, schemas50.0-1ubuntu2 (`fic-de-native-gnome:ubuntu2604-check`).
-* Native probe explicitly requires FIC_NATIVE_GNOME_PROBE=container-only, root and /.dockerenv; never ordinary host CTest. No host/remote system policy mutation performed.
+* Full configure/build Debian12 builder fic-deb-builder:debian12-final PASS. Final build dm-evidence/dm-alt-route-build.log.
+* Full CTest after final ALT/input-drift fixes **174/174 PASS**, 71.57s, dm-evidence/dm-alt-routes-ctest.log. Drops DAC_OVERRIDE/DAC_READ_SEARCH; Git safe.directory=/src. Includes package, PAM, prelogin, journal and rollback checks. git diff --check PASS; native gate shell syntax PASS.
+* Native persistent DM loaders + restart/release/foreign settings PASS on five real distro images/packages:
+  * Debian12: sddm0.19.0-5, gdm3 43.0-3, lightdm1.26.0-8.
+  * Debian13: sddm0.21.0+git20250502.4fe234b-2, gdm3 48.0-2, lightdm1.32.0-6+b2.
+  * Ubuntu24: sddm0.20.0-2ubuntu4.2, gdm3 46.2-1ubuntu1~24.04.9, lightdm1.30.0-0ubuntu14.
+  * Ubuntu26: sddm0.21.0+git20250502.4fe234b-2ubuntu3, gdm3 50.1-0ubuntu0.1, lightdm1.32.0-6ubuntu4.
+  * ALT p11: sddm0.21.0-alt3, gdm48.0-alt5, lightdm1.32.0-alt15, Qt6-devel6.11.2-alt1. Final native-alt-routes-final.log; also negative runtime alias test.
+* Evidence under ignored build-prelogin-validation/dm-evidence. Network HTTP failures resolved via official HTTPS/cache with hashes/signatures retained; approval timeouts were infrastructure, eventually allowed. No host /etc or remote policy mutation.
+* DE committed evidence: full build +173 CTest and native GNOME Debian12/13 Ubuntu24/26 PASS. ALT native DE was not verified in that pass.
 
 ## Remaining / limits
-* DM is the next task; do not revisit completed DE implementation without a concrete defect.
-* ALT p11 native GNOME NOT VERIFIED: package mirror.yandex.ru refused connections on HTTP80 and HTTPS443. No provider test ran; package signatures were not weakened.
-* Native FLY, GNOME Shell/live KDE/XFCE sessions and actual package-manager install/erase NOT VERIFIED. Generated removal scripts and native dconf/GSettings probes are distinct evidence levels.
-* screenlock_timeout has Supported joint rollback for currently permitted journaled root mutations. Media-controls rollback remains Unsupported; native session writers are unavailable. Unknown DE routes/actions fail closed.
+* No unfinished implementation components.
+* Live DM runtime, GNOME Shell/FLY/KDE/XFCE sessions and actual FIC package-manager install/erase NOT VERIFIED. Native loaders/backend release and generated removal hooks are distinct evidence.
+* Root CAS/locking residual race remains as accepted; no claim of atomic exclusion against unrelated root writers.

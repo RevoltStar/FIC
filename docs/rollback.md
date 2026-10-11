@@ -100,6 +100,23 @@ Runtime image использует ту же чистую ALT p11 base, что
 проверка TLS не отключается. Builder/runtime — два окружения одной платформы.
 
 
+## DisplayManager: совместный ownership-safe rollback
+
+`controlled_display_managers` и
+`absence_of_uncontrolled_display_managers` имеют `NotEnrolled`.
+`disable_autologin` имеет `Supported` только через совместный DM release;
+неизвестная политика `OSS/DisplayManager` и общий undo отдельной DM-записи
+возвращают `Unsupported`. Release не зависит от текущего scope, запущенного
+DM или включённости политики. Он удаляет только точный доказанный FIC-блок,
+сохраняя настройки администратора; чужой или подменённый inode не удаляется.
+Незавершённый release сохраняет provenance и восстанавливается до новой
+enrollment. Удаление пакета сначала выполняет preflight, затем останавливает
+writers и выполняет release до PAM detach. Ошибка блокирует удаление.
+
+Подробный контракт journal, recovery и native persistent verification:
+[graphical-scope-transactions.md](graphical-scope-transactions.md#display-manager-scope).
+Автоматического restart DM нет; live runtime отдельно `NOT_VERIFIED`.
+
 ## FSTAB: намеренно non-reverting lifecycle
 
 Все 11 зарегистрированных политик `OSS/Fstab` имеют явный

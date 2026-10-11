@@ -921,3 +921,8 @@
 [devices:class][subsystem:usb][class:FF|00|03]=[Специфичное для производителя] [Устройство Google]
 [devices:class][subsystem:usb][class:FF|FF|FF]=[Специфичное для производителя] [Индивидуальное устройство]
 # END GENERATED DEVICE CLASS LOCALIZATION
+
+[module:OSS][policy:controlled_display_managers]=Контролируемые дисплейные менеджеры
+[module:OSS][policy:controlled_display_managers][description]=Административная область контроля DM. Пустой список — UNCONFIGURED; apply подтверждает защиту и освобождение владения.
+[module:OSS][policy:absence_of_uncontrolled_display_managers]=Отсутствие неконтролируемых дисплейных менеджеров
+[module:OSS][policy:absence_of_uncontrolled_display_managers][description]=Проверяет выбранные и работающие DM; установленные неиспользуемые менеджеры вне списка допустимы.

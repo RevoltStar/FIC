@@ -53,12 +53,13 @@ with tempfile.TemporaryDirectory(prefix="fic-de-package-") as directory:
         text = text.replace("/usr/sbin/control", str(helpers / "control"))
         script = work / (kind + "-erase.sh")
         script.write_text(text)
-        for mode in ("preflight-fail", "release-fail"):
+        for domain, mode in ((domain, mode) for domain in ("desktop", "dm") for mode in ("preflight-fail", "release-fail")):
             log.write_text("")
             before = fixture.pam_state_digest(pam_state, pam_d)
             env = {**os.environ, "PATH": str(helpers) + ":/usr/bin:/bin", "FAKE_LOG": str(log),
                 "FAKE_PAM_STATE": str(pam_state), "FAKE_PAM_D": str(pam_d),
-                "FIC_FAKE_HELPER_MODE": "", "FIC_FAKE_PROVIDER_MODE": "", "FIC_FAKE_DESKTOP_MODE": mode}
+                "FIC_FAKE_HELPER_MODE": "", "FIC_FAKE_PROVIDER_MODE": "", "FIC_FAKE_DESKTOP_MODE": mode if domain == "desktop" else "",
+                "FIC_FAKE_DM_MODE": mode if domain == "dm" else ""}
             result = subprocess.run(["sh", str(script), "remove" if kind == "deb" else "0"],
                 env=env, text=True, capture_output=True)
             calls = log.read_text()
@@ -66,8 +67,8 @@ with tempfile.TemporaryDirectory(prefix="fic-de-package-") as directory:
             fixture.require(before == fixture.pam_state_digest(pam_state, pam_d), "DE failure changed foreign PAM state")
             fixture.require("incident-pam-alt detach" not in calls and "pam-auth-update" not in calls, "DE failure detached account access gate")
             if mode == "preflight-fail":
-                fixture.require("systemctl" not in calls and "control " not in calls and "desktop-prerm-prepare release" not in calls,
+                fixture.require("systemctl" not in calls and "control " not in calls and domain + "-prerm-prepare release" not in calls,
                     "DE preflight failure stopped writers or attempted release")
             else:
-                fixture.require(calls.index("systemctl") < calls.index("desktop-prerm-prepare release"), "DE release ran before writer stop")
-    print("PASS: generated DEB/RPM DE preflight and release failures preserve foreign state")
+                fixture.require(calls.index("systemctl") < calls.index(domain + "-prerm-prepare release"), "DE release ran before writer stop")
+    print("PASS: generated DEB/RPM DE/DM preflight and release failures preserve foreign state")

@@ -78,6 +78,8 @@
 #include <fic/core/fs/FileStats.h>
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
+#include "modules/oss/display_manager/policies/OSS_controlled_display_managers.h"
+#include "rollback/ScopeTransition.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
 #include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 
@@ -278,15 +280,22 @@ json policy_apply_result_json(const PolicyApplyResult& result,
     }
 
     responseDiagnosticsTruncated = responseDiagnosticsTruncated || diagnosticsTruncated;
-    return json{
+    std::string applyMessage = result.message;
+    const bool dmPersistentApplied = result.moduleName == "OSS" && result.submoduleName == "DisplayManager" &&
+        result.policyName == "disable_autologin" && result.status == PolicyApplyStatus::Applied;
+    if (dmPersistentApplied) applyMessage += "; native persistent configuration verified; live runtime=NOT_VERIFIED (no DM restart)";
+    json rendered = json{
         {"module", result.moduleName},
         {"submodule", result.submoduleName},
         {"policy", result.policyName},
         {"status", policyApplyStatusToString(result.status)},
-        {"message", result.message},
+        {"message", applyMessage},
         {"diagnostics", std::move(diagnostics)},
         {"diagnostics_truncated", diagnosticsTruncated}
     };
+    if (dmPersistentApplied) rendered["verification"] = {
+        {"native_persistent", "verified"}, {"live_runtime", "NOT_VERIFIED"}};
+    return rendered;
 }
 
 json policy_apply_summary_json(const PolicyApplySummary& summary, bool ok, const std::string& message) {
@@ -600,6 +609,8 @@ bool run_daemon_apply_all_pass(
         write_audit_log(event);
         return false;
     }
+    std::string dmError;
+    const bool dmOk = reconcileDisplayManagerScope(policyRegistry, dmError);
     const DesktopGlobalReconcileReport desktopGlobalReport =
         desktopGlobalConfig.reconcile(policyRegistry);
     install_desktop_global_report(policyRegistry, desktopGlobalReport);
@@ -621,15 +632,18 @@ bool run_daemon_apply_all_pass(
     std::string deviceError;
     const bool deviceOk = DC::reconcile(deviceError);
     const bool ok = isPolicyApplySuccessful(summary, "all", "") &&
-        desktopGlobalConfigOk && firewallOk && deviceOk;
+        desktopGlobalConfigOk && dmOk && firewallOk && deviceOk;
     json result = {
         {"ok", ok},
         {"registry_reload", true},
         {"desktop_global_configuration", desktopGlobalConfigOk},
+        {"display_manager_configuration", dmOk},
+        {"display_manager_live_runtime", "NOT_VERIFIED"},
         {"firewall_reconciliation", firewallOk},
         {"device_reconciliation", deviceOk},
         {"incident_severity", fic::core::incidentSeverityToken(policyIncident)}
     };
+    if (!dmOk) result["display_manager_configuration_error"] = dmError;
     if (!desktopGlobalConfigError.empty()) {
         result["desktop_global_configuration_error"] =
             desktopGlobalConfigError;
@@ -787,6 +801,9 @@ json handle_request(json request,
                     : reloadError);
         }
         if (!reconcileDesktop) return std::nullopt;
+        std::string dmError;
+        const bool dmOk = reconcileDisplayManagerScope(policyRegistry, dmError);
+        if (!dmOk && requireAllBackends) return "display manager reconciliation failed: " + dmError;
         latestGlobalReport = desktopGlobalConfig.reconcile(policyRegistry);
         install_desktop_global_report(policyRegistry, latestGlobalReport);
         if (!latestGlobalReport.requirementsValid ||
@@ -868,7 +885,8 @@ json handle_request(json request,
             if (ok) {
                 if (auto reloadError = reloadRegistryAndGlobalConfig(
                         true, !(module == "OSS" &&
-                                policy == "controlled_desktop_environments"))) {
+                                (policy == "controlled_desktop_environments" ||
+                                 policy == "controlled_display_managers")))) {
                     return fic::ipc::make_error_response(
                         "policy value was saved, but reconciliation failed: " +
                         reloadError.value());
@@ -1611,6 +1629,23 @@ int main(int argc, char* argv[]) {
     }
 
     if (get_arg_value(argc, argv, 1) == "--maintenance") {
+        if (get_arg_value(argc, argv, 2) == "dm-prerm-prepare") {
+            const auto action = get_arg_value(argc, argv, 3);
+            if (::geteuid() != 0 || (action != "preflight" && action != "release")) {
+                std::cerr << "dm-prerm-prepare requires root and preflight/release" << std::endl; return 1;
+            }
+            std::string error;
+            auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+            if (!journal) { std::cerr << error << std::endl; return 1; }
+            const fic::platform::PlatformExecutableResolver executables(platform.executables);
+            DisplayManagerConfigTransaction backend(executables, platform.displayManager);
+            if (!backend.releaseAll(*journal, error, true) || (action == "release" &&
+                (!fic::rollback::ScopeTransition(*journal, fic::rollback::ScopeTransition::Domain::DisplayManager).invalidate("DM package release", error) ||
+                 !backend.releaseAll(*journal, error)))) {
+                std::cerr << error << std::endl; return 1;
+            }
+            return 0;
+        }
         if (get_arg_value(argc, argv, 2) == "desktop-prerm-prepare") {
             const fic::platform::PlatformExecutableResolver executables(platform.executables);
             const auto action = get_arg_value(argc, argv, 3);

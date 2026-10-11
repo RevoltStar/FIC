@@ -29,7 +29,11 @@ enum class ExecutableId {
     Gpasswd,
     PamAuthUpdate,
     Dconf,
-    Gsettings
+    Gsettings,
+    Sddm,
+    Gdm,
+    LightDm,
+    PackageQuery
 };
 
 struct PlatformExecutableSpec {
@@ -441,6 +445,11 @@ struct UserCreationPlatformConfig {
 };
 
 struct DisplayManagerPlatformConfig {
+    PackageManagerKind packageManagerKind = PackageManagerKind::Dpkg;
+    std::filesystem::path defaultDisplayManagerPath;
+    std::filesystem::path gdmRuntimeConfigPath;
+    std::vector<std::filesystem::path> sddmConfigDirectories;
+    std::vector<std::filesystem::path> lightDmConfigDirectories;
     std::filesystem::path sddmConfigPath;
     std::filesystem::path lightDmConfigPath;
     std::vector<std::filesystem::path> gdmConfigCandidates;

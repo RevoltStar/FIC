@@ -147,6 +147,30 @@ void testDesktopJointOwnerRelease() {
             "failed DE preflight executed release");
 }
 
+void testDisplayManagerJointRelease() {
+    for(const auto* name : {"controlled_display_managers","absence_of_uncontrolled_display_managers"})
+        require(rollbackEnrollment({"OSS","DisplayManager",name})==RollbackEnrollment::NotEnrolled,name);
+    const PolicyRef owner{"OSS","DisplayManager","disable_autologin"};
+    require(rollbackEnrollment(owner)==RollbackEnrollment::Supported,"autologin rollback is not enrolled");
+    require(rollbackEnrollment({"OSS","DisplayManager","future"})==RollbackEnrollment::Unsupported,"future DM silently enrolled");
+    TempJournal tree;JournalOverride override(tree.tree.root/"dm-journal.json");
+    std::string error;auto* journal=DaemonMutationJournal::instance().tryGet(error);require(journal!=nullptr,error);
+    MutationRecord r;r.policy=owner;r.resource="DM/GDM/autologin";
+    UndoRemoveDisplayManagerBlock p;p.manager="GDM";r.undo={MutationBackend::DisplayManager,p};MutationId id=0;
+    require(journal->prepareMutation(r,id,error),error);p.hadApplied=true;r.undo.payload=p;
+    require(journal->prepareMutation(r,id,error)&&journal->setStatus(id,MutationStatus::Applied,error),error);
+    RollbackExecutorDeps deps;
+    require(rollbackPolicyBeforeDisable(owner,"",deps).status==RollbackStatus::Unsupported,"missing DM route closed records");
+    std::vector<bool> calls;
+    deps.releaseDisplayManagers=[&](MutationJournal& current,std::string&,bool preview){
+        calls.push_back(preview);require(current.records().front().id==id,"DM callback lost journal identity");return true;
+    };
+    require(rollbackPolicyBeforeDisable(owner,"",deps).rollbackCompleted()&&calls==std::vector<bool>{true,false},"DM typed route omitted preflight/release");
+    require(journal->records().front().status==MutationStatus::Applied,"generic per-record undo closed DM ownership");
+    calls.clear();deps.releaseDisplayManagers=[&](MutationJournal&,std::string& e,bool preview){calls.push_back(preview);e="native ownership conflict";return false;};
+    require(!rollbackPolicyBeforeDisable(owner,"",deps).rollbackCompleted()&&calls==std::vector<bool>{true},"DM preflight failure ran physical release");
+}
+
 class SysctlTree {
 public:
     SysctlTree()
@@ -3046,6 +3070,7 @@ int main(int argc, char** argv) {
     } tests[] = {
         {"enrollment matrix", testEnrollmentMatrix},
         {"DE joint owner release", testDesktopJointOwnerRelease},
+        {"DM joint release and enrollment", testDisplayManagerJointRelease},
         {"FSTAB non-reverting lifecycle", testFstabNonRevertingLifecycle},
         {"passwdqc contextual enrollment", testPasswdqcContextualEnrollment},
         {"USER_CREATION executor ownership release",

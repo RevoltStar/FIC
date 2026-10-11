@@ -153,19 +153,16 @@ def main():
             "/etc/sudoers",
             "/etc/sudoers.d/zzzz-fic",
         ),
-        "fic/src/modules/oss/display_manager/DisplayManager.cpp": (
+        "fic/src/modules/oss/display_manager/DisplayManagerInventory.cpp": (
             "/usr/bin/systemctl",
             "/bin/systemctl",
         ),
-        "fic/src/modules/oss/display_manager/backends/"
-        "GdmBackend.cpp": (
+        "fic/src/modules/oss/display_manager/DisplayManagerConfigTransaction.cpp": (
             "/etc/gdm/custom.conf",
             "/etc/gdm3/daemon.conf",
+            "/etc/sddm.conf",
+            "/etc/lightdm/lightdm.conf",
         ),
-        "fic/src/modules/oss/display_manager/backends/"
-        "SddmBackend.cpp": ("/etc/sddm.conf",),
-        "fic/src/modules/oss/display_manager/backends/"
-        "LightDmBackend.cpp": ("/etc/lightdm/lightdm.conf",),
     }
     for relative_path, forbidden_paths in platform_consumers.items():
         source = (root / relative_path).read_text(encoding="utf-8")

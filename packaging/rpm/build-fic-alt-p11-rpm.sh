@@ -734,6 +734,10 @@ fic_pam_provider_post_stop_preun_script() {
     cat <<'INNEREOF'
 if [ "$1" -eq 0 ]; then
     if [ -x /opt/fic/bin/fic ]; then
+        if ! /opt/fic/bin/fic --maintenance dm-prerm-prepare release; then
+            echo "FIC: DM ownership release refused erase" >&2
+            exit 1
+        fi
         if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare release; then
             echo "FIC: DE ownership release failed; erase is refused" >&2
             exit 1
@@ -786,6 +790,10 @@ if [ "$1" -eq 0 ]; then
     # read-only, BEFORE any side effect; a failure keeps the package
     # installed.
     if [ -x /opt/fic/bin/fic ]; then
+        /opt/fic/bin/fic --maintenance dm-prerm-prepare preflight || {
+            echo "FIC: DM ownership preflight refused erase" >&2
+            exit 1
+        }
         /opt/fic/bin/fic --maintenance desktop-prerm-prepare preflight || {
             echo "FIC: DE ownership preflight refused erase before any mutation" >&2
             exit 1

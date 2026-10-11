@@ -15,6 +15,7 @@
 #include "policy/registry/PolicyRegistryInitialization.h"
 #include "policy/registry/PolicyRegistryMutation.h"
 #include "rollback/RollbackExecutor.h"
+#include "modules/oss/display_manager/policies/OSS_absence_of_uncontrolled_display_managers.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
 #include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 
@@ -268,6 +269,9 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
 
         fic::rollback::RollbackExecutorDeps rollbackDeps =
             fic::rollback::productionRollbackDeps(platform, executables);
+        rollbackDeps.releaseDisplayManagers = [&platform,&executables](fic::rollback::MutationJournal& journal, std::string& error, bool preview) {
+            return DisplayManagerConfigTransaction(executables,platform.displayManager).releaseAll(journal,error,preview);
+        };
         rollbackDeps.releaseDesktopOwner = [&executables](const PolicyRef& owner,
             fic::rollback::MutationJournal& journal, std::string& error, bool preview) {
             DesktopGlobalConfigReconciler coordinator({std::make_shared<GnomeSystemBackend>(executables),
@@ -622,8 +626,13 @@ bool initPolicyRegistry(
     cafArr.push_back(std::move(controlledDesktops));
     cafArr.push_back(std::make_unique<OSS_screenlock_timeout>(
         *controlledDesktopsScope, graphicalSessions));
-    cafArr.push_back(std::make_unique<OSS_disable_autologin>(
-        executables, platform.displayManager));
+    auto dmInventory = std::make_shared<SystemDisplayManagerInventory>(executables, platform.displayManager);
+    auto dmBackend = std::make_shared<DisplayManagerConfigTransaction>(executables, platform.displayManager);
+    auto controlledDm = std::make_unique<OSS_controlled_display_managers>(dmInventory, dmBackend);
+    auto* dmScope = controlledDm.get();
+    cafArr.push_back(std::move(controlledDm));
+    cafArr.push_back(std::make_unique<OSS_disable_autologin>(*dmScope, dmInventory, dmBackend));
+    cafArr.push_back(std::make_unique<OSS_absence_of_uncontrolled_display_managers>(*dmScope, dmInventory));
     cafArr.push_back(
         std::make_unique<OSS_disable_kde_lock_screen_media_controls>(
             *controlledDesktopsScope, graphicalSessions));

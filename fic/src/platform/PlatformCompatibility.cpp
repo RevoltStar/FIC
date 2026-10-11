@@ -156,7 +156,9 @@ bool validateExecutables(const PlatformExecutables& executables,
     for (const ExecutableId id : supportedIds) {
         if (id == ExecutableId::PamAuthUpdate ||
             id == ExecutableId::Dconf ||
-            id == ExecutableId::Gsettings) {
+            id == ExecutableId::Gsettings ||
+            id == ExecutableId::Sddm || id == ExecutableId::Gdm ||
+            id == ExecutableId::LightDm || id == ExecutableId::PackageQuery) {
             continue;
         }
         const PlatformExecutableSpec* spec =
@@ -1157,6 +1159,10 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                       "user-creation local group path", error) ||
         !validatePath(profile.userCreation.shellsPath,
                       "user-creation shells path", error) ||
+        !validatePath(profile.displayManager.defaultDisplayManagerPath, "selected DM path", error) ||
+        !validatePath(profile.displayManager.gdmRuntimeConfigPath, "GDM runtime path", error) ||
+        !validatePaths(profile.displayManager.sddmConfigDirectories, "SDDM config directories", error) ||
+        !validatePaths(profile.displayManager.lightDmConfigDirectories, "LightDM config directories", error) ||
         !validatePath(profile.displayManager.sddmConfigPath,
                       "SDDM configuration path", error) ||
         !validatePath(profile.displayManager.lightDmConfigPath,

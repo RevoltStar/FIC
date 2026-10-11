@@ -1,4 +1,5 @@
 #include "rollback/RollbackExecutor.h"
+#include "rollback/ScopeTransition.h"
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
 #include <fic/core/fs/AtomicFileWriter.h>
@@ -631,6 +632,9 @@ MutationRollbackOutcome undoPamProviderManagedFlagMutation(
 MutationRollbackOutcome undoMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record) {
+    if (std::holds_alternative<UndoRemoveDisplayManagerBlock>(record.undo.payload)) {
+        return {record.id, record.resource, RollbackStatus::Unsupported, "DM block requires verified joint release"};
+    }
     if (std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload) ||
         std::holds_alternative<UndoOwnDesktopArtifact>(record.undo.payload)) {
         return {record.id, record.resource, RollbackStatus::Unsupported,
@@ -830,6 +834,11 @@ std::string rollbackStatusToString(RollbackStatus status) {
 }
 
 RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
+    if (policy.moduleName == "OSS" && policy.submoduleName == "DisplayManager") {
+        if (policy.policyName == "controlled_display_managers" || policy.policyName == "absence_of_uncontrolled_display_managers") return RollbackEnrollment::NotEnrolled;
+        if (policy.policyName == "disable_autologin") return RollbackEnrollment::Supported;
+        return RollbackEnrollment::Unsupported;
+    }
     if (policy.moduleName == "OSS" && policy.submoduleName == "DesktopEnvironment") {
         if (policy.policyName == "controlled_desktop_environments" ||
             policy.policyName == "absence_of_uncontrolled_desktop_environments")
@@ -1350,6 +1359,16 @@ RollbackReport rollbackPolicyBeforeDisable(
         return report;
     }
 
+    if (policy.moduleName == "OSS" && policy.submoduleName == "DisplayManager") {
+        RollbackReport report;
+        if (!deps.releaseDisplayManagers) { report.status=RollbackStatus::Unsupported; report.message="DM release route unavailable"; return report; }
+        if (!deps.releaseDisplayManagers(*journal, journalError, true) ||
+            !ScopeTransition(*journal, ScopeTransition::Domain::DisplayManager).invalidate("DM policy owner release",journalError) ||
+            !deps.releaseDisplayManagers(*journal, journalError, false)) {
+            report.status=RollbackStatus::Failed; report.message=journalError; return report;
+        }
+        report.status=RollbackStatus::Success; report.message="DM ownership released independently of active DM/scope"; return report;
+    }
     if (policy.moduleName == "OSS" && policy.submoduleName == "DesktopEnvironment") {
         RollbackReport report;
         if (!deps.releaseDesktopOwner) {

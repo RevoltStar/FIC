@@ -236,6 +236,12 @@ attach_back() {
     return 0
 }
 case " $* " in
+    *" dm-prerm-prepare preflight "*)
+        [ "${FIC_FAKE_DM_MODE:-}" = "preflight-fail" ] && exit 1
+        exit 0 ;;
+    *" dm-prerm-prepare release "*)
+        [ "${FIC_FAKE_DM_MODE:-}" = "release-fail" ] && exit 1
+        exit 0 ;;
     *" desktop-prerm-prepare preflight "*)
         [ "${FIC_FAKE_DESKTOP_MODE:-}" = "preflight-fail" ] && exit 1
         exit 0

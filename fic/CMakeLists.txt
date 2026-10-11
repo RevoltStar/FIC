@@ -48,6 +48,9 @@ find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FIC_LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+pkg_check_modules(FIC_DM_GLIB REQUIRED IMPORTED_TARGET GLOBAL glib-2.0)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
 
 set(FIC_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
 file(MAKE_DIRECTORY "${FIC_GENERATED_INCLUDE_DIR}/platform")
@@ -131,7 +134,7 @@ target_link_libraries(fic PRIVATE fic-ipc)
 target_link_libraries(fic PRIVATE fic-core)
 target_link_libraries(fic PRIVATE fic-policy)
 target_link_libraries(fic PRIVATE fic-platform)
-target_link_libraries(fic PRIVATE PkgConfig::FIC_LIBSYSTEMD)
+target_link_libraries(fic PRIVATE PkgConfig::FIC_LIBSYSTEMD PkgConfig::FIC_DM_GLIB Qt${QT_VERSION_MAJOR}::Core)
 target_link_libraries(fic PRIVATE ${CMAKE_DL_LIBS})
 # Canonical trusted location of the fic-xfconf-inspect session helper used by
 # the XFCE typed property backend. Compiled in, never resolved from PATH.

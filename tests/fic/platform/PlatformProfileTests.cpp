@@ -255,6 +255,17 @@ void testSelectedProfile() {
                              ? "/usr/bin/dconf" : "/usr/bin/gsettings"),
                 "GNOME command must be an optional canonical executable");
     }
+    for(const auto id:{fic::platform::ExecutableId::Sddm,fic::platform::ExecutableId::Gdm,
+                      fic::platform::ExecutableId::LightDm,fic::platform::ExecutableId::PackageQuery}) {
+        const auto& spec=executableSpec(profile,id);
+        require(!spec.required&&!spec.candidates.empty(),"DM capability executable must be optional and explicit");
+    }
+    require(!profile.displayManager.gdmRuntimeConfigPath.empty() &&
+                profile.displayManager.sddmConfigDirectories.size()==2 &&
+                profile.displayManager.lightDmConfigDirectories.size()==4,
+            "DM native resource routes must be explicit");
+    require(profile.displayManager.packageManagerKind==profile.packageManager.kind,
+            "DM package inventory must use the platform package database");
     const auto supplementaryProvider =
         profile.userCreation.supplementaryGroupsProvider;
     if (profile.id == "debian-12" || profile.id == "ubuntu-24.04") {

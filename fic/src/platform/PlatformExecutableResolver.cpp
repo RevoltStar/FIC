@@ -40,6 +40,10 @@ const char* executableIdName(ExecutableId id) {
         return "dconf";
     case ExecutableId::Gsettings:
         return "gsettings";
+    case ExecutableId::Sddm: return "sddm";
+    case ExecutableId::Gdm: return "gdm";
+    case ExecutableId::LightDm: return "lightdm";
+    case ExecutableId::PackageQuery: return "package-query";
     }
     return "unknown";
 }
@@ -59,7 +63,8 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::Gpasswd,
         ExecutableId::PamAuthUpdate,
         ExecutableId::Dconf,
-        ExecutableId::Gsettings
+        ExecutableId::Gsettings,
+        ExecutableId::Sddm, ExecutableId::Gdm, ExecutableId::LightDm, ExecutableId::PackageQuery
     };
 }
 

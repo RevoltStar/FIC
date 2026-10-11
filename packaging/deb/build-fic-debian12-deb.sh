@@ -1024,6 +1024,10 @@ if [ "\$1" = "remove" ]; then
         echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the C2 password topology state cannot be proven and the removal is refused before any mutation" >&2
         exit 1
     fi
+    if ! /opt/fic/bin/fic --maintenance dm-prerm-prepare preflight; then
+        echo "FIC: DM ownership preflight refused removal" >&2
+        exit 1
+    fi
     if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare preflight; then
         echo "FIC: DE ownership preflight refused removal before any mutation" >&2
         exit 1
@@ -1068,6 +1072,10 @@ if [ "\$1" = "remove" ]; then
                 exit 1
             fi
         done
+    fi
+    if ! /opt/fic/bin/fic --maintenance dm-prerm-prepare release; then
+        echo "FIC: DM ownership release refused removal" >&2
+        exit 1
     fi
     if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare release; then
         echo "FIC: DE ownership release failed; removal is refused" >&2

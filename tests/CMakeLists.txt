@@ -1075,6 +1075,7 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
@@ -1187,6 +1188,7 @@ add_executable(sudo_scoped_defaults_lifecycle_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
@@ -1661,6 +1663,7 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
@@ -2242,6 +2245,7 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwner.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
@@ -2356,6 +2360,7 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/nss/NssPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
@@ -2483,6 +2488,7 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_root_login.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
@@ -2947,3 +2953,35 @@ set_tests_properties(${FIC_STATIC_TESTS} PROPERTIES LABELS "static")
 set_tests_properties(${FIC_INTEGRATION_TESTS} PROPERTIES LABELS "integration")
 set_tests_properties(${FIC_ROOT_TESTS} PROPERTIES LABELS "root;integration")
 set_tests_properties(${FIC_UNIT_TESTS} PROPERTIES LABELS "unit")
+
+add_executable(display_manager_transaction_tests
+    fic/modules/oss/display_manager/DisplayManagerTransactionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/display_manager/DisplayManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/display_manager/DisplayManagerInventory.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/display_manager/DisplayManagerConfigTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/display_manager/ControlledDisplayManagersPolicyTypeValue.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/display_manager/policies/OSS_controlled_display_managers.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/display_manager/policies/OSS_disable_autologin.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/display_manager/policies/OSS_absence_of_uncontrolled_display_managers.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryMutation.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyExecutionPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyDependencyGraph.cpp
+)
+target_include_directories(display_manager_transaction_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(display_manager_transaction_tests PRIVATE fic-core fic-policy fic-platform PkgConfig::FIC_DM_GLIB Qt${QT_VERSION_MAJOR}::Core)
+add_test(NAME display_manager_transaction_tests COMMAND display_manager_transaction_tests)
+set_tests_properties(display_manager_transaction_tests PROPERTIES LABELS "unit;root")
+
+# Explicit root disposable-container native probe; never ordinary host CTest.
+add_executable(display_manager_native_probe
+    integration/desktop/dm-journal-native-driver.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/display_manager/DisplayManagerConfigTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp)
+target_include_directories(display_manager_native_probe PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(display_manager_native_probe PRIVATE fic-core fic-policy fic-platform PkgConfig::FIC_DM_GLIB Qt${QT_VERSION_MAJOR}::Core)
