@@ -776,7 +776,7 @@ json handle_request(json request,
     };
     DesktopGlobalReconcileReport latestGlobalReport;
     auto reloadRegistryAndGlobalConfig =
-        [&](bool requireAllBackends = true) -> std::optional<std::string> {
+        [&](bool requireAllBackends = true, bool reconcileDesktop = true) -> std::optional<std::string> {
         std::string reloadError;
         if (!initPolicyRegistry(
                 platform, executables, policyRegistry, reloadError)) {
@@ -786,6 +786,7 @@ json handle_request(json request,
                     ? std::string("unknown initialization error")
                     : reloadError);
         }
+        if (!reconcileDesktop) return std::nullopt;
         latestGlobalReport = desktopGlobalConfig.reconcile(policyRegistry);
         install_desktop_global_report(policyRegistry, latestGlobalReport);
         if (!latestGlobalReport.requirementsValid ||
@@ -865,7 +866,9 @@ json handle_request(json request,
             }
             bool ok = set(policyRegistry, module, policy, value);
             if (ok) {
-                if (auto reloadError = reloadRegistryAndGlobalConfig()) {
+                if (auto reloadError = reloadRegistryAndGlobalConfig(
+                        true, !(module == "OSS" &&
+                                policy == "controlled_desktop_environments"))) {
                     return fic::ipc::make_error_response(
                         "policy value was saved, but reconciliation failed: " +
                         reloadError.value());
@@ -1608,6 +1611,22 @@ int main(int argc, char* argv[]) {
     }
 
     if (get_arg_value(argc, argv, 1) == "--maintenance") {
+        if (get_arg_value(argc, argv, 2) == "desktop-prerm-prepare") {
+            const fic::platform::PlatformExecutableResolver executables(platform.executables);
+            const auto action = get_arg_value(argc, argv, 3);
+            if (::geteuid() != 0 || (action != "preflight" && action != "release")) {
+                std::cerr << "desktop-prerm-prepare requires root and preflight/release" << std::endl; return 1;
+            }
+            std::string error;
+            auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+            if (!journal) { std::cerr << error << std::endl; return 1; }
+            DesktopGlobalConfigReconciler coordinator({std::make_shared<GnomeSystemBackend>(executables),
+                std::make_shared<FlySystemBackend>()}, journal);
+            if (!coordinator.releaseAll(*journal, error, action == "preflight")) {
+                std::cerr << error << std::endl; return 1;
+            }
+            return 0;
+        }
         const std::string command = get_arg_value(argc, argv, 2);
         const auto& paths = fic::core::FicRuntimePaths::get();
         std::string maintenanceError;

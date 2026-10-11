@@ -734,6 +734,10 @@ fic_pam_provider_post_stop_preun_script() {
     cat <<'INNEREOF'
 if [ "$1" -eq 0 ]; then
     if [ -x /opt/fic/bin/fic ]; then
+        if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare release; then
+            echo "FIC: DE ownership release failed; erase is refused" >&2
+            exit 1
+        fi
         if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
             echo "FIC: the managed PAM provider configuration release failed; the incident gate remains attached and the package erase is blocked" >&2
             exit 1
@@ -782,6 +786,10 @@ if [ "$1" -eq 0 ]; then
     # read-only, BEFORE any side effect; a failure keeps the package
     # installed.
     if [ -x /opt/fic/bin/fic ]; then
+        /opt/fic/bin/fic --maintenance desktop-prerm-prepare preflight || {
+            echo "FIC: DE ownership preflight refused erase before any mutation" >&2
+            exit 1
+        }
         /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare preflight || {
             echo "FIC: the read-only managed PAM provider configuration preflight refused the erase BEFORE any mutation" >&2
             exit 1

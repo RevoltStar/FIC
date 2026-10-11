@@ -47,6 +47,21 @@ protected:
         const PolicyRef& policy,
         const PolicyDependencyCondition& condition);
 public:
+    // Prove that cached policy intent still comes from the current config.
+    // Read-only; does not reload/mutate registry or create missing configs.
+    bool captureConfigurationVersion(std::string& path, AtomicTargetState& state,
+                                     std::string& error) const {
+        if (!moduleConf) { error = "policy has no module configuration"; return false; }
+        path = moduleConf->path();
+        if (!AtomicFileWriter::captureTargetState(path, state, &error)) return false;
+        FileHandlerOptions options; options.writeOptions.rejectSymlink = true;
+        ConfigFileHandler current(path, "=", options);
+        if (!current.loadConfig() || current.entries() != moduleConf->entries() ||
+            !AtomicFileWriter::targetStateMatches(path, state, &error)) {
+            error = "policy configuration changed; registry reload required: " + path; return false;
+        }
+        return true;
+    }
     //Задано ли значение политики в конфигурационном файле
     bool hasConfiguredValue() const {
         return this->moduleConf->hasConfiguredValue(this->policyName);

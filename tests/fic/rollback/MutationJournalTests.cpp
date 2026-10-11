@@ -1,6 +1,7 @@
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/MutationJournal.h"
 #include "rollback/MutationRecord.h"
+#include "rollback/ScopeTransition.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <nlohmann/json.hpp>
@@ -1083,6 +1084,184 @@ void testResolvedHistoryWithActiveRecordLoads() {
     require(journal.records()[0].status == MutationStatus::RolledBack &&
                 journal.records()[1].status == MutationStatus::Applied,
             "the active record must remain resolvable after load");
+}
+
+void testDesktopArtifactJournalContract() {
+    TempFile file;
+    MutationJournal journal(file.path); std::string error;
+    require(journal.initializeOrLoad(error), error);
+    MutationRecord record;
+    record.policy = {"OSS", "DesktopEnvironment", "screenlock_timeout"};
+    record.resource = "GNOME/artifact/source-directory";
+    record.undo = {MutationBackend::Desktop, UndoOwnDesktopArtifact{"source-directory"}};
+    MutationId id = 0;
+    auto bad = record; bad.resource = "../../etc";
+    require(!journal.prepareMutation(bad, id, error), "artifact path traversal accepted");
+    bad = record; bad.undo.backend = MutationBackend::Sysctl;
+    require(!journal.prepareMutation(bad, id, error), "artifact payload/backend mismatch accepted");
+    bad = record; std::get<UndoOwnDesktopArtifact>(bad.undo.payload).kind = "future-directory";
+    require(!journal.prepareMutation(bad, id, error), "unknown artifact creation contract accepted");
+    bad = record; std::get<UndoOwnDesktopArtifact>(bad.undo.payload).hadApplied = true;
+    require(!journal.prepareMutation(bad, id, error), "fresh artifact invented prior creation ownership");
+    require(journal.prepareMutation(record, id, error), error);
+    auto& artifact = std::get<UndoOwnDesktopArtifact>(record.undo.payload);
+    artifact.device = 123; artifact.inode = 456;
+    require(journal.prepareMutation(record, id, error), error);
+    artifact.hadApplied = true;
+    require(journal.prepareMutation(record, id, error) && journal.setStatus(id, MutationStatus::Applied, error), error);
+    bad = record; std::get<UndoOwnDesktopArtifact>(bad.undo.payload).inode = 999;
+    require(!journal.prepareMutation(bad, id, error), "Applied directory creation proof adopted another inode");
+    bad = record; std::get<UndoOwnDesktopArtifact>(bad.undo.payload).hadApplied = false;
+    require(!journal.prepareMutation(bad, id, error), "artifact refresh erased prior ownership");
+    artifact.phase = "release";
+    require(journal.prepareMutation(record, id, error), error);
+    require(!journal.setStatus(id, MutationStatus::Applied, error), "release artifact became Applied");
+    bad = record; std::get<UndoOwnDesktopArtifact>(bad.undo.payload).phase = "ensure";
+    require(!journal.prepareMutation(bad, id, error), "pending artifact release was reconstructed");
+    MutationJournal restarted(file.path); require(restarted.initializeOrLoad(error), error);
+    const auto& restored = std::get<UndoOwnDesktopArtifact>(restarted.records().front().undo.payload);
+    require(restored.phase == "release" && restored.hadApplied && restored.inode == 456 && restored.device == 123,
+            "artifact identity/lifecycle lost on restart");
+    auto doc = nlohmann::json::parse(file.read());
+    doc["records"][0]["undo"]["kind"] = "untrusted-directory";
+    file.write(doc.dump());
+    MutationJournal corrupt(file.path); require(!corrupt.initializeOrLoad(error), "unknown artifact trusted on load");
+}
+
+void testScopeCheckpointLifecycle() {
+    TempFile temp;
+    MutationJournal journal(temp.path);
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+    ScopeTransition transaction(journal);
+    int writes = 0;
+    std::vector<std::string> physical;
+    const ScopeTransition::Operation ok = [](std::string&) { return true; };
+    const auto ensure = [&](std::string&) { ++writes; physical = {"GNOME", "KDE"}; return true; };
+    const auto release = [&](std::string&) { physical = {"KDE"}; return true; };
+    const auto blocked = [](std::string& e) { e = "ownership conflict"; return false; };
+    require(transaction.reconcile({"GNOME", "KDE"}, ok, ensure, ok, ok, error), error);
+    require(transaction.requireCommitted({"GNOME", "KDE"}, error), error);
+    require(!transaction.requireCommitted({"KDE"}, error), "new intent accepted as committed");
+    require(!transaction.reconcile({"KDE"}, blocked, ensure, ok, ok, error), "preflight accepted");
+    require(writes == 1 && physical.size() == 2, "preflight physically mutated");
+    MutationJournal restarted(temp.path);
+    require(restarted.initializeOrLoad(error), error);
+    ScopeTransition recovered(restarted);
+    ScopeTransitionState state;
+    require(recovered.state(state, error) && state.committed.size() == 2 &&
+            state.target == std::vector<std::string>{"KDE"} && state.phase == "failed",
+            "restart lost configured/committed distinction");
+    require(!recovered.reconcile({"KDE"}, ok, ok, release, blocked, error), "verify failure accepted");
+    require(recovered.state(state, error) && state.phase == "partial" && state.committed.size() == 2,
+            "partial transition lost previous checkpoint");
+    require(physical == std::vector<std::string>{"KDE"}, "released ownership reconstructed");
+    require(recovered.reconcile({"KDE"}, ok, ok, release, ok, error), error);
+    require(recovered.requireCommitted({"KDE"}, error), error);
+    require(!recovered.reconcile({}, ok, ensure, release, ok, error), "empty scope committed");
+    require(writes == 1, "UNCONFIGURED scope physically mutated");
+    require(recovered.state(state, error) && state.committed == physical && state.target.empty(),
+            "empty scope erased committed checkpoint");
+}
+
+void testScopeCrashAndMalformedProvenance() {
+    TempFile temp;
+    std::string error;
+    MutationJournal journal(temp.path);
+    require(journal.initializeOrLoad(error), error);
+    ScopeTransition transition(journal);
+    const ScopeTransition::Operation ok = [](std::string&) { return true; };
+    bool released = false;
+    const auto crash = [&](std::string&) -> bool {
+        released = true; throw std::runtime_error("crash after release");
+    };
+    try { transition.reconcile({"KDE"}, ok, ok, crash, ok, error); }
+    catch (const std::runtime_error&) {}
+    require(released, "crash did not reach physical release");
+    MutationJournal afterCrash(temp.path);
+    require(afterCrash.initializeOrLoad(error), error);
+    ScopeTransition recovery(afterCrash);
+    require(!recovery.requireCommitted({"KDE"}, error), "Prepared accepted as Applied");
+    require(recovery.reconcile({"KDE"}, ok, ok, ok, ok, error), error);
+    require(recovery.requireCommitted({"KDE"}, error), error);
+    MutationRecord record;
+    record.policy = {"OSS", "DesktopEnvironment", "controlled_desktop_environments"};
+    record.resource = "../../etc/fstab";
+    record.undo = {MutationBackend::Scope, ScopeTransitionCheckpoint{{}, {"KDE"}, "pending"}};
+    MutationId id;
+    require(!afterCrash.prepareMutation(record, id, error), "untrusted checkpoint resource accepted");
+    record.resource = "scope/de";
+    record.undo.backend = MutationBackend::Sysctl;
+    require(!afterCrash.prepareMutation(record, id, error),
+            "scope payload accepted under unrelated backend");
+    record.undo.backend = MutationBackend::Scope;
+    require(afterCrash.prepareMutation(record, id, error), error);
+    require(!afterCrash.setStatus(id, MutationStatus::Applied, error),
+            "pending checkpoint promoted to Applied without verified commit");
+    require(afterCrash.records().front().id == id &&
+            afterCrash.records().front().status == MutationStatus::Prepared,
+            "rejected status update changed checkpoint in memory");
+    auto invalidStatus = nlohmann::json::parse(temp.read());
+    invalidStatus["records"][0]["status"] = "applied";
+    const std::string validDocument = temp.read();
+    temp.write(invalidStatus.dump());
+    MutationJournal invalidCheckpoint(temp.path);
+    require(!invalidCheckpoint.initializeOrLoad(error),
+            "pending checkpoint with Applied status trusted on reload");
+    temp.write(validDocument);
+    std::get<ScopeTransitionCheckpoint>(record.undo.payload).targetScope = {"KDE", "KDE"};
+    require(!afterCrash.prepareMutation(record, id, error), "duplicate scope accepted");
+    auto corrupt = nlohmann::json::parse(temp.read());
+    corrupt["records"][0]["resource"] = "foreign";
+    temp.write(corrupt.dump());
+    MutationJournal broken(temp.path);
+    require(!broken.initializeOrLoad(error), "corrupt checkpoint trusted on reload");
+}
+
+void testScopeCommitDurabilityFailure() {
+    TempFile temp;
+    MutationJournal journal(temp.path);
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+    ScopeTransition transition(journal);
+    const ScopeTransition::Operation ok = [](std::string&) { return true; };
+    require(transition.reconcile({"GNOME", "KDE"}, ok, ok, ok, ok, error), error);
+    bool released = false;
+    const auto release = [&](std::string&) { released = true; return true; };
+    struct HookReset {
+        ~HookReset() { AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr); }
+    } hookReset;
+    const auto verify = [&](std::string&) {
+        // Release has completed; fail every durability completion attempt for
+        // the commit checkpoint after its rename. No rollback/reconstruction
+        // of the released physical resource is authorized by this failure.
+        const std::string journalPath = temp.path.string();
+        AtomicFileWriter::setDirectoryFsyncHookForTests(
+            [journalPath](const std::string& target) { return target != journalPath; });
+        return true;
+    };
+    require(!transition.reconcile({"KDE"}, ok, ok, release, verify, error),
+            "commit durability failure reported success");
+    require(released, "durability fault occurred before resource release");
+    require(!journal.usable(), "indeterminate journal remained operational");
+    require(!transition.requireCommitted({"KDE"}, error),
+            "indeterminate commit authorized dependent policy");
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    MutationJournal restarted(temp.path);
+    require(restarted.initializeOrLoad(error), error);
+    ScopeTransition recovery(restarted);
+    ScopeTransitionState state;
+    require(recovery.state(state, error) && state.phase == "pending" &&
+            state.committed == std::vector<std::string>({"GNOME", "KDE"}),
+            "unconfirmed commit replaced the previous committed checkpoint");
+    require(!recovery.requireCommitted({"KDE"}, error),
+            "renamed Prepared checkpoint trusted as committed after restart");
+    int verifications = 0;
+    require(recovery.reconcile({"KDE"}, ok, ok, ok,
+        [&](std::string&) { ++verifications; return true; }, error), error);
+    require(verifications == 1 && released &&
+            recovery.requireCommitted({"KDE"}, error),
+            "retry did not reverify the target before committing");
 }
 
 } // namespace
@@ -2762,6 +2941,10 @@ int main() {
         const char* name;
         void (*test)();
     } tests[] = {
+        {"scope checkpoint lifecycle", testScopeCheckpointLifecycle},
+        {"DE artifact creation contract", testDesktopArtifactJournalContract},
+        {"scope crash and malformed provenance", testScopeCrashAndMalformedProvenance},
+        {"scope commit durability failure", testScopeCommitDurabilityFailure},
         {"PAM journal contract", testPamJournalContract},
         {"missing file is empty journal", testMissingFileIsEmptyJournal},
         {"prepare commit reload persistence", testPrepareCommitAndReloadPersistence},

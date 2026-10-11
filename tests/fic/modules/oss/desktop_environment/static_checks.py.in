@@ -82,9 +82,13 @@ assert "report.backends" in global_reconciler
 assert "report.policies" in global_reconciler
 assert "MandatoryGlobal policy has no global requirement coverage" in global_reconciler
 assert "if (!policy->isEnabled()) continue" in global_reconciler
-assert "ensureManagedSettings" in global_reconciler
+assert "reconcileJournaled" in global_reconciler
+assert "preflightJournaled" in global_reconciler
+assert "ScopeTransition(*journal).reconcile" in global_reconciler
+assert "captureConfigurationVersion" in global_reconciler
+assert "->ensureManagedSettings" not in global_reconciler
 assert "verifyManagedSettings" in global_reconciler
-assert "if (desired.empty()) continue" in global_reconciler
+assert "desired.empty() == nonempty" in global_reconciler
 assert "replaceManagedState" not in global_reconciler
 assert "bool DesktopGlobalConfigReconciler::reconcile" not in global_reconciler
 assert "backend->desktop() != contribution.desktop" in global_reconciler
@@ -102,8 +106,10 @@ assert "VerifiedProcessExecutor::execute" in gnome_system
 assert "return DesktopEnvironmentKind::Fly" in fly_system
 assert 'return "fly"' in fly_system
 assert "/usr/share/fly-wm/theme.master/themerc" in fly_system_header
-for required in ("openat", "O_NOFOLLOW", "fstat", "fstatat", "renameat",
-                 "fsync", "S_IWGRP", "S_IWOTH", "S_IROTH"):
+for required in ("openat", "O_NOFOLLOW", "fstat", "S_IWGRP", "S_IWOTH", "S_IROTH",
+                 "AtomicFileWriter::writeWithResult", "expectedTargetState",
+                 "ensureTargetDurableIfCurrentState", "ExclusivePidLock",
+                 "journal.prepareMutation", "reconcileJournaled"):
     assert required in fly_system
 for forbidden in ("std::ifstream", "std::ofstream", "current.themerc",
                   "getpwuid", "system(", "popen(", "/bin/sh"):
@@ -111,7 +117,13 @@ for forbidden in ("std::ifstream", "std::ofstream", "current.themerc",
 for forbidden in ("current.themerc", "std::ifstream", "std::ofstream",
                   "getpwuid"):
     assert forbidden not in fly_session
-assert "FLYWM_UPDATE_VAL" in fly_session
+assert "FLYWM_UPDATE_VAL" not in fly_session
+assert "setValue(" not in fly_session
+fly_runtime = (root / "fic/src/modules/oss/desktop_environment/policies/FlyScreenLockTimeoutHandler.h").read_text()
+assert "unjournaled FLYWM_UPDATE_VAL is refused" in fly_runtime
+assert "backend.setValue(" not in fly_runtime
+gnome_runtime = (root / "fic/src/modules/oss/desktop_environment/policies/GnomeScreenLockTimeoutHandler.h").read_text()
+assert "backend.setSetting(" not in gnome_runtime
 assert "qt6-declarative-devel" in (
     root / "packaging/rpm/Dockerfile").read_text()
 for forbidden in ("system(", "popen(", "/bin/sh", "~/.config/dconf",
@@ -220,7 +232,7 @@ assert "xfce4-screensaver-command" in xfce_session
 assert '{"--query"}' in xfce_session
 for forbidden in ("pgrep", "pidof", "/proc/", "XfceSystemBackend"):
     assert forbidden not in xfce_session
-assert '"--create", "--type"' in xfce_session
+assert "XFCE scalar mutation unavailable" in xfce_session
 assert '"--property", property, "--set"' not in xfce_session
 assert "getPropertyState" in xfce_session and "getPropertyState" in xfce_handler
 assert "::getProperty(" not in xfce_session
@@ -234,7 +246,7 @@ assert "xfcePropertyTypeName(actual.type)" in xfce_handler
 assert "XfcePropertyStateKind::Absent" in xfce_handler
 assert "kind == XfcePropertyStateKind::Absent" in xfce_handler
 assert '"/saver/fullscreen-inhibit", "bool", "false"' in xfce_handler
-assert '"--create", "--type"' in xfce_session
+assert "native conditional write/ownership-safe rollback is not proven" in xfce_session
 assert '"--property", property, "--set"' not in xfce_session
 assert "getPropertyState" in xfce_session and "getPropertyState" in xfce_handler
 assert "::getProperty(" not in xfce_session

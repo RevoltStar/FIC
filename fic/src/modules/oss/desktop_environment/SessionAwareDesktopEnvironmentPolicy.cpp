@@ -55,6 +55,8 @@ SessionReconcileResult SessionAwareDesktopEnvironmentPolicy::reconcileSession(
     const PolicyGlobalEnforcementResult& globalResult)
 {
     std::string error;
+    if (!scope_.readyForApply(error))
+        return {SessionReconcileStatus::GlobalEnforcementFailed, std::move(error)};
     const SessionApplicability applicability =
         sessionApplicability(context.target.desktop, error);
     if (applicability == SessionApplicability::NotApplicable) {
@@ -93,6 +95,10 @@ bool SessionAwareDesktopEnvironmentPolicy::apply()
 {
     DesktopEnvironmentSet controlled;
     std::string error;
+    if (!scope_.readyForApply(error)) {
+        log(error, logLevel::ERROR);
+        return false;
+    }
     if (!scope_.controlledDesktopEnvironments(controlled, error)) {
         log(error, logLevel::ERROR);
         return false;

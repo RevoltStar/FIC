@@ -103,6 +103,8 @@ struct RollbackExecutorDeps {
     std::function<KerberosRollbackOptions()> kerberosOptions;
     // FIREWALL undo: reconcile the nftables state without the given policy.
     std::function<bool(const std::string& policyName, std::string& error)> undoFirewallPolicy;
+    // Joint owner release across ALL active DE records, not activeRecords(owner).
+    std::function<bool(const PolicyRef&, MutationJournal&, std::string&, bool)> releaseDesktopOwner;
 };
 
 // Step 7F: contextual (platform-aware) enrollment. Preserves the static

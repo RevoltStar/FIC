@@ -92,6 +92,7 @@ public:
     const std::optional<AtomicTargetState>& loadSnapshot() const {
         return loadSnapshot_;
     }
+    const std::string& path() const { return filepath_; }
     //Закомментировать все параметры в файле
     /*virtual bool commentAllParameters();*/
 

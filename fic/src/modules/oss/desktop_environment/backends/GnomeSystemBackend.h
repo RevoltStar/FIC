@@ -3,6 +3,7 @@
 
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "platform/PlatformExecutableResolver.h"
+#include "rollback/MutationJournal.h"
 
 #include <fic/core/process/ProcessExecutor.h>
 
@@ -20,6 +21,7 @@ struct GnomeSystemBackendOptions {
     std::string lockfileName = "99-fic";
     uid_t trustedOwner = 0;
     gid_t trustedGroup = 0;
+    std::filesystem::path lockPath; // Production: FicRuntimePaths::runtimeDir.
 };
 
 struct GnomeSystemBackendDependencies {
@@ -41,10 +43,21 @@ public:
 
     DesktopEnvironmentKind desktop() const override;
     std::string backendName() const override;
+    bool verifiedEnforcementAvailable(std::string& error) const override { error.clear(); return true; }
     bool ensureManagedSettings(const DesktopManagedSettings& required,
                                std::string& error) override;
     bool verifyManagedSettings(const DesktopManagedSettings& required,
                                std::string& error) override;
+    bool preflightJournaled(const DesktopGlobalConfigRequirements& required,
+                            fic::rollback::MutationJournal& journal,
+                            std::string& error);
+    bool reconcileJournaled(const DesktopGlobalConfigRequirements& required,
+                            fic::rollback::MutationJournal& journal,
+                            std::string& error);
+    // Remove one policy reference; restore a scalar only after its last owner.
+    bool releaseOwnerJournaled(const PolicyRef& owner,
+                               fic::rollback::MutationJournal& journal,
+                               std::string& error, bool preview = false);
 
 private:
     GnomeSystemBackendDependencies dependencies_;

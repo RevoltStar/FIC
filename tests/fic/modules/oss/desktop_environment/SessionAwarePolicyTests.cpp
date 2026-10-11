@@ -16,6 +16,11 @@ void require(bool value, const char* message) {
 }
 
 struct Scope : ControlledDesktopEnvironmentScope {
+    bool ready = true;
+    bool readyForApply(std::string& error) override {
+        error = ready ? "" : "scope transition is pending";
+        return ready;
+    }
     DesktopEnvironmentSet value;
     bool controlledDesktopEnvironments(DesktopEnvironmentSet& out,
                                        std::string& error) override {
@@ -123,6 +128,24 @@ void initializeRuntime() {
 
 int main() {
     initializeRuntime();
+    {
+        Scope pendingScope;
+        pendingScope.value = {DesktopEnvironmentKind::Kde};
+        pendingScope.ready = false;
+        auto inventory = std::make_shared<Inventory>();
+        inventory->value = {session(DesktopEnvironmentKind::Kde)};
+        TestPolicy blocked(pendingScope, inventory);
+        require(!blocked.apply() && blocked.reconciled == 0,
+                "ordinary apply bypassed pending scope");
+        const auto& target = inventory->value.front();
+        const SessionReconcileContext context{target, inventory->value, true};
+        require(!blocked.reconcileSession(context, {}).successful() && blocked.reconciled == 0,
+                "session_ready bypassed pending scope");
+        OSS_absence_of_uncontrolled_desktop_environments compliance(pendingScope, inventory);
+        std::string error;
+        require(!compliance.evaluateSessionInventory(inventory->value, error),
+                "inventory compliance bypassed pending scope");
+    }
     Scope scope;
     auto inventory = std::make_shared<Inventory>();
 

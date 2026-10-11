@@ -1024,6 +1024,10 @@ if [ "\$1" = "remove" ]; then
         echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the C2 password topology state cannot be proven and the removal is refused before any mutation" >&2
         exit 1
     fi
+    if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare preflight; then
+        echo "FIC: DE ownership preflight refused removal before any mutation" >&2
+        exit 1
+    fi
     if ! /opt/fic/bin/fic --maintenance pam-password-prerm-prepare preflight; then
         echo "FIC: the read-only password package preflight refused the removal BEFORE any PAM mutation (see the classified diagnostic above); the package stays installed" >&2
         exit 1
@@ -1064,6 +1068,10 @@ if [ "\$1" = "remove" ]; then
                 exit 1
             fi
         done
+    fi
+    if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare release; then
+        echo "FIC: DE ownership release failed; removal is refused" >&2
+        exit 1
     fi
     # Release every fallible provider and password domain with the incident
     # gate still attached. A failed release leaves account access fail-closed.

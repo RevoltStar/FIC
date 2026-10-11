@@ -110,6 +110,42 @@ MutationId recordApplied(const PolicyRef& policy,
 }
 
 // ---------------------------------------------------------------- sysctl ----
+void testDesktopJointOwnerRelease() {
+    TempJournal tree;
+    JournalOverride override(tree.tree.root / "mutations.json");
+    std::string error;
+    auto* journal = DaemonMutationJournal::instance().tryGet(error); require(journal != nullptr, error);
+    MutationRecord record;
+    record.policy = {"OSS", "DesktopEnvironment", "screenlock_timeout"};
+    record.resource = "FLY/themerc/Variables/ScreenSaverDelay";
+    UndoRestoreDesktopScalar scalar;
+    scalar.desktop = "FLY"; scalar.setting = "themerc/Variables/ScreenSaverDelay";
+    scalar.appliedLine = "ScreenSaverDelay=300\n"; scalar.originalLine = "ScreenSaverDelay=900\n";
+    scalar.owners = {{"OSS", "DesktopEnvironment", "disable_kde_lock_screen_media_controls"}};
+    record.undo = {MutationBackend::Desktop, scalar};
+    MutationId id = 0; require(journal->prepareMutation(record, id, error), error);
+    scalar.hadApplied = true; record.undo.payload = scalar;
+    require(journal->prepareMutation(record, id, error) && journal->setStatus(id, MutationStatus::Applied, error), error);
+    RollbackExecutorDeps deps;
+    require(rollbackPolicyBeforeDisable(record.policy, "", deps).status == RollbackStatus::Unsupported,
+            "missing joint DE route silently closed shared ownership");
+    std::vector<bool> calls;
+    deps.releaseDesktopOwner = [&](const PolicyRef& owner, MutationJournal& current, std::string&, bool preview) {
+        require(owner == record.policy && current.records().size() == 1, "joint release identity lost");
+        calls.push_back(preview); return true;
+    };
+    require(rollbackPolicyBeforeDisable(record.policy, "", deps).rollbackCompleted() && calls == std::vector<bool>{true, false},
+            "DE disable did not preflight joint release before action");
+    require(journal->records().front().status == MutationStatus::Applied &&
+            std::get<UndoRestoreDesktopScalar>(journal->records().front().undo.payload).owners == scalar.owners,
+            "generic per-record rollback abandoned surviving DE owner");
+    calls.clear();
+    deps.releaseDesktopOwner = [&](const PolicyRef&, MutationJournal&, std::string& error, bool preview) {
+        calls.push_back(preview); error = "ownership conflict"; return false;
+    };
+    require(!rollbackPolicyBeforeDisable(record.policy, "", deps).rollbackCompleted() && calls == std::vector<bool>{true},
+            "failed DE preflight executed release");
+}
 
 class SysctlTree {
 public:
@@ -343,6 +379,18 @@ void testEnrollmentMatrix() {
     require(rollbackEnrollment({"DC", "DeviceControl", "unknown_feature"}) ==
                 RollbackEnrollment::Unsupported,
             "unknown DC features must refuse automatic rollback");
+    for (const auto* name : {"controlled_desktop_environments",
+                             "absence_of_uncontrolled_desktop_environments"})
+        require(rollbackEnrollment({"OSS", "DesktopEnvironment", name}) ==
+                    RollbackEnrollment::NotEnrolled,
+                "DE intent/compliance must not claim physical policy rollback");
+    require(rollbackEnrollment({"OSS", "DesktopEnvironment", "screenlock_timeout"}) == RollbackEnrollment::Supported,
+            "screenlock global journaled mutations must enroll with explicit refusal of unsafe session writes");
+    for (const auto* name : {"disable_kde_lock_screen_media_controls",
+                             "unknown_desktop_policy"})
+        require(rollbackEnrollment({"OSS", "DesktopEnvironment", name}) ==
+                    RollbackEnrollment::Unsupported,
+                "incomplete or unknown DE rollback must fail closed, not abandon ownership");
     require(rollbackEnrollment({"NET", "SshEdit", "ssh_port"}) ==
                 RollbackEnrollment::Supported,
             "NET/SshEdit ssh_port must be enrolled");
@@ -2997,6 +3045,7 @@ int main(int argc, char** argv) {
         void (*test)();
     } tests[] = {
         {"enrollment matrix", testEnrollmentMatrix},
+        {"DE joint owner release", testDesktopJointOwnerRelease},
         {"FSTAB non-reverting lifecycle", testFstabNonRevertingLifecycle},
         {"passwdqc contextual enrollment", testPasswdqcContextualEnrollment},
         {"USER_CREATION executor ownership release",

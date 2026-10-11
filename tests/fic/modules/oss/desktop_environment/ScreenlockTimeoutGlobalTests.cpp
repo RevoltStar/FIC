@@ -25,6 +25,11 @@ void require(bool value, const std::string& message) {
 }
 
 struct Scope : ControlledDesktopEnvironmentScope {
+    bool ready = true;
+    bool readyForApply(std::string& error) override {
+        error = ready ? "" : "scope transition is pending";
+        return ready;
+    }
     DesktopEnvironmentSet desktops;
     bool controlledDesktopEnvironments(DesktopEnvironmentSet& result,
                                        std::string& error) override {
@@ -50,6 +55,16 @@ struct Backend : DesktopSystemBackend {
     int verifies = 0;
     DesktopEnvironmentKind desktop() const override { return kind; }
     std::string backendName() const override { return name; }
+    bool verifiedEnforcementAvailable(std::string& error) const override { error.clear(); return true; }
+    bool preflightJournaled(const DesktopGlobalConfigRequirements&, fic::rollback::MutationJournal&, std::string& error) override {
+        error.clear(); return true;
+    }
+    bool reconcileJournaled(const DesktopGlobalConfigRequirements& required, fic::rollback::MutationJournal&, std::string& error) override {
+        if (required.empty()) { received.clear(); error.clear(); return true; }
+        DesktopManagedSettings values;
+        for (const auto& [key, value] : required) values.emplace(key, value.value);
+        return ensureManagedSettings(values, error);
+    }
     bool ensureManagedSettings(const DesktopManagedSettings& required,
                                std::string& error) override {
         ++ensures;
@@ -57,8 +72,9 @@ struct Backend : DesktopSystemBackend {
         error = ensureOk ? "" : "ensure failed";
         return ensureOk;
     }
-    bool verifyManagedSettings(const DesktopManagedSettings&,
+    bool verifyManagedSettings(const DesktopManagedSettings& required,
                                std::string& error) override {
+        if (required.empty()) { error.clear(); return true; }
         ++verifies;
         error = ensureOk ? "" : "verify failed";
         return ensureOk;
@@ -70,6 +86,7 @@ fs::path configPath;
 void writeConfig(const std::string& value) {
     std::ofstream(configPath) <<
         "_schema_version=1\n"
+        "controlled_desktop_environments.status=ENABLE\n"
         "screenlock_timeout.status=ENABLE\n"
         "screenlock_timeout.value=" << value << "\n";
 }
@@ -98,6 +115,25 @@ std::unique_ptr<OSS_screenlock_timeout> makePolicy(
     Scope& scope, const std::shared_ptr<EmptyInventory>& inventory) {
     return std::make_unique<OSS_screenlock_timeout>(scope, inventory);
 }
+
+class ValidScopePolicy final : public Policy, public ControlledDesktopEnvironmentScope {
+public:
+    ValidScopePolicy() {
+        moduleName = "OSS";
+        submoduleName = "DesktopEnvironment";
+        policyName = "controlled_desktop_environments";
+        moduleConf = std::make_unique<ModuleConfigFileHandler>(moduleName);
+        require(moduleConf->loadConfig(), "scope fixture load failed");
+    }
+    bool apply() override { return true; }
+    bool readyForApply(std::string& error) override { error.clear(); return true; }
+    bool controlledDesktopEnvironments(DesktopEnvironmentSet& controlled,
+                                      std::string& error) override {
+        controlled = {DesktopEnvironmentKind::Gnome, DesktopEnvironmentKind::Fly};
+        error.clear();
+        return true;
+    }
+};
 
 void testModesCapabilitiesAndContributions() {
     Scope scope;
@@ -222,6 +258,7 @@ void testInvalidValueAndReconcilerReport() {
     writeConfig("5");
     PolicyRegistry registry;
     require(registry.addModule("OSS", ModuleView::Standard, 0, error), error);
+    require(registry.addPolicy(std::make_unique<ValidScopePolicy>(), error), error);
     require(registry.addPolicy(makePolicy(scope, inventory), error), error);
     auto gnome = std::make_shared<Backend>();
     auto kde = std::make_shared<Backend>();
@@ -230,7 +267,9 @@ void testInvalidValueAndReconcilerReport() {
     auto fly = std::make_shared<Backend>();
     fly->kind = DesktopEnvironmentKind::Fly;
     fly->name = "fly";
-    DesktopGlobalConfigReconciler reconciler({gnome, kde, fly});
+    fic::rollback::MutationJournal journal(configPath.parent_path().parent_path() / "mutations.json");
+    require(journal.initializeOrLoad(error), error);
+    DesktopGlobalConfigReconciler reconciler({gnome, kde, fly}, &journal);
     auto report = reconciler.reconcile(registry);
     const PolicyRef owner{"OSS", "DesktopEnvironment", "screenlock_timeout"};
     require(report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
@@ -252,14 +291,14 @@ void testInvalidValueAndReconcilerReport() {
     gnome->ensureOk = false;
     report = reconciler.reconcile(registry);
     require(!report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
-                report.resultFor(owner, DesktopEnvironmentKind::Fly).verified &&
+                !report.resultFor(owner, DesktopEnvironmentKind::Fly).verified &&
                 !report.successful() && kde->ensures == 0 && kde->verifies == 0,
             "GNOME failure or unused KDE backend handling is wrong");
 
     gnome->ensureOk = true;
     fly->ensureOk = false;
     report = reconciler.reconcile(registry);
-    require(report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
+    require(!report.resultFor(owner, DesktopEnvironmentKind::Gnome).verified &&
                 !report.resultFor(owner, DesktopEnvironmentKind::Fly).verified &&
                 !report.successful() && kde->ensures == 0 && kde->verifies == 0,
             "FLY failure or unused KDE backend handling is wrong");

@@ -236,6 +236,14 @@ attach_back() {
     return 0
 }
 case " $* " in
+    *" desktop-prerm-prepare preflight "*)
+        [ "${FIC_FAKE_DESKTOP_MODE:-}" = "preflight-fail" ] && exit 1
+        exit 0
+        ;;
+    *" desktop-prerm-prepare release "*)
+        [ "${FIC_FAKE_DESKTOP_MODE:-}" = "release-fail" ] && exit 1
+        exit 0
+        ;;
     *" incident-pam-verify "*)
         grep -q "^Module: fic-incident-access$" "$FAKE_PAM_STATE/account" &&
         grep -q "pam_fic_access.so" "$FAKE_PAM_D/common-account"

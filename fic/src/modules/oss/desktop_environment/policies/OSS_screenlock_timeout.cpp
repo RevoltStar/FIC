@@ -13,6 +13,8 @@ OSS_screenlock_timeout::OSS_screenlock_timeout(
     : SessionAwareDesktopEnvironmentPolicy(scope, std::move(inventory))
 {
     this->policyName = "screenlock_timeout";
+    addRequiredDependency({"OSS", "DesktopEnvironment",
+                           "controlled_desktop_environments"});
     this->policyTypeValue = std::make_unique<IntPolicyTypeValue>(1, 20, 5);
 }
 

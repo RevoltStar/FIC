@@ -71,22 +71,18 @@ FakeGnomeSession correctSession() {
 
 void testGnomeSessionConvergence() {
     {
-        // disable-lock-screen=true ломает state matching даже при корректных
-        // остальных трёх настройках: convergence обязан выполнить set false.
+        // A mismatching user override is diagnosed without mutating it.
         FakeGnomeSession session = correctSession();
         session.values["org.gnome.desktop.lockdown disable-lock-screen"] =
             "true";
         std::string error;
-        require(gnome_screen_lock_timeout::applyTimeout(session, 5, error),
-                error);
-        require(std::find(session.sets.begin(), session.sets.end(),
-                          "org.gnome.desktop.lockdown disable-lock-screen "
-                          "false") != session.sets.end(),
-                "handler did not write disable-lock-screen=false");
+        require(!gnome_screen_lock_timeout::applyTimeout(session, 5, error) && !error.empty(),
+                "runtime mismatch was reported as converged");
+        require(session.sets.empty(), "read-only GNOME check wrote a user override");
         require(session.values[
                     "org.gnome.desktop.lockdown disable-lock-screen"] ==
-                    "false",
-                "readback did not observe disable-lock-screen=false");
+                    "true",
+                "GNOME check overwrote a foreign user setting");
     }
     {
         // Полностью корректное состояние не требует ненужных записей
@@ -99,15 +95,15 @@ void testGnomeSessionConvergence() {
                 "already-correct session state was rewritten");
     }
     {
-        // Неверный timeout тоже ломает matching и конвергируется.
+        // A stale timeout is also a read-only mismatch.
         FakeGnomeSession session = correctSession();
         session.values["org.gnome.desktop.session idle-delay"] = "uint32 1";
         std::string error;
-        require(gnome_screen_lock_timeout::applyTimeout(session, 5, error),
-                error);
+        require(!gnome_screen_lock_timeout::applyTimeout(session, 5, error) && session.sets.empty(),
+                "stale GNOME timeout was rewritten");
         require(session.values["org.gnome.desktop.session idle-delay"] ==
-                    "uint32 300",
-                "idle-delay was not converged");
+                    "uint32 1",
+                "idle-delay user value was changed");
     }
 }
 
@@ -352,21 +348,18 @@ void testFlyRuntimeOnlyConvergence() {
     {
         FakeFlySession session;
         std::string error;
-        require(fly_screen_lock_timeout::applyTimeout(session, 5, error),
-                error);
-        require(session.calls == std::vector<std::string>{
-                    "ScreenSaverDelay=300"},
-                "FLY runtime calls or minutes-to-seconds conversion are wrong");
+        require(!fly_screen_lock_timeout::applyTimeout(session, 5, error) &&
+                error.find("unjournaled FLYWM_UPDATE_VAL is refused") != std::string::npos &&
+                session.calls.empty(), "unproven FLY runtime update was executed");
     }
     {
         FakeFlySession session;
         session.failAt = 1;
         std::string error;
         require(!fly_screen_lock_timeout::applyTimeout(session, 5, error) &&
-                    error == "runtime update failed" &&
-                    session.calls == std::vector<std::string>{
-                        "ScreenSaverDelay=300"},
-                "FLY runtime failure was hidden or execution continued");
+                    error.find("unjournaled FLYWM_UPDATE_VAL is refused") != std::string::npos &&
+                    session.calls.empty(),
+                "unproven FLY runtime mutation was not refused before execution");
     }
 }
 

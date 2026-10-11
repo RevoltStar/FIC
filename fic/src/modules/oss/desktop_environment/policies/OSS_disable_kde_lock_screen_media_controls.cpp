@@ -11,6 +11,8 @@ OSS_disable_kde_lock_screen_media_controls(
     : SessionAwareDesktopEnvironmentPolicy(scope, std::move(inventory))
 {
     this->policyName = "disable_kde_lock_screen_media_controls";
+    addRequiredDependency({"OSS", "DesktopEnvironment",
+                           "controlled_desktop_environments"});
     this->policyTypeValue = std::make_unique<FixedPolicyTypeValue>();
 }
 

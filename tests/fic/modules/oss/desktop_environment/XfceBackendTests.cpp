@@ -54,20 +54,16 @@ struct FakeCommands {
     }
 };
 
-void testSetPropertyUsesSingleTypedMutation() {
+void testSetPropertyRefusesUnconditionalMutation() {
     FakeCommands commands;
     XfceBackend backend({}, {}, commands.dependencies());
     std::string error;
-    require(backend.setProperty(
+    require(!backend.setProperty(
                 "xfce4-screensaver", "/saver/fullscreen-inhibit",
-                "bool", "false", error), error);
-    require(commands.arguments.size() == 1,
-            "typed XFCE property mutation did not use exactly one command");
-    require(commands.arguments[0] == std::vector<std::string>{
-                "--channel", "xfce4-screensaver", "--property",
-                "/saver/fullscreen-inhibit", "--create", "--type", "bool",
-                "--set", "false"},
-            "XFCE typed property mutation arguments are wrong");
+                "bool", "false", error), "unsafe XFCE mutation was accepted");
+    require(commands.arguments.empty() &&
+            error.find("native conditional write/ownership-safe rollback is not proven") != std::string::npos,
+            "XFCE refusal executed a writer or hid the safety boundary");
 }
 
 void testSetPropertyFailureHasNoUntypedFallback() {
@@ -80,10 +76,8 @@ void testSetPropertyFailureHasNoUntypedFallback() {
                 "int", "5", error),
             "failing XFCE property mutation reported success");
     require(!error.empty(), "XFCE property mutation failure hid the error");
-    // Exactly one typed mutation attempt: no plain `--set` fallback may exist
-    // because it preserves a wrong storage type.
-    require(commands.arguments.size() == 1,
-            "failed XFCE typed mutation retried with an untyped fallback");
+    require(commands.arguments.empty(),
+            "XFCE strict refusal attempted an unconditional fallback");
 }
 
 void testAvailabilityOnlyQueriesExistingLocker() {
@@ -233,7 +227,7 @@ void testGetPropertyStateFailsClosedOnHelperFailure() {
 } // namespace
 
 int main() {
-    testSetPropertyUsesSingleTypedMutation();
+    testSetPropertyRefusesUnconditionalMutation();
     testSetPropertyFailureHasNoUntypedFallback();
     testAvailabilityOnlyQueriesExistingLocker();
     testGetPropertyStateUsesTrustedHelperAndParsesTypes();

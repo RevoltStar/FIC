@@ -1,4 +1,8 @@
 #include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
+#include "rollback/DaemonMutationJournal.h"
+#include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/process/ExclusivePidLock.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
 
 #include <algorithm>
 #include <array>
@@ -225,72 +229,6 @@ bool readOptionalFile(const std::filesystem::path& path,
     return true;
 }
 
-bool writeAll(int fd, const std::string& content) {
-    std::size_t offset = 0;
-    while (offset < content.size()) {
-        const ssize_t count = ::write(fd, content.data() + offset,
-                                      content.size() - offset);
-        if (count > 0) offset += static_cast<std::size_t>(count);
-        else if (count < 0 && errno == EINTR) continue;
-        else return false;
-    }
-    return true;
-}
-
-bool atomicWrite(const std::filesystem::path& path,
-                 const std::string& content,
-                 const FlySystemBackendOptions& options,
-                 std::string& error) {
-    UniqueFd parent;
-    if (!openDirectory(path.parent_path(), options, parent, error)) return false;
-    struct stat oldInfo {};
-    if (::fstatat(parent.get(), path.filename().c_str(), &oldInfo,
-                  AT_SYMLINK_NOFOLLOW) == 0) {
-        if (!S_ISREG(oldInfo.st_mode) ||
-            oldInfo.st_uid != options.trustedOwner ||
-            (oldInfo.st_mode & (S_IWGRP | S_IWOTH)) != 0 ||
-            (oldInfo.st_mode & S_IROTH) == 0) {
-            error = "refusing to replace unsafe FLY system config: " +
-                path.string();
-            return false;
-        }
-    } else if (errno != ENOENT) {
-        error = "cannot inspect FLY system config " + path.string() + ": " +
-            systemError();
-        return false;
-    }
-    static std::atomic<unsigned long> sequence{0};
-    const std::string temporary = "." + path.filename().string() + ".tmp." +
-        std::to_string(::getpid()) + "." + std::to_string(sequence++);
-    UniqueFd file(::openat(parent.get(), temporary.c_str(),
-        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW, 0600));
-    if (file.get() < 0) {
-        error = "cannot create temporary FLY system config: " + systemError();
-        return false;
-    }
-    const auto cleanup = [&] { ::unlinkat(parent.get(), temporary.c_str(), 0); };
-    if (::fchown(file.get(), options.trustedOwner, options.trustedGroup) != 0 ||
-        ::fchmod(file.get(), 0644) != 0 || !writeAll(file.get(), content) ||
-        ::fsync(file.get()) != 0) {
-        error = "cannot write FLY system config " + path.string() + ": " +
-            systemError();
-        cleanup();
-        return false;
-    }
-    if (::renameat(parent.get(), temporary.c_str(), parent.get(),
-                   path.filename().c_str()) != 0) {
-        error = "cannot atomically replace FLY system config " +
-            path.string() + ": " + systemError();
-        cleanup();
-        return false;
-    }
-    if (::fsync(parent.get()) != 0) {
-        error = "cannot fsync FLY system config directory: " + systemError();
-        return false;
-    }
-    return true;
-}
-
 std::vector<std::string> splitLines(const std::string& content) {
     std::vector<std::string> lines;
     std::istringstream stream(content);
@@ -388,55 +326,6 @@ std::map<std::string, std::string> valuesByKey(
     return values;
 }
 
-std::string mergeManagedSettings(const std::string& content,
-                                 const DesktopManagedSettings& required) {
-    const auto values = valuesByKey(required);
-    const auto lines = splitLines(content);
-    std::vector<std::string> output;
-    std::set<std::string> emitted;
-    bool inVariables = false;
-    bool sawVariables = false;
-    bool leftVariables = false;
-    const auto emitMissing = [&] {
-        for (const auto& [key, value] : values)
-            if (emitted.insert(key).second)
-                output.push_back(key + "=" + value);
-    };
-    for (const auto& line : lines) {
-        std::string group;
-        if (groupHeader(line, group)) {
-            if (inVariables && !leftVariables) {
-                emitMissing();
-                leftVariables = true;
-            }
-            inVariables = group == "Variables";
-            sawVariables = sawVariables || inVariables;
-            output.push_back(line);
-            continue;
-        }
-        if (inVariables) {
-            std::string left, value;
-            const auto* setting = managedAssignment(line, left, value);
-            if (setting != nullptr && values.count(setting->key) != 0) {
-                if (emitted.insert(setting->key).second)
-                    output.push_back(std::string(setting->key) + "=" +
-                                     values.at(setting->key));
-                continue;
-            }
-        }
-        output.push_back(line);
-    }
-    if (inVariables && !leftVariables) emitMissing();
-    else if (!sawVariables) {
-        if (!output.empty() && !output.back().empty()) output.emplace_back();
-        output.push_back("[Variables]");
-        emitMissing();
-    }
-    std::ostringstream serialized;
-    for (const auto& line : output) serialized << line << '\n';
-    return serialized.str();
-}
-
 bool verifyContent(const std::string& content,
                    const DesktopManagedSettings& required,
                    std::string& error) {
@@ -472,7 +361,10 @@ bool verifyContent(const std::string& content,
 } // namespace
 
 FlySystemBackend::FlySystemBackend(FlySystemBackendOptions options)
-    : options_(std::move(options)) {}
+    : options_(std::move(options)) {
+    if (options_.lockPath.empty() && fic::core::FicRuntimePaths::isInitialized())
+        options_.lockPath = fic::core::FicRuntimePaths::get().runtimeDir / "desktop-config.lock";
+}
 
 DesktopEnvironmentKind FlySystemBackend::desktop() const {
     return DesktopEnvironmentKind::Fly;
@@ -484,17 +376,15 @@ bool FlySystemBackend::ensureManagedSettings(
     const DesktopManagedSettings& required, std::string& error) {
     if (required.empty()) { error.clear(); return true; }
     if (!validateRequirements(required, error)) return false;
-    bool exists = false;
-    std::string current;
-    if (!readOptionalFile(options_.configPath, options_, exists, current,
-                          error)) return false;
-    if (exists && !validateManagedSyntax(
-            current, required, options_.configPath, error))
-        return false;
-    const std::string merged = mergeManagedSettings(current, required);
-    if ((!exists || merged != current) &&
-        !atomicWrite(options_.configPath, merged, options_, error)) return false;
-    return verifyManagedSettings(required, error);
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (!journal) return false;
+    DesktopGlobalConfigRequirements owned;
+    for (const auto& [key, value] : required)
+        owned.emplace(key, GlobalDesktopConfigValue{value,
+            {{"OSS", "DesktopEnvironment", "screenlock_timeout"}}});
+    // Missing requirements are deliberately a no-op above. Only a coordinator
+    // with a complete desired owner set may authorize obsolete-resource release.
+    return reconcileJournaled(owned, *journal, error);
 }
 
 bool FlySystemBackend::verifyManagedSettings(
@@ -512,4 +402,364 @@ bool FlySystemBackend::verifyManagedSettings(
     return validateManagedSyntax(content, required, options_.configPath,
                                  error) &&
         verifyContent(content, required, error);
+}
+
+namespace {
+using namespace fic::rollback;
+const std::string flyResource = "FLY/themerc/Variables/ScreenSaverDelay";
+const PolicyRef flyPolicy{"OSS", "DesktopEnvironment", "screenlock_timeout"};
+
+struct FlyScalarView {
+    std::optional<std::string> line;
+    std::size_t offset = 0;
+    std::size_t insertion = 0;
+    bool variables = false;
+};
+
+// Byte offsets retain every foreign byte, including CRLF and final-newline
+// state. The inverse delta stores only the one original parameter line.
+bool scalarView(const std::string& content, FlyScalarView& result,
+                std::string& error) {
+    result = {};
+    if (!validateManagedSyntax(content,
+            {{{"themerc/Variables/ScreenSaverDelay"}, "300"}}, "themerc", error))
+        return false;
+    bool inVariables = false;
+    for (std::size_t offset = 0; offset < content.size();) {
+        const auto end = content.find('\n', offset);
+        const auto size = end == std::string::npos ? content.size() - offset : end - offset + 1;
+        const std::string raw = content.substr(offset, size);
+        std::string group;
+        if (groupHeader(raw, group)) {
+            inVariables = group == "Variables";
+            if (inVariables) {
+                result.variables = true;
+                result.insertion = offset + size;
+            }
+        } else if (inVariables) {
+            result.insertion = offset + size;
+            const std::string stripped = trim(raw);
+            if (!stripped.empty() && stripped.front() != '#' && stripped.front() != ';') {
+                std::string key, value;
+                if (managedAssignment(raw, key, value)) {
+                    result.offset = offset;
+                    result.line = raw;
+                }
+            }
+        }
+        offset += size;
+    }
+    if (!result.variables) {
+        error = "FLY rollback requires an existing unambiguous [Variables] group";
+        return false;
+    }
+    return true;
+}
+
+std::string scalarMarker(MutationId id) {
+    return "# FIC-DE " + std::to_string(id) + " " + flyResource + "\n";
+}
+
+bool activeScalar(MutationJournal& journal, std::optional<MutationRecord>& record,
+                  std::string& error) {
+    record.reset();
+    if (!journal.usable()) { error = "Desktop mutation journal is unhealthy"; return false; }
+    for (const auto& candidate : journal.records()) {
+        if (!candidate.isActive() || candidate.undo.backend != MutationBackend::Desktop)
+            continue;
+        const auto* scalar = std::get_if<UndoRestoreDesktopScalar>(&candidate.undo.payload);
+        if (std::holds_alternative<fic::rollback::UndoOwnDesktopArtifact>(candidate.undo.payload)) continue;
+        if (!scalar) { error = "Desktop mutation payload mismatch"; return false; }
+        if (scalar->desktop != "FLY") continue;
+        if (candidate.resource != flyResource || candidate.policy != flyPolicy || record) {
+            error = "FLY scalar identity/ownership conflict";
+            return false;
+        }
+        record = candidate;
+    }
+    return true;
+}
+
+bool captureScalar(const FlySystemBackendOptions& options, AtomicTargetState& snapshot,
+                   FlyScalarView& view, std::string& error) {
+    bool exists = false;
+    std::string content;
+    if (!readOptionalFile(options.configPath, options, exists, content, error)) return false;
+    if (!exists) {
+        error = "FLY rollback requires the installed theme.master/themerc file; creation is not enrolled";
+        return false;
+    }
+    if (!AtomicFileWriter::captureTargetState(options.configPath.string(), snapshot, &error)) return false;
+    if (snapshot.content != content || snapshot.owner != options.trustedOwner ||
+        (snapshot.mode & (S_IWGRP | S_IWOTH)) != 0 || (snapshot.mode & S_IROTH) == 0) {
+        error = "FLY config changed during trusted capture";
+        return false;
+    }
+    return scalarView(content, view, error);
+}
+
+bool scalarProof(const AtomicTargetState& snapshot, const FlyScalarView& view,
+                 const std::optional<MutationRecord>& record,
+                 bool& marked, std::string& error) {
+    marked = false;
+    const auto anyMarker = snapshot.content.find("# FIC-DE ");
+    if (!record) {
+        if (anyMarker != std::string::npos) {
+            error = "Orphan FLY ownership marker without active journal provenance";
+            return false;
+        }
+        return true;
+    }
+    const auto& scalar = std::get<UndoRestoreDesktopScalar>(record->undo.payload);
+    const std::string marker = scalarMarker(record->id);
+    if (anyMarker != std::string::npos) {
+        if (!view.line || view.offset < marker.size() ||
+            snapshot.content.substr(view.offset - marker.size(), marker.size()) != marker ||
+            anyMarker != view.offset - marker.size() ||
+            snapshot.content.find("# FIC-DE ", anyMarker + 1) != std::string::npos ||
+            (*view.line != scalar.appliedLine &&
+             (!scalar.previousAppliedLine || *view.line != *scalar.previousAppliedLine))) {
+            error = "FLY ownership marker/mutation ID/applied scalar mismatch";
+            return false;
+        }
+        marked = true;
+        return true;
+    }
+    // An unmarked original is permitted only BEFORE first installation, or
+    // AFTER a durably prepared release. Applied ownership never adopts it.
+    if (view.line == scalar.originalLine &&
+        (scalar.phase == "release" ||
+         (record->status == MutationStatus::Prepared && !scalar.hadApplied &&
+          !scalar.previousAppliedLine))) return true;
+    error = "FLY applied ownership disappeared or the original scalar changed";
+    return false;
+}
+
+bool replaceScalar(const FlySystemBackendOptions& options,
+                   const AtomicTargetState& snapshot, const std::string& content,
+                   std::string& error) {
+    if (content == snapshot.content)
+        return AtomicFileWriter::ensureTargetDurableIfCurrentState(
+            options.configPath.string(), snapshot, &error);
+    AtomicWriteOptions writeOptions;
+    writeOptions.rejectSymlink = true;
+    writeOptions.expectedTargetState = snapshot;
+    AtomicWriteResult result;
+    if (AtomicFileWriter::writeWithResult(options.configPath.string(), content,
+            writeOptions, &error, &result)) return true;
+    if (result.installed && result.installedTargetState &&
+        AtomicFileWriter::ensureTargetDurableIfCurrentState(options.configPath.string(),
+            *result.installedTargetState, &error)) return true;
+    return false;
+}
+
+bool validFlyDesired(const DesktopGlobalConfigRequirements& required, std::string& error) {
+    DesktopManagedSettings values;
+    for (const auto& [key, value] : required) {
+        if (value.owners.empty()) { error = "FLY requirement has no policy owner"; return false; }
+        for (const auto& owner : value.owners) {
+            if (owner.moduleName != "OSS" || owner.submoduleName != "DesktopEnvironment" ||
+                (owner.policyName != "screenlock_timeout" &&
+                 owner.policyName != "disable_kde_lock_screen_media_controls")) {
+                error = "Unknown FLY physical requirement owner";
+                return false;
+            }
+        }
+        values.emplace(key, value.value);
+        if (validRequiredValue(value.value) &&
+            value.value != std::to_string(std::stoi(value.value))) {
+            error = "Noncanonical FLY scalar value";
+            return false;
+        }
+    }
+    return validateRequirements(values, error);
+}
+} // namespace
+
+bool FlySystemBackend::preflightJournaled(
+    const DesktopGlobalConfigRequirements& required,
+    fic::rollback::MutationJournal& journal, std::string& error) {
+    if (!validFlyDesired(required, error)) return false;
+    std::vector<std::string> components;
+    if (!relativeComponents(options_.configPath, options_, components, error)) return false;
+    std::optional<fic::rollback::MutationRecord> record;
+    if (!activeScalar(journal, record, error)) return false;
+    if (required.empty() && !record) {
+        struct stat info {};
+        if (::lstat(options_.configPath.c_str(), &info) != 0 && errno == ENOENT) {
+            error.clear(); return true;
+        }
+    }
+    AtomicTargetState snapshot;
+    FlyScalarView view;
+    bool marked = false;
+    if (!captureScalar(options_, snapshot, view, error) ||
+        !scalarProof(snapshot, view, record, marked, error)) return false;
+    if (!required.empty() && !view.line && view.insertion != 0 &&
+        snapshot.content[view.insertion - 1] != '\n') {
+        error = "FLY scalar insertion needs a terminated [Variables] line";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool FlySystemBackend::releaseJournaled(
+    const fic::rollback::MutationRecord& request,
+    fic::rollback::MutationJournal& journal, std::string& error) {
+    ExclusivePidLock lock(options_.lockPath.string(), "", false);
+    if (!lock.acquire()) { error = "Cannot acquire FIC desktop-config lock"; return false; }
+    std::optional<fic::rollback::MutationRecord> active;
+    if (!activeScalar(journal, active, error)) return false;
+    if (!active || active->id != request.id || request.resource != flyResource ||
+        request.policy != flyPolicy || request.undo.backend != fic::rollback::MutationBackend::Desktop) {
+        error = "FLY release requires matching active journal identity";
+        return false;
+    }
+    const auto* requested = std::get_if<fic::rollback::UndoRestoreDesktopScalar>(&request.undo.payload);
+    const auto& current = std::get<fic::rollback::UndoRestoreDesktopScalar>(active->undo.payload);
+    if (!requested || requested->desktop != current.desktop || requested->setting != current.setting ||
+        requested->originalLine != current.originalLine || requested->originalLockLine != current.originalLockLine ||
+        requested->appliedLine != current.appliedLine ||
+        requested->previousAppliedLine != current.previousAppliedLine || requested->owners != current.owners ||
+        requested->hadApplied != current.hadApplied || requested->phase != current.phase ||
+        requested->compiledBeforeDigest != current.compiledBeforeDigest ||
+        requested->compiledTargetDigest != current.compiledTargetDigest ||
+        request.status != active->status) {
+        error = "FLY release request is stale relative to current journal ownership";
+        return false;
+    }
+    AtomicTargetState snapshot;
+    FlyScalarView view;
+    bool marked = false;
+    if (!captureScalar(options_, snapshot, view, error) ||
+        !scalarProof(snapshot, view, active, marked, error)) return false;
+    auto record = *active;
+    auto& scalar = std::get<fic::rollback::UndoRestoreDesktopScalar>(record.undo.payload);
+    scalar.phase = "release";
+    scalar.owners.clear();
+    record.status = fic::rollback::MutationStatus::Prepared;
+    fic::rollback::MutationId id = 0;
+    if (!journal.prepareMutation(record, id, error)) return false;
+    std::string restored = snapshot.content;
+    if (marked) {
+        const std::string marker = scalarMarker(id);
+        restored.replace(view.offset - marker.size(), marker.size() + view.line->size(),
+                         scalar.originalLine.value_or(""));
+    }
+    if (!replaceScalar(options_, snapshot, restored, error)) return false;
+    AtomicTargetState finalState;
+    FlyScalarView finalView;
+    if (!captureScalar(options_, finalState, finalView, error) ||
+        finalView.line != scalar.originalLine ||
+        finalState.content.find("# FIC-DE ") != std::string::npos) {
+        if (error.empty()) error = "FLY released scalar did not match the inverse delta";
+        return false;
+    }
+    if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+            options_.configPath.string(), finalState, &error)) return false;
+    return journal.setStatus(id, fic::rollback::MutationStatus::RolledBack, error);
+}
+
+bool FlySystemBackend::releaseOwnerJournaled(
+    const PolicyRef& owner, fic::rollback::MutationJournal& journal, std::string& error, bool preview) {
+    if (owner.moduleName != "OSS" || owner.submoduleName != "DesktopEnvironment" ||
+        (owner.policyName != "screenlock_timeout" && owner.policyName != "disable_kde_lock_screen_media_controls")) {
+        error = "Unknown FLY release owner"; return false;
+    }
+    ExclusivePidLock lock(options_.lockPath.string(), "", false);
+    if (!lock.acquire()) { error = "Cannot acquire FIC desktop-config lock"; return false; }
+    std::optional<fic::rollback::MutationRecord> active;
+    if (!activeScalar(journal, active, error)) return false;
+    DesktopGlobalConfigRequirements remaining;
+    if (active) {
+        const auto& scalar = std::get<fic::rollback::UndoRestoreDesktopScalar>(active->undo.payload);
+        std::set<PolicyRef> owners(scalar.owners.begin(), scalar.owners.end());
+        owners.erase(owner);
+        if (!owners.empty()) {
+            const auto line = trim(scalar.appliedLine);
+            const std::string prefix = "ScreenSaverDelay=";
+            if (line.compare(0, prefix.size(), prefix) != 0) {
+                error = "FLY release scalar identity conflict"; return false;
+            }
+            remaining.emplace(GlobalDesktopConfigKey{scalar.setting},
+                GlobalDesktopConfigValue{line.substr(prefix.size()), std::move(owners)});
+        }
+    }
+    return preview ? preflightJournaled(remaining, journal, error) : reconcileJournaled(remaining, journal, error);
+}
+
+bool FlySystemBackend::reconcileJournaled(
+    const DesktopGlobalConfigRequirements& required,
+    fic::rollback::MutationJournal& journal, std::string& error) {
+    ExclusivePidLock lock(options_.lockPath.string(), "", false);
+    if (!lock.acquire()) { error = "Cannot acquire FIC desktop-config lock"; return false; }
+    if (!preflightJournaled(required, journal, error)) return false;
+    std::optional<fic::rollback::MutationRecord> active;
+    if (!activeScalar(journal, active, error)) return false;
+    if (required.empty()) {
+        if (active) return releaseJournaled(*active, journal, error);
+        error.clear(); return true;
+    }
+    if (active && std::get<fic::rollback::UndoRestoreDesktopScalar>(active->undo.payload).phase == "release") {
+        if (!releaseJournaled(*active, journal, error)) return false;
+        active.reset();
+    }
+    AtomicTargetState snapshot;
+    FlyScalarView view;
+    bool marked = false;
+    if (!captureScalar(options_, snapshot, view, error) ||
+        !scalarProof(snapshot, view, active, marked, error)) return false;
+    const auto& desired = required.begin()->second;
+    fic::rollback::MutationRecord record;
+    fic::rollback::UndoRestoreDesktopScalar scalar;
+    if (active) {
+        record = *active;
+        scalar = std::get<fic::rollback::UndoRestoreDesktopScalar>(record.undo.payload);
+        if (marked) scalar.previousAppliedLine = view.line;
+    } else {
+        record.policy = flyPolicy;
+        record.resource = flyResource;
+        scalar.desktop = "FLY";
+        scalar.setting = "themerc/Variables/ScreenSaverDelay";
+        scalar.originalLine = view.line;
+    }
+    scalar.appliedLine = "ScreenSaverDelay=" + desired.value + "\n";
+    scalar.owners.assign(desired.owners.begin(), desired.owners.end());
+    scalar.phase = "ensure";
+    record.status = fic::rollback::MutationStatus::Prepared;
+    record.undo = {fic::rollback::MutationBackend::Desktop, scalar};
+    fic::rollback::MutationId id = 0;
+    if (!journal.prepareMutation(record, id, error)) return false;
+    std::string installed = snapshot.content;
+    const std::string target = scalarMarker(id) + scalar.appliedLine;
+    if (marked) {
+        const std::string marker = scalarMarker(id);
+        installed.replace(view.offset - marker.size(), marker.size() + view.line->size(), target);
+    } else if (view.line) {
+        installed.replace(view.offset, view.line->size(), target);
+    } else {
+        if (view.insertion != 0 && installed[view.insertion - 1] != '\n') {
+            error = "FLY scalar insertion needs a terminated [Variables] line";
+            return false;
+        }
+        installed.insert(view.insertion, target);
+    }
+    if (!replaceScalar(options_, snapshot, installed, error)) return false;
+    AtomicTargetState finalState;
+    FlyScalarView finalView;
+    if (!captureScalar(options_, finalState, finalView, error)) return false;
+    record.id = id;
+    if (!scalarProof(finalState, finalView, record, marked, error) ||
+        !marked || finalView.line != scalar.appliedLine) {
+        if (error.empty()) error = "FLY installed scalar verification failed";
+        return false;
+    }
+    if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
+            options_.configPath.string(), finalState, &error)) return false;
+    scalar.hadApplied = true;
+    scalar.previousAppliedLine.reset();
+    record.undo.payload = scalar;
+    if (!journal.prepareMutation(record, id, error)) return false;
+    return journal.setStatus(id, fic::rollback::MutationStatus::Applied, error);
 }

@@ -89,6 +89,7 @@ public:
     virtual bool controlledDesktopEnvironments(
         DesktopEnvironmentSet& controlled,
         std::string& error) = 0;
+    virtual bool readyForApply(std::string& error) = 0;
 };
 
 class GraphicalSessionInventory {

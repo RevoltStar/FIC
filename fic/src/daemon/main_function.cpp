@@ -15,6 +15,8 @@
 #include "policy/registry/PolicyRegistryInitialization.h"
 #include "policy/registry/PolicyRegistryMutation.h"
 #include "rollback/RollbackExecutor.h"
+#include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
+#include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/process/VerifiedProcessExecutor.h>
@@ -266,6 +268,12 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
 
         fic::rollback::RollbackExecutorDeps rollbackDeps =
             fic::rollback::productionRollbackDeps(platform, executables);
+        rollbackDeps.releaseDesktopOwner = [&executables](const PolicyRef& owner,
+            fic::rollback::MutationJournal& journal, std::string& error, bool preview) {
+            DesktopGlobalConfigReconciler coordinator({std::make_shared<GnomeSystemBackend>(executables),
+                std::make_shared<FlySystemBackend>()}, &journal);
+            return coordinator.releasePolicy(owner, journal, error, preview);
+        };
         rollbackDeps.pamManagerFactory =
             [&platform, &executables](
                 const fic::platform::PamCapabilityConfig& capability,

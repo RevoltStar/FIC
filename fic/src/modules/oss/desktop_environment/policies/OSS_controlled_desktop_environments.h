@@ -11,6 +11,7 @@ public:
     OSS_controlled_desktop_environments();
 
     bool apply() override;
+    bool readyForApply(std::string& error) override;
     bool controlledDesktopEnvironments(
         DesktopEnvironmentSet& controlled,
         std::string& error) override;

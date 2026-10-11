@@ -3,6 +3,7 @@
 
 #include "modules/oss/desktop_environment/DesktopEnvironmentControl.h"
 #include "policy/registry/PolicyRegistry.h"
+#include "rollback/MutationJournal.h"
 
 #include <map>
 #include <memory>
@@ -25,8 +26,8 @@ struct GlobalDesktopPolicyContribution {
     std::string value;
 };
 
-// Ownership is transient reconciliation metadata, never part of physical
-// identity or persistent backend state.
+// Owner references are persisted by journaled physical backends; they are
+// independent of the physical key and of the record's primary policy.
 struct GlobalDesktopConfigValue {
     std::string value;
     std::set<PolicyRef> owners;
@@ -62,12 +63,29 @@ public:
 
     virtual DesktopEnvironmentKind desktop() const = 0;
     virtual std::string backendName() const = 0;
+    virtual bool verifiedEnforcementAvailable(std::string& error) const {
+        error = "desktop backend cannot prove effective enforcement"; return false;
+    }
     virtual bool ensureManagedSettings(
         const DesktopManagedSettings& required,
         std::string& error) = 0;
     virtual bool verifyManagedSettings(
         const DesktopManagedSettings& required,
         std::string& error) = 0;
+    virtual bool preflightJournaled(const DesktopGlobalConfigRequirements&,
+                                   fic::rollback::MutationJournal&,
+                                   std::string& error) {
+        error = "desktop backend has no journaled preflight"; return false;
+    }
+    virtual bool reconcileJournaled(const DesktopGlobalConfigRequirements&,
+                                   fic::rollback::MutationJournal&,
+                                   std::string& error) {
+        error = "desktop backend has no journaled reconciliation"; return false;
+    }
+    virtual bool releaseOwnerJournaled(const PolicyRef&, fic::rollback::MutationJournal&,
+                                      std::string& error, bool = false) {
+        error = "desktop backend has no owner release"; return false;
+    }
 };
 
 struct DesktopGlobalBackendResult {
@@ -95,12 +113,18 @@ struct DesktopGlobalReconcileReport {
 class DesktopGlobalConfigReconciler {
 public:
     explicit DesktopGlobalConfigReconciler(
-        std::vector<std::shared_ptr<DesktopSystemBackend>> backends = {});
+        std::vector<std::shared_ptr<DesktopSystemBackend>> backends = {},
+        fic::rollback::MutationJournal* journal = nullptr);
 
     DesktopGlobalReconcileReport reconcile(PolicyRegistry& registry);
+    bool releasePolicy(const PolicyRef& owner, fic::rollback::MutationJournal& journal,
+                       std::string& error, bool preview = false);
+    bool releaseAll(fic::rollback::MutationJournal& journal, std::string& error,
+                    bool preview = false);
 
 private:
     std::vector<std::shared_ptr<DesktopSystemBackend>> backends_;
+    fic::rollback::MutationJournal* journal_;
 };
 
 #endif // FIC_DESKTOP_GLOBAL_CONFIG_RECONCILER_H

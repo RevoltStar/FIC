@@ -631,6 +631,11 @@ MutationRollbackOutcome undoPamProviderManagedFlagMutation(
 MutationRollbackOutcome undoMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record) {
+    if (std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload) ||
+        std::holds_alternative<UndoOwnDesktopArtifact>(record.undo.payload)) {
+        return {record.id, record.resource, RollbackStatus::Unsupported,
+            "DE shared resource requires the joint policy-owner release route; individual record close is refused"};
+    }
     if (const auto* setting =
             std::get_if<UndoRemoveManagedSetting>(&record.undo.payload)) {
         if (record.undo.backend == MutationBackend::Sysctl) {
@@ -825,6 +830,13 @@ std::string rollbackStatusToString(RollbackStatus status) {
 }
 
 RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
+    if (policy.moduleName == "OSS" && policy.submoduleName == "DesktopEnvironment") {
+        if (policy.policyName == "controlled_desktop_environments" ||
+            policy.policyName == "absence_of_uncontrolled_desktop_environments")
+            return RollbackEnrollment::NotEnrolled;
+        if (policy.policyName == "screenlock_timeout") return RollbackEnrollment::Supported;
+        return RollbackEnrollment::Unsupported;
+    }
     if (policy.moduleName == "SYSCTL") {
         return RollbackEnrollment::Supported;
     }
@@ -1335,6 +1347,19 @@ RollbackReport rollbackPolicyBeforeDisable(
         report.message = journalError.empty()
             ? "Mutation journal недоступен"
             : journalError;
+        return report;
+    }
+
+    if (policy.moduleName == "OSS" && policy.submoduleName == "DesktopEnvironment") {
+        RollbackReport report;
+        if (!deps.releaseDesktopOwner) {
+            report.status = RollbackStatus::Unsupported; report.message = "DE joint release route unavailable"; return report;
+        }
+        if (!deps.releaseDesktopOwner(policy, *journal, journalError, true) ||
+            !deps.releaseDesktopOwner(policy, *journal, journalError, false)) {
+            report.status = RollbackStatus::Failed; report.message = journalError; return report;
+        }
+        report.status = RollbackStatus::Success; report.message = "DE policy owner released with surviving owners preserved";
         return report;
     }
 

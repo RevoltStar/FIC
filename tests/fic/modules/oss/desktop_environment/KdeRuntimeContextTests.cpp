@@ -562,7 +562,8 @@ void testKdeBackendUsesLockerSelectedGraph() {
             {"XDG_CONFIG_HOME", "/tmp/locker-config"},
             {"XDG_CONFIG_DIRS", ""}, {"KDE_SKIP_KDERC", "1"}})));
     std::map<std::string, std::string> defaultGraph{{"Lock", "false"}};
-    std::map<std::string, std::string> lockerGraph{{"Lock", "false"}};
+    std::map<std::string, std::string> lockerGraph{{"Lock", "true"}};
+    int writes = 0;
     KdeBackend backend(session(), sessionContext(), topo(KdeSessionTopology::Unique),
         {runtimeResolver,
          [](const std::vector<std::string>& paths) {
@@ -596,19 +597,22 @@ void testKdeBackendUsesLockerSelectedGraph() {
              require(environment.find("PATH") == environment.end() &&
                          environment.find("LD_PRELOAD") == environment.end(),
                      "unsafe variable reached KDE command overrides");
-             if (executable.find("kwriteconfig") != std::string::npos)
+             if (executable.find("kwriteconfig") != std::string::npos) {
+                 ++writes;
                  lockerGraph[arguments[arguments.size() - 2]] = arguments.back();
-             else if (executable.find("kreadconfig") != std::string::npos)
+             } else if (executable.find("kreadconfig") != std::string::npos)
                  result.standardOutput = lockerGraph[arguments.back()] + "\n";
              return result;
          }});
     std::string error;
-    require(backend.writeConfig("kscreenlockerrc", "Daemon", "Lock", "true", error), error);
+    require(!backend.writeConfig("kscreenlockerrc", "Daemon", "Lock", "false", error) &&
+            writes == 0 && error.find("native conditional write/ownership-safe rollback is not proven") != std::string::npos,
+            "KDE writer ran without conditional mutation authority");
     std::string value;
     require(backend.readConfig("kscreenlockerrc", "Daemon", "Lock", value, error), error);
     require(value == "true" && lockerGraph["Lock"] == "true" &&
                 defaultGraph["Lock"] == "false",
-            "KDE backend changed the wrong KConfig graph");
+            "KDE read selected the wrong graph or the refused write modified state");
     require(backend.callDbusMethod("org.kde.screensaver", "/ScreenSaver",
                 "org.kde.screensaver", "configure", error), error);
 }

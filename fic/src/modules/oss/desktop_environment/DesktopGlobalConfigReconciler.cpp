@@ -1,5 +1,9 @@
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.h"
+#include <fic/policy/PolicyDependencyConditionEvaluator.h>
+#include "rollback/DaemonMutationJournal.h"
+#include "rollback/ScopeTransition.h"
+#include <algorithm>
 
 #include <set>
 #include <utility>
@@ -95,28 +99,10 @@ std::string DesktopGlobalReconcileReport::diagnostic() const
     return result;
 }
 
-namespace {
-bool reconcileBackend(DesktopSystemBackend& backend,
-                      const DesktopManagedSettings& required,
-                      std::string& error)
-{
-    std::string detail;
-    if (!backend.ensureManagedSettings(required, detail)) {
-        error = "ensureManagedSettings failed: " + detail;
-        return false;
-    }
-    detail.clear();
-    if (!backend.verifyManagedSettings(required, detail)) {
-        error = "verifyManagedSettings failed: " + detail;
-        return false;
-    }
-    return true;
-}
-} // namespace
-
 DesktopGlobalConfigReconciler::DesktopGlobalConfigReconciler(
-    std::vector<std::shared_ptr<DesktopSystemBackend>> backends)
-    : backends_(std::move(backends))
+    std::vector<std::shared_ptr<DesktopSystemBackend>> backends,
+    fic::rollback::MutationJournal* journal)
+    : backends_(std::move(backends)), journal_(journal)
 {
 }
 
@@ -124,11 +110,53 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
     PolicyRegistry& registry)
 {
     DesktopGlobalReconcileReport report;
+    fic::rollback::MutationJournal* journal = nullptr;
+    std::vector<std::string> target;
+    bool executingTransition = false;
     auto failStageA = [&](std::string diagnostic) {
+        if (journal && journal->usable() && !executingTransition) {
+            std::string checkpointError;
+            const auto fail = [&](std::string& error) { error = diagnostic; return false; };
+            const auto unused = [](std::string&) { return true; };
+            (void)fic::rollback::ScopeTransition(*journal).reconcile(target, fail, unused, unused, unused, checkpointError);
+            if (checkpointError != diagnostic && !checkpointError.empty()) diagnostic += "; " + checkpointError;
+        }
         report.requirementsValid = false;
         report.stageADiagnostic = std::move(diagnostic);
         return report;
     };
+    const PolicyRef scopeRef{"OSS", "DesktopEnvironment", "controlled_desktop_environments"};
+    Policy* scopePolicy = registry.findPolicy(scopeRef);
+    auto* scope = dynamic_cast<ControlledDesktopEnvironmentScope*>(scopePolicy);
+    DesktopEnvironmentSet configured;
+    std::string scopeError;
+    if (!scopePolicy || !scopePolicy->isEnabled()) {
+        // A disabled scope never authorizes enforcement or release. With no
+        // enabled consumer it is an inert configuration, not a transition.
+        for (const auto& ref : registry.policyRefs()) {
+            Policy* policy = registry.findPolicy(ref);
+            if (!policy->isEnabled()) continue;
+            for (const auto& dependency : policy->dependencies())
+                if (dependency.policy == scopeRef && dependency.strength == PolicyDependencyStrength::Required)
+                    return failStageA("Required dependency is disabled: " + formatPolicyRef(scopeRef));
+        }
+        return report;
+    }
+    if (!scope || !scope->controlledDesktopEnvironments(configured, scopeError))
+        return failStageA("Invalid configured DE scope: " + scopeError);
+    journal = journal_ ? journal_ : fic::rollback::DaemonMutationJournal::instance().tryGet(scopeError);
+    if (!journal) return failStageA("DE scope journal unavailable: " + scopeError);
+    for (const auto desktop : configured) target.emplace_back(DesktopEnvironmentBackend::kindName(desktop));
+    std::sort(target.begin(), target.end());
+    std::map<std::string, AtomicTargetState> configurationVersions;
+    const auto rememberIntent = [&](Policy& policy) {
+        std::string path;
+        AtomicTargetState version;
+        if (!policy.captureConfigurationVersion(path, version, scopeError)) return false;
+        const auto [entry, inserted] = configurationVersions.emplace(path, version);
+        return inserted || AtomicFileWriter::targetStateMatches(path, entry->second, &scopeError);
+    };
+    if (!rememberIntent(*scopePolicy)) return failStageA(scopeError);
     std::map<std::string, DesktopGlobalConfigRequirements> desiredByBackend;
     std::map<std::string, DesktopSystemBackend*> backendByName;
     std::map<DesktopEnvironmentKind, DesktopSystemBackend*> backendByDesktop;
@@ -159,6 +187,24 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         const bool hasCapability = capablePolicies.count(policy) != 0;
         if (!hasCapability && contributor == nullptr) continue;
         if (!policy->isEnabled()) continue;
+        if (!rememberIntent(*policy)) return failStageA(scopeError);
+        // This entrypoint runs before the planner: it must prove Required
+        // dependencies before invoking a contributor or touching a backend.
+        for (const auto& dependency : policy->dependencies()) {
+            if (dependency.strength != PolicyDependencyStrength::Required)
+                continue;
+            if (!dependencyConditionMatches(*policy, dependency.condition))
+                continue;
+            Policy* prerequisite = registry.findPolicy(dependency.policy);
+            std::string prerequisiteError;
+            if (prerequisite == nullptr || !prerequisite->isEnabled() ||
+                (dependency.policy != scopeRef) ||
+                dynamic_cast<ControlledDesktopEnvironmentScope*>(prerequisite) == nullptr) {
+                return failStageA("Required dependency was not applied: " +
+                    formatPolicyRef(dependency.policy) +
+                    (prerequisiteError.empty() ? "" : "; " + prerequisiteError));
+            }
+        }
         if (hasCapability != (contributor != nullptr)) {
             return failStageA(
                 "global desktop policy capability/contributor mismatch: " +
@@ -241,11 +287,19 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
             policy->moduleName, policy->submoduleName, policy->policyName};
         for (const DesktopEnvironmentKind desktop : desktops) {
             std::string applicabilityError;
-            if (sessionAware->sessionApplicability(desktop, applicabilityError) !=
-                    SessionApplicability::Applicable ||
-                sessionAware->enforcementMode(desktop) !=
-                    EnforcementMode::MandatoryGlobal) {
+            const auto applicable = sessionAware->sessionApplicability(desktop, applicabilityError);
+            if (!applicabilityError.empty()) return failStageA(applicabilityError);
+            if (!configured.count(desktop) || applicable == SessionApplicability::NotApplicable) {
                 continue;
+            }
+            // Session-only setters currently have no native conditional
+            // mutation contract. Refuse BEFORE releasing any global state.
+            // They cannot grant a successful scope checkpoint, even when an
+            // agent is temporarily absent or a setting happens to match.
+            if (applicable == SessionApplicability::Unsupported ||
+                sessionAware->enforcementMode(desktop) != EnforcementMode::MandatoryGlobal) {
+                return failStageA("DE transition cannot prove ownership-safe session enforcement: " +
+                    formatPolicyRef(owner) + "/" + DesktopEnvironmentBackend::kindName(desktop));
             }
             if (!report.resultFor(owner, desktop).hasRequirement) {
                 return failStageA(
@@ -256,20 +310,61 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         }
     }
 
-    // Stage B: independently ensure every backend with active requirements.
-    for (const auto& backend : backends_) {
-        const std::string name = backend->backendName();
-        const auto& desired = desiredByBackend.at(name);
-        if (desired.empty()) continue;
-        auto& backendResult = report.backends.at(name);
-        backendResult.attempted = true;
-        DesktopManagedSettings required;
-        for (const auto& [key, value] : desired) {
-            required.emplace(key, value.value);
+    // Only this coordinator authorizes a pending target; ordinary policy and
+    // session entrypoints still require a committed checkpoint. Complete all
+    // preflights before any protected resource changes, preserving owners.
+    const auto preflight = [&](std::string& error) {
+        for (const auto& backend : backends_) {
+            auto& result = report.backends.at(backend->backendName());
+            if (!desiredByBackend.at(backend->backendName()).empty() &&
+                !backend->verifiedEnforcementAvailable(result.diagnostic)) {
+                error = backend->backendName() + ": " + result.diagnostic; return false;
+            }
+            if (!backend->preflightJournaled(desiredByBackend.at(backend->backendName()), *journal, result.diagnostic)) {
+                error = backend->backendName() + ": " + result.diagnostic; return false;
+            }
         }
-        backendResult.verified =
-            reconcileBackend(*backend, required, backendResult.diagnostic);
-    }
+        return true;
+    };
+    const auto reconcile = [&](bool nonempty, std::string& error) {
+        for (const auto& backend : backends_) {
+            const auto& desired = desiredByBackend.at(backend->backendName());
+            if (desired.empty() == nonempty) continue;
+            auto& result = report.backends.at(backend->backendName());
+            result.attempted = true;
+            if (!backend->reconcileJournaled(desired, *journal, result.diagnostic)) {
+                error = backend->backendName() + ": " + result.diagnostic; return false;
+            }
+        }
+        return true;
+    };
+    const auto verify = [&](std::string& error) {
+        for (const auto& [path, version] : configurationVersions)
+            if (!AtomicFileWriter::targetStateMatches(path, version, &error)) {
+                error = "configured DE intent changed during transition: " + error; return false;
+            }
+        DesktopEnvironmentSet current;
+        if (!scopePolicy->isEnabled() || !scope->controlledDesktopEnvironments(current, error) || current != configured) {
+            error = "configured DE scope changed during transition"; return false;
+        }
+        for (const auto& backend : backends_) {
+            auto& result = report.backends.at(backend->backendName());
+            const auto& desired = desiredByBackend.at(backend->backendName());
+            DesktopManagedSettings values;
+            for (const auto& [key, value] : desired) values.emplace(key, value.value);
+            if (!backend->preflightJournaled(desired, *journal, result.diagnostic) ||
+                !backend->verifyManagedSettings(values, result.diagnostic)) {
+                error = backend->backendName() + ": " + result.diagnostic; return false;
+            }
+            result.verified = true;
+        }
+        return true;
+    };
+    executingTransition = true;
+    if (!fic::rollback::ScopeTransition(*journal).reconcile(target, preflight,
+        [&](std::string& error) { return reconcile(true, error); },
+        [&](std::string& error) { return reconcile(false, error); }, verify, scopeError))
+        return failStageA("DE scope transition failed: " + scopeError);
     for (auto& [owner, desktopsForPolicy] : report.policies) {
         (void)owner;
         for (auto& [desktop, policyResult] : desktopsForPolicy) {
@@ -289,4 +384,28 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         }
     }
     return report;
+}
+
+bool DesktopGlobalConfigReconciler::releasePolicy(const PolicyRef& owner,
+    fic::rollback::MutationJournal& journal, std::string& error, bool preview) {
+    for (const auto& backend : backends_)
+        if (!backend || !backend->releaseOwnerJournaled(owner, journal, error, true)) return false;
+    if (preview) return true;
+    if (!fic::rollback::ScopeTransition(journal).invalidate("DE policy owner release requires scope re-verification", error)) return false;
+    for (const auto& backend : backends_)
+        if (!backend->releaseOwnerJournaled(owner, journal, error)) return false;
+    return true;
+}
+
+bool DesktopGlobalConfigReconciler::releaseAll(fic::rollback::MutationJournal& journal,
+    std::string& error, bool preview) {
+    for (const auto& backend : backends_)
+        if (!backend || !backend->preflightJournaled({}, journal, error)) return false;
+    if (preview) return true;
+    if (!fic::rollback::ScopeTransition(journal).invalidate("DE package ownership release", error)) return false;
+    for (const auto& backend : backends_)
+        if (!backend->reconcileJournaled({}, journal, error)) return false;
+    for (const auto& backend : backends_)
+        if (!backend->preflightJournaled({}, journal, error)) return false;
+    return true;
 }

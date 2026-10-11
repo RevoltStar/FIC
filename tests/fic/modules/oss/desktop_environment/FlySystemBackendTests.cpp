@@ -1,4 +1,7 @@
 #include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
+#include "rollback/DaemonMutationJournal.h"
+#include <fic/core/fs/AtomicFileWriter.h>
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -54,6 +57,8 @@ struct Fixture {
             root / "usr/share/fly-wm/theme.master/themerc";
         options.trustedOwner = ::getuid();
         options.trustedGroup = ::getgid();
+        options.lockPath = root / "desktop-config.lock";
+        fic::rollback::DaemonMutationJournal::instance().setOverridePath(root / "mutations.json");
         if (createThemeMaster) {
             fs::create_directories(options.configPath.parent_path());
             for (fs::path current = root / "usr"; current != root;
@@ -68,28 +73,35 @@ struct Fixture {
             ::chmod((root / "usr/share/fly-wm").c_str(), 0755);
         }
     }
-    ~Fixture() { std::error_code ignored; fs::remove_all(root, ignored); }
+    ~Fixture() {
+        fic::rollback::DaemonMutationJournal::instance().resetOverride();
+        std::error_code ignored; fs::remove_all(root, ignored);
+    }
     FlySystemBackend backend() { return FlySystemBackend(options); }
     inline static unsigned long sequence = 0;
 };
 
-void testInitialCreationAndVerification() {
+void testInstalledFileAndVerification() {
     Fixture fixture;
     auto backend = fixture.backend();
     std::string error;
     require(backend.desktop() == DesktopEnvironmentKind::Fly &&
             backend.backendName() == "fly", "typed backend identity is wrong");
+    require(!backend.ensureManagedSettings(requirements(), error) &&
+            !fs::exists(fixture.options.configPath),
+            "missing installed FLY master was fabricated");
+    write(fixture.options.configPath, "[Variables]\nScreenSaverDelay=999\n");
     require(backend.ensureManagedSettings(requirements(), error), error);
-    require(read(fixture.options.configPath) ==
-        "[Variables]\nScreenSaverDelay=300\n",
-        "initial FLY master state is wrong");
+    require(read(fixture.options.configPath).find("ScreenSaverDelay=300\n") != std::string::npos &&
+            read(fixture.options.configPath).find("# FIC-DE ") != std::string::npos,
+            "production ensure did not install journal-backed ownership");
     write(fixture.root / "home/user/.fly/theme/current.themerc",
           "[Variables]\nScreenSaver=evil\nScreenSaverDBUS=false\n"
           "ScreenSaverDelay=99999\n");
     require(backend.verifyManagedSettings(requirements(), error), error);
 }
 
-void testMergeCrLfAndIdempotence() {
+void testPreserveCrLfAndIdempotence() {
     Fixture fixture;
     write(fixture.options.configPath,
           "# admin\r\n[Variables]\r\nForeignSetting=keep\r\n"
@@ -100,14 +112,14 @@ void testMergeCrLfAndIdempotence() {
     std::string error;
     require(backend.ensureManagedSettings(requirements(), error), error);
     const std::string merged = read(fixture.options.configPath);
-    require(merged.find("# admin\n") != std::string::npos &&
-            merged.find("ForeignSetting=keep\n") != std::string::npos &&
-            merged.find("ScreenSaver=internal fly-modern-locker\n") !=
+    require(merged.find("# admin\r\n") != std::string::npos &&
+            merged.find("ForeignSetting=keep\r\n") != std::string::npos &&
+            merged.find("ScreenSaver=internal fly-modern-locker\r\n") !=
                 std::string::npos &&
-            merged.find("ScreenSaverDBUS=false\n") != std::string::npos &&
+            merged.find("ScreenSaverDBUS=false\r\n") != std::string::npos &&
             merged.find("ScreenSaverDelay=300\n") != std::string::npos &&
-            merged.find("[Other]\nFoo=Bar\n") != std::string::npos,
-            "FLY merge lost or failed to canonicalize state");
+            merged.find("[Other]\r\nFoo=Bar\r\n") != std::string::npos,
+            "FLY apply rewrote foreign line endings or lost data");
     require(backend.ensureManagedSettings(requirements(), error), error);
     require(read(fixture.options.configPath) == merged,
             "idempotent ensure rewrote FLY master state");
@@ -224,14 +236,222 @@ void testEmptyRequirementsDoNotTouchFilesystem() {
             !fs::exists(fixture.root / "missing"),
             "empty FLY requirements touched the filesystem");
 }
+
+DesktopGlobalConfigRequirements ownedRequirements(int seconds = 300, bool shared = false) {
+    std::set<PolicyRef> owners{{"OSS", "DesktopEnvironment", "screenlock_timeout"}};
+    if (shared) owners.insert({"OSS", "DesktopEnvironment", "disable_kde_lock_screen_media_controls"});
+    return {{{"themerc/Variables/ScreenSaverDelay"}, {std::to_string(seconds), owners}}};
+}
+
+fic::rollback::MutationRecord activeFly(const fic::rollback::MutationJournal& journal) {
+    for (const auto& record : journal.records())
+        if (record.isActive() && record.undo.backend == fic::rollback::MutationBackend::Desktop)
+            return record;
+    throw std::runtime_error("active FLY record missing");
+}
+
+void testJournaledExactDeltaAndSharedOwners() {
+    Fixture fixture;
+    const std::string original = "# admin\r\n[Variables]\r\nForeign=keep\r\n"
+        "  ScreenSaverDelay = 99999\r\n[Other]\r\nTail=no-newline";
+    write(fixture.options.configPath, original);
+    auto backend = fixture.backend();
+    fic::rollback::MutationJournal journal(fixture.root / "mutations.json");
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+    require(backend.preflightJournaled(ownedRequirements(300, true), journal, error), error);
+    require(read(fixture.options.configPath) == original && journal.records().empty(),
+            "preflight touched the shared config or ownership journal");
+    require(backend.reconcileJournaled(ownedRequirements(300, true), journal, error), error);
+    const auto applied = activeFly(journal);
+    const auto& scalar = std::get<fic::rollback::UndoRestoreDesktopScalar>(applied.undo.payload);
+    require(scalar.originalLine == "  ScreenSaverDelay = 99999\r\n" &&
+            scalar.owners.size() == 2 && scalar.hadApplied,
+            "scalar journal lost original bytes or shared ownership");
+    require(read(fixture.root / "mutations.json").find("Foreign=keep") == std::string::npos,
+            "journal captured a whole foreign file");
+    const std::string once = read(fixture.options.configPath);
+    require(backend.reconcileJournaled(ownedRequirements(300), journal, error), error);
+    require(read(fixture.options.configPath) == once &&
+            std::get<fic::rollback::UndoRestoreDesktopScalar>(activeFly(journal).undo.payload).owners.size() == 1,
+            "removal of one owner released a still-required physical key");
+    require(backend.reconcileJournaled(ownedRequirements(600), journal, error), error);
+    require(activeFly(journal).id == applied.id,
+            "value refresh lost the active physical mutation identity");
+    const std::string refreshed = read(fixture.options.configPath);
+    require(!backend.releaseJournaled(applied, journal, error) &&
+            read(fixture.options.configPath) == refreshed,
+            "stale release request removed a refreshed requirement with the same mutation ID");
+    // A foreign edit to another parameter is deliberately preserved.
+    std::string edited = read(fixture.options.configPath);
+    edited.replace(edited.find("Foreign=keep"), std::string("Foreign=keep").size(), "Foreign=changed");
+    write(fixture.options.configPath, edited);
+    require(backend.reconcileJournaled({}, journal, error), error);
+    std::string expected = original;
+    expected.replace(expected.find("Foreign=keep"), std::string("Foreign=keep").size(), "Foreign=changed");
+    require(read(fixture.options.configPath) == expected,
+            "rollback did not restore exact scalar bytes or overwrote foreign data");
+    require(backend.reconcileJournaled({}, journal, error), error);
+}
+
+void testJournaledPolicyOwnerReleaseAfterRestart() {
+    Fixture fixture;
+    const std::string original = "[Variables]\r\nScreenSaverDelay=999\r\nForeign=keep\r\n";
+    write(fixture.options.configPath, original);
+    auto backend = fixture.backend();
+    const auto path = fixture.root / "mutations.json";
+    fic::rollback::MutationJournal journal(path);
+    std::string error; require(journal.initializeOrLoad(error), error);
+    require(backend.reconcileJournaled(ownedRequirements(300, true), journal, error), error);
+    const auto before = read(fixture.options.configPath);
+    const auto id = activeFly(journal).id;
+    require(!backend.releaseOwnerJournaled({"OSS", "DesktopEnvironment", "unknown"}, journal, error) &&
+            read(fixture.options.configPath) == before, "unknown FLY owner acquired release authority");
+    require(backend.releaseOwnerJournaled({"OSS", "DesktopEnvironment", "screenlock_timeout"}, journal, error), error);
+    const auto retained = activeFly(journal);
+    const auto& scalar = std::get<fic::rollback::UndoRestoreDesktopScalar>(retained.undo.payload);
+    require(activeFly(journal).id == id && scalar.owners ==
+            std::vector<PolicyRef>{{"OSS", "DesktopEnvironment", "disable_kde_lock_screen_media_controls"}} &&
+            read(fixture.options.configPath) == before,
+            "primary policy release discarded shared FLY ownership");
+    fic::rollback::MutationJournal restarted(path); require(restarted.initializeOrLoad(error), error);
+    require(backend.releaseOwnerJournaled({"OSS", "DesktopEnvironment", "disable_kde_lock_screen_media_controls"},
+            restarted, error), error);
+    require(read(fixture.options.configPath) == original, "last-owner FLY release lost exact inverse after restart");
+    require(backend.releaseOwnerJournaled({"OSS", "DesktopEnvironment", "screenlock_timeout"}, restarted, error), error);
+    require(read(fixture.options.configPath) == original, "repeated FLY policy release reconstructed state");
+}
+
+void testJournaledInsertionAndOwnershipConflicts() {
+    Fixture fixture;
+    const std::string original = "[Variables]\nForeign=keep\n[Other]\nTail=keep\n";
+    write(fixture.options.configPath, original);
+    auto backend = fixture.backend();
+    fic::rollback::MutationJournal journal(fixture.root / "mutations.json");
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+    require(backend.reconcileJournaled(ownedRequirements(), journal, error), error);
+    const std::string installed = read(fixture.options.configPath);
+    const auto mutation = activeFly(journal);
+    std::string foreign = installed;
+    foreign.replace(foreign.find("ScreenSaverDelay=300"),
+                    std::string("ScreenSaverDelay=300").size(), "ScreenSaverDelay=600");
+    write(fixture.options.configPath, foreign);
+    require(!backend.reconcileJournaled({}, journal, error) && read(fixture.options.configPath) == foreign,
+            "rollback overwrote a foreign applied-scalar modification");
+    std::string aba = installed;
+    const auto idOffset = aba.find("# FIC-DE ") + std::string("# FIC-DE ").size();
+    aba.replace(idOffset, std::to_string(mutation.id).size(), std::to_string(mutation.id + 1));
+    write(fixture.options.configPath, aba);
+    require(!backend.preflightJournaled({}, journal, error), "mutation ID ABA accepted");
+    write(fixture.options.configPath, original);
+    require(!backend.preflightJournaled(ownedRequirements(), journal, error),
+            "missing Applied marker silently adopted the baseline");
+    write(fixture.options.configPath, installed);
+    require(backend.reconcileJournaled({}, journal, error), error);
+    require(read(fixture.options.configPath) == original, "inserted scalar was not removed exactly");
+    write(fixture.options.configPath, installed);
+    require(!backend.preflightJournaled({}, journal, error), "resolved journal adopted an orphan block");
+}
+
+void testJournaledCrashRecovery() {
+    Fixture fixture;
+    const std::string original = "[Variables]\nScreenSaverDelay=999\nForeign=keep\n";
+    write(fixture.options.configPath, original);
+    auto backend = fixture.backend();
+    const fs::path journalPath = fixture.root / "mutations.json";
+    fic::rollback::MutationJournal journal(journalPath);
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+    struct ResetHooks {
+        ~ResetHooks() {
+            AtomicFileWriter::setPreInstallHookForTests(nullptr);
+            AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+        }
+    } reset;
+    AtomicFileWriter::setPreInstallHookForTests([&](const std::string& path) {
+        if (path == fixture.options.configPath.string()) {
+            AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& target) {
+                return target != journalPath.string();
+            });
+        }
+    });
+    require(!backend.reconcileJournaled(ownedRequirements(), journal, error),
+            "post-install journal durability failure reported success");
+    require(read(fixture.options.configPath).find("ScreenSaverDelay=300") != std::string::npos &&
+            !journal.usable(), "fault did not leave the physical change and unresolved journal");
+    AtomicFileWriter::setPreInstallHookForTests(nullptr);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    fic::rollback::MutationJournal restarted(journalPath);
+    require(restarted.initializeOrLoad(error), error);
+    require(backend.reconcileJournaled(ownedRequirements(), restarted, error), error);
+    require(std::get<fic::rollback::UndoRestoreDesktopScalar>(activeFly(restarted).undo.payload).originalLine ==
+            "ScreenSaverDelay=999\n", "restart replaced the inverse delta with the already applied value");
+    AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& target) {
+        return target != fixture.options.configPath.string();
+    });
+    require(!backend.reconcileJournaled({}, restarted, error),
+            "release rename without durability reported success");
+    require(read(fixture.options.configPath) == original && activeFly(restarted).isActive(),
+            "release failure lost the original/provenance");
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    fic::rollback::MutationJournal afterRelease(journalPath);
+    require(afterRelease.initializeOrLoad(error), error);
+    require(backend.reconcileJournaled({}, afterRelease, error), error);
+    require(read(fixture.options.configPath) == original,
+            "release retry reconstructed the removed FIC setting");
+}
+
+void testJournaledCasAndMalformedProvenance() {
+    Fixture fixture;
+    const std::string original = "[Variables]\nScreenSaverDelay=999\nForeign=keep\n";
+    write(fixture.options.configPath, original);
+    auto backend = fixture.backend();
+    fic::rollback::MutationJournal journal(fixture.root / "mutations.json");
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+    AtomicFileWriter::setPreInstallHookForTests([&](const std::string& path) {
+        if (path == fixture.options.configPath.string()) write(path, original + "# concurrent admin\n");
+    });
+    struct Reset { ~Reset() { AtomicFileWriter::setPreInstallHookForTests(nullptr); } } reset;
+    require(!backend.reconcileJournaled(ownedRequirements(), journal, error),
+            "CAS overwrote a concurrent file change");
+    require(read(fixture.options.configPath) == original + "# concurrent admin\n",
+            "CAS rejection did not preserve the concurrent writer");
+    AtomicFileWriter::setPreInstallHookForTests(nullptr);
+    require(backend.reconcileJournaled(ownedRequirements(), journal, error), error);
+    require(read(fixture.options.configPath).find("# concurrent admin\n") != std::string::npos,
+            "retry after CAS rejection lost the concurrent foreign change");
+    auto bad = activeFly(journal);
+    fic::rollback::MutationId id = 0;
+    std::get<fic::rollback::UndoRestoreDesktopScalar>(bad.undo.payload).originalLine = "ScreenSaverDelay=300\n";
+    require(!journal.prepareMutation(bad, id, error), "refresh changed the original inverse delta");
+    bad = activeFly(journal);
+    bad.resource = "../../etc/fstab";
+    require(!journal.prepareMutation(bad, id, error), "desktop path traversal accepted");
+    bad = activeFly(journal);
+    bad.undo.backend = fic::rollback::MutationBackend::Sysctl;
+    require(!journal.prepareMutation(bad, id, error), "desktop payload accepted under another backend");
+    auto doc = nlohmann::json::parse(read(fixture.root / "mutations.json"));
+    doc["records"][0]["undo"]["original_line"] = "ScreenSaverDelay=999\n[Injected]\nKey=evil\n";
+    write(fixture.root / "mutations.json", doc.dump());
+    ::chmod((fixture.root / "mutations.json").c_str(), 0600);
+    fic::rollback::MutationJournal corrupt(fixture.root / "mutations.json");
+    require(!corrupt.initializeOrLoad(error), "multiline foreign-file inverse delta loaded");
+}
 } // namespace
 
 int main() {
-    testInitialCreationAndVerification();
-    testMergeCrLfAndIdempotence();
+    testInstalledFileAndVerification();
+    testPreserveCrLfAndIdempotence();
     testMalformedAndUnknownFailBeforeMutation();
     testSymlinkAndUnsafeAncestorAreRejected();
     testMissingDirectoryAndVerificationFailures();
     testEmptyRequirementsDoNotTouchFilesystem();
+    testJournaledExactDeltaAndSharedOwners();
+    testJournaledPolicyOwnerReleaseAfterRestart();
+    testJournaledInsertionAndOwnershipConflicts();
+    testJournaledCrashRecovery();
+    testJournaledCasAndMalformedProvenance();
     return 0;
 }

@@ -63,6 +63,8 @@ if(Python3_Interpreter_FOUND)
                 ${CMAKE_SOURCE_DIR}
                 $<TARGET_FILE:pam_incident_access_gate_verifier_tests>
     )
+    add_test(NAME desktop_package_release_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/integration/desktop/DesktopPackageReleaseChecks.py ${CMAKE_SOURCE_DIR})
     add_test(
         NAME incident_state_lifecycle_static_checks
         COMMAND ${Python3_EXECUTABLE}
@@ -288,6 +290,13 @@ target_include_directories(gsettings_value_parser_tests PRIVATE
 add_test(NAME gsettings_value_parser_tests COMMAND gsettings_value_parser_tests)
 
 add_executable(controlled_desktop_environments_tests
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/OSS_controlled_desktop_environments.cpp
     fic/modules/oss/desktop_environment/ControlledDesktopEnvironmentsTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/ControlledDesktopEnvironmentsPolicyTypeValue.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
@@ -328,6 +337,10 @@ target_link_libraries(session_aware_policy_tests PRIVATE fic-policy fic-core)
 add_test(NAME session_aware_policy_tests COMMAND session_aware_policy_tests)
 
 add_executable(desktop_global_config_reconciler_tests
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
     fic/modules/oss/desktop_environment/DesktopGlobalConfigReconcilerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
@@ -343,8 +356,11 @@ add_test(NAME desktop_global_config_reconciler_tests
          COMMAND desktop_global_config_reconciler_tests)
 
 add_executable(gnome_system_backend_tests
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     fic/modules/oss/desktop_environment/GnomeSystemBackendTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(gnome_system_backend_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -352,16 +368,34 @@ target_include_directories(gnome_system_backend_tests PRIVATE
 target_link_libraries(gnome_system_backend_tests PRIVATE fic-core fic-policy fic-platform)
 add_test(NAME gnome_system_backend_tests COMMAND gnome_system_backend_tests)
 
+# Explicit disposable-container probe; never part of ordinary host CTest.
+add_executable(gnome_journal_native_probe
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    integration/desktop/gnome-journal-native-driver.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+)
+target_include_directories(gnome_journal_native_probe PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(gnome_journal_native_probe PRIVATE fic-core fic-policy fic-platform)
+
 add_executable(fly_system_backend_tests
     fic/modules/oss/desktop_environment/FlySystemBackendTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/FlySystemBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(fly_system_backend_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
-target_link_libraries(fly_system_backend_tests PRIVATE fic-policy)
+target_link_libraries(fly_system_backend_tests PRIVATE fic-policy fic-core)
 add_test(NAME fly_system_backend_tests COMMAND fly_system_backend_tests)
 add_executable(screenlock_timeout_global_tests
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
     fic/modules/oss/desktop_environment/ScreenlockTimeoutGlobalTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopEnvironment.cpp
@@ -1021,6 +1055,7 @@ add_test(NAME pam_provider_managed_flag_executor_tests
          COMMAND pam_provider_managed_flag_executor_tests)
 
 add_executable(mutation_journal_tests
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     fic/rollback/MutationJournalTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp

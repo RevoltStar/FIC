@@ -15,15 +15,13 @@ namespace gnome_screen_lock_timeout {
 // true, lock-delay == 0 и disable-lock-screen == false. Последний ключ обязателен:
 // org.gnome.desktop.lockdown disable-lock-screen=true не даёт GNOME Shell
 // заблокировать экран, поэтому state matching учитывает все четыре значения.
-// Логика — шаблон над бэкендом с интерфейсом GnomeBackend, чтобы текущая-сессия
-// convergence был проверяем без живой графической сессии.
+// Runtime is read-only: the journaled system dconf state owns enforcement.
+// Writing a user's overrides here would introduce separate unproven ownership.
 template<typename Backend>
 bool applyTimeout(const Backend& backend, int timeoutMinutes,
                   std::string& error) {
     const std::uint32_t expectedTimeoutSeconds =
         static_cast<std::uint32_t>(timeoutMinutes) * 60U;
-    const std::string timeoutSeconds =
-        "uint32 " + std::to_string(expectedTimeoutSeconds);
     const auto readState = [&](bool& matches, std::string&) {
         std::uint32_t idleDelay = 0, lockDelay = 0;
         std::string lockEnabled, disableLockScreen;
@@ -38,15 +36,14 @@ bool applyTimeout(const Backend& backend, int timeoutMinutes,
             idleDelay == expectedTimeoutSeconds && lockDelay == 0U;
         return true;
     };
-    const auto writeState = [&](std::string&) {
-        return backend.setSetting("org.gnome.desktop.session", "idle-delay", timeoutSeconds, error) &&
-            backend.setSetting("org.gnome.desktop.screensaver", "lock-enabled", "true", error) &&
-            backend.setSetting("org.gnome.desktop.screensaver", "lock-delay", "uint32 0", error) &&
-            backend.setSetting("org.gnome.desktop.lockdown", "disable-lock-screen", "false", error);
-    };
-    return desktop_policy::reconcileEffectiveSetting(
-        readState, writeState,
-        "GNOME screen lock settings did not reach the requested state", error);
+    bool matches = false;
+    if (!readState(matches, error)) return false;
+    if (!matches) {
+        error = "GNOME runtime does not reflect the protected system dconf state; user overrides were not changed";
+        return false;
+    }
+    error.clear();
+    return true;
 }
 
 } // namespace gnome_screen_lock_timeout

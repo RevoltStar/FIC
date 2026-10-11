@@ -22,6 +22,8 @@ OSS_absence_of_uncontrolled_desktop_environments(
     : scope_(scope), inventory_(std::move(inventory))
 {
     policyName = "absence_of_uncontrolled_desktop_environments";
+    addRequiredDependency({"OSS", "DesktopEnvironment",
+                           "controlled_desktop_environments"});
     policyTypeValue = std::make_unique<FixedPolicyTypeValue>("ENABLE");
 }
 
@@ -47,6 +49,7 @@ evaluateSessionInventory(
     std::string& error)
 {
     DesktopEnvironmentSet controlled;
+    if (!scope_.readyForApply(error)) return false;
     if (!scope_.controlledDesktopEnvironments(controlled, error)) return false;
     if (controlled.empty()) {
         error = "controlled_desktop_environments is empty (UNCONFIGURED)";

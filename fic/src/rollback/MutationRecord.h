@@ -36,7 +36,9 @@ enum class MutationBackend {
     Kerberos,
     Pam,
     UserCreation,
-    IdentityLoginDefs
+    IdentityLoginDefs,
+    Scope,
+    Desktop
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -287,6 +289,48 @@ struct UndoRemovePamProviderManagedFlag {
     std::vector<std::string> previousSuppressionIds;
 };
 
+// Logical checkpoint in the SAME durable journal as physical ownership.
+// Applied means targetScope was verified; Prepared/RollbackFailed retain
+// committedScope as the last successful checkpoint, never an effective-state
+// claim. This payload grants no authority over any physical resource.
+struct ScopeTransitionCheckpoint {
+    std::vector<std::string> committedScope;
+    std::vector<std::string> targetScope;
+    std::string phase = "pending";
+};
+
+// A scalar inverse delta, never a snapshot of the containing shared file.
+// Paths are intentionally absent: routing comes from the trusted backend.
+// The physical marker is derived from MutationRecord::id, not from input.
+struct UndoRestoreDesktopScalar {
+    std::string desktop;
+    std::string setting;
+    std::optional<std::string> originalLine;
+    std::string appliedLine;
+    std::optional<std::string> previousAppliedLine;
+    std::vector<PolicyRef> owners;
+    bool hadApplied = false;
+    std::string phase = "ensure";
+    // GNOME key + lock form one protected scalar. A foreign original lock
+    // is restored exactly; its existence never authorizes deleting it.
+    std::optional<std::string> originalLockLine;
+    // Digests authorize retry of a stale/partially published native cache.
+    // Rebuild always derives bytes from current sources, never restores a
+    // whole compiled database snapshot. Empty for non-GNOME scalars.
+    std::string compiledBeforeDigest;
+    std::string compiledTargetDigest;
+};
+
+// Creation proof for a fixed GNOME resource route. No arbitrary path and no
+// foreign file snapshot. Physical markers bind the artifact to the journal ID.
+struct UndoOwnDesktopArtifact {
+    std::string kind;
+    std::string phase = "ensure";
+    bool hadApplied = false;
+    std::uint64_t device = 0;
+    std::uint64_t inode = 0;
+};
+
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoReleaseSudoScopedDefaults,
@@ -300,7 +344,10 @@ using UndoPayload = std::variant<
     UndoRemovePamProviderManagedEntry,
     UndoRemovePamProviderManagedFlag,
     UndoOwnPamProviderContainer,
-    UndoRemoveIdentityLoginDefsManagedPolicy>;
+    UndoRemoveIdentityLoginDefsManagedPolicy,
+    ScopeTransitionCheckpoint,
+    UndoRestoreDesktopScalar,
+    UndoOwnDesktopArtifact>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

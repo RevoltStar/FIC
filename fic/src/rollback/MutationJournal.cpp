@@ -158,6 +158,139 @@ std::function<void()>& beforeFinalJournalProofHook() {
     return hook;
 }
 
+bool validScopeCheckpoint(const ScopeTransitionCheckpoint& checkpoint,
+                          std::string& error) {
+    const std::set<std::string> known{"FLY", "GNOME", "KDE", "XFCE", "LXQT"};
+    const auto valid = [&](const std::vector<std::string>& scope) {
+        return std::is_sorted(scope.begin(), scope.end()) &&
+            std::adjacent_find(scope.begin(), scope.end()) == scope.end() &&
+            std::all_of(scope.begin(), scope.end(),
+                        [&](const auto& name) { return known.count(name) != 0; });
+    };
+    if (!valid(checkpoint.committedScope) || !valid(checkpoint.targetScope) ||
+        (checkpoint.phase != "pending" && checkpoint.phase != "failed" &&
+         checkpoint.phase != "partial" && checkpoint.phase != "committed") ||
+        (checkpoint.phase == "committed" && checkpoint.targetScope.empty())) {
+        error = "invalid canonical DE scope checkpoint";
+        return false;
+    }
+    return true;
+}
+
+bool validScopeRecord(const MutationRecord& record, std::string& error) {
+    const auto* checkpoint = std::get_if<ScopeTransitionCheckpoint>(&record.undo.payload);
+    if (record.undo.backend != MutationBackend::Scope || checkpoint == nullptr || record.policy !=
+            PolicyRef{"OSS", "DesktopEnvironment", "controlled_desktop_environments"} ||
+        record.resource != "scope/de" || !validScopeCheckpoint(*checkpoint, error) ||
+        (record.status == MutationStatus::Applied && checkpoint->phase != "committed")) {
+        error = "invalid DE scope checkpoint identity or payload: " + error;
+        return false;
+    }
+    return true;
+}
+
+bool validDesktopRecord(const MutationRecord& record, std::string& error) {
+    if (const auto* artifact = std::get_if<UndoOwnDesktopArtifact>(&record.undo.payload)) {
+        const std::set<std::string> kinds{"dconf-directory", "database-directory", "profile-directory", "source-directory", "locks-directory", "keyfile", "lockfile",
+            "profile", "profile-entry", "session-group", "screensaver-group", "lockdown-group", "cache"};
+        const bool directory = artifact->kind.find("-directory") != std::string::npos;
+        if (record.undo.backend != MutationBackend::Desktop ||
+            record.policy != PolicyRef{"OSS", "DesktopEnvironment", "screenlock_timeout"} ||
+            !kinds.count(artifact->kind) || record.resource != "GNOME/artifact/" + artifact->kind ||
+            (artifact->phase != "ensure" && artifact->phase != "release") ||
+            (!directory && (artifact->device || artifact->inode)) ||
+            (directory && artifact->hadApplied && !artifact->inode) ||
+            (record.status == MutationStatus::Applied && (!artifact->hadApplied || artifact->phase != "ensure"))) {
+            error = "invalid GNOME artifact creation identity/lifecycle"; return false;
+        }
+        return true;
+    }
+    const auto* scalar = std::get_if<UndoRestoreDesktopScalar>(&record.undo.payload);
+    if (!scalar) { error = "missing desktop scalar payload"; return false; }
+    const std::set<std::string> gnomeBooleans{
+        "/org/gnome/desktop/screensaver/lock-enabled",
+        "/org/gnome/desktop/lockdown/disable-lock-screen"};
+    const std::set<std::string> gnomeIntegers{
+        "/org/gnome/desktop/session/idle-delay",
+        "/org/gnome/desktop/screensaver/lock-delay"};
+    const bool fly = scalar->desktop == "FLY" &&
+        scalar->setting == "themerc/Variables/ScreenSaverDelay";
+    const bool gnome = scalar->desktop == "GNOME" &&
+        (gnomeBooleans.count(scalar->setting) || gnomeIntegers.count(scalar->setting));
+    const std::string key = fly ? "ScreenSaverDelay" :
+        scalar->setting.substr(scalar->setting.find_last_of('/') + 1);
+    const auto rawLine = [](const std::string& line, std::string& raw) {
+        if (line.size() > 4096 || line.find('\0') != std::string::npos) return false;
+        raw = line;
+        if (!raw.empty() && raw.back() == '\n') raw.pop_back();
+        if (!raw.empty() && raw.back() == '\r') raw.pop_back();
+        return raw.find_first_of("\r\n") == std::string::npos;
+    };
+    const auto validLine = [&](const std::string& line, bool applied) {
+        std::string raw;
+        if (!rawLine(line, raw)) return false;
+        if (!applied) {
+            const auto equals = raw.find('=');
+            if (equals == std::string::npos) return false;
+            std::string left = raw.substr(0, equals);
+            const auto begin = left.find_first_not_of(" \t");
+            const auto end = left.find_last_not_of(" \t");
+            return begin != std::string::npos &&
+                left.substr(begin, end - begin + 1) == key;
+        }
+        const std::string prefix = key + "=";
+        if (line != raw + "\n" || raw.compare(0, prefix.size(), prefix) != 0) return false;
+        std::string value = raw.substr(prefix.size());
+        if (gnomeBooleans.count(scalar->setting)) return value == "true" || value == "false";
+        if (gnome) {
+            if (value.compare(0, 7, "uint32 ") != 0) return false;
+            value.erase(0, 7);
+        }
+        if (value.empty() || value.size() > (fly ? 4U : 10U) ||
+            !std::all_of(value.begin(), value.end(), [](unsigned char c) {
+                return c >= '0' && c <= '9';
+            })) return false;
+        const auto number = std::stoull(value);
+        return value == std::to_string(number) && (fly
+            ? number >= 60 && number <= 1200 && number % 60 == 0
+            : number <= 0xffffffffULL);
+    };
+    const auto validLock = [&] {
+        if (fly) return !scalar->originalLockLine;
+        if (!scalar->originalLockLine) return true;
+        std::string raw;
+        return rawLine(*scalar->originalLockLine, raw) && raw == scalar->setting;
+    };
+    const auto validOwner = [](const PolicyRef& owner) {
+        return owner.moduleName == "OSS" && owner.submoduleName == "DesktopEnvironment" &&
+            (owner.policyName == "screenlock_timeout" ||
+             owner.policyName == "disable_kde_lock_screen_media_controls");
+    };
+    if (record.undo.backend != MutationBackend::Desktop || !scalar ||
+        record.policy != PolicyRef{"OSS", "DesktopEnvironment", "screenlock_timeout"} ||
+        (!fly && !gnome) ||
+        record.resource != (fly ? "FLY/" + scalar->setting : "GNOME" + scalar->setting) ||
+        !validLock() ||
+        (fly && (!scalar->compiledBeforeDigest.empty() || !scalar->compiledTargetDigest.empty())) ||
+        (gnome && (!fic::core::ContentDigest::isCanonicalSha256Hex(scalar->compiledBeforeDigest) ||
+                   !fic::core::ContentDigest::isCanonicalSha256Hex(scalar->compiledTargetDigest))) ||
+        (scalar->phase != "ensure" && scalar->phase != "release") ||
+        (scalar->phase == "ensure" && scalar->owners.empty()) ||
+        (scalar->phase == "release" && !scalar->owners.empty()) ||
+        !std::is_sorted(scalar->owners.begin(), scalar->owners.end()) ||
+        std::adjacent_find(scalar->owners.begin(), scalar->owners.end()) != scalar->owners.end() ||
+        !std::all_of(scalar->owners.begin(), scalar->owners.end(), validOwner) ||
+        !validLine(scalar->appliedLine, true) ||
+        (scalar->originalLine && !validLine(*scalar->originalLine, false)) ||
+        (scalar->previousAppliedLine && !validLine(*scalar->previousAppliedLine, true)) ||
+        (record.status == MutationStatus::Applied &&
+         (!scalar->hadApplied || scalar->phase != "ensure"))) {
+        error = "invalid desktop scalar identity, owners, phase or inverse delta";
+        return false;
+    }
+    return true;
+}
+
 json serializeUndoAction(const UndoAction& action) {
     json value;
     value["action"] = undoActionTypeName(action);
@@ -165,7 +298,30 @@ json serializeUndoAction(const UndoAction& action) {
     // the backend inside the undo object to validate payload/backend
     // consistency on load (fail closed).
     value["backend"] = mutationBackendToString(action.backend);
-    if (const auto* setting =
+    if (const auto* artifact = std::get_if<UndoOwnDesktopArtifact>(&action.payload)) {
+        value["kind"] = artifact->kind; value["phase"] = artifact->phase;
+        value["had_applied"] = artifact->hadApplied;
+        value["device"] = artifact->device; value["inode"] = artifact->inode;
+    } else if (const auto* checkpoint = std::get_if<ScopeTransitionCheckpoint>(&action.payload)) {
+        value["committed_scope"] = checkpoint->committedScope;
+        value["target_scope"] = checkpoint->targetScope;
+        value["phase"] = checkpoint->phase;
+    } else if (const auto* scalar = std::get_if<UndoRestoreDesktopScalar>(&action.payload)) {
+        value["desktop"] = scalar->desktop;
+        value["setting"] = scalar->setting;
+        value["original_line"] = scalar->originalLine ? json(*scalar->originalLine) : json(nullptr);
+        value["applied_line"] = scalar->appliedLine;
+        value["previous_applied_line"] = scalar->previousAppliedLine ? json(*scalar->previousAppliedLine) : json(nullptr);
+        value["owners"] = json::array();
+        for (const auto& owner : scalar->owners)
+            value["owners"].push_back({{"module", owner.moduleName},
+                {"submodule", owner.submoduleName}, {"policy", owner.policyName}});
+        value["had_applied"] = scalar->hadApplied;
+        value["phase"] = scalar->phase;
+        value["original_lock_line"] = scalar->originalLockLine ? json(*scalar->originalLockLine) : json(nullptr);
+        value["compiled_before_digest"] = scalar->compiledBeforeDigest;
+        value["compiled_target_digest"] = scalar->compiledTargetDigest;
+    } else if (const auto* setting =
             std::get_if<UndoRemoveManagedSetting>(&action.payload)) {
         value["key"] = setting->key;
         value["applied_value"] = setting->appliedValue;
@@ -861,6 +1017,78 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         return false;
     }
     action.backend = backend;
+    if (backend == MutationBackend::Desktop && actionName == "own_desktop_artifact") {
+        if (!value.contains("kind") || !value["kind"].is_string() ||
+            !value.contains("phase") || !value["phase"].is_string() ||
+            !value.contains("had_applied") || !value["had_applied"].is_boolean() ||
+            !value.contains("device") || !value["device"].is_number_unsigned() ||
+            !value.contains("inode") || !value["inode"].is_number_unsigned()) {
+            error = "malformed GNOME artifact creation payload"; return false;
+        }
+        action.payload = UndoOwnDesktopArtifact{value["kind"].get<std::string>(),
+            value["phase"].get<std::string>(), value["had_applied"].get<bool>(),
+            value["device"].get<std::uint64_t>(), value["inode"].get<std::uint64_t>()};
+        return true;
+    }
+    if (backend == MutationBackend::Desktop && actionName == "restore_desktop_scalar") {
+        for (const auto* field : {"desktop", "setting", "applied_line", "phase",
+                                  "compiled_before_digest", "compiled_target_digest"}) {
+            if (!value.contains(field) || !value[field].is_string()) {
+                error = "malformed desktop scalar field";
+                return false;
+            }
+        }
+        for (const auto* field : {"original_line", "previous_applied_line", "original_lock_line"}) {
+            if (!value.contains(field) ||
+                (!value[field].is_string() && !value[field].is_null())) {
+                error = "malformed optional desktop scalar line";
+                return false;
+            }
+        }
+        if (!value.contains("owners") || !value["owners"].is_array() ||
+            !value.contains("had_applied") || !value["had_applied"].is_boolean()) {
+            error = "malformed desktop scalar owners/progress";
+            return false;
+        }
+        UndoRestoreDesktopScalar scalar;
+        scalar.desktop = value["desktop"].get<std::string>();
+        scalar.setting = value["setting"].get<std::string>();
+        scalar.appliedLine = value["applied_line"].get<std::string>();
+        scalar.phase = value["phase"].get<std::string>();
+        scalar.compiledBeforeDigest = value["compiled_before_digest"].get<std::string>();
+        scalar.compiledTargetDigest = value["compiled_target_digest"].get<std::string>();
+        scalar.hadApplied = value["had_applied"].get<bool>();
+        if (!value["original_line"].is_null()) scalar.originalLine = value["original_line"].get<std::string>();
+        if (!value["original_lock_line"].is_null()) scalar.originalLockLine = value["original_lock_line"].get<std::string>();
+        if (!value["previous_applied_line"].is_null()) scalar.previousAppliedLine = value["previous_applied_line"].get<std::string>();
+        for (const auto& owner : value["owners"]) {
+            if (!owner.is_object() || !owner.contains("module") || !owner["module"].is_string() ||
+                !owner.contains("submodule") || !owner["submodule"].is_string() ||
+                !owner.contains("policy") || !owner["policy"].is_string()) {
+                error = "malformed desktop scalar owner";
+                return false;
+            }
+            scalar.owners.push_back({owner["module"].get<std::string>(),
+                owner["submodule"].get<std::string>(), owner["policy"].get<std::string>()});
+        }
+        action.payload = std::move(scalar);
+        return true;
+    }
+    if (backend == MutationBackend::Scope && actionName == "scope_transition_checkpoint") {
+        if (!value.contains("committed_scope") || !value["committed_scope"].is_array() ||
+            !value.contains("target_scope") || !value["target_scope"].is_array() ||
+            !value.contains("phase") || !value["phase"].is_string()) {
+            error = "malformed scope checkpoint";
+            return false;
+        }
+        ScopeTransitionCheckpoint checkpoint;
+        checkpoint.committedScope = value["committed_scope"].get<std::vector<std::string>>();
+        checkpoint.targetScope = value["target_scope"].get<std::vector<std::string>>();
+        checkpoint.phase = value["phase"].get<std::string>();
+        if (!validScopeCheckpoint(checkpoint, error)) return false;
+        action.payload = std::move(checkpoint);
+        return true;
+    }
     if (actionName == "disable_pam_capability" &&
         backend == MutationBackend::Pam) {
         UndoDisablePamCapability payload;
@@ -1441,6 +1669,9 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
     if (!deserializeUndoAction(*undoIt, record.undo, error)) {
         return false;
     }
+    if ((record.undo.backend == MutationBackend::Scope ||
+         std::holds_alternative<ScopeTransitionCheckpoint>(record.undo.payload)) &&
+        !validScopeRecord(record, error)) return false;
     // Cross-field consistency: for GRUB the record identity carries the
     // managed key. record.resource MUST equal UndoRemoveGrubManagedSetting
     // .key — a disagreement means malformed provenance, which must never
@@ -1562,6 +1793,12 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
         return false;
     }
     record.status = status;
+    if ((record.undo.backend == MutationBackend::Desktop ||
+         (std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload) ||
+          std::holds_alternative<UndoOwnDesktopArtifact>(record.undo.payload))) &&
+        !validDesktopRecord(record, error)) return false;
+    if (record.undo.backend == MutationBackend::Scope &&
+        !validScopeRecord(record, error)) return false;
 
     record.createdAtEpoch = value.value("created_at_epoch", std::int64_t{0});
     record.updatedAtEpoch = value.value("updated_at_epoch", std::int64_t{0});
@@ -1620,6 +1857,8 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::Pam: return "pam";
     case MutationBackend::UserCreation: return "user_creation";
     case MutationBackend::IdentityLoginDefs: return "identity_login_defs";
+    case MutationBackend::Scope: return "scope";
+    case MutationBackend::Desktop: return "desktop";
     }
     return "unknown";
 }
@@ -1635,10 +1874,18 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "pam") { backend = MutationBackend::Pam; return true; }
     if (value == "user_creation") { backend = MutationBackend::UserCreation; return true; }
     if (value == "identity_login_defs") { backend = MutationBackend::IdentityLoginDefs; return true; }
+    if (value == "scope") { backend = MutationBackend::Scope; return true; }
+    if (value == "desktop") { backend = MutationBackend::Desktop; return true; }
     return false;
 }
 
 std::string undoActionTypeName(const UndoAction& action) {
+    if (std::holds_alternative<UndoOwnDesktopArtifact>(action.payload))
+        return "own_desktop_artifact";
+    if (std::holds_alternative<UndoRestoreDesktopScalar>(action.payload))
+        return "restore_desktop_scalar";
+    if (std::holds_alternative<ScopeTransitionCheckpoint>(action.payload))
+        return "scope_transition_checkpoint";
     if (std::holds_alternative<UndoRemoveManagedSetting>(action.payload)) {
         return "remove_managed_setting";
     }
@@ -2510,6 +2757,52 @@ bool MutationJournal::prepareMutation(MutationRecord record,
         error = "Mutation record требует resource";
         return false;
     }
+    if ((record.undo.backend == MutationBackend::Scope ||
+         std::holds_alternative<ScopeTransitionCheckpoint>(record.undo.payload)) &&
+        !validScopeRecord(record, error)) return false;
+    if ((record.undo.backend == MutationBackend::Desktop ||
+         (std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload) ||
+          std::holds_alternative<UndoOwnDesktopArtifact>(record.undo.payload))) &&
+        !validDesktopRecord(record, error)) return false;
+    if (record.undo.backend == MutationBackend::Desktop &&
+        std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload)) {
+        const auto& incoming = std::get<UndoRestoreDesktopScalar>(record.undo.payload);
+        const MutationRecord* predecessor = nullptr;
+        for (const auto& existing : records_) {
+            if (existing.isActive() && existing.policy == record.policy &&
+                existing.undo.backend == record.undo.backend && existing.resource == record.resource)
+                predecessor = &existing;
+        }
+        if (!predecessor) {
+            if (incoming.hadApplied || incoming.previousAppliedLine || incoming.phase != "ensure") {
+                error = "fresh desktop scalar must not claim previous ownership or release authority";
+                return false;
+            }
+        } else {
+            const auto& previous = std::get<UndoRestoreDesktopScalar>(predecessor->undo.payload);
+            if (incoming.originalLine != previous.originalLine ||
+                incoming.originalLockLine != previous.originalLockLine ||
+                (previous.hadApplied && !incoming.hadApplied) ||
+                (previous.phase == "release" && incoming.phase != "release") ||
+                (incoming.previousAppliedLine &&
+                 incoming.previousAppliedLine != previous.previousAppliedLine &&
+                 *incoming.previousAppliedLine != previous.appliedLine)) {
+                error = "desktop scalar refresh would lose or invent ownership provenance";
+                return false;
+            }
+        }
+    }
+    if (const auto* incoming = std::get_if<UndoOwnDesktopArtifact>(&record.undo.payload)) {
+        const UndoOwnDesktopArtifact* previous = nullptr;
+        for (const auto& existing : records_)
+            if (existing.isActive() && existing.resource == record.resource && existing.undo.backend == MutationBackend::Desktop)
+                previous = std::get_if<UndoOwnDesktopArtifact>(&existing.undo.payload);
+        if ((!previous && (incoming->hadApplied || incoming->phase != "ensure")) ||
+            (previous && ((previous->hadApplied && (!incoming->hadApplied || incoming->device != previous->device || incoming->inode != previous->inode)) ||
+                          (previous->phase == "release" && incoming->phase != "release")))) {
+            error = "GNOME artifact refresh loses or invents ownership"; return false;
+        }
+    }
     // Record consistency before ANY refresh/insert: for GRUB the logical
     // identity carries the managed key, so the payload MUST agree with it
     // (record.resource == undo.key). The payload itself must satisfy the
@@ -3297,6 +3590,18 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
     }
     const MutationRecord previous = *record;
     record->status = status;
+    if ((record->undo.backend == MutationBackend::Desktop ||
+         std::holds_alternative<UndoRestoreDesktopScalar>(record->undo.payload) ||
+         std::holds_alternative<UndoOwnDesktopArtifact>(record->undo.payload)) &&
+        !validDesktopRecord(*record, error)) {
+        *record = previous;
+        return false;
+    }
+    if (record->undo.backend == MutationBackend::Scope &&
+        !validScopeRecord(*record, error)) {
+        *record = previous;
+        return false;
+    }
     record->error = message;
     record->updatedAtEpoch = currentEpochSeconds();
     const PersistOutcome outcome = persist(error);
