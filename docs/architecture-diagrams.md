@@ -1553,6 +1553,12 @@ packet only for a bounded interval. A client which connects before sending is
 therefore handled without a false `EAGAIN` rejection, while a silent or closed
 peer cannot block the daemon indefinitely.
 
+The session_ready worker executes the new session plus inventory compliance
+through a targeted planner executor and reports one aggregate summary to the
+common PolicyIncidentReporter. Required failures retain the dependent's own
+severity; runtime warnings remain WARN-only. See
+[the session-ready incident contract](graphical-scope-transactions.md#new-session-incident-reporting).
+
 Controlled GNOME and FLY `screenlock_timeout` are `MandatoryGlobal`; KDE and
 XFCE screen-lock handling and KDE media-control are `SessionOnly`.
 `GnomeSystemBackend` is registered as backend `"gnome"` with typed identity

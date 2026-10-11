@@ -331,6 +331,16 @@ is distinct from live runtime NOT_VERIFIED; fly-wmfunc failure is a convergence
 warning after verified system enforcement. The complete physical release
 contract is in [graphical-scope-transactions.md](graphical-scope-transactions.md).
 
+The session_ready worker now builds a targeted planner summary for the new
+session and current-inventory compliance, then calls the common
+PolicyIncidentReporter once. SessionOnly/native Unsupported/global proof
+failures react using each enabled failed policy's own violation_severity,
+including Required-dependency failures. MandatoryGlobal runtime warnings remain
+WARN-only. Unvalidated target context cannot trigger arbitrary SessionAware
+failure; authoritative unknown/uncontrolled inventory can fail enabled
+compliance immediately. Notification deduplication remains in IncidentController.
+See [the new-session reporting contract](graphical-scope-transactions.md#new-session-incident-reporting).
+
 The session-event listener is mandatory startup infrastructure. `fic.service`
 remains `Type=notify`, `NotifyAccess=main`, and `TimeoutStartSec=600s`;
 `READY=1` is sent only after startup apply and successful listen on both the

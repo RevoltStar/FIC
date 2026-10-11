@@ -190,11 +190,16 @@ bool openDirectory(const std::filesystem::path& path,
 bool readOptionalFile(const std::filesystem::path& path,
                       const FlySystemBackendOptions& options,
                       bool& exists, std::string& content,
-                      std::string& error) {
+                      std::string& error, bool allowMissingParents = false) {
     exists = false;
     content.clear();
     UniqueFd parent;
-    if (!openDirectory(path.parent_path(), options, parent, error)) return false;
+    bool missing = false;
+    if (!openDirectory(path.parent_path(), options, parent, error,
+                       allowMissingParents ? &missing : nullptr)) {
+        if (allowMissingParents && missing) { error.clear(); return true; }
+        return false;
+    }
     UniqueFd file(::openat(parent.get(), path.filename().c_str(),
         O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK));
     if (file.get() < 0) {
@@ -585,10 +590,17 @@ bool FlySystemBackend::preflightJournaled(
     std::optional<fic::rollback::MutationRecord> record;
     if (!activeScalar(journal, record, error)) return false;
     if (required.empty() && !record) {
-        struct stat info {};
-        if (::lstat(options_.configPath.c_str(), &info) != 0 && errno == ENOENT) {
-            error.clear(); return true;
+        // No scalar is managed: prove safe absence of orphan ownership only.
+        // Do not require the administrator's unrelated INI layout to match FLY.
+        bool exists = false;
+        std::string content;
+        if (!readOptionalFile(options_.configPath, options_, exists, content, error, true))
+            return false;
+        if (content.find("# FIC-DE") != std::string::npos) {
+            error = "Orphan FLY ownership marker without active journal provenance";
+            return false;
         }
+        error.clear(); return true;
     }
     AtomicTargetState snapshot;
     FlyScalarView view;

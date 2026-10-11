@@ -28,6 +28,29 @@ or future user sessions converged. SessionOnly failure does not invalidate it.
 require the DE declaration. `disable_autologin` and DM compliance require the
 DM declaration. Neither declaration requires an already committed checkpoint.
 
+## New-session incident reporting
+
+The serialized session_ready worker retains logind/peer/context validation and
+one current-inventory snapshot. A targeted PolicyExecutionPlanner executor
+reconciles only the new session and evaluates enabled inventory compliance from
+that snapshot. Dependencies still use their ordinary apply; disabled/missing/
+failed Required dependencies block the dependent with its own failure origin
+and violation_severity. No whole-module/all-session apply is substituted.
+
+SessionOnlyFailed, applicable Unsupported and applicable MandatoryGlobal global
+proof failures become Failed policy results. Converged and NotApplicable results
+are Applied for incident reporting; MandatoryGlobalRuntimeWarning remains an
+Applied result with WARN diagnostics, never an incident on its own. An unrelated
+global failure does not invalidate successful SessionOnly reconciliation.
+
+One aggregate PolicyIncidentReporter call feeds the existing IncidentController,
+severity max, audit, notification deduplication and active response. Diagnostics
+retain policy, session ID, UID, DE, phase and cause. Failed work can be retried by
+the existing periodic/event paths. Historical apply results are not rewritten.
+Without a validated target context, ordinary SessionAware execution is skipped;
+only authoritative current-inventory compliance can produce a violation. An
+invalid IPC packet is not proof of a policy failure.
+
 ## Transition
 
 DesktopGlobalConfigReconciler is the authorized scope recovery entrypoint. It
@@ -109,6 +132,21 @@ FLY persistent release uses an exact inverse of the one
 Other lines/groups/newline state remain intact. The marker binds ID+resource;
 snapshot CAS/FIC locking and exact applied/original proofs protect update,
 release and crash retry. A missing FLY master is not fabricated.
+
+Inactive FLY preflight checks only trusted path/file safety and absence of orphan
+FIC markers, without requiring [Variables] or ScreenSaverDelay syntax:
+
+| Requirements / active ownership | File | Outcome |
+| --- | --- | --- |
+| Neither | Absent, safely proved | SUCCESS, no mutation |
+| Neither | Foreign layout, no FIC marker | SUCCESS, bytes unchanged |
+| Neither | FIC marker present | FAIL / orphan ownership |
+| Either present | Any | Existing strict scalar/marker/CAS/recovery/release proof |
+
+Missing parents are accepted only after proving each existing trusted ancestor;
+symlinks and unsafe metadata remain failures. Active ownership is never discarded
+because scope no longer requires FLY. The full preflight of every global backend
+still precedes any protected mutation.
 
 FLY ensure and release operate on the installed system theme master and verify
 that exact persistent source. `persistent_configuration=VERIFIED` is reported

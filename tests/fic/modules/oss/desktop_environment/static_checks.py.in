@@ -4,6 +4,7 @@ import sys
 
 root = Path(sys.argv[1])
 main = (root / "fic/src/main.cpp").read_text()
+session_reconciler = (root / "fic/src/session/SessionPolicyReconciler.cpp").read_text()
 agent = (root / "fic-session-agent/src/main.cpp").read_text()
 unit = (root / "fic/src/resources/service/fic.service.in").read_text()
 device_unit = (root / "fic/src/resources/service/fic-device.service.in").read_text()
@@ -45,15 +46,20 @@ event_startup = main[main.index("const fic::ipc::AdminSocketResult eventSocketRe
 assert "eventSocketResult.fileDescriptor < 0" in event_startup
 assert "return 1" in event_startup
 assert "ProductionSessionEvents" in main
-assert "PolicyCapability::SessionAware" in main
-assert "PolicyCapability::SessionInventoryCompliance" in main
+assert "PolicyCapability::SessionAware" in session_reconciler
+assert "PolicyCapability::SessionInventoryCompliance" in session_reconciler
 worker = main[main.index("void reconcile_session_ready("):
               main.index("} // namespace", main.index("void reconcile_session_ready("))]
-assert worker.index("inventory.currentSessions") < worker.index("PolicyCapability::SessionAware")
+assert worker.index("inventory.currentSessions") < worker.index("reconcileSessionReadyPolicies")
 assert "run_daemon_apply_all_pass" not in worker
-assert "MandatoryGlobalRuntimeWarning" in worker and "logLevel::WARN" in worker
+session_reconciler = (root / "fic/src/session/SessionPolicyReconciler.cpp").read_text()
+assert "MandatoryGlobalRuntimeWarning" in session_reconciler and "logLevel::WARN" in session_reconciler
+assert "PolicyExecutionPlanner planner" in session_reconciler
+assert session_reconciler.count("PolicyIncidentReporter(controller).report") == 1
+assert "evaluateSessionInventory(inventory" in session_reconciler
+assert "inventory_->currentSessions" not in session_reconciler
 unknown_dispatch = worker[worker.index("DesktopEnvironmentKind::Unknown"):
-                          worker.index("PolicyCapability::SessionAware")]
+                          worker.index("    const SessionReconcileContext reconcileContext")]
 assert "return;" in unknown_dispatch
 assert "readPacketWithTimeout" in event_server
 assert "POLLIN" in event_server and "POLLERR" in event_server and "POLLHUP" in event_server
@@ -64,8 +70,8 @@ for obsolete in ("ensureGlobalState", "applyGlobalValue",
     assert obsolete not in session_policy
 targeted = main[main.index("void reconcile_session_ready("):
                 main.index("} // namespace", main.index("void reconcile_session_ready("))]
-assert targeted.index("desktopGlobalConfig.reconcile") < targeted.index("reconcileSession(")
-assert "globalReport.resultFor(owner, session.desktop)" in targeted
+assert targeted.index("desktopGlobalConfig.reconcile") < targeted.index("reconcilePolicies(&reconcileContext")
+assert "globalReport.resultFor(owner,context->target.desktop)" in session_reconciler
 assert "globalEnforcementVerified" not in targeted
 assert '"phase", "desktop_global_configuration"' in targeted
 assert "DesktopGlobalConfigReconciler desktopGlobalConfig" in main

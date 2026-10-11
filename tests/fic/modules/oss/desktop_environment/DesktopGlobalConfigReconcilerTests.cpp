@@ -1,5 +1,6 @@
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "rollback/ScopeTransition.h"
+#include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 #include <fic/core/config/ModuleConfigFileHandler.h>
 #include <filesystem>
 #include <fstream>
@@ -180,6 +181,25 @@ void sessionScopeTransitions() {
     }
 }
 
+void unrelatedFlyDoesNotBlockGnome() {
+    Fixture f;
+    FlySystemBackendOptions options;
+    options.trustedRoot=f.root;options.configPath=f.root/"themerc";
+    options.trustedOwner=getuid();options.trustedGroup=getgid();options.lockPath=f.root/"fly.lock";
+    const std::string foreign="[Theme]\nName=Foreign\n";
+    std::ofstream(options.configPath)<<foreign;
+    auto fly=std::make_shared<FlySystemBackend>(options);
+    DesktopGlobalConfigReconciler coordinator({f.gnome,fly},&f.journal);
+    require(coordinator.reconcile(f.registry).successful()&&f.gnome->writes>0,
+            "unmanaged foreign FLY layout blocked GNOME ensure");
+    std::ifstream in(options.configPath);const std::string actual{std::istreambuf_iterator<char>(in),{}};
+    require(actual==foreign,"coordinator modified unrelated FLY bytes");
+    std::ofstream(options.configPath)<<foreign<<"# FIC-DE 123 unexpected\n";
+    const auto writes=f.gnome->writes;
+    require(!coordinator.reconcile(f.registry).successful()&&f.gnome->writes==writes,
+            "orphan FLY failed full preflight or mutated GNOME first");
+}
+
 void refusals() {
     for (const std::string mode : {"disabled", "invalid", "conflict", "owner", "backend", "desktop", "key", "capability", "generation", "session", "preflight", "duplicate", "runtime"}) {
         Fixture f(mode != "capability");
@@ -218,4 +238,4 @@ void partialRecovery() {
     require(!f.apply().successful() && f.state().phase == "partial", "external intent version change committed");
 }
 }
-int main() { transitions(); sessionScopeTransitions(); refusals(); partialRecovery(); }
+int main() { unrelatedFlyDoesNotBlockGnome(); transitions(); sessionScopeTransitions(); refusals(); partialRecovery(); }

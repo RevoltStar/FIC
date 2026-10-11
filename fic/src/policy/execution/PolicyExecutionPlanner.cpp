@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <stdexcept>
 #include <iterator>
 #include <utility>
 
@@ -27,12 +28,21 @@ PolicyDiagnostic dependencyDiagnostic(
 
 PolicyApplyResult executeOwnPolicy(
     const PolicyRef& ref,
-    Policy& policy) {
+    Policy& policy,
+    const PolicyExecutionPlanner::OwnExecutor& executor) {
     Logger::ScopedCapture capture;
     bool applied = false;
     std::string exceptionMessage;
+    std::optional<PolicyApplyResult> adapted;
     try {
-        applied = policy.apply();
+        if (executor) adapted = executor(ref, policy);
+        if (adapted) {
+            if (PolicyRef{adapted->moduleName,adapted->submoduleName,adapted->policyName} != ref)
+                throw std::runtime_error("own executor returned a different policy identity");
+            if (adapted->status != PolicyApplyStatus::Applied && adapted->status != PolicyApplyStatus::Failed)
+                throw std::runtime_error("own executor returned an invalid execution status");
+            applied = adapted->status == PolicyApplyStatus::Applied;
+        } else applied = policy.apply();
     } catch (const std::exception& exception) {
         exceptionMessage = "Исключение при применении политики: " +
             std::string(exception.what());
@@ -61,6 +71,11 @@ PolicyApplyResult executeOwnPolicy(
         });
     }
 
+    if (adapted && exceptionMessage.empty()) {
+        adapted->diagnostics.insert(adapted->diagnostics.end(), diagnostics.begin(), diagnostics.end());
+        adapted->diagnosticsTruncated = adapted->diagnosticsTruncated || captured.truncated;
+        return *adapted;
+    }
     const bool succeeded = applied && exceptionMessage.empty();
 
     PolicyApplyResult result{
@@ -85,8 +100,8 @@ PolicyApplyResult executeOwnPolicy(
 
 } // namespace
 
-PolicyExecutionPlanner::PolicyExecutionPlanner(PolicyRegistry& registry)
-    : registry_(registry) {
+PolicyExecutionPlanner::PolicyExecutionPlanner(PolicyRegistry& registry, OwnExecutor executor)
+    : registry_(registry), ownExecutor_(std::move(executor)) {
 }
 
 PolicyApplySummary PolicyExecutionPlanner::execute(
@@ -219,7 +234,7 @@ const PolicyApplyResult& PolicyExecutionPlanner::executePolicy(
         result.ownApplyAttempted = false;
         result.failureOrigin = PolicyFailureOrigin::RequiredDependencyBlocked;
     } else {
-        result = executeOwnPolicy(ref, *policy);
+        result = executeOwnPolicy(ref, *policy, ownExecutor_);
         result.diagnostics.insert(
             result.diagnostics.begin(),
             std::make_move_iterator(dependencyDiagnostics.begin()),

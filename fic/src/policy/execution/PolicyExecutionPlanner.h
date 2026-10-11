@@ -5,6 +5,8 @@
 
 #include <fic/policy/PolicyApplyResult.h>
 
+#include <functional>
+#include <optional>
 #include <map>
 #include <set>
 #include <string>
@@ -17,12 +19,16 @@ struct PolicyExecutionRequest {
 
 class PolicyExecutionPlanner {
 public:
-    explicit PolicyExecutionPlanner(PolicyRegistry& registry);
+    // Override only own execution; dependencies, disabled guards and caching
+    // remain identical to ordinary apply. nullopt selects ordinary apply().
+    using OwnExecutor = std::function<std::optional<PolicyApplyResult>(const PolicyRef&, Policy&)>;
+    explicit PolicyExecutionPlanner(PolicyRegistry& registry, OwnExecutor executor = {});
 
     PolicyApplySummary execute(const PolicyExecutionRequest& request);
 
 private:
     PolicyRegistry& registry_;
+    OwnExecutor ownExecutor_;
     std::set<std::string> excludedModules_;
     std::map<PolicyRef, PolicyApplyResult> results_;
     std::set<PolicyRef> visiting_;

@@ -342,6 +342,7 @@ add_executable(desktop_global_config_reconciler_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
     fic/modules/oss/desktop_environment/DesktopGlobalConfigReconcilerTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/FlySystemBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
@@ -995,6 +996,33 @@ target_include_directories(policy_incident_reporter_tests PRIVATE
 )
 target_link_libraries(policy_incident_reporter_tests PRIVATE fic-core fic-policy)
 add_test(NAME policy_incident_reporter_tests COMMAND policy_incident_reporter_tests)
+add_executable(session_ready_incident_tests
+    fic/incident/SessionReadyIncidentTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionPolicyReconciler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyExecutionPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyDependencyGraph.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopEnvironment.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/DesktopGlobalConfigReconciler.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/OSS_absence_of_uncontrolled_desktop_environments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/DesktopEnvironmentBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/BackendCommand.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/session/SessionCommandExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/PolicyIncidentReporter.cpp
+)
+target_include_directories(session_ready_incident_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(session_ready_incident_tests PRIVATE fic-core fic-policy)
+add_test(NAME session_ready_incident_tests COMMAND session_ready_incident_tests)
+set_tests_properties(session_ready_incident_tests PROPERTIES LABELS unit)
 add_test(NAME incident_apply_routing_static_checks
          COMMAND ${Python3_EXECUTABLE}
                  ${CMAKE_CURRENT_SOURCE_DIR}/fic/incident/IncidentApplyRoutingChecks.py)

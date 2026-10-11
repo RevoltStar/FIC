@@ -63,6 +63,7 @@
 #include "session/SessionEventServer.h"
 #include "session/LogindSessionContainmentBackend.h"
 #include "session/SessionReadyValidation.h"
+#include "session/SessionPolicyReconciler.h"
 #include "session/SystemGraphicalSessionInventory.h"
 #include "incident/IncidentController.h"
 #include "incident/FirewallIncidentNetworkAdapter.h"
@@ -1479,16 +1480,17 @@ void reconcile_session_ready(
     std::string error;
     std::vector<ClassifiedGraphicalSession> current;
     const bool inventoryLoaded = inventory.currentSessions(current, error);
-    for (Policy* policy : registry.capabilityPolicies(
-             PolicyCapability::SessionInventoryCompliance)) {
-        if (!policy->isEnabled()) continue;
-        auto* compliance = dynamic_cast<SessionInventoryCompliancePolicy*>(policy);
-        if (compliance == nullptr || !inventoryLoaded ||
-            !compliance->evaluateSessionInventory(current, error)) {
-            policy->log("Runtime desktop session compliance failed: " + error,
-                        logLevel::ERROR);
-        }
-    }
+    const std::string inventoryError = inventoryLoaded ? "" : error;
+    const auto reconcilePolicies = [&](const SessionReconcileContext* context,
+                                       const DesktopGlobalReconcileReport& report) {
+        const auto summary = fic::session::reconcileSessionReadyPolicies(registry,
+            incidentController(),session,context,current,inventoryLoaded,inventoryError,report);
+        write_audit_log(fic::core::security_audit::makeEvent("fic", {
+            {"event","session_ready"}, {"session_id",session.session.id},
+            {"uid",session.session.uid}, {"desktop",DesktopEnvironmentBackend::kindName(session.desktop)},
+            {"phase","policy_reconciliation"}, {"result",policy_apply_summary_json(
+                summary,!summary.hasFailures(),"targeted session policies evaluated")}}));
+    };
 
     if (!SessionAgentClient::query(
             session.session, session.context, error)) {
@@ -1498,6 +1500,7 @@ void reconcile_session_ready(
             {"phase", "context_query"},
             {"result", {{"ok", false}, {"message", error}}}
         }));
+        reconcilePolicies(nullptr,{});
         return;
     }
     session.desktop = DesktopEnvironmentBackend::kindFromName(
@@ -1509,6 +1512,7 @@ void reconcile_session_ready(
             {"phase", "desktop_classification"},
             {"result", {{"ok", false}, {"message", "unknown desktop environment"}}}
         }));
+        reconcilePolicies(nullptr,{});
         return;
     }
     const SessionReconcileContext reconcileContext{
@@ -1524,32 +1528,7 @@ void reconcile_session_ready(
                 {"ok", false}, {"message", globalReport.diagnostic()}}}
         }));
     }
-    for (Policy* policy : registry.capabilityPolicies(PolicyCapability::SessionAware)) {
-        if (!policy->isEnabled()) continue;
-        auto* sessionAware = dynamic_cast<SessionAwarePolicy*>(policy);
-        if (sessionAware == nullptr) continue;
-        const PolicyRef owner{
-            policy->moduleName, policy->submoduleName, policy->policyName};
-        const SessionReconcileResult result =
-            sessionAware->reconcileSession(
-                reconcileContext,
-                globalReport.resultFor(owner, session.desktop));
-        if (result.status == SessionReconcileStatus::NotApplicable ||
-            result.status == SessionReconcileStatus::MandatoryGlobalConverged ||
-            result.status == SessionReconcileStatus::SessionOnlyConverged) {
-            continue;
-        }
-        if (result.status ==
-            SessionReconcileStatus::MandatoryGlobalRuntimeWarning) {
-            policy->log("Runtime session reconciliation warning for session " +
-                            session.session.id + ": " + result.diagnostic,
-                        logLevel::WARN);
-        } else {
-            policy->log("Runtime session reconciliation failed for session " +
-                            session.session.id + ": " + result.diagnostic,
-                        logLevel::ERROR);
-        }
-    }
+    reconcilePolicies(&reconcileContext,globalReport);
 }
 // Registry initialization must still fail closed. When the effective mode is
 // ACTIVE, stop the declared SSH entry point before exiting without IPC.

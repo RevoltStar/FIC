@@ -439,9 +439,76 @@ void testJournaledCasAndMalformedProvenance() {
     fic::rollback::MutationJournal corrupt(fixture.root / "mutations.json");
     require(!corrupt.initializeOrLoad(error), "multiline foreign-file inverse delta loaded");
 }
+void testInactiveScopeRetainsActiveProvenance() {
+    for (const bool missing : {true,false}) {
+        Fixture fixture;auto backend=fixture.backend();std::string error;
+        write(fixture.options.configPath,"[Variables]\nScreenSaverDelay=900\n");
+        fic::rollback::MutationJournal journal(fixture.root/"active-journal.json");require(journal.initializeOrLoad(error),error);
+        require(backend.reconcileJournaled(ownedRequirements(),journal,error),error);
+        const auto record=activeFly(journal);
+        if(missing)fs::remove(fixture.options.configPath);
+        else write(fixture.options.configPath,"[Theme]\nName=Foreign replacement\n");
+        require(!backend.preflightJournaled({},journal,error),"inactive scope bypassed active FLY ownership proof");
+        require(activeFly(journal).id==record.id && activeFly(journal).status==record.status,
+                "failed preflight lost active provenance");
+    }
+}
+
+void testUnmanagedForeignConfiguration() {
+    for (const std::string content : {"", "[Theme]\nName=Example\n", "[Other]\r\nScreenSaverDelay=garbage\r\nUnknown=anything\r\n"}) {
+        Fixture fixture;
+        auto backend=fixture.backend();
+        fic::rollback::MutationJournal journal(fixture.root/"foreign-journal.json");
+        std::string error;require(journal.initializeOrLoad(error),error);
+        if (!content.empty()) write(fixture.options.configPath,content);
+        require(backend.preflightJournaled({},journal,error),error);
+        require(backend.reconcileJournaled({},journal,error),error);
+        require(journal.records().empty(),"unmanaged FLY acquired journal ownership");
+        require(content.empty() ? !fs::exists(fixture.options.configPath) : read(fixture.options.configPath)==content,
+                "unmanaged foreign FLY bytes changed");
+        if (!content.empty()) require(!backend.preflightJournaled(ownedRequirements(),journal,error),
+                "required FLY without Variables section accepted");
+    }
+    {
+        Fixture fixture(false);auto backend=fixture.backend();
+        fic::rollback::MutationJournal journal(fixture.root/"foreign-journal.json");std::string error;require(journal.initializeOrLoad(error),error);
+        require(backend.preflightJournaled({},journal,error)&&!fs::exists(fixture.options.configPath),"safely absent parent blocked inactive FLY");
+        ::chmod((fixture.root/"usr/share/fly-wm").c_str(),0777);
+        require(!backend.preflightJournaled({},journal,error),"missing target bypassed unsafe ancestor check");
+    }
+    {
+        Fixture fixture(false);
+        fs::create_symlink(fixture.root/"absent",fixture.options.configPath.parent_path());
+        fic::rollback::MutationJournal journal(fixture.root/"foreign-journal.json");std::string error;require(journal.initializeOrLoad(error),error);
+        require(!fixture.backend().preflightJournaled({},journal,error),"missing target behind symlink bypassed path proof");
+    }
+    {
+        Fixture fixture;write(fixture.options.configPath,"[Theme]\nName=Foreign\n");
+        ::chmod(fixture.options.configPath.c_str(),0666);
+        fic::rollback::MutationJournal journal(fixture.root/"foreign-journal.json");std::string error;require(journal.initializeOrLoad(error),error);
+        require(!fixture.backend().preflightJournaled({},journal,error),"unmanaged file bypassed unsafe metadata guard");
+    }
+    for (const std::string content : {"[Theme]\n# FIC-DE 123 unexpected\n", "# FIC-DE malformed\n"}) {
+        Fixture fixture;write(fixture.options.configPath,content);
+        fic::rollback::MutationJournal journal(fixture.root/"foreign-journal.json");std::string error;require(journal.initializeOrLoad(error),error);
+        require(!fixture.backend().preflightJournaled({},journal,error)&&error.find("Orphan")!=std::string::npos,
+                "orphan marker without Variables accepted");
+        require(read(fixture.options.configPath)==content&&journal.records().empty(),"orphan marker adopted or erased");
+    }
+    {
+        Fixture fixture;auto backend=fixture.backend();std::string error;
+        write(fixture.root/"foreign","[Theme]\nName=Example\n");
+        fs::create_symlink(fixture.root/"foreign",fixture.options.configPath);
+        fic::rollback::MutationJournal journal(fixture.root/"foreign-journal.json");require(journal.initializeOrLoad(error),error);
+        require(!backend.preflightJournaled({},journal,error),"unmanaged symlink accepted");
+    }
+}
+
 } // namespace
 
 int main() {
+    testUnmanagedForeignConfiguration();
+    testInactiveScopeRetainsActiveProvenance();
     testInstalledFileAndVerification();
     testPreserveCrLfAndIdempotence();
     testMalformedAndUnknownFailBeforeMutation();
