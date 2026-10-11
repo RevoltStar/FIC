@@ -86,9 +86,12 @@ bool ScopeTransition::reconcile(const std::vector<std::string>& configured,
                                 const Operation& ensure,
                                 const Operation& release,
                                 const Operation& verify,
-                                std::string& error) {
+                                std::string& error, FailurePhase* failurePhase) {
+    const auto phase = [&](FailurePhase value) { if (failurePhase) *failurePhase = value; };
+    phase(FailurePhase::State);
     ScopeTransitionState previous;
     if (!state(previous, error)) return false;
+    phase(FailurePhase::Configuration);
     if (!preflight || !ensure || !release || !verify) {
         error = "Scope transition requires all four verification stages";
         return false;
@@ -106,17 +109,25 @@ bool ScopeTransition::reconcile(const std::vector<std::string>& configured,
     };
     // This stage has no permission to mutate physical resources.
     if (configured.empty()) return fail("failed", "Graphical scope is UNCONFIGURED");
+    phase(FailurePhase::Preflight);
     if (!preflight(error)) return fail("failed", error);
+    phase(FailurePhase::CheckpointPrepare);
     if (!journal_.prepareMutation(checkpointRecord(domain_, previous, configured, "pending"),
                                   id, error)) return false;
     // Callbacks may have partially changed multiple files even when false.
     // Preserve checkpoint and resource provenance; never claim old protection.
+    phase(FailurePhase::Ensure);
     if (!ensure(error)) return fail("partial", error);
+    phase(FailurePhase::Release);
     if (!release(error)) return fail("partial", error);
+    phase(FailurePhase::Verify);
     if (!verify(error)) return fail("partial", error);
     // Configured version must be re-proved by verify before this commit.
+    phase(FailurePhase::CheckpointCommit);
     if (!journal_.prepareMutation(checkpointRecord(domain_, previous, configured, "committed"),
                                   id, error)) return false;
-    return journal_.setStatus(id, MutationStatus::Applied, error);
+    if (!journal_.setStatus(id, MutationStatus::Applied, error)) return false;
+    phase(FailurePhase::None);
+    return true;
 }
 } // namespace fic::rollback

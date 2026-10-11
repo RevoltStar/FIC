@@ -304,6 +304,44 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         }
     }
 
+    // Capture validated journal ownership before any backend can replace an
+    // ensure record with release progress (whose owners are deliberately empty).
+    // Journal admission/load validates the complete Desktop scalar schema and
+    // identity. Scope checkpoints and artifact primary policies prove no owner.
+    std::map<std::string, std::vector<fic::rollback::MutationRecord>> releases;
+    if (journal->usable()) for (const auto& record : journal->records()) {
+        if (!record.isActive() || record.undo.backend != fic::rollback::MutationBackend::Desktop) continue;
+        const auto* scalar = std::get_if<fic::rollback::UndoRestoreDesktopScalar>(&record.undo.payload);
+        if (!scalar || scalar->owners.empty()) continue;
+        for (const auto& backend : backends_) {
+            if (scalar->desktop != DesktopEnvironmentBackend::kindName(backend->desktop()) ||
+                desiredByBackend.at(backend->backendName()).count({scalar->setting})) continue;
+            releases[backend->backendName()].push_back(record);
+        }
+    }
+    const auto releaseFailed = [&](DesktopSystemBackend& backend, const std::string& phase,
+                                   const std::string& diagnostic) {
+        for (const auto& record : releases[backend.backendName()]) {
+            // A completed physical release is not undone by a later verify or
+            // checkpoint failure. Indeterminate journal cannot prove completion.
+            if (journal->usable()) {
+                const auto& records = journal->records();
+                const auto current = std::find_if(records.begin(), records.end(),
+                    [&](const auto& candidate) { return candidate.id == record.id; });
+                if (current != records.end() && (!current->isActive() ||
+                    current->resource != record.resource || current->policy != record.policy ||
+                    current->undo.backend != record.undo.backend)) continue;
+            }
+            const auto& scalar = std::get<fic::rollback::UndoRestoreDesktopScalar>(record.undo.payload);
+            for (const auto& owner : scalar.owners) {
+                const auto duplicate = std::find_if(report.releaseFailures.begin(), report.releaseFailures.end(),
+                    [&](const auto& failure) { return failure.owner == owner && failure.mutation == record.id; });
+                if (duplicate == report.releaseFailures.end()) report.releaseFailures.push_back(
+                    {owner,backend.desktop(),record.id,record.resource,phase,diagnostic});
+            }
+        }
+    };
+
     // Global checkpoint covers only system resources. Complete all
     // preflights before any protected resource changes, preserving owners.
     const auto preflight = [&](std::string& error) {
@@ -312,9 +350,11 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
             auto& result = report.backends.at(backend->backendName());
             if (!desiredByBackend.at(backend->backendName()).empty() &&
                 !backend->verifiedEnforcementAvailable(result.diagnostic)) {
+                releaseFailed(*backend, report.phase, result.diagnostic);
                 error = backend->backendName() + ": " + result.diagnostic; return false;
             }
             if (!backend->preflightJournaled(desiredByBackend.at(backend->backendName()), *journal, result.diagnostic)) {
+                releaseFailed(*backend, report.phase, result.diagnostic);
                 error = backend->backendName() + ": " + result.diagnostic; return false;
             }
         }
@@ -328,6 +368,7 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
             auto& result = report.backends.at(backend->backendName());
             result.attempted = true;
             if (!backend->reconcileJournaled(desired, *journal, result.diagnostic)) {
+                releaseFailed(*backend, report.phase, result.diagnostic);
                 error = backend->backendName() + ": " + result.diagnostic; return false;
             }
         }
@@ -350,6 +391,7 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
             for (const auto& [key, value] : desired) values.emplace(key, value.value);
             if (!backend->preflightJournaled(desired, *journal, result.diagnostic) ||
                 !backend->verifyManagedSettings(values, result.diagnostic)) {
+                releaseFailed(*backend, report.phase, result.diagnostic);
                 error = backend->backendName() + ": " + result.diagnostic; return false;
             }
             result.verified = true;
@@ -357,10 +399,28 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
         return true;
     };
     executingTransition = true;
-    if (!fic::rollback::ScopeTransition(*journal).reconcile(target, preflight,
+    using FailurePhase = fic::rollback::ScopeTransition::FailurePhase;
+    FailurePhase failurePhase = FailurePhase::None;
+    const bool transitioned = fic::rollback::ScopeTransition(*journal).reconcile(target, preflight,
         [&](std::string& error) { return reconcile(true, error); },
-        [&](std::string& error) { return reconcile(false, error); }, verify, scopeError))
-        return failStageA("DE scope transition failed: " + scopeError);
+        [&](std::string& error) { return reconcile(false, error); }, verify, scopeError, &failurePhase);
+    if (!transitioned) {
+        switch (failurePhase) {
+        case FailurePhase::State: report.phase = "checkpoint_state"; break;
+        case FailurePhase::Configuration: report.phase = "global_configuration"; break;
+        case FailurePhase::CheckpointPrepare: report.phase = "checkpoint_prepare"; break;
+        case FailurePhase::CheckpointCommit: report.phase = "checkpoint_commit"; break;
+        case FailurePhase::Preflight: report.phase = "global_preflight"; break;
+        case FailurePhase::Ensure: report.phase = "global_ensure"; break;
+        case FailurePhase::Release: report.phase = "global_release"; break;
+        case FailurePhase::Verify: report.phase = "global_verify"; break;
+        case FailurePhase::None: break;
+        }
+        // Persistence alone is infrastructure failure, not a backend failure.
+        // Retain the independently verified physical requirements in diagnostics.
+        if (failurePhase != FailurePhase::CheckpointCommit)
+            return failStageA("DE scope transition failed: " + scopeError);
+    }
     for (auto& [owner, desktopsForPolicy] : report.policies) {
         (void)owner;
         for (auto& [desktop, policyResult] : desktopsForPolicy) {
@@ -379,6 +439,7 @@ DesktopGlobalReconcileReport DesktopGlobalConfigReconciler::reconcile(
             }
         }
     }
+    if (!transitioned) return failStageA("DE scope transition failed: " + scopeError);
     return report;
 }
 

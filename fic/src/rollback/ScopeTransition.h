@@ -23,6 +23,7 @@ class ScopeTransition {
 public:
     using Operation = std::function<bool(std::string&)>;
 
+    enum class FailurePhase { None, State, Configuration, Preflight, CheckpointPrepare, Ensure, Release, Verify, CheckpointCommit };
     enum class Domain { Desktop, DisplayManager };
     explicit ScopeTransition(MutationJournal& journal, Domain domain = Domain::Desktop)
         : journal_(journal), domain_(domain) {}
@@ -35,7 +36,7 @@ public:
                    const Operation& ensure,
                    const Operation& release,
                    const Operation& verify,
-                   std::string& error);
+                   std::string& error, FailurePhase* failurePhase = nullptr);
 
 private:
     MutationJournal& journal_;

@@ -1,32 +1,35 @@
 # FIC handoff
 
 ## Current base
-* Branch main; task base `21ea260c2fe1f417c431195bc64640208e4e2a78`.
-* This snapshot accompanies `Account for global DE enforcement failures in session-ready incidents`.
+* Branch main; task base `d3e632e0944ef8a31592358e922a92236a7f9cd2`.
+* This snapshot accompanies `Preserve release-only DE failure attribution in session-ready incidents`.
 
 ## Current task
-* Owned global DE/session-ready aggregation completed; no next implementation stage planned.
+* Release-only GNOME/FLY attribution and checkpoint failure diagnostics completed; no next implementation stage planned.
 
 ## Accepted architecture / invariants
-* One global reconciliation, one inventory snapshot, one planner summary/result per actual PolicyRef and one PolicyIncidentReporter call per event. Required guards, dependent severity, severity max/dedup and ingress validation remain unchanged.
-* Attribution uses the validated report owner map plus the owner's own applicable MandatoryGlobal declarations. Incomplete contribution collection cannot grant success for an unproved own obligation; foreign errors alone cannot establish ownership.
-* Independent KDE/XFCE SessionOnly reconciliation still runs. Global FAILED retains its separate session SUCCESS/FAILED diagnostic; no adapter rollback or journal mutations. MandatoryGlobalRuntimeWarning alone remains Applied/WARN.
-* GNOME/FLY ownership-safe journal/CAS/recovery, root CAS residual race, SessionOnly/NotEnrolled, scope pure validation, LXQt Unsupported and DM contracts unchanged.
+* Desired requirements and failed release obligations are separate. Healthy MutationJournal admission/load validates scalar ownership/identity; coordinator snapshots active owners before any backend mutation, retaining mutation ID/resource/DE. Scope/artifact primary policies and previous scope never establish owners.
+* A failed backend preflight/ensure/release/verify publishes unreleased scalar obligations once per owner/mutation, using the snapshot even when progress clears owners or journal health becomes Indeterminate. Completed physical releases do not create false obligations.
+* Enabled owners aggregate desired/release/session outcomes into one planner result and one reporter pass with their own severity. Disabled/unproven owners retain global FAIL diagnosis without arbitrary policy incidents. Independent SessionOnly success remains explicit; Required-blocked origin, warnings, ingress validation and dedup unchanged.
+* ScopeTransition typed diagnostic phases include checkpoint_state/prepare/commit, separate from global callback phases. Commit persistence failure preserves verified physical requirements without inventing a backend failure; global checkpoint remains failed. No operation reorder or error substring classification.
+* Persisted format unchanged: release progress deliberately clears scalar owners. A later invocation with no surviving owner evidence remains UNPROVEN; no guessing from primary policy. Physical ownership-safe recovery remains available.
+* KDE/XFCE SessionOnly/NotEnrolled, GNOME/FLY persistent mutation/CAS/fsync/recovery, DM, pure scope validation and LXQt Unsupported unchanged.
 
 ## Completed / changed areas
-* SessionPolicyReconciler aggregates every owned global DE result, including DEs different from the new session, with the targeted outcome.
-* DesktopGlobalConfigReconciler retains the actual global_preflight/global_ensure/global_release/global_verify phase without changing physical execution.
-* Real planner/reporter/controller regressions cover GNOME failure plus KDE success, FLY failure plus XFCE success, both failures, both verified globals, early/incomplete preflight, release/verify, foreign ownership, NotApplicable, HARD severity, disabled owners and dedup. Existing Required/warning/untrusted-context/compliance cases retained.
-* Coordinator phase regressions and static architecture guards updated; graphical-scope-transactions.md documents aggregation/attribution.
+* DesktopGlobalConfigReconciler.{h,cpp}: diagnostic release failures from validated journal snapshots; immutable resource identity check; no physical rollback changes.
+* ScopeTransition.{h,cpp}: optional typed failure-phase output; original callback/persistence order preserved. SessionPolicyReconciler.cpp: aggregate release failures by actual owner; checkpoint-only failure does not invalidate confirmed physical enforcement.
+* session_ready_incident_tests now links real GNOME/FLY backends and tests actual journaled apply → scope exclusion → rollback conflict → real planner/reporter/controller. Covers NONE/SOFT/HARD/ISOLATE, shared owners, disabled/unproven/corrupt journals, preflight and release failures, session success/failure, repeat dedup, provenance retention/retry and checkpoint-only faults with/without desired globals.
+* Shared existing GNOME fake command fixture extracted for reuse. MutationJournal regressions cover prepared/commit persistence phase and crash recovery. CI/static guards and graphical-scope-transactions.md updated.
 
 ## Validation
-* Docker Debian12 full configure/build PASS. Full CTest **175/175 PASS**, 181.46s.
-* After final added severity/disabled regressions: rebuilt session_ready_incident_tests; targeted CTest **9/9 PASS**, 48.85s (session-ready, global coordinator, GNOME/FLY, screenlock, rollback executor, DM).
-* Updated desktop architecture static checks run directly: PASS. git diff --check PASS.
-* Native GNOME/dconf lifecycle probes PASS in disposable Debian12, Ubuntu24 and ALT p11 snapshots. ALT stock /etc/dconf preserved under /tmp inside the disposable overlay to isolate the native fixture. Native Debian12 DM persistent inspection/journal restart/release PASS; no manager start/restart.
-* Ubuntu24 and ALT related GNOME/FLY/coordinator/session-ready gates PASS (current Debian-built regression binaries against those native environments; no claim of distro-native rebuild).
-* Evidence: ignored build-prelogin-validation/dm-evidence/global-session-*. No host /etc or remote machine modifications.
+* Docker Debian12 full configure/build PASS; initial focused real-backend/coordinator/journal gate 3/3 PASS.
+* Full Debian12 CTest **175/175 PASS**, 216.70s; final targeted gate **11/11 PASS**, 93.37s, covering session-ready, coordinator, GNOME/FLY, screenlock, MutationJournal/ScopeTransition, rollback executor, DM and static architecture.
+* After adding explicit mock SessionOnly setting-retention assertion: rebuilt incident target; final focused incident CTest **1/1 PASS**, 37.31s.
+* Direct desktop architecture static checks and git diff --check PASS.
+* Native GNOME Debian12/Ubuntu24/ALT p11 probes PASS; ALT stock dconf preserved under /tmp inside disposable overlay for fixture isolation. Native Debian12 DM persistent inspection/journal restart/release PASS.
+* Related GNOME/FLY/coordinator/session-ready gates PASS on Ubuntu24 and ALT using current Debian-built test binaries against native package environments (no distro-native rebuild claimed).
+* Evidence: ignored build-prelogin-validation/dm-evidence/release-session-*. No host /etc or remote-machine modifications.
 
 ## Remaining / limits
-* No unfinished implementation components.
-* Real graphical sessions, live DM runtime, physical containment and native Astra FLY NOT VERIFIED. Pipeline tests use real incident decisions with mock containment; FLY uses filesystem fixtures.
+* No unfinished implementation components. Temporary native snapshot tags removed; original containers/cache retained.
+* Real graphical sessions/live DM/physical containment/native Astra FLY NOT VERIFIED. Incident tests use production pipeline with mock containment; physical backend tests use isolated temporary files and controlled command fixtures.

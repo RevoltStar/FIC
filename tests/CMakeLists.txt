@@ -1018,6 +1018,9 @@ add_executable(session_ready_incident_tests
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/PolicyIncidentReporter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/GnomeSystemBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/backends/FlySystemBackend.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/platform/PlatformExecutableResolver.cpp
 )
 target_include_directories(session_ready_incident_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(session_ready_incident_tests PRIVATE fic-core fic-policy)

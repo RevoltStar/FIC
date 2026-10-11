@@ -94,6 +94,16 @@ struct DesktopGlobalBackendResult {
     std::string diagnostic;
 };
 
+// Diagnostic ownership evidence only; never authorizes physical rollback.
+struct DesktopGlobalReleaseFailure {
+    PolicyRef owner;
+    DesktopEnvironmentKind desktop = DesktopEnvironmentKind::Unknown;
+    fic::rollback::MutationId mutation = 0;
+    std::string resource;
+    std::string phase;
+    std::string diagnostic;
+};
+
 struct DesktopGlobalReconcileReport {
     bool requirementsValid = true;
     std::string stageADiagnostic;
@@ -101,6 +111,7 @@ struct DesktopGlobalReconcileReport {
     std::string phase = "global_preflight";
     std::map<std::string, DesktopGlobalBackendResult> backends;
     std::map<PolicyRef, PolicyGlobalEnforcementResults> policies;
+    std::vector<DesktopGlobalReleaseFailure> releaseFailures;
 
     bool successful() const;
     bool successfulForPolicy(const PolicyRef& policy) const;

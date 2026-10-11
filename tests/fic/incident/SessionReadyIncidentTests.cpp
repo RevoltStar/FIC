@@ -2,6 +2,11 @@
 #include "modules/oss/desktop_environment/SessionAwareDesktopEnvironmentPolicy.h"
 #include "modules/oss/desktop_environment/policies/OSS_absence_of_uncontrolled_desktop_environments.h"
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
+#include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
+#include "rollback/ScopeTransition.h"
+#include <fic/core/fs/AtomicFileWriter.h>
+#include <sstream>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -13,6 +18,15 @@ using namespace fic::incident;
 namespace fs=std::filesystem;
 namespace {
 void require(bool ok,const std::string& message) { if(!ok) throw std::runtime_error(message); }
+std::string read(const fs::path& path) { std::ifstream f(path); return {std::istreambuf_iterator<char>(f),{}}; }
+void write(const fs::path& path,const std::string& text) { fs::create_directories(path.parent_path());std::ofstream(path)<<text; }
+DesktopManagedSettings requirements(unsigned seconds=300) {
+    return {{{"/org/gnome/desktop/session/idle-delay"},"uint32 "+std::to_string(seconds)},
+            {{"/org/gnome/desktop/screensaver/lock-enabled"},"true"},
+            {{"/org/gnome/desktop/screensaver/lock-delay"},"uint32 0"},
+            {{"/org/gnome/desktop/lockdown/disable-lock-screen"},"false"}};
+}
+#include "../modules/oss/desktop_environment/GnomeFixtureCommands.h"
 struct Sessions final : fic::session::SessionContainmentBackend {
     int inventories=0;
     fic::session::SessionInventoryResult listSessions() override { ++inventories; return {true,{},{}}; }
@@ -28,6 +42,7 @@ struct Sessions final : fic::session::SessionContainmentBackend {
 };
 struct Network final : IncidentNetworkBackend { bool applyQuarantine(bool,std::string&) override { return true; } };
 struct Scope final : Policy, ControlledDesktopEnvironmentScope {
+    void refreshForTests() {require(moduleConf->loadConfig(),"scope refresh");}
     bool valid=true;
     DesktopEnvironmentSet target{DesktopEnvironmentKind::Kde};
     Scope() { moduleName="OSS";submoduleName="DesktopEnvironment";policyName="controlled_desktop_environments";
@@ -40,17 +55,35 @@ struct Scope final : Policy, ControlledDesktopEnvironmentScope {
 struct Inventory final : GraphicalSessionInventory {
     bool currentSessions(std::vector<ClassifiedGraphicalSession>&,std::string&) override { throw std::runtime_error("targeted compliance re-enumerated sessions"); }
 };
-struct SessionPolicy final : SessionAwareDesktopEnvironmentPolicy {
-    int calls=0; bool nativeOk=true,relevant=true,throws=false,unsupported=false,emptyError=false;
+struct SessionPolicy final : SessionAwareDesktopEnvironmentPolicy, GlobalDesktopPolicyContributor {
+    bool contribute=false;
+    void refreshForTests() {require(moduleConf->loadConfig(),"policy refresh");}
+    void disableForTests() {require(moduleConf->disablePolicy(policyName)&&moduleConf->saveConfig(),"test disable");}
+    int calls=0,appliedSetting=0; bool nativeOk=true,relevant=true,throws=false,unsupported=false,emptyError=false;
     SessionPolicy(Scope& scope,std::shared_ptr<Inventory> inventory,const std::string& name)
         :SessionAwareDesktopEnvironmentPolicy(scope,inventory) { policyName=name;addRequiredDependency({"OSS","DesktopEnvironment","controlled_desktop_environments"}); }
+    std::vector<PolicyCapability> capabilities() const override {
+        auto result=SessionAwareDesktopEnvironmentPolicy::capabilities();
+        if(contribute) result.push_back(PolicyCapability::GlobalDesktopConfiguration);
+        return result;
+    }
+    bool globalDesktopPolicyContributions(std::vector<GlobalDesktopPolicyContribution>& out,std::string& error) override {
+        out.clear();error.clear();
+        for(auto de:{DesktopEnvironmentKind::Gnome,DesktopEnvironmentKind::Fly}) {
+            if(sessionApplicability(de,error)!=SessionApplicability::Applicable)continue;
+            const PolicyRef owner{moduleName,submoduleName,policyName};
+            if(de==DesktopEnvironmentKind::Gnome)for(const auto& [key,value]:requirements())out.push_back({"gnome",de,owner,key,value});
+            else out.push_back({"fly",de,owner,{"themerc/Variables/ScreenSaverDelay"},"300"});
+        }
+        return true;
+    }
     bool prepare(std::string&) override { return true; }
     bool relevantTo(DesktopEnvironmentKind) const override { return relevant; }
     EnforcementMode modeFor(DesktopEnvironmentKind desktop) const override {
         if(unsupported)return EnforcementMode::Unsupported;
         return (desktop==DesktopEnvironmentKind::Gnome||desktop==DesktopEnvironmentKind::Fly)?EnforcementMode::MandatoryGlobal:EnforcementMode::SessionOnly; }
     bool reconcileControlledSession(const SessionReconcileContext&,std::string& error) override {
-        ++calls;if(throws)throw std::runtime_error("native exception");if(!nativeOk&&!emptyError)error=policyName+" native failure";return nativeOk; }
+        ++calls;if(throws)throw std::runtime_error("native exception");if(!nativeOk&&!emptyError)error=policyName+" native failure";if(nativeOk)appliedSetting=300;return nativeOk; }
 };
 fs::path root;
 int sequence=0;
@@ -63,7 +96,7 @@ struct Fixture {
     std::vector<ClassifiedGraphicalSession> snapshot;
     DesktopGlobalReconcileReport global;
     std::vector<std::string> audits,notificationReasons; int notifications=0;
-    Fixture(bool aEnabled=true,bool bEnabled=false,bool compliance=false,bool scopeEnabled=true,const char* severity="SOFT")
+    Fixture(bool aEnabled=true,bool bEnabled=false,bool compliance=false,bool scopeEnabled=true,const char* severity="SOFT",bool globalContributor=false)
         :controller(IncidentStateStore(root/("state"+std::to_string(++sequence))),sessions,std::make_shared<Network>()) {
         const auto state=root/("state"+std::to_string(sequence));std::ofstream(state)<<"UNLOCKED\n";::chmod(state.c_str(),0640);
         std::ofstream(root/"config/OSS.conf")<<"controlled_desktop_environments.status="<<(scopeEnabled?"ENABLE":"DISABLE")
@@ -73,8 +106,8 @@ struct Fixture {
             <<"\nabsence_of_uncontrolled_desktop_environments.violation_severity=HARD\n";
         std::string error;require(registry.addModule("OSS",ModuleView::Standard,0,error),error);
         auto s=std::make_unique<Scope>();scope=s.get();require(registry.addPolicy(std::move(s),error),error);
-        auto first=std::make_unique<SessionPolicy>(*scope,inventory,"screenlock_timeout");a=first.get();require(registry.addPolicy(std::move(first),error),error);
-        auto second=std::make_unique<SessionPolicy>(*scope,inventory,"disable_kde_lock_screen_media_controls");b=second.get();require(registry.addPolicy(std::move(second),error),error);
+        auto first=std::make_unique<SessionPolicy>(*scope,inventory,"screenlock_timeout");a=first.get();a->contribute=globalContributor;require(registry.addPolicy(std::move(first),error),error);
+        auto second=std::make_unique<SessionPolicy>(*scope,inventory,"disable_kde_lock_screen_media_controls");b=second.get();b->contribute=globalContributor;require(registry.addPolicy(std::move(second),error),error);
         require(registry.addPolicy(std::make_unique<OSS_absence_of_uncontrolled_desktop_environments>(*scope,inventory),error),error);
         target.session.id="7";target.session.uid=1000;target.desktop=DesktopEnvironmentKind::Kde;snapshot={target};
         controller.setModeResolver([] { return IncidentResponseModeResult{IncidentResponseMode::Active,true,"test"}; });
@@ -98,6 +131,120 @@ const PolicyApplyResult& find(const PolicyApplySummary& summary,const std::strin
     for(const auto& result:summary.getResults())if(result.policyName==name)return result;
     throw std::runtime_error("missing policy result: "+name);
 }
+// Delegate all physical work to production backends; inject drift only after
+// coordinator preflight to exercise the real release refusal path.
+struct PhysicalBackend final : DesktopSystemBackend {
+    std::shared_ptr<DesktopSystemBackend> native;
+    std::function<void()> beforeRelease,afterVerify;
+    DesktopEnvironmentKind desktop() const override {return native->desktop();}
+    std::string backendName() const override {return native->backendName();}
+    bool verifiedEnforcementAvailable(std::string& e) const override {return native->verifiedEnforcementAvailable(e);}
+    bool ensureManagedSettings(const DesktopManagedSettings& r,std::string& e) override {return native->ensureManagedSettings(r,e);}
+    bool verifyManagedSettings(const DesktopManagedSettings& r,std::string& e) override {
+        const bool ok=native->verifyManagedSettings(r,e);if(ok&&afterVerify)afterVerify();return ok;
+    }
+    bool preflightJournaled(const DesktopGlobalConfigRequirements& r,fic::rollback::MutationJournal& j,std::string& e) override {return native->preflightJournaled(r,j,e);}
+    bool reconcileJournaled(const DesktopGlobalConfigRequirements& r,fic::rollback::MutationJournal& j,std::string& e) override {
+        if(r.empty()&&beforeRelease)beforeRelease();return native->reconcileJournaled(r,j,e);
+    }
+};
+void releaseScenarios() {
+    using namespace fic::rollback;
+    for(const auto de:{DesktopEnvironmentKind::Gnome,DesktopEnvironmentKind::Fly})
+    for(const auto scenario:{"NONE","SOFT","HARD","ISOLATE","disabled","unknown","corrupt","shared","preflight","session_failure","progress_failure","checkpoint","checkpoint_desired"}) {
+        const std::string mode=scenario;
+        const char* severity=(mode=="NONE"||mode=="SOFT"||mode=="HARD"||mode=="ISOLATE")?scenario:"HARD";
+        Fixture f(true,mode=="shared",false,true,severity,true);
+        f.scope->target.insert(de);
+        const auto physical=root/("physical"+std::to_string(sequence));fs::create_directories(physical);::chmod(physical.c_str(),0755);
+        MutationJournal journal(physical/"journal.json");std::string error;require(journal.initializeOrLoad(error),error);
+        FakeCommands commands;
+        auto backend=std::make_shared<PhysicalBackend>();fs::path resource;
+        if(de==DesktopEnvironmentKind::Gnome) {
+            GnomeSystemBackendOptions options;options.trustedRoot=physical;options.profilePath=physical/"dconf/profile/user";
+            options.databaseRoot=physical/"dconf/db";options.trustedOwner=getuid();options.trustedGroup=getgid();options.lockPath=physical/"lock";
+            resource=options.databaseRoot/"fic.d/99-fic.conf";
+            write(options.profilePath,"user-db:user\nsystem-db:fic\n");
+            write(resource,"[org/gnome/desktop/session]\nidle-delay=uint32 600\n[org/gnome/desktop/screensaver]\nlock-enabled=false\nlock-delay=uint32 10\n[org/gnome/desktop/lockdown]\ndisable-lock-screen=true\n");
+            write(options.databaseRoot/"fic.d/locks/99-fic","");
+            commands.compiledPath=options.databaseRoot/"fic";
+            write(commands.compiledPath,FakeCommands::nativeBytes(resource.parent_path()));commands.inspectSources();
+            backend->native=std::make_shared<GnomeSystemBackend>(commands.dependencies(),options);
+        } else {
+            FlySystemBackendOptions options;options.trustedRoot=physical;options.configPath=physical/"themerc";
+            options.trustedOwner=getuid();options.trustedGroup=getgid();options.lockPath=physical/"lock";
+            resource=options.configPath;write(resource,"[Variables]\nScreenSaverDelay=600\nforeign=keep\n");
+            backend->native=std::make_shared<FlySystemBackend>(options);
+        }
+        DesktopGlobalConfigReconciler coordinator({backend},&journal);
+        const auto initial=coordinator.reconcile(f.registry);require(initial.successful(),"initial real global apply failed: "+initial.diagnostic());
+        const auto owned=read(resource);require(owned.find("# FIC-DE")!=std::string::npos,"test did not create physical FIC ownership");
+        f.scope->target={DesktopEnvironmentKind::Kde};
+        if(de==DesktopEnvironmentKind::Fly){f.target.desktop=DesktopEnvironmentKind::Xfce;f.snapshot={f.target};f.scope->target={f.target.desktop};}
+        if(mode=="disabled") {f.a->disableForTests();f.scope->refreshForTests();f.a->refreshForTests();f.b->refreshForTests();}
+        if(mode=="unknown"||mode=="corrupt") {
+            MutationJournal unproven(physical/"unproven.json");
+            if(mode=="corrupt") {write(physical/"unproven.json","broken journal");require(!unproven.initializeOrLoad(error),"corrupt journal accepted");}
+            else require(unproven.initializeOrLoad(error),error);
+            f.global=DesktopGlobalConfigReconciler({backend},&unproven).reconcile(f.registry);
+            require(!f.global.successful()&&f.global.releaseFailures.empty()&&!f.run().hasFailures()&&f.notifications==0,
+                    "unproven ownership falsely attributed to policy");
+            require(read(resource)==owned,"unproven preflight modified physical resource");continue;
+        }
+        if(mode=="checkpoint"||mode=="checkpoint_desired") {
+            if(mode=="checkpoint_desired") {f.scope->target.insert(de);f.target.desktop=de;f.snapshot={f.target};}
+            backend->afterVerify=[&] {AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){return path!=(physical/"journal.json").string();});};
+            f.global=coordinator.reconcile(f.registry);AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+            require(!f.global.successful()&&f.global.phase=="checkpoint_commit"&&f.global.releaseFailures.empty(),"checkpoint commit invented backend release failure");
+            require(!f.run().hasFailures()&&f.a->calls==1&&f.notifications==0,"checkpoint-only error invented owner incident");
+            require(!journal.usable(),"commit durability failure remained healthy");
+            require(journal.initializeOrLoad(error),error);backend->afterVerify={};
+            require(coordinator.reconcile(f.registry).successful(),"checkpoint commit recovery failed");continue;
+        }
+        const auto drift=de==DesktopEnvironmentKind::Gnome?"uint32 300":"ScreenSaverDelay=300";
+        backend->beforeRelease=[&] {auto content=owned;const auto offset=content.find(drift);require(offset!=std::string::npos,"missing owned scalar");content.replace(offset,std::string(drift).size(),"foreign-invalid-value");write(resource,content);};
+        if(mode=="progress_failure") backend->beforeRelease=[&] {
+            AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){return path!=(physical/"journal.json").string();});
+        };
+        if(mode=="preflight") {backend->beforeRelease();backend->beforeRelease={};}
+        if(mode=="session_failure")f.a->nativeOk=false;
+        f.global=coordinator.reconcile(f.registry);AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+        require(!f.global.successful()&&f.global.phase==(mode=="preflight"?"global_preflight":"global_release")&&!f.global.releaseFailures.empty(),"release-only failure attribution missing");
+        const auto afterFailure=read(resource);
+        if(mode=="disabled") {
+            require(!f.run().hasFailures()&&f.notifications==0&&!f.global.diagnostic().empty()&&read(resource)==afterFailure,
+                    "disabled release owner caused incident or erased global diagnosis");
+            backend->beforeRelease={};write(resource,owned);require(coordinator.reconcile(f.registry).successful(),"disabled owner release retry failed");continue;
+        }
+        auto summary=f.run();const auto& result=find(summary,"screenlock_timeout");
+        require(result.isFailure()&&result.failureOrigin==PolicyFailureOrigin::OwnApplyFailure&&f.a->calls==1,
+                "journal-backed release failure did not aggregate with independent session success");
+        require(f.a->appliedSetting==(mode=="session_failure"?0:300),"release incident undid independently applied session setting");
+        require(result.message.find(mode=="preflight"?"global_preflight":"global_release")!=std::string::npos&&result.message.find(mode=="session_failure"?"session_reconciliation FAILED":"session_reconciliation SUCCESS")!=std::string::npos,"release/session diagnostics missing");
+        if(mode=="shared") {
+            require(find(summary,"disable_kde_lock_screen_media_controls").isFailure(),"shared owner lost release incident");
+            std::set<std::pair<PolicyRef,MutationId>> identities;
+            for(const auto& failure:f.global.releaseFailures)require(identities.emplace(failure.owner,failure.mutation).second,"duplicate release attribution");
+            require(identities.size()==(de==DesktopEnvironmentKind::Gnome?8u:2u),"shared physical ownership identity lost");
+        }
+        const auto expected=std::string(severity)=="NONE"?IncidentSeverity::Unlocked:std::string(severity)=="SOFT"?IncidentSeverity::Soft:std::string(severity)=="HARD"?IncidentSeverity::Hard:IncidentSeverity::Isolate;
+        require(f.controller.status().severity==expected&&f.notifications==(expected==IncidentSeverity::Unlocked?0:1),"release incident severity incorrect");
+        f.run();require(f.notifications==(expected==IncidentSeverity::Unlocked?0:1)&&read(resource)==afterFailure,"repeat incident duplicated or adapter changed resource");
+        require(std::any_of(journal.records().begin(),journal.records().end(),[](const auto& r){return r.isActive()&&std::holds_alternative<UndoRestoreDesktopScalar>(r.undo.payload);}),"failed release lost journal record");
+        if(mode=="progress_failure") {
+            require(!journal.usable(),"release progress fault did not poison journal");
+            require(journal.initializeOrLoad(error),error);
+            require(std::any_of(journal.records().begin(),journal.records().end(),[](const auto& record){
+                const auto* scalar=std::get_if<UndoRestoreDesktopScalar>(&record.undo.payload);
+                return record.isActive()&&scalar&&scalar->phase=="release"&&scalar->owners.empty();
+            }),"test failed to exercise owner-clearing release progress");
+        }
+        backend->beforeRelease={};f.a->nativeOk=true;write(resource,owned);
+        f.global=coordinator.reconcile(f.registry);require(f.global.successful()&&f.global.releaseFailures.empty(),"retry did not finish ownership-safe release");
+        require(!f.run().hasFailures(),"successful release left false obligation");
+    }
+}
+
 void scenarios() {
     {Fixture f(true,false,false,true,"HARD");f.scope->target.insert(DesktopEnvironmentKind::Gnome);
         require(f.run().hasFailures()&&f.controller.status().severity==IncidentSeverity::Hard&&f.notifications==1,
@@ -173,6 +320,6 @@ int main() {
     std::string error;require(fic::core::FicRuntimePaths::initialize(paths,error),error);
     IncidentStateStore::setOwnershipExpectationForTests(getuid(),getuid());
     IncidentSessionTargetStore::setOwnershipExpectationForTests(getuid(),getuid());
-    try {scenarios();} catch(...) {fs::remove_all(root);throw;}
+    try {scenarios();releaseScenarios();} catch(...) {fs::remove_all(root);throw;}
     fs::remove_all(root);
 }

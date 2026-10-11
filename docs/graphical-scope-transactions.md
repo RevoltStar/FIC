@@ -53,6 +53,30 @@ session SUCCESS is retained explicitly alongside global FAILED; the adapter
 neither retries global reconciliation nor rolls back session settings or journal
 provenance.
 
+Release-only failures are separate from desired requirements. Before backend
+operations the coordinator snapshots active scalar records from the healthy,
+schema-validated MutationJournal, routing by the scalar's canonical desktop and
+setting. Only recorded scalar owners are used; artifact/checkpoint primary policy
+references and old scope membership never establish policy ownership. Failures
+retain owner, mutation ID, resource, desktop, actual phase and backend cause;
+each physical record is counted once per owner. Completed releases do not leave
+false obligations. This report is diagnostic and grants no rollback authority.
+
+Enabled owners aggregate release, desired and targeted session outcomes into one
+result with their own severity. Disabled or unproven owners retain the global
+failure diagnosis without activating an arbitrary policy or the scope policy.
+A snapshot survives backend changes to Prepared/release progress and journal
+health failures. Persisted release progress intentionally has empty owners: if a
+later invocation has no surviving owner evidence, it remains unproven rather
+than guessing from the primary policy; physical recovery is unchanged.
+
+ScopeTransition exposes typed failure phases including checkpoint_state,
+checkpoint_prepare and checkpoint_commit. A commit persistence failure after
+successful physical verification keeps the global transition failed but retains
+verified desired settings and completed releases; it does not invent a backend
+failure. Native callback failures retain their actual phase even if saving the
+failed checkpoint also fails. No error-message substring classification is used.
+
 One aggregate PolicyIncidentReporter call feeds the existing IncidentController,
 severity max, audit, notification deduplication and active response. Diagnostics
 retain policy, session ID, UID, DE, phase and cause. Failed work can be retried by

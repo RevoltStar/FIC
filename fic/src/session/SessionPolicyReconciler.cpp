@@ -33,8 +33,13 @@ PolicyApplySummary reconcileSessionReadyPolicies(
         } else if (auto* sessionAware = dynamic_cast<SessionAwarePolicy*>(&policy)) {
             if (!context) return std::nullopt;
             phase = "session_reconciliation";
-            const auto outcome = sessionAware->reconcileSession(*context,
-                globalReport.resultFor(owner,context->target.desktop));
+            auto targetGlobal = globalReport.resultFor(owner,context->target.desktop);
+            if (globalReport.phase == "checkpoint_commit") {
+                const auto owned = globalReport.resultsFor(owner);
+                const auto found = owned.find(context->target.desktop);
+                if (found != owned.end()) targetGlobal = found->second;
+            }
+            const auto outcome = sessionAware->reconcileSession(*context,targetGlobal);
             success = outcome.successful();
             warning = outcome.status == SessionReconcileStatus::MandatoryGlobalRuntimeWarning;
             diagnostic = outcome.diagnostic;
@@ -59,6 +64,13 @@ PolicyApplySummary reconcileSessionReadyPolicies(
                     (global.diagnostic.empty() ?
                         (globalReport.stageADiagnostic.empty() ? "own mandatory global requirement not verified" :
                          "own mandatory global requirement not verified; checkpoint: " + globalReport.stageADiagnostic) : global.diagnostic);
+            }
+            for (const auto& release : globalReport.releaseFailures) {
+                if (release.owner != owner) continue;
+                if (!globalFailures.empty()) globalFailures += "; ";
+                globalFailures += std::string(DesktopEnvironmentBackend::kindName(release.desktop)) +
+                    " phase=" + release.phase + " resource=" + release.resource +
+                    " mutation=" + std::to_string(release.mutation) + ": " + release.diagnostic;
             }
             if (!globalFailures.empty()) {
                 // Session reconciliation has already run. Keep its independent

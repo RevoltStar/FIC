@@ -1218,6 +1218,18 @@ void testScopeCrashAndMalformedProvenance() {
     require(!broken.initializeOrLoad(error), "corrupt checkpoint trusted on reload");
 }
 
+void testScopePrepareFailurePhase() {
+    TempFile temp; MutationJournal journal(temp.path); std::string error;
+    require(journal.initializeOrLoad(error),error);
+    ScopeTransition transition(journal);ScopeTransition::FailurePhase phase;
+    const ScopeTransition::Operation ok=[](std::string&){return true;};
+    int physical=0;
+    AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){return path!=temp.path.string();});
+    const bool result=transition.reconcile({"KDE"},ok,[&](std::string&){++physical;return true;},ok,ok,error,&phase);
+    AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
+    require(!result&&phase==ScopeTransition::FailurePhase::CheckpointPrepare&&physical==0,"prepared persistence failure misclassified or physical write attempted");
+}
+
 void testScopeCommitDurabilityFailure() {
     TempFile temp;
     MutationJournal journal(temp.path);
@@ -1240,9 +1252,11 @@ void testScopeCommitDurabilityFailure() {
             [journalPath](const std::string& target) { return target != journalPath; });
         return true;
     };
-    require(!transition.reconcile({"KDE"}, ok, ok, release, verify, error),
+    ScopeTransition::FailurePhase failurePhase;
+    require(!transition.reconcile({"KDE"}, ok, ok, release, verify, error, &failurePhase),
             "commit durability failure reported success");
     require(released, "durability fault occurred before resource release");
+    require(failurePhase == ScopeTransition::FailurePhase::CheckpointCommit, "commit durability fault misclassified as backend verify");
     require(!journal.usable(), "indeterminate journal remained operational");
     require(!transition.requireCommitted({"KDE"}, error),
             "indeterminate commit authorized dependent policy");
@@ -2945,6 +2959,7 @@ int main() {
         {"DE artifact creation contract", testDesktopArtifactJournalContract},
         {"scope crash and malformed provenance", testScopeCrashAndMalformedProvenance},
         {"scope commit durability failure", testScopeCommitDurabilityFailure},
+        {"scope prepared persistence phase",testScopePrepareFailurePhase},
         {"PAM journal contract", testPamJournalContract},
         {"missing file is empty journal", testMissingFileIsEmptyJournal},
         {"prepare commit reload persistence", testPrepareCommitAndReloadPersistence},
