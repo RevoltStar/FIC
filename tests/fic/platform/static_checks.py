@@ -25,9 +25,9 @@ def main():
 
     daemon_main = (root / "fic/src/main.cpp").read_text(encoding="utf-8")
     require(
-        "bool should_audit_ipc_request(const json& request)" in daemon_main
-        and 'command != "boot_id" && command != "log_records"' in daemon_main
-        and "if (should_audit_ipc_request(request))" in daemon_main,
+        "const bool requestValidated = fic::ipc::parse_request_json" in daemon_main
+        and "validate_policy_request_schema(request, error)" in daemon_main
+        and "if (should_audit_ipc_request(request, requestValidated))" in daemon_main,
         "log polling IPC commands must not write audit records into the paginated log stream",
     )
     platform_profile = (root / "fic/src/platform/PlatformProfile.h").read_text(

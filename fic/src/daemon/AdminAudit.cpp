@@ -72,3 +72,17 @@ json make_admin_ipc_audit_event(
         admin_audit_request_fields(request), response_ok(response),
         response_message(response), timestamp);
 }
+
+
+bool should_audit_ipc_request(const json& request, bool requestValidated) {
+    if (!request.is_object()) return true;
+    const auto command = admin_audit_command(request);
+    // Preserve the existing exclusions, including their validation semantics.
+    if (command == "boot_id" || command == "log_records" ||
+        command == "access_gate_status" || command == "prelogin_status") return false;
+    if (command != "incident_status" || !requestValidated) return true;
+    // Defense against callers incorrectly claiming validation of extra fields.
+    for (const auto& field : request.items())
+        if (field.key() != "command" && field.key() != "api_version") return true;
+    return false;
+}

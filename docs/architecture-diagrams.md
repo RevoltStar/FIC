@@ -404,8 +404,13 @@ IPC-ответа, а усечение обозначается `diagnostics_trun
 Параллельно daemon ведет security audit trail административных IPC-запросов
 через `write_audit_log()`. Этот путь намеренно не использует `Logger` и всегда
 включен независимо от `AUDIT/log_level`, в том числе при `NoLog`. Отдельное
-исключение `boot_id` и `log_records` предотвращает самогенерацию записей во
-время polling и не меняет семантику `log_level`.
+исключение `boot_id`, `log_records`, `access_gate_status`, `prelogin_status` и
+валидного `incident_status` предотвращает самогенерацию записей во время polling.
+Для incident_status освобождение требует успешного parsing/schema validation;
+некорректный запрос с этим command остаётся в аудите. Семантика существующих
+четырёх исключений сохранена. `incident_raise`/`incident_clear` (включая ошибки)
+и события IncidentController по-прежнему аудитируются; log_level не управляет
+этим путём.
 
 Security audit trail обоих daemon сериализуется общей реализацией `fic-core`
 как JSON Lines. IPC event содержит authoritative `timestamp`, `component`,

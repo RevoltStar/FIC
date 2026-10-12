@@ -175,16 +175,6 @@ void audit_ipc_request(const PeerCredentials& peer, const json& request, const j
     write_audit_log(make_admin_ipc_audit_event(peer, request, response));
 }
 
-bool should_audit_ipc_request(const json& request) {
-    if (!request.is_object()) {
-        return true;
-    }
-
-    const std::string command = admin_audit_command(request);
-    return command != "boot_id" && command != "log_records" &&
-        command != "access_gate_status" && command != "prelogin_status";
-}
-
 std::string canonical_module_name(
     const PolicyRegistry& policyRegistry,
     const std::string& module
@@ -1294,8 +1284,9 @@ std::string handle_client_packet(
     std::string error;
     json request;
     json response;
-    if (fic::ipc::parse_request_json(requestText, request, error) &&
-        validate_policy_request_schema(request, error)) {
+    const bool requestValidated = fic::ipc::parse_request_json(requestText, request, error) &&
+        validate_policy_request_schema(request, error);
+    if (requestValidated) {
         fic::incident::canonicalizePolicyRequest(request,
             [&](const std::string& module) {
                 return canonical_module_name(policyRegistry, module);
@@ -1411,7 +1402,7 @@ std::string handle_client_packet(
         response = fic::ipc::make_error_response("invalid request: " + error);
     }
 
-    if (should_audit_ipc_request(request)) {
+    if (should_audit_ipc_request(request, requestValidated)) {
         audit_ipc_request(peer, request, response);
     }
     response["api_version"] = fic::ipc::API_VERSION;

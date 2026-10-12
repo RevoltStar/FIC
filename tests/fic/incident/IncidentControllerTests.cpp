@@ -5,6 +5,10 @@
 #include "incident/IncidentNotificationLevel.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/logging/Logger.h>
+#include <fic/core/logging/SecurityAudit.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include <nlohmann/json.hpp>
 #include <fic/core/incident/IncidentSeverity.h>
 
 #include <sys/stat.h>
@@ -819,9 +823,32 @@ void testPersistentBrokenFlagTracksObservation(const TempTree& tree) {
             "successful clear must report freshly proven persistent state");
 }
 
+void testStructuredAuditWithNoLog(const TempTree& tree) {
+    Harness harness(tree.statePath);
+    const auto path=tree.root / "audit.jsonl";
+    harness.controller.setAuditSink([&](const std::string& line) {
+        std::string error;
+        require(fic::core::security_audit::appendJsonLine(path,nlohmann::json::parse(line),error),error);
+    });
+    Logger::ScopedCapture ordinary;
+    require(Logger::log("suppressed ordinary record",logLevel::ERROR),"filtered logging must succeed");
+    require(ordinary.finish().records.empty(),"NoLog must suppress Logger capture");
+    harness.controller.raise(IncidentSeverity::Soft,policySource("audit"),"audit regression");
+    harness.controller.clear("administrator");
+    std::ifstream stream(path); std::string line; std::vector<std::string> events;
+    while(std::getline(stream,line)) events.push_back(nlohmann::json::parse(line).at("event").get<std::string>());
+    require(events==std::vector<std::string>{"incident_raise","incident_clear"},"controller events must bypass NoLog and IPC polling classification");
+}
+
 } // namespace
 
 int main() {
+    TempTree loggingTree;
+    auto paths=fic::core::FicProductPaths::production();
+    paths.configDir=loggingTree.root / "config"; paths.logDir=loggingTree.root / "log";
+    std::string loggingError;
+    require(fic::core::FicRuntimePaths::initialize(paths,loggingError),loggingError);
+    std::ofstream(paths.configDir / "AUDIT.conf") << "_schema_version=1\nlog_level.status=ENABLE\nlog_level.value=NoLog\n";
     IncidentStateStore::setOwnershipExpectationForTests(::geteuid(), ::geteuid());
     IncidentSessionTargetStore::setOwnershipExpectationForTests(
         ::geteuid(), ::geteuid());
@@ -831,6 +858,7 @@ int main() {
         void (*run)(const TempTree&);
     };
     const Scenario scenarios[] = {
+        {"structured_audit_with_NoLog", testStructuredAuditWithNoLog},
         {"raise_is_monotonic_through_the_controller",
          testRaiseIsMonotonicThroughTheController},
         {"notification_is_deduplicated_by_severity",

@@ -1,7 +1,6 @@
 #pragma once
 #include "features/incidents/services/IncidentService.h"
 #include "features/incidents/models/IncidentAuditModel.h"
-#include <QSet>
 
 // Bounded, current-boot acquisition cache only. No event store or enforcement.
 class IncidentHistoryService {

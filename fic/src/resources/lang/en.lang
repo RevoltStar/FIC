@@ -972,7 +972,7 @@ Where possible, a lock against modification is applied
 [incident:history_more]=More log pages remain. Use refresh to continue; bounded incremental polling also continues loading.
 [incident:history_trimmed]=Memory limit reached: previously loaded cached events were removed.
 [incident:history_damaged]=Some audit lines were damaged and skipped, or audit fields were truncated.
-[incident:history_reloaded]=Cursor expired or logs rotated: reading restarted; identical cached lines are coalesced.
+[incident:history_reloaded]=Cursor expired or logs rotated: bounded reconstruction replaced the snapshot; complete history is not guaranteed.
 [incident:time]=Date/time (audit)
 [incident:event]=Event
 [incident:previous]=Previous severity

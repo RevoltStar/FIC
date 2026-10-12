@@ -51,7 +51,7 @@ IncidentHistoryView::IncidentHistoryView(QWidget* parent) : QWidget(parent) {
 void IncidentHistoryView::setBusy(bool busy) { refresh_->setEnabled(!busy); }
 void IncidentHistoryView::updateSnapshot(const IncidentHistorySnapshot& snapshot) {
     retranslate();
-    model_->update(snapshot.events);
+    model_->update(snapshot.events, snapshot.generation);
     QString message = trIR("history_scope").arg(snapshot.bootId.isEmpty() ? "UNKNOWN" : snapshot.bootId);
     if (snapshot.acquired.isValid()) message += "\n" + trIR("history_time").arg(snapshot.acquired.toLocalTime().toString(Qt::ISODate));
     else message += "\n" + trIR("history_unavailable");

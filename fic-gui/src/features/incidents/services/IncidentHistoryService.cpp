@@ -25,12 +25,12 @@ IncidentHistorySnapshot IncidentHistoryService::refresh() {
             throw std::runtime_error("Invalid history boot_id");
         if (candidate.bootId != QString::fromStdString(boot)) {
             candidate = {}; candidate.bootId = QString::fromStdString(boot);
+            candidate.generation = data_.generation + 1;
         }
-        QSet<QString> identities;
         qsizetype bytes = 0;
-        for (const auto& e : candidate.events) { identities.insert(e.identity); bytes += e.memoryBytes(); }
+        for (const auto& e : candidate.events) bytes += e.memoryBytes();
         bool resetOnce = false, acquiredPage = false;
-        for (int page = 0; page < MaxPages; ++page) {
+        for (int pages = 0; pages < MaxPages;) {
             if (QThread::currentThread()->isInterruptionRequested()) throw std::runtime_error("History acquisition interrupted");
             const auto j = request({{"command", "log_records"}, {"boot_id", boot},
                 {"cursor", candidate.cursor.toStdString()}, {"limit", PageSize}});
@@ -39,20 +39,25 @@ IncidentHistorySnapshot IncidentHistoryService::refresh() {
                 !j.at("reload_required").is_boolean()) throw std::runtime_error("Invalid history page");
             if (j.at("reload_required").get<bool>()) {
                 if (resetOnce) throw std::runtime_error("Repeated stale history cursor");
-                resetOnce = true; candidate.cursor.clear(); candidate.reloaded = true;
+                resetOnce = true;
+                candidate = {}; candidate.bootId = QString::fromStdString(boot);
+                candidate.generation = data_.generation + 1;
+                candidate.reloaded = true; bytes = 0;
                 candidate.hasMore = true; acquiredPage = false; continue;
             }
             const auto cursor = QString::fromStdString(j.at("next_cursor").get<std::string>());
             if (cursor.isEmpty() || cursor.size() > 34 || (j.at("has_more").get<bool>() && cursor == candidate.cursor))
                 throw std::runtime_error("Invalid or non-progressing history cursor");
+            ++pages; // Reload attempts do not consume the successful-page budget.
             for (const auto& record : j.at("records")) {
                 bool damaged = false;
                 auto e = IncidentAuditEvent::parse(record, damaged);
                 candidate.damaged = candidate.damaged || damaged || (e && e->truncated);
-                if (!e || identities.contains(e->identity)) continue;
-                identities.insert(e->identity); bytes += e->memoryBytes(); candidate.events.append(std::move(*e));
+                if (!e) continue;
+                bytes += e->memoryBytes(); candidate.events.append(std::move(*e));
                 while (candidate.events.size() > MaxEvents || bytes > MaxMemoryBytes) {
-                    const auto& oldest = candidate.events.front(); bytes -= oldest.memoryBytes(); identities.remove(oldest.identity);
+                    const auto& oldest = candidate.events.front(); bytes -= oldest.memoryBytes();
+                    candidate.generation = data_.generation + 1;
                     candidate.events.removeFirst(); candidate.trimmed = true;
                 }
             }

@@ -118,14 +118,14 @@ int main(int argc, char** argv) {
     offline=true; history=service.refresh(); assert(history.stale && history.transportFailed && history.events.size() == 6 && history.cursor == lastCursor && history.acquired == lastTime);
     assert(history.error == "precise connection failure" && history.bootId == "boot-one");
     offline=false; reload=true; history=service.refresh();
-    assert(!history.stale && history.reloaded && history.events.size() == 7); // Identical page1 is not duplicated.
+    assert(!history.stale && history.reloaded && history.events.size() == 2); // Reconstruction replaces the old range instead of merging it.
     repeatReload=true; const auto before=history;
-    history=service.refresh(); assert(history.stale && history.cursor == before.cursor && history.events.size() == 7);
+    history=service.refresh(); assert(history.stale && history.cursor == before.cursor && history.events.size() == 2);
     repeatReload=false; badPage=true; history=service.refresh(); assert(history.stale && history.cursor == before.cursor);
-    badPage=false; stuck=true; history=service.refresh(); assert(history.stale && history.events.size() == 7);
+    badPage=false; stuck=true; history=service.refresh(); assert(history.stale && history.events.size() == 2);
     stuck=false;
     boot="boot-two"; bootPageFail=true; history=service.refresh();
-    assert(history.stale && history.bootId == "boot-one" && history.events.size() == 7 && history.error == "exact log refusal");
+    assert(history.stale && history.bootId == "boot-one" && history.events.size() == 2 && history.error == "exact log refusal");
     bootPageFail=false; position=0; history=service.refresh();
     assert(history.bootId == "boot-two" && history.events.size() == 4 && history.hasMore && !history.stale);
 
@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
     qsizetype bytes=0; for (const auto& e:history.events) bytes+=e.memoryBytes();
     assert(bytes <= IncidentHistoryService::MaxMemoryBytes && history.events.size() <= IncidentHistoryService::MaxEvents);
     history=bounds.refresh(); assert(history.trimmed && count == 1600);
-    bytes=0; QSet<QString> ids; for (const auto& e:history.events) { bytes+=e.memoryBytes(); assert(!ids.contains(e.identity)); ids.insert(e.identity); }
+    bytes=0; for (const auto& e:history.events) bytes+=e.memoryBytes();
     assert(bytes <= IncidentHistoryService::MaxMemoryBytes);
     int small=0;
     IncidentHistoryService rowBounds([&](const json& q) {
@@ -188,6 +188,68 @@ int main(int argc, char** argv) {
     assert(warning->textFormat() == Qt::PlainText && warning->text().contains("STALE") && warning->text().contains("PARTIAL") && warning->isVisible());
     view.findChild<QLineEdit*>("incidentSearch")->setText("does-not-exist"); assert(table->model()->rowCount() == 0);
     view.findChild<QLineEdit*>("incidentSearch")->clear(); assert(table->model()->rowCount() == 1);
+    // Count physical log records, including byte-identical audit lines.
+    const auto identical=record(event());
+    int physicalPosition=0, physicalCalls=0;
+    int phase=0; bool reconstruct=false, reconstructFailure=false, repeatedReload=false;
+    std::string physicalBoot="physical-one";
+    IncidentHistoryService physical([&](const json& q) {
+        if (q.at("command") == "boot_id") return response({{"boot_id",physicalBoot}});
+        ++physicalCalls;
+        if (reconstruct || repeatedReload) {
+            reconstruct=false;
+            return response({{"boot_id",physicalBoot},{"records",json::array()},{"has_more",false},{"reload_required",true}});
+        }
+        if (reconstructFailure && q.at("cursor") != "") return Result{false,{},"reconstruction failed"};
+        if (q.at("cursor") == "") { physicalPosition=1; return response(page(physicalBoot,json::array({identical,identical}),1,phase==1 || reconstructFailure)); }
+        if (phase==1) { phase=2; return response(page(physicalBoot,json::array({identical}),++physicalPosition)); }
+        if (phase==3) { phase=4; return response(page(physicalBoot,json::array({identical}),++physicalPosition)); }
+        return response(page(physicalBoot,json::array(),++physicalPosition));
+    });
+    auto physicalHistory=physical.refresh(); assert(physicalHistory.events.size() == 2);
+    assert(physicalHistory.events[0].raw == physicalHistory.events[1].raw);
+    phase=3; physicalHistory=physical.refresh(); assert(physicalHistory.events.size() == 3); // Identical incremental record.
+    physicalHistory=physical.refresh(); assert(physicalHistory.events.size() == 3); // Empty incremental page.
+    reconstruct=true; phase=1; physicalCalls=0;
+    physicalHistory=physical.refresh(); assert(physicalHistory.events.size() == 3 && physicalHistory.reloaded && !physicalHistory.stale);
+    assert(physicalCalls==3); // Reload control response + two successful pages.
+    const auto preserved=physicalHistory;
+    reconstruct=true; reconstructFailure=true;
+    physicalHistory=physical.refresh();
+    assert(physicalHistory.stale && physicalHistory.events.size()==preserved.events.size() &&
+        physicalHistory.cursor==preserved.cursor && physicalHistory.acquired==preserved.acquired &&
+        physicalHistory.generation==preserved.generation);
+    for(int i=0;i<physicalHistory.events.size();++i) assert(physicalHistory.events[i].raw==preserved.events[i].raw);
+    reconstructFailure=false; repeatedReload=true; physicalCalls=0;
+    physicalHistory=physical.refresh(); assert(physicalHistory.stale && physicalCalls==2 && physicalHistory.cursor==preserved.cursor);
+    repeatedReload=false; physicalBoot="physical-two"; phase=0;
+    physicalHistory=physical.refresh(); assert(physicalHistory.bootId=="physical-two" && physicalHistory.events.size()==2);
+    assert(physicalHistory.generation!=preserved.generation);
+    // A reload control response does not spend one of the four useful pages.
+    int budgetPages=0; bool budgetReload=true;
+    IncidentHistoryService budget([&](const json& q) {
+        if (q.at("command")=="boot_id") return response({{"boot_id","budget"}});
+        if (budgetReload) { budgetReload=false; return response({{"boot_id","budget"},{"records",json::array()},{"has_more",false},{"reload_required",true}}); }
+        return response(page("budget",json::array({identical}),++budgetPages,true));
+    });
+    auto budgetHistory=budget.refresh(); assert(budgetPages==4 && budgetHistory.events.size()==4 && budgetHistory.hasMore && budgetHistory.reloaded);
+    int identicalPages=0;
+    IncidentHistoryService identicalBound([&](const json& q) {
+        if (q.at("command")=="boot_id") return response({{"boot_id","identical-bound"}});
+        json records=json::array(); for(int i=0;i<200;++i) records.push_back(identical);
+        return response(page("identical-bound",records,++identicalPages,true));
+    });
+    identicalBound.refresh(); auto identicalHistory=identicalBound.refresh();
+    assert(identicalHistory.events.size()==1000 && identicalHistory.trimmed && identicalPages==8);
+    IncidentAuditModel duplicateModel; int duplicateInserts=0, duplicateResets=0;
+    QObject::connect(&duplicateModel,&QAbstractItemModel::rowsInserted,[&]{++duplicateInserts;});
+    QObject::connect(&duplicateModel,&QAbstractItemModel::modelReset,[&]{++duplicateResets;});
+    duplicateModel.update({*full,*full}); duplicateModel.update({*full,*full,*full});
+    assert(duplicateModel.rowCount()==3 && duplicateInserts==2 && duplicateResets==0);
+    duplicateModel.update({*full,*full,*full},1); // Same bytes, new reconstruction generation.
+    assert(duplicateModel.rowCount()==3 && duplicateResets==1);
+    duplicateModel.update({*full,*full},2); assert(duplicateModel.rowCount()==2 && duplicateResets==2);
+
     // Exercise the shipped RU/EN bundles and atomic rejection of malformed data.
     for (const auto lang : {"ru", "en"}) {
         QFile file(QString(":/fic/lang/%1.lang").arg(lang)); assert(file.open(QIODevice::ReadOnly));

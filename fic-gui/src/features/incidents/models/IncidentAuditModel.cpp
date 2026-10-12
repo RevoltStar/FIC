@@ -1,6 +1,5 @@
 #include "IncidentAuditModel.h"
 #include "shared/i18n/QLocalizationManager.h"
-#include <QCryptographicHash>
 #include <fic/ipc/FicIpcClient.h>
 #include <stdexcept>
 namespace {
@@ -13,7 +12,7 @@ QString field(const nlohmann::json& j, const char* key) {
 }
 qsizetype IncidentAuditEvent::memoryBytes() const {
     return sizeof(*this) + raw.size() + 2 * (timestamp.size() + event.size() + previous.size() +
-        severity.size() + source.size() + reason.size() + diagnostic.size() + identity.size());
+        severity.size() + source.size() + reason.size() + diagnostic.size());
 }
 std::optional<IncidentAuditEvent> IncidentAuditEvent::parse(const nlohmann::json& record, bool& damaged) {
     damaged = false;
@@ -57,12 +56,6 @@ std::optional<IncidentAuditEvent> IncidentAuditEvent::parse(const nlohmann::json
         }
         e.truncated = j.value("record_truncated", false) || j.contains("truncated_fields");
         e.raw = QByteArray::fromStdString(line);
-        // log_records has no physical record ID/offset. Coalesce identical lines
-        // from the same file (including replay following cursor expiration).
-        const auto& filename = record.at("source_file").get_ref<const std::string&>();
-        if (filename.size() > MaxLine) throw std::runtime_error("Audit source path too large");
-        const auto origin = QByteArray::fromStdString(filename);
-        e.identity = QString::fromLatin1(QCryptographicHash::hash(origin + '\0' + e.raw, QCryptographicHash::Sha256).toHex());
         return e;
     } catch (const std::exception&) { damaged = true; return {}; }
 }
@@ -84,13 +77,14 @@ QVariant IncidentAuditModel::headerData(int section, Qt::Orientation orientation
 const IncidentAuditEvent* IncidentAuditModel::eventAt(int row) const {
     return row >= 0 && row < events_.size() ? &events_[row] : nullptr;
 }
-void IncidentAuditModel::update(const QVector<IncidentAuditEvent>& events) {
-    bool prefix = events.size() >= events_.size();
-    for (int i = 0; prefix && i < events_.size(); ++i) prefix = events[i].identity == events_[i].identity;
+void IncidentAuditModel::update(const QVector<IncidentAuditEvent>& events, quint64 generation) {
+    // Positional content comparison is only a rendering optimization, never deduplication.
+    bool prefix = generation == generation_ && events.size() >= events_.size();
+    for (int i = 0; prefix && i < events_.size(); ++i) prefix = events[i].raw == events_[i].raw;
     if (prefix) {
         if (events.size() == events_.size()) return;
         beginInsertRows({}, events_.size(), events.size() - 1); events_ = events; endInsertRows();
-    } else { beginResetModel(); events_ = events; endResetModel(); }
+    } else { beginResetModel(); events_ = events; generation_ = generation; endResetModel(); }
 }
 void IncidentAuditFilter::setFilters(QString event, QString severity, QString source, QString search) {
     event_ = std::move(event); severity_ = std::move(severity); source_ = std::move(source); search_ = std::move(search);
