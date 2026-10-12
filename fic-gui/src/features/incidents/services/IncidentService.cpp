@@ -1,4 +1,6 @@
 #include "IncidentService.h"
+#include "IncidentHistoryService.h"
+#include <QThread>
 #include <utility>
 IncidentService::IncidentService(RequestFunction request) : request_(std::move(request)) {}
 IncidentService::Reply IncidentService::request(const nlohmann::json& payload, bool parseStatus) const {
@@ -27,8 +29,24 @@ IncidentService::Reply IncidentService::action(const QString& command, const QSt
         return request({{"command", "incident_raise"}, {"value", severity.toStdString()}}, false);
     Reply reply; reply.failure = Failure::Protocol; reply.message = "Invalid incident action"; return reply;
 }
-IncidentWorker::IncidentWorker(IncidentService::RequestFunction request) : service_(std::move(request)) {}
+IncidentWorker::IncidentWorker(IncidentService::RequestFunction request)
+    : transport_(request), service_(request), history_(std::make_unique<IncidentHistoryService>(std::move(request))) {}
+IncidentWorker::~IncidentWorker() = default;
+void IncidentWorker::refreshHistory() { emit historyFinished(history_->refresh()); }
 void IncidentWorker::run(quint64 sequence, QString command, QString severity) {
     if (!command.isEmpty()) emit actionFinished(service_.action(command, severity));
-    emit statusFinished(sequence, service_.status());
+    if (QThread::currentThread()->isInterruptionRequested()) return;
+    const auto status = service_.status();
+    emit statusFinished(sequence, status);
+    if (status.status && !localizationAttempted_ && !QThread::currentThread()->isInterruptionRequested()) {
+        try {
+            const nlohmann::json payload = {{"command", "localization_bundle"}};
+            const auto result = transport_ ? transport_(payload) : fic::ipc::Client().requestWithStatus(payload);
+            if (result.hasResponse && result.response.is_object() && result.response.contains("translations") &&
+                result.response.at("translations").is_object()) {
+                localizationAttempted_ = true;
+                emit localizationFinished(QByteArray::fromStdString(result.response.dump()));
+            }
+        } catch (const std::exception&) { /* Offline fallback remains available. */ }
+    }
 }

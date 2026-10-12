@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QMessageBox>
 #include <QTimer>
+#include <QTableView>
 #include <QElapsedTimer>
 #include <atomic>
 #include <thread>
@@ -49,6 +50,8 @@ int main(int argc, char** argv) {
     current = valid(); current["severity"] = "UNLOCKED"; current["runtime"] = "inactive";
     for (auto& flag : current["runtime_containment"].items()) flag.value() = false;
     assert(service.status().status->normal());
+    current["persistent_provenance"] = "BROKEN"; assert(!service.status().status->normal());
+    current["persistent_provenance"] = "PROVEN";
     current["response_mode_proven"] = false; assert(!service.status().status->normal());
     current = valid(); current["state_proven"] = false; current["persistent_state_broken"] = true;
     current["persistent_provenance"] = "BROKEN"; current["runtime"] = "degraded";
@@ -77,8 +80,19 @@ int main(int argc, char** argv) {
     assert(actions.action("incident_clear").failure == IncidentService::Failure::None); assert(sent.at("command") == "incident_clear" && !sent.contains("value"));
     assert(service.action("incident_clear").message == "precise daemon refusal");
     std::atomic<int> statusCalls{0}, actionCalls{0}, failure{0};
+    std::atomic<bool> historyOffline{false};
     IncidentPage page(nullptr, [&](const json& payload) {
         assert(QThread::currentThread() != app.thread());
+        if (payload.at("command") == "localization_bundle") return Result{false,{},"offline localization"};
+        if (historyOffline && (payload.at("command") == "boot_id" || payload.at("command") == "log_records"))
+            return Result{false,{},"history transport lost"};
+        if (payload.at("command") == "boot_id") return Result{true, {{"ok",true},{"message","boot"},{"api_version",1},{"boot_id","test-boot"}}, {}};
+        if (payload.at("command") == "log_records") {
+            const json audit={{"event","incident_raise"},{"component","fic"},{"timestamp","time"},{"effective_severity","ISOLATE"},{"source","administrator"}};
+            const json records=json::array({{{"category","audit"},{"source_file","/mock/audit.txt"},{"line",audit.dump()}},
+                {{"category","audit"},{"source_file","/mock/audit.txt"},{"line","{bad"}}});
+            return Result{true, {{"ok",true},{"message","logs"},{"api_version",1},{"boot_id","test-boot"},{"records",records},{"has_more",false},{"reload_required",false},{"next_cursor","2.0123456789abcdef0123456789abcdef"}}, {}};
+        }
         if (payload.at("command") != "incident_status") {
             ++actionCalls; return Result{true, {{"api_version",1},{"ok",false},{"message","<b>denied</b>"}}, {}};
         }
@@ -88,20 +102,27 @@ int main(int argc, char** argv) {
         if (failure == 3) { auto j = valid(); j["runtime"] = "degraded"; j["state_proven"] = false; return Result{true, j, {}}; }
         return Result{true, valid(), {}};
     });
-    page.show(); until([&]{ return page.snapshot().status.has_value(); });
+    page.show(); until([&]{ return page.snapshot().status.has_value() && !page.isBusy(); });
     auto* warning = page.findChild<QLabel*>("incidentWarning");
     auto* details = page.findChild<QPlainTextEdit*>("incidentDetails");
     assert(warning && !warning->isVisible());
+    auto* historyTable=page.findChild<QTableView*>("incidentHistoryTable");
+    assert(historyTable->model()->rowCount() == 1); // Bad audit line never invalidates status.
+    assert(page.findChild<QLabel*>("incidentHistoryWarning")->text().contains("PARTIAL"));
     assert(details->toPlainText().contains("diagnostic <script>"));
     failure = 1; auto sequence = page.snapshot().lastSequence; page.refresh();
-    until([&]{ return page.snapshot().lastSequence > sequence; });
+    until([&]{ return page.snapshot().lastSequence > sequence && !page.isBusy(); });
+    page.findChild<QTabWidget*>("incidentTabs")->setCurrentIndex(1);
     assert(page.snapshot().stale && warning->isVisible() && warning->text().contains("STALE"));
+    assert(historyTable->model()->rowCount() == 1);
+    assert(page.findChild<QLabel*>("incidentHistoryWarning")->text().contains("STALE"));
+    page.findChild<QTabWidget*>("incidentTabs")->setCurrentIndex(0);
     assert(page.snapshot().status->severity == "ISOLATE" && page.snapshot().status->sessions && page.snapshot().status->userRuntime);
     assert(details->toPlainText().contains("mode detail <b>"));
     failure = 2; sequence = page.snapshot().lastSequence; page.refresh();
-    until([&]{ return page.snapshot().lastSequence > sequence; }); assert(page.snapshot().stale);
+    until([&]{ return page.snapshot().lastSequence > sequence && !page.isBusy(); }); assert(page.snapshot().stale);
     failure = 3; sequence = page.snapshot().lastSequence; page.refresh();
-    until([&]{ return page.snapshot().lastSequence > sequence; }); assert(!page.snapshot().stale);
+    until([&]{ return page.snapshot().lastSequence > sequence && !page.isBusy(); }); assert(!page.snapshot().stale);
     for (auto* button : page.findChildren<QPushButton*>()) assert(button->isEnabled());
     // Both UI paths require a cancellable PlainText confirmation before IPC.
     for (auto* button : page.findChildren<QPushButton*>()) {
@@ -116,10 +137,15 @@ int main(int argc, char** argv) {
         button->click(); assert(actionCalls == 0);
     }
     sequence = page.snapshot().lastSequence; page.executeConfirmedAction("incident_clear");
-    until([&]{ return page.snapshot().lastSequence > sequence; }); assert(actionCalls == 1 && statusCalls >= 5);
+    until([&]{ return page.snapshot().lastSequence > sequence && !page.isBusy(); }); assert(actionCalls == 1 && statusCalls >= 5);
     assert(page.findChild<QLabel*>("incidentOperation")->text().contains("<b>denied</b>"));
+    const auto beforeHistoryFailure=page.snapshot().acquired;
+    historyOffline=true; page.refreshHistory(); until([&]{ return !page.isBusy(); });
+    assert(page.snapshot().stale && page.snapshot().status->severity == "ISOLATE" && page.snapshot().acquired == beforeHistoryFailure);
+    assert(warning->isVisible() && warning->text().contains("history transport lost") && historyTable->model()->rowCount() == 1);
+    historyOffline=false;
     failure = 1; sequence = page.snapshot().lastSequence; page.executeConfirmedAction("incident_raise", "HARD");
-    until([&]{ return page.snapshot().lastSequence > sequence; }); assert(page.snapshot().stale);
+    until([&]{ return page.snapshot().lastSequence > sequence && !page.isBusy(); }); assert(page.snapshot().stale);
     IncidentPage firstFailure(nullptr, [](const json&) { return Result{false, {}, "offline"}; });
     firstFailure.show(); until([&]{ return firstFailure.snapshot().lastSequence > 0; });
     assert(!firstFailure.snapshot().status && !firstFailure.snapshot().stale);
@@ -137,6 +163,27 @@ int main(int argc, char** argv) {
     policyFailure.show();
     assert(policyFailure.findChild<QTabWidget*>("tab_modules")->isVisible());
     assert(policyFailure.findChild<IncidentPage*>("incidentPage"));
+    MainWindow malformedModules(nullptr, [](const json&) {
+        return Result{true, {{"ok","invalid"},{"message","bad module envelope"}}, {}};
+    }, [](const json&) { return Result{true, valid(), {}}; });
+    malformedModules.show(); malformedModules.addModules();
+    assert(malformedModules.findChild<QTabWidget*>("tab_modules")->count() == 1);
+    // Changing selection and rebuilding ordinary pages retains the named page.
+    const json bundle={{"ok",true},{"message","bundle"},{"api_version",1},{"language","en"},{"translations",json::object()}};
+    assert(QLocalizationManager::installBundle(QByteArray::fromStdString(bundle.dump())));
+    assert(QLocalizationManager::getLang("[incident:title]") != "[incident:title]");
+    MainWindow normalModules(nullptr, [](const json& q) {
+        if (q.at("command") == "module_list") return Result{true, {{"ok",true},{"modules",json::array({
+            {{"name","GLOBAL"},{"view","standard"},{"display_order",1}},
+            {{"name","SYSCTL"},{"view","standard"},{"display_order",2}}})}}, {}};
+        return Result{true, {{"ok",true},{"message","policies loaded"},{"policies",json::array()}}, {}};
+    }, [](const json&) { return Result{true, valid(), {}}; });
+    auto* normalTabs=normalModules.findChild<QTabWidget*>("tab_modules");
+    assert(normalTabs->count() == 3); normalTabs->setCurrentIndex(2);
+    assert(normalTabs->currentWidget()->objectName() == "SYSCTL");
+    normalModules.addModules(); assert(normalTabs->count() == 3 && normalTabs->currentWidget()->objectName() == "SYSCTL");
+    normalTabs->setCurrentIndex(0); auto* permanent=normalTabs->currentWidget();
+    normalModules.addModules(); assert(normalTabs->currentWidget() == permanent && normalTabs->count() == 3);
     std::atomic<bool> entered{false}, release{false}; std::atomic<int> slowCalls{0};
     auto* slow = new IncidentPage(nullptr, [&](const json&) {
         ++slowCalls; entered = true;

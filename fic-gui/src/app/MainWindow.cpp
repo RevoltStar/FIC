@@ -24,6 +24,10 @@ MainWindow::MainWindow(QWidget* parent, PolicyService::RequestFunction policyReq
     ui->statusbar->hide();
     incidentPage_ = new IncidentPage(ui->tab_modules, std::move(incidentRequest));
     ui->tab_modules->addTab(incidentPage_, QLocalizationManager::getLang("[incident:title]"));
+    connect(incidentPage_, &IncidentPage::localizationChanged, this, [this] {
+        ui->tab_modules->setTabText(ui->tab_modules->indexOf(incidentPage_), QLocalizationManager::getLang("[incident:title]"));
+        if (refreshButton_) refreshButton_->setText(QLocalizationManager::getLang("[incident:refresh]"));
+    });
     addModules();
 }
 
@@ -38,47 +42,51 @@ void MainWindow::addModules()
     const QString selectedName = selected ? selected->objectName() : QString();
     clearModules();
 
-    PolicyService service(policyRequest_);
-    std::vector<ModuleDescriptor> modules;
-    QString error;
-    if (!service.loadModules(modules, error)) {
-        showRefreshFallback(error);
-        return;
-    }
+    try {
+        PolicyService service(policyRequest_);
+        std::vector<ModuleDescriptor> modules;
+        QString error;
+        if (!service.loadModules(modules, error)) {
+            showRefreshFallback(error);
+            return;
+        }
 
-    std::sort(
-        modules.begin(),
-        modules.end(),
-        [](const ModuleDescriptor& left, const ModuleDescriptor& right) {
-            if (left.displayOrder != right.displayOrder) {
-                return left.displayOrder < right.displayOrder;
+        std::sort(
+            modules.begin(),
+            modules.end(),
+            [](const ModuleDescriptor& left, const ModuleDescriptor& right) {
+                if (left.displayOrder != right.displayOrder) {
+                    return left.displayOrder < right.displayOrder;
+                }
+                return left.name < right.name;
+            });
+
+        const ModulePageFactory factory;
+        for (const ModuleDescriptor& module : modules) {
+            std::vector<PolicyDescriptor> policies;
+            if (!service.loadPolicies(module.name, policies, error)) {
+                showRefreshFallback(QString::fromStdString(module.name) + ": " + error);
+                return;
             }
-            return left.name < right.name;
-        });
+            QWidget* page = factory.create(module, policies, ui->tab_modules);
+            if (page == nullptr) {
+                QMessageBox::warning(this, "FIC daemon", "Unsupported module view");
+                return;
+            }
+            page->setObjectName(QString::fromStdString(module.name));
+            ui->tab_modules->addTab(
+                page,
+                QLocalizationManager::getLang(
+                    QString::fromStdString("[module:" + module.name + "]")));
+        }
 
-    const ModulePageFactory factory;
-    for (const ModuleDescriptor& module : modules) {
-        std::vector<PolicyDescriptor> policies;
-        if (!service.loadPolicies(module.name, policies, error)) {
-            showRefreshFallback(QString::fromStdString(module.name) + ": " + error);
-            return;
-        }
-        QWidget* page = factory.create(module, policies, ui->tab_modules);
-        if (page == nullptr) {
-            QMessageBox::warning(this, "FIC daemon", "Unsupported module view");
-            return;
-        }
-        page->setObjectName(QString::fromStdString(module.name));
-        ui->tab_modules->addTab(
-            page,
-            QLocalizationManager::getLang(
-                QString::fromStdString("[module:" + module.name + "]")));
+        showModules();
+        ui->tab_modules->setTabText(ui->tab_modules->indexOf(incidentPage_), QLocalizationManager::getLang("[incident:title]"));
+        for (int i = 0; i < ui->tab_modules->count(); ++i)
+            if (ui->tab_modules->widget(i)->objectName() == selectedName) ui->tab_modules->setCurrentIndex(i);
+    } catch (const std::exception& error) {
+        showRefreshFallback(QString::fromUtf8(error.what()));
     }
-
-    showModules();
-    ui->tab_modules->setTabText(ui->tab_modules->indexOf(incidentPage_), QLocalizationManager::getLang("[incident:title]"));
-    for (int i = 0; i < ui->tab_modules->count(); ++i)
-        if (ui->tab_modules->widget(i)->objectName() == selectedName) ui->tab_modules->setCurrentIndex(i);
 }
 
 void MainWindow::clearModules()
@@ -121,7 +129,7 @@ void MainWindow::showRefreshFallback(const QString& error)
 
     ui->tab_modules->show();
     refreshFallback_->show();
-    refreshButton_->setToolTip(error);
+    refreshButton_->setToolTip({});
     ui->statusbar->showMessage(error);
     ui->statusbar->show();
 }

@@ -1,5 +1,7 @@
 #pragma once
 #include <functional>
+#include <memory>
+#include "features/incidents/models/IncidentAuditModel.h"
 #include <QObject>
 #include <fic/ipc/FicIpcClient.h>
 #include "features/incidents/models/IncidentStatus.h"
@@ -23,15 +25,23 @@ private:
 };
 Q_DECLARE_METATYPE(IncidentService::Reply)
 
+class IncidentHistoryService;
 class IncidentWorker : public QObject {
     Q_OBJECT
 public:
     explicit IncidentWorker(IncidentService::RequestFunction request = {});
+    ~IncidentWorker() override;
 public slots:
     void run(quint64 sequence, QString command, QString severity);
+    void refreshHistory();
 signals:
     void actionFinished(IncidentService::Reply reply);
     void statusFinished(quint64 sequence, IncidentService::Reply reply);
+    void historyFinished(IncidentHistorySnapshot snapshot);
+    void localizationFinished(QByteArray bundle);
 private:
+    IncidentService::RequestFunction transport_;
+    bool localizationAttempted_ = false;
     IncidentService service_;
+    std::unique_ptr<IncidentHistoryService> history_;
 };

@@ -2,6 +2,7 @@
 #include <QWidget>
 #include <QThread>
 #include "features/incidents/services/IncidentService.h"
+class IncidentHistoryView;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
@@ -13,17 +14,24 @@ public:
     explicit IncidentPage(QWidget* parent = nullptr, IncidentService::RequestFunction request = {});
     ~IncidentPage() override;
     const IncidentSnapshot& snapshot() const { return snapshot_; }
+    bool isBusy() const { return busy_; }
 public slots:
     void refresh();
+    void refreshHistory();
     // Used after UI confirmation; transport may be injected for offscreen tests.
     void executeConfirmedAction(const QString& command, const QString& severity = {});
 signals:
     void request(quint64 sequence, QString command, QString severity);
     void updated();
+    void historyRequested();
+    void localizationChanged();
 private:
     void submit(const QString& command = {}, const QString& severity = {});
     void render();
     IncidentSnapshot snapshot_;
+    IncidentHistorySnapshot historySnapshot_;
+    IncidentHistoryView* historyView_;
+    QDateTime lastHistoryAttempt_;
     QThread thread_;
     bool busy_ = false;
     quint64 sequence_ = 0;

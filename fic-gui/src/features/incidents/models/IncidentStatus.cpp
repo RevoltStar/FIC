@@ -27,7 +27,7 @@ IncidentStatus IncidentStatus::parse(const nlohmann::json& j) {
     return s;
 }
 bool IncidentStatus::normal() const {
-    return stateProven && !persistentBroken && modeProven && severity == "UNLOCKED" &&
+    return stateProven && !persistentBroken && provenance == "PROVEN" && modeProven && severity == "UNLOCKED" &&
         runtime == "inactive" && !pam && !sessions && !userRuntime && !network;
 }
 bool IncidentSnapshot::accept(quint64 sequence, const std::optional<IncidentStatus>& value,

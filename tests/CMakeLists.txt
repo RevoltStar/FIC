@@ -3035,3 +3035,17 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME incident_gui_static_checks COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/fic-gui/incidents/static_checks.py ${CMAKE_SOURCE_DIR})
 endif()
+add_executable(incident_history_tests
+    fic-gui/incidents/IncidentHistoryTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/incidents/models/IncidentStatus.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/incidents/models/IncidentAuditModel.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/incidents/services/IncidentService.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/incidents/services/IncidentHistoryService.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/incidents/pages/IncidentHistoryView.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/shared/i18n/QLocalizationManager.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/app/resources.qrc)
+set_target_properties(incident_history_tests PROPERTIES AUTOMOC ON AUTORCC ON)
+target_include_directories(incident_history_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-gui/src)
+target_link_libraries(incident_history_tests PRIVATE Qt${QT_VERSION_MAJOR}::Widgets fic-ipc fic-core)
+add_test(NAME incident_history_tests COMMAND incident_history_tests)
+set_tests_properties(incident_history_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;FIC_SOCKET_PATH=/tmp/fic-incident-tests-no-daemon.sock" TIMEOUT 30)

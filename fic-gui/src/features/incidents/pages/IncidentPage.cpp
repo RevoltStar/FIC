@@ -1,4 +1,6 @@
 #include "IncidentPage.h"
+#include "IncidentHistoryView.h"
+#include <QTabWidget>
 #include "shared/i18n/QLocalizationManager.h"
 #include <QLabel>
 #include <QPlainTextEdit>
@@ -17,8 +19,13 @@ QLabel* label(QWidget* parent, const char* name) {
 }
 IncidentPage::IncidentPage(QWidget* parent, IncidentService::RequestFunction transport) : QWidget(parent) {
     setObjectName("incidentPage");
-    auto* layout = new QVBoxLayout(this);
-    warning_ = label(this, "incidentWarning"); layout->addWidget(warning_);
+    auto* outer = new QVBoxLayout(this);
+    auto* tabs = new QTabWidget(this); tabs->setObjectName("incidentTabs"); outer->addWidget(tabs);
+    auto* status = new QWidget(tabs); tabs->addTab(status, trIR("current_status"));
+    historyView_ = new IncidentHistoryView(tabs); tabs->addTab(historyView_, trIR("history"));
+    auto* layout = new QVBoxLayout(status);
+    connect(historyView_, &IncidentHistoryView::refreshRequested, this, &IncidentPage::refreshHistory);
+    warning_ = label(this, "incidentWarning"); outer->insertWidget(0, warning_);
     summary_ = label(this, "incidentSummary"); layout->addWidget(summary_);
     details_ = new QPlainTextEdit(this); details_->setObjectName("incidentDetails"); details_->setReadOnly(true);
     layout->addWidget(details_);
@@ -41,9 +48,24 @@ IncidentPage::IncidentPage(QWidget* parent, IncidentService::RequestFunction tra
         if (box.exec() == QMessageBox::Yes) executeConfirmedAction("incident_clear");
     });
     qRegisterMetaType<IncidentService::Reply>();
+    qRegisterMetaType<IncidentHistorySnapshot>();
     auto* worker = new IncidentWorker(std::move(transport)); worker->moveToThread(&thread_);
     connect(&thread_, &QThread::finished, worker, &QObject::deleteLater);
     connect(this, &IncidentPage::request, worker, &IncidentWorker::run, Qt::QueuedConnection);
+    connect(this, &IncidentPage::historyRequested, worker, &IncidentWorker::refreshHistory, Qt::QueuedConnection);
+    connect(worker, &IncidentWorker::historyFinished, this, [this](IncidentHistorySnapshot history) {
+        busy_ = false; historySnapshot_ = std::move(history); historyView_->updateSnapshot(historySnapshot_);
+        if (historySnapshot_.transportFailed) {
+            snapshot_.stale = snapshot_.status.has_value(); snapshot_.reachable = false;
+            snapshot_.error = historySnapshot_.error;
+        }
+        render(); emit updated();
+    });
+    connect(worker, &IncidentWorker::localizationFinished, this, [this](const QByteArray& bundle) {
+        if (QLocalizationManager::installBundle(bundle)) {
+            historyView_->updateSnapshot(historySnapshot_); render(); emit localizationChanged();
+        }
+    });
     connect(worker, &IncidentWorker::actionFinished, this, [this](IncidentService::Reply r) {
         operation_->setText(trIR(r.failure == IncidentService::Failure::None ? "action_ok" : "action_failed") + "\n" + r.message);
     });
@@ -51,21 +73,35 @@ IncidentPage::IncidentPage(QWidget* parent, IncidentService::RequestFunction tra
         if (seq != sequence_) return;
         busy_ = false;
         snapshot_.accept(seq, r.status, r.status ? QString() : r.message, r.reachable);
+        if (!r.status) {
+            historySnapshot_.stale = true; historySnapshot_.error = r.message;
+            historyView_->updateSnapshot(historySnapshot_);
+        }
         render(); emit updated();
+        if (r.status && (!lastHistoryAttempt_.isValid() || lastHistoryAttempt_.secsTo(QDateTime::currentDateTimeUtc()) >= 10)) refreshHistory();
     });
     thread_.start();
     auto* timer = new QTimer(this); timer->setInterval(5000);
     connect(timer, &QTimer::timeout, this, &IncidentPage::refresh); timer->start();
     render(); QTimer::singleShot(0, this, &IncidentPage::refresh);
 }
-IncidentPage::~IncidentPage() { thread_.quit(); thread_.wait(); }
+IncidentPage::~IncidentPage() { thread_.requestInterruption(); thread_.quit(); thread_.wait(); }
 void IncidentPage::refresh() { submit(); }
+void IncidentPage::refreshHistory() {
+    if (busy_) return;
+    busy_ = true; lastHistoryAttempt_ = QDateTime::currentDateTimeUtc();
+    render(); emit historyRequested();
+}
 void IncidentPage::executeConfirmedAction(const QString& command, const QString& severity) { submit(command, severity); }
 void IncidentPage::submit(const QString& command, const QString& severity) {
     if (busy_) return;
     busy_ = true; render(); emit request(++sequence_, command, severity);
 }
 void IncidentPage::render() {
+    auto* tabs = findChild<QTabWidget*>("incidentTabs");
+    tabs->setTabText(0, trIR("current_status")); tabs->setTabText(1, trIR("history"));
+    refresh_->setText(trIR("refresh")); raise_->setText(trIR("raise")); clear_->setText(trIR("clear"));
+    historyView_->retranslate(); historyView_->setBusy(busy_);
     refresh_->setEnabled(!busy_);
     raise_->setEnabled(!busy_ && snapshot_.reachable); clear_->setEnabled(!busy_ && snapshot_.reachable);
     severity_->setEnabled(!busy_ && snapshot_.reachable);
