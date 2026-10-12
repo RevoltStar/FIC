@@ -1,4 +1,5 @@
 #include "app/MainWindow.h"
+#include "features/incidents/pages/IncidentPage.h"
 
 #include "ui_MainWindow.h"
 
@@ -13,12 +14,16 @@
 #include "features/policies/services/PolicyService.h"
 #include "shared/i18n/QLocalizationManager.h"
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(QWidget* parent, PolicyService::RequestFunction policyRequest,
+                       IncidentService::RequestFunction incidentRequest)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
+    , policyRequest_(std::move(policyRequest))
 {
     ui->setupUi(this);
     ui->statusbar->hide();
+    incidentPage_ = new IncidentPage(ui->tab_modules, std::move(incidentRequest));
+    ui->tab_modules->addTab(incidentPage_, QLocalizationManager::getLang("[incident:title]"));
     addModules();
 }
 
@@ -29,9 +34,11 @@ MainWindow::~MainWindow()
 
 void MainWindow::addModules()
 {
+    QWidget* selected = ui->tab_modules->currentWidget();
+    const QString selectedName = selected ? selected->objectName() : QString();
     clearModules();
 
-    PolicyService service;
+    PolicyService service(policyRequest_);
     std::vector<ModuleDescriptor> modules;
     QString error;
     if (!service.loadModules(modules, error)) {
@@ -61,6 +68,7 @@ void MainWindow::addModules()
             QMessageBox::warning(this, "FIC daemon", "Unsupported module view");
             return;
         }
+        page->setObjectName(QString::fromStdString(module.name));
         ui->tab_modules->addTab(
             page,
             QLocalizationManager::getLang(
@@ -68,13 +76,17 @@ void MainWindow::addModules()
     }
 
     showModules();
+    ui->tab_modules->setTabText(ui->tab_modules->indexOf(incidentPage_), QLocalizationManager::getLang("[incident:title]"));
+    for (int i = 0; i < ui->tab_modules->count(); ++i)
+        if (ui->tab_modules->widget(i)->objectName() == selectedName) ui->tab_modules->setCurrentIndex(i);
 }
 
 void MainWindow::clearModules()
 {
-    while (ui->tab_modules->count() > 0) {
-        QWidget* page = ui->tab_modules->widget(0);
-        ui->tab_modules->removeTab(0);
+    for (int i = ui->tab_modules->count() - 1; i >= 0; --i) {
+        QWidget* page = ui->tab_modules->widget(i);
+        if (page == incidentPage_) continue;
+        ui->tab_modules->removeTab(i);
         delete page;
     }
 }
@@ -99,7 +111,7 @@ void MainWindow::showRefreshFallback(const QString& error)
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addStretch();
 
-        refreshButton_ = new QPushButton("Обновить", refreshFallback_);
+        refreshButton_ = new QPushButton(QLocalizationManager::getLang("[incident:refresh]"), refreshFallback_);
         connect(refreshButton_, &QPushButton::clicked, this, &MainWindow::addModules);
         layout->addWidget(refreshButton_, 0, Qt::AlignCenter);
         layout->addStretch();
@@ -107,9 +119,9 @@ void MainWindow::showRefreshFallback(const QString& error)
         ui->verticalLayout->addWidget(refreshFallback_);
     }
 
-    ui->tab_modules->hide();
+    ui->tab_modules->show();
     refreshFallback_->show();
     refreshButton_->setToolTip(error);
-    refreshButton_->setFocus(Qt::OtherFocusReason);
-    ui->statusbar->hide();
+    ui->statusbar->showMessage(error);
+    ui->statusbar->show();
 }

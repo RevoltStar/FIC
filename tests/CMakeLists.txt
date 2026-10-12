@@ -3016,3 +3016,22 @@ add_executable(display_manager_native_probe
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp)
 target_include_directories(display_manager_native_probe PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(display_manager_native_probe PRIVATE fic-core fic-policy fic-platform PkgConfig::FIC_DM_GLIB Qt${QT_VERSION_MAJOR}::Core)
+
+# Offscreen integration tests use only injected administrative transports.
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets)
+find_package(OpenSSL REQUIRED)
+file(GLOB_RECURSE INCIDENT_GUI_TEST_SOURCES "${CMAKE_SOURCE_DIR}/fic-gui/src/*.cpp")
+list(FILTER INCIDENT_GUI_TEST_SOURCES EXCLUDE REGEX "/app/main\\.cpp$")
+add_executable(incident_gui_tests
+    fic-gui/incidents/IncidentGuiTests.cpp
+    ${INCIDENT_GUI_TEST_SOURCES}
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/app/resources.qrc)
+set_target_properties(incident_gui_tests PROPERTIES AUTOMOC ON AUTOUIC ON AUTORCC ON)
+target_include_directories(incident_gui_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-gui/src)
+target_link_libraries(incident_gui_tests PRIVATE Qt${QT_VERSION_MAJOR}::Widgets fic-ipc OpenSSL::SSL OpenSSL::Crypto ${CMAKE_DL_LIBS})
+add_test(NAME incident_gui_tests COMMAND incident_gui_tests)
+set_tests_properties(incident_gui_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;FIC_SOCKET_PATH=/tmp/fic-incident-tests-no-daemon.sock" TIMEOUT 30)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME incident_gui_static_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/fic-gui/incidents/static_checks.py ${CMAKE_SOURCE_DIR})
+endif()

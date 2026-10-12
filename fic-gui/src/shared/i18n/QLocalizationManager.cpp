@@ -1,6 +1,9 @@
 #include "QLocalizationManager.h"
 
 #include <QHash>
+#include <QFile>
+#include <QLocale>
+#include <QTextStream>
 
 #include <fic/ipc/FicIpcClient.h>
 
@@ -47,6 +50,30 @@ bool loadLocalizationBundle()
 QString QLocalizationManager::getLang(const QString& key)
 {
     LocalizationCache& localizationCache = cache();
+    // Incident UI must remain usable offline and must not perform synchronous
+    // localization IPC on every polling render. Prefer the daemon bundle once
+    // another module has loaded it; otherwise use the shipped RU/EN strings.
+    if (!localizationCache.loaded && key.startsWith("[incident:")) {
+        static const QHash<QString, QString> fallback = [] {
+            QHash<QString, QString> values;
+            QFile file(QLocale::system().language() == QLocale::Russian
+                ? ":/fic/lang/ru.lang" : ":/fic/lang/en.lang");
+            if (file.open(QIODevice::ReadOnly)) {
+                QTextStream stream(&file);
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+                stream.setCodec("UTF-8");
+#endif
+                while (!stream.atEnd()) {
+                    const auto line = stream.readLine();
+                    const auto separator = line.indexOf('=');
+                    if (separator > 0 && line.startsWith("[incident:"))
+                        values.insert(line.left(separator).trimmed(), line.mid(separator + 1).trimmed());
+                }
+            }
+            return values;
+        }();
+        return fallback.value(key, key);
+    }
     if (!localizationCache.loaded && !loadLocalizationBundle()) {
         return key;
     }

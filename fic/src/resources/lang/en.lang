@@ -926,3 +926,33 @@ Where possible, a lock against modification is applied
 [module:OSS][policy:controlled_display_managers][description]=Administrative DM scope. Empty scope is UNCONFIGURED; apply commits verified enforcement and ownership release.
 [module:OSS][policy:absence_of_uncontrolled_display_managers]=Absence of uncontrolled display managers
 [module:OSS][policy:absence_of_uncontrolled_display_managers][description]=Check selected/running DMs; installed inactive managers outside scope are permitted.
+
+# Incident Response GUI
+[incident:title]=Incident Response
+[incident:refresh]=Refresh
+[incident:raise]=Raise incident
+[incident:clear]=Clear incident
+[incident:confirm_raise]=Raise incident to %1? Depending on daemon response mode, user sessions may be blocked or terminated and network access restricted.
+[incident:confirm_clear]=Clear Incident Response restrictions according to daemon logic? This does not roll back all FIC policies and does not guarantee automatic unlocking of already locked graphical sessions.
+[incident:unavailable]=Status unavailable. Could not obtain information from the FIC daemon.
+[incident:unknown]=UNKNOWN — no valid snapshot acquired
+[incident:stale]=STALE — Connection to the FIC daemon lost or response invalid. Showing the last known state from %1; it may be outdated.
+[incident:summary]=Severity: %1 | Response mode: %2 | Runtime: %3 | Persistent state: %4 | Provenance: %5 | Response mode: %6 | Last valid acquisition: %7
+[incident:proven]=PROVEN — proven
+[incident:unproven]=UNPROVEN — not proven
+[incident:connected]=Daemon reachable; valid response
+[incident:connection_error]=Acquisition failed; snapshot is stale
+[incident:containment]=Containment reported by daemon (flags are observations, not inferred guarantees; degraded/unproven state may have incomplete containment):
+[incident:pam]=PAM access gate
+[incident:sessions]=Session containment
+[incident:user_runtime]=User runtime containment
+[incident:network]=Network quarantine
+[incident:reported_yes]=Reported active
+[incident:reported_no]=Not reported active
+[incident:diagnostics]=Response mode diagnostic / detail
+[incident:action_ok]=Daemon accepted the action. Status is refreshed separately.
+[incident:action_failed]=Action failed:
+[incident:mode_legend]=OFF: response disabled; PASSIVE: observation; ACTIVE: daemon applies incident response. Flags below report actual containment, independently of selected mode.
+[incident:persistent_broken]=Persistent state broken (daemon flag)
+[incident:yes]=Yes
+[incident:no]=No

@@ -926,3 +926,33 @@
 [module:OSS][policy:controlled_display_managers][description]=Административная область контроля DM. Пустой список — UNCONFIGURED; apply подтверждает защиту и освобождение владения.
 [module:OSS][policy:absence_of_uncontrolled_display_managers]=Отсутствие неконтролируемых дисплейных менеджеров
 [module:OSS][policy:absence_of_uncontrolled_display_managers][description]=Проверяет выбранные и работающие DM; установленные неиспользуемые менеджеры вне списка допустимы.
+
+# Incident Response GUI
+[incident:title]=Инциденты
+[incident:refresh]=Обновить
+[incident:raise]=Повысить уровень инцидента
+[incident:clear]=Сбросить инцидент
+[incident:confirm_raise]=Повысить уровень инцидента до %1? В зависимости от response mode демона пользовательские сессии могут быть заблокированы или завершены, а доступ к сети ограничен.
+[incident:confirm_clear]=Снять ограничения Incident Response согласно логике демона? Это не rollback всех политик FIC и не гарантия автоматической разблокировки уже заблокированных графических сессий.
+[incident:unavailable]=Статус недоступен. Не удалось получить сведения от демона FIC.
+[incident:unknown]=UNKNOWN — валидный снимок ещё не получен
+[incident:stale]=STALE — Связь с демоном FIC потеряна или ответ некорректен. Показано последнее известное состояние от %1; данные могут быть неактуальны.
+[incident:summary]=Severity: %1 | Response mode: %2 | Runtime: %3 | Persistent state: %4 | Происхождение: %5 | Response mode: %6 | Последний валидный снимок: %7
+[incident:proven]=PROVEN — доказано
+[incident:unproven]=UNPROVEN — не доказано
+[incident:connected]=Демон доступен; ответ валиден
+[incident:connection_error]=Получение состояния завершилось ошибкой; снимок устарел
+[incident:containment]=Containment по данным демона (флаги — наблюдения, а не вычисленные гарантии; degraded/недоказанное состояние может означать неполный containment):
+[incident:pam]=PAM access gate
+[incident:sessions]=Ограничение сессий
+[incident:user_runtime]=Ограничение пользовательского runtime
+[incident:network]=Сетевой карантин
+[incident:reported_yes]=Сообщено: активно
+[incident:reported_no]=Не сообщено как активное
+[incident:diagnostics]=Диагностика response mode / detail
+[incident:action_ok]=Демон принял действие. Статус обновляется отдельным запросом.
+[incident:action_failed]=Ошибка действия:
+[incident:mode_legend]=OFF: реагирование отключено; PASSIVE: наблюдение; ACTIVE: демон применяет меры Incident Response. Флаги ниже отражают фактический containment независимо от выбранного режима.
+[incident:persistent_broken]=Persistent state broken (флаг демона)
+[incident:yes]=Да
+[incident:no]=Нет
