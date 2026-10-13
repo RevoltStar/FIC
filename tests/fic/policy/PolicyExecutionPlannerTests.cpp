@@ -76,6 +76,12 @@ public:
         addRequiredDependency(dependency);
     }
 
+    bool supportsDependencyCapability(const std::string& capability) const override {
+        return capability == "exempt_group";
+    }
+    bool requiresDependencyCapability(const std::string&) const override { return backendRequires; }
+    bool backendRequires = true;
+
 private:
     PolicyBehavior& behavior_;
     std::vector<std::string>& order_;
@@ -312,6 +318,39 @@ void testRecommendedDependencies(const std::filesystem::path& root) {
         require(summary.requestedRootsApplied(),
                 "dependency-only recommended failure broke root success");
     }
+}
+
+void testBackendCapabilityDependencies(const std::filesystem::path& root) {
+    writeModuleConfig(root, "AUDIT", {{"a", true}, {"b", false}, {"scoped", false}});
+    PolicyBehavior a, b, scoped;
+    std::vector<std::string> order;
+    auto owner = std::make_unique<TestPolicy>(ref("a"), a, order,
+        std::vector<PolicyDependency>{required(ref("b"), whenBackendRequiresCapability("exempt_group")),
+                                      recommended(ref("scoped"))});
+    auto* activeOwner = owner.get();
+    PolicyList policies;
+    policies.push_back(std::move(owner));
+    policies.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
+    policies.push_back(std::make_unique<TestPolicy>(ref("scoped"), scoped, order));
+    auto registry = buildRegistry(std::move(policies));
+    auto classic = PolicyExecutionPlanner(registry).execute({{ref("a")}, {}});
+    require(!classic.requestedRootsApplied() && a.calls == 0,
+            "classic required capability was bypassed");
+    require(enabledRequiredDependents(registry, ref("b")) == std::vector<PolicyRef>{ref("a")},
+            "classic disable guard lost its required dependent");
+    activeOwner->backendRequires = false;
+    auto rust = PolicyExecutionPlanner(registry).execute({{ref("a")}, {}});
+    require(rust.requestedRootsApplied() && a.calls == 1 && !hasResult(rust, ref("b")),
+            "provider construction still requires the irrelevant blocker");
+    require(enabledRequiredDependents(registry, ref("b")).empty(),
+            "provider construction still blocks policy disable");
+    require(hasDiagnostic(result(rust, ref("a")), "WARN",
+                "dependency status=" + policyApplyStatusToString(PolicyApplyStatus::Disabled)),
+            "Recommended scoped blocker warning disappeared");
+    activeOwner->backendRequires = true;
+    auto switchedBack = PolicyExecutionPlanner(registry).execute({{ref("a")}, {}});
+    require(!switchedBack.requestedRootsApplied() && a.calls == 1,
+            "provider capability change was incorrectly cached");
 }
 
 void testConditionalDependencies(const std::filesystem::path& root) {
@@ -937,12 +976,12 @@ void testSudoDependencyGraphShape(const std::filesystem::path& root) {
     PolicyList policies;
     policies.push_back(std::make_unique<TestPolicy>(scoped, behavior, order));
     policies.push_back(std::make_unique<TestPolicy>(exempt, behavior, order,
-        std::vector<PolicyDependency>{required(scoped)}));
+        std::vector<PolicyDependency>{recommended(scoped)}));
     for (const PolicyRef& globalDefaults :
          {envReset, passwdTries, securepath, timeout}) {
         policies.push_back(std::make_unique<TestPolicy>(
             globalDefaults, behavior, order,
-            std::vector<PolicyDependency>{required(scoped)}));
+            std::vector<PolicyDependency>{recommended(scoped)}));
     }
     policies.push_back(std::make_unique<TestPolicy>(
         requireAuth, behavior, order,
@@ -951,12 +990,12 @@ void testSudoDependencyGraphShape(const std::filesystem::path& root) {
     // The graph must be valid (no cycle, no unknown/duplicate dependency).
     PolicyRegistry registry = buildRegistry(std::move(policies));
 
-    const auto hasRequired = [&registry](const PolicyRef& owner,
-                                         const PolicyRef& dependency) {
+    const auto hasEdge = [&registry](const PolicyRef& owner, const PolicyRef& dependency,
+                                    PolicyDependencyStrength strength) {
         for (const PolicyDependency& declared :
              registry.findPolicy(owner)->dependencies()) {
             if (declared.policy == dependency &&
-                declared.strength == PolicyDependencyStrength::Required) {
+                declared.strength == strength) {
                 return true;
             }
         }
@@ -965,14 +1004,14 @@ void testSudoDependencyGraphShape(const std::filesystem::path& root) {
 
     for (const PolicyRef& globalDefaults :
          {envReset, passwdTries, securepath, timeout}) {
-        require(hasRequired(globalDefaults, scoped),
-                "every global Defaults policy must require the scoped blocker");
+        require(hasEdge(globalDefaults, scoped, PolicyDependencyStrength::Recommended),
+                "every global Defaults policy must recommend the scoped blocker");
     }
-    require(hasRequired(exempt, scoped),
-            "exempt_group policy must require the scoped blocker");
-    require(hasRequired(requireAuth, exempt),
+    require(hasEdge(exempt, scoped, PolicyDependencyStrength::Recommended),
+            "exempt_group policy must recommend the scoped blocker");
+    require(hasEdge(requireAuth, exempt, PolicyDependencyStrength::Required),
             "require_authentication must require the exempt_group owner");
-    require(!hasRequired(envReset, exempt),
+    require(!hasEdge(envReset, exempt, PolicyDependencyStrength::Required),
             "env_reset must not depend on exempt_group: upstream sudoers shows "
             "no such relation");
 
@@ -1293,6 +1332,7 @@ int main() {
         testGraphicalSubmoduleApply(root);
         testRecommendedDependencies(root);
         testConditionalDependencies(root);
+        testBackendCapabilityDependencies(root);
         testConditionalExcludedModule(root);
         testDisabledDependentDoesNotExpand(root);
         testChains(root);

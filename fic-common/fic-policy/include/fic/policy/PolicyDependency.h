@@ -31,7 +31,8 @@ enum class PolicyDependencyStrength {
 
 enum class PolicyDependencyConditionType {
     Always,
-    OwnerValueEquals
+    OwnerValueEquals,
+    BackendRequiresCapability
 };
 
 struct PolicyDependencyCondition {
@@ -47,6 +48,7 @@ struct PolicyDependency {
 };
 
 PolicyDependencyCondition whenOwnerValueEquals(std::string value);
+PolicyDependencyCondition whenBackendRequiresCapability(std::string capability);
 std::string formatPolicyRef(const PolicyRef& policy);
 
 #endif // FIC_POLICY_DEPENDENCY_H

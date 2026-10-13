@@ -478,13 +478,21 @@ managed-файла sudoers (`root:root`, `0440`). Исходные файлы su
 администратора. Их эталон записывается в управляемый файл:
 
 ```text
-/etc/sudoers.d/zzzz-fic
+/etc/sudoers.d/99-fic.conf
 ```
 
-Каталог `/etc/sudoers.d` должен быть подключен из основной конфигурации, а
-managed-файл должен определять итоговое значение. Если после include находятся
-перекрывающие директивы, применение завершается ошибкой и изменение
-откатывается. FIC не добавляет include-директиву в `/etc/sudoers` автоматически.
+FIC подключает файл собственным каноническим `FIC_INCLUDE`-блоком на EOF
+`/etc/sudoers`, поскольку native includedir игнорирует `.conf`. Чужие
+Defaults и include-директивы не переписываются. Journal доказывает владение
+каждым параметром и общим контейнером; independent rollback снимает только
+собственный ключ, последний release безопасно освобождает include и файл.
+Drift/orphan artifacts означают безопасный отказ. Полный контракт:
+[rollback](../docs/rollback.md#sudo-rollback-dac--sudoedit).
+
+На подтверждённом sudo-rs `env_reset=ENABLE` и отсутствие `exempt_group`
+удовлетворяются VerifiedByConstruction без фиктивных параметров/journal
+records. Provider определяется по реальному executable/version/config и
+native validator; FIC никогда автоматически не переключает alternatives.
 
 Политика `sudo_require_authentication` имеет другую семантику: она точечно
 заменяет `NOPASSWD` на `PASSWD`, включает `authenticate` и отключает

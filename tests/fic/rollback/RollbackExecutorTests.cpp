@@ -5,6 +5,7 @@
 
 #include "modules/dac/mode_and_owner/ModeAndOwnerProfilesPolicy.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
 #include "modules/identity_access/pam/PamProviderManagedBlock.h"
 #include "modules/identity_access/user_creation/UserCreationManagedConfig.h"
 #include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
@@ -264,13 +265,13 @@ public:
     SudoersConfigurationOptions options(const std::string& mainContent) const {
         SudoersConfigurationOptions value;
         value.mainPath = tree.root / "sudoers";
-        value.managedPath = tree.root / "sudoers.d" / "zzzz-fic";
+        value.managedPath = tree.root / "sudoers.d" / "99-fic.conf";
         value.validatorPath.clear();
         value.verifyValidatorHash = false;
         value.enforceOwnership = false;
-        writeFile(value.mainPath,
-                  mainContent +
-                  "\n@includedir " + (tree.root / "sudoers.d").string() + "\n");
+        if (!std::filesystem::exists(value.mainPath))
+            writeFile(value.mainPath, mainContent +
+                "\n@includedir " + (tree.root / "sudoers.d").string() + "\n");
         return value;
     }
 
@@ -346,6 +347,24 @@ void testContextualManagedProviderEnrollment() {
 }
 
 const PolicyRef kSudoPolicy{"DAC", "SudoEdit", "sudo_passwd_tries"};
+
+MutationId applySudoFixture(const SudoersConfigurationOptions& options,
+    const PolicyRef& policy, const std::string& key, const std::string& line, const std::string& value) {
+    std::string error;
+    auto* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    const auto applied = fic::sudoers::GlobalDefaultsTransaction(options, *journal).reconcile(policy, key, line, value);
+    require(applied.ok, applied.message);
+    return journal->activeRecords(policy).front().id;
+}
+
+void replaceSudoFixture(const std::filesystem::path& path, const std::string& content) {
+    AtomicWriteOptions options;
+    options.createIfMissing = true;
+    options.rejectSymlink = true;
+    std::string error;
+    require(AtomicFileWriter::write(path.string(), content, options, &error), error);
+}
 
 // ---------------------------------------------------------------- tests -----
 
@@ -1279,71 +1298,31 @@ void testSysctlNoRecordsAndNotOwnedIsNothingToDo() {
 void testSudoRollbackRemovesManagedDefault() {
     SudoersTree tree;
     const auto options = tree.options("Defaults passwd_tries=2");
-    {
-        SudoersConfiguration configuration(options);
-        std::string error;
-        require(configuration.load(error), error);
-        const SudoersOperationResult operation = configuration
-            .ensureManagedGlobalDefault("passwd_tries",
-                                        "Defaults passwd_tries=3", "3");
-        require(operation.ok && operation.changed, operation.message);
-    }
-
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const MutationId id = recordApplied(
-        kSudoPolicy, "passwd_tries",
-        UndoAction{MutationBackend::Sudo,
-                   UndoRemoveManagedSetting{"passwd_tries", "3"}});
-
-    const RollbackReport report = rollbackPolicyBeforeDisable(
-        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=2"));
+    const auto id = applySudoFixture(options, kSudoPolicy, "passwd_tries", "Defaults passwd_tries=3", "3");
+    const auto report = rollbackPolicyBeforeDisable(kSudoPolicy, "passwd_tries", tree.deps(""));
     require(report.status == RollbackStatus::Success, report.message);
-    require(report.outcomes.size() == 1 &&
-                report.outcomes.front().status == RollbackStatus::Success,
-            report.message);
-
-    require(!std::filesystem::exists(options.managedPath),
-            "empty FIC managed sudoers file must be removed by rollback");
-
+    require(!std::filesystem::exists(options.managedPath), "last owned file must be released");
     MutationJournal stored(journal.tree.root / "journal.json");
     std::string error;
     require(stored.load(error), error);
-    require(stored.records().size() == 1 &&
-                stored.records().front().id == id &&
-                stored.records().front().status == MutationStatus::RolledBack,
-            "sudo rollback must be persisted as rolled_back");
+    require(stored.records().size() == 1 && stored.records().front().id == id &&
+            stored.records().front().status == MutationStatus::RolledBack, "release journal lifecycle incorrect");
 }
 
 void testSudoRollbackConflictOnDrift() {
     SudoersTree tree;
     const auto options = tree.options("Defaults passwd_tries=2");
-    {
-        SudoersConfiguration configuration(options);
-        std::string error;
-        require(configuration.load(error), error);
-        const SudoersOperationResult operation = configuration
-            .ensureManagedGlobalDefault("passwd_tries",
-                                        "Defaults passwd_tries=5", "5");
-        require(operation.ok && operation.changed, operation.message);
-    }
-
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    recordApplied(
-        kSudoPolicy, "passwd_tries",
-        UndoAction{MutationBackend::Sudo,
-                   UndoRemoveManagedSetting{"passwd_tries", "3"}});
-
-    const RollbackReport report = rollbackPolicyBeforeDisable(
-        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=2"));
-    require(report.status == RollbackStatus::Conflict,
-            "drifted sudoers value must fail closed as conflict: " +
-                report.message);
-    require(!report.rollbackCompleted(), "conflict must refuse the disable");
-    require(readFile(options.managedPath).find("passwd_tries=5") !=
-                std::string::npos,
-            "conflicting managed value must not be modified");
+    applySudoFixture(options, kSudoPolicy, "passwd_tries", "Defaults passwd_tries=3", "3");
+    auto drifted = readFile(options.managedPath);
+    drifted.replace(drifted.find("passwd_tries=3"), 14, "passwd_tries=5");
+    replaceSudoFixture(options.managedPath, drifted);
+    const auto report = rollbackPolicyBeforeDisable(kSudoPolicy, "passwd_tries", tree.deps(""));
+    require(report.status == RollbackStatus::Conflict && !report.rollbackCompleted(), report.message);
+    require(readFile(options.managedPath) == drifted, "foreign drift was overwritten");
 }
 
 void testSudoRollbackMissingManagedEntryIsNothingToDo() {
@@ -1362,11 +1341,8 @@ void testSudoRollbackMissingManagedEntryIsNothingToDo() {
 
     const RollbackReport report = rollbackPolicyBeforeDisable(
         kSudoPolicy, "passwd_tries", tree.deps(mainSudoers));
-    require(report.status == RollbackStatus::NothingToDo,
-            "absent FIC managed entry must be an idempotent nothing-to-do: " +
-                report.message);
-    require(report.rollbackCompleted(),
-            "nothing-to-do rollback must allow the disable");
+    require(report.status == RollbackStatus::Conflict, report.message);
+    require(!report.rollbackCompleted(), "legacy provenance must not be resolved by path absence");
     require(readFile(options.mainPath).find("passwd_tries=7") !=
                 std::string::npos,
             "external sudoers content must not be touched");
@@ -1375,65 +1351,22 @@ void testSudoRollbackMissingManagedEntryIsNothingToDo() {
 void testSudoRollbackRemovesShadowedManagedEntry() {
     SudoersTree tree;
     const auto options = tree.options("Defaults timestamp_timeout=2");
-    // An external fragment sorts after the FIC managed file and shadows its
-    // entry: the effective value is 10, but the FIC-owned entry still exists
-    // and must be removed by the rollback.
-    const std::filesystem::path external =
-        tree.tree.root / "sudoers.d" / "zzzzz-external";
+    const auto external = tree.tree.root / "sudoers.d" / "zzzzz-external";
     writeFile(external, "Defaults timestamp_timeout=10\n");
-    writeFile(options.managedPath, "Defaults timestamp_timeout=5\n");
-
-    {
-        SudoersConfiguration configuration(options);
-        std::string error;
-        require(configuration.load(error), error);
-        const SudoersValueObservation effective =
-            configuration.inspectGlobalDefault("timestamp_timeout");
-        require(effective.found && effective.value == "10" &&
-                    effective.source.path == external,
-            "fixture precondition: external source must be effective");
-        const SudoersValueObservation managed =
-            configuration.inspectManagedGlobalDefault("timestamp_timeout");
-        require(managed.found && managed.value == "5",
-            "fixture precondition: managed entry must be visible");
-    }
-
     const PolicyRef policy{"DAC", "SudoEdit", "sudo_timeout"};
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const MutationId id = recordApplied(
-        policy, "timestamp_timeout",
-        UndoAction{MutationBackend::Sudo,
-                   UndoRemoveManagedSetting{"timestamp_timeout", "5"}});
-
-    const RollbackReport report = rollbackPolicyBeforeDisable(
-        policy, "timestamp_timeout", tree.deps("Defaults timestamp_timeout=2"));
-    require(report.status == RollbackStatus::Success, report.message);
-    require(report.outcomes.size() == 1 &&
-                report.outcomes.front().status == RollbackStatus::Success,
-            report.message);
-
-    require(!std::filesystem::exists(options.managedPath),
-            "shadowed FIC managed entry must still be removed by rollback");
-    require(readFile(external).find("timestamp_timeout=10") !=
-                std::string::npos,
-            "external overriding source must survive the rollback");
-
-    SudoersConfiguration verification(options);
+    applySudoFixture(options, policy, "timestamp_timeout", "Defaults timestamp_timeout=5", "5");
+    SudoersConfiguration before(options);
     std::string error;
-    require(verification.load(error), error);
-    const SudoersValueObservation after =
-        verification.inspectGlobalDefault("timestamp_timeout");
-    require(after.found && after.value == "10" && after.source.path == external,
-            "effective value must stay owned by the external source");
-
-    MutationJournal stored(journal.tree.root / "journal.json");
-    std::string storedError;
-    require(stored.load(storedError), storedError);
-    require(stored.records().size() == 1 &&
-                stored.records().front().id == id &&
-                stored.records().front().status == MutationStatus::RolledBack,
-            "shadowed rollback must be persisted as rolled_back");
+    require(before.load(error), error);
+    require(before.inspectGlobalDefault("timestamp_timeout").value == "5", "owned EOF override must win");
+    const auto report = rollbackPolicyBeforeDisable(policy, "timestamp_timeout", tree.deps(""));
+    require(report.status == RollbackStatus::Success, report.message);
+    SudoersConfiguration after(options);
+    require(after.load(error), error);
+    require(after.inspectGlobalDefault("timestamp_timeout").value == "10", "foreign default not preserved");
+    require(!std::filesystem::exists(options.managedPath), "owned container must be released");
 }
 
 void testSudoLegacyProvenanceRefusedWhenShadowed() {
@@ -1455,11 +1388,10 @@ void testSudoLegacyProvenanceRefusedWhenShadowed() {
     const PolicyRef policy{"DAC", "SudoEdit", "sudo_timeout"};
     const RollbackReport report = rollbackPolicyBeforeDisable(
         policy, "timestamp_timeout", tree.deps("Defaults timestamp_timeout=2"));
-    require(report.status == RollbackStatus::Unsupported,
+    require(report.status == RollbackStatus::NothingToDo,
             "shadowed legacy managed entry must refuse the disable: " +
                 report.message);
-    require(!report.rollbackCompleted(),
-            "provenance unavailable must refuse the disable");
+    require(report.rollbackCompleted(), "foreign candidate is not FIC ownership");
     require(readFile(options.managedPath) == managedContent,
             "legacy managed entry must not be modified");
     require(readFile(external) == externalContent,
@@ -1507,88 +1439,39 @@ void testSysctlRollbackKeepsOtherPolicySetting() {
 
 void testSudoRollbackVisudoFailureFailsClosed() {
     SudoersTree tree;
-    SudoersConfigurationOptions options = tree.options("Defaults passwd_tries=2");
-    // Validator accepts the state while the FIC managed file exists and fails
-    // once the rollback removes it, emulating a visudo rejection.
-    const std::filesystem::path validator = tree.tree.root / "validator";
-    writeFile(validator,
-              "#!/bin/sh\n[ -f '" + options.managedPath.string() + "' ]\n");
-    require(::chmod(validator.c_str(), 0700) == 0,
-            "failed to make validator executable");
-    options.validatorPath = validator;
-    options.verifyValidatorHash = false;
-
-    writeFile(options.managedPath, "Defaults passwd_tries=3\n");
-
+    auto options = tree.options("Defaults passwd_tries=2");
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    const MutationId id = recordApplied(
-        kSudoPolicy, "passwd_tries",
-        UndoAction{MutationBackend::Sudo,
-                   UndoRemoveManagedSetting{"passwd_tries", "3"}});
-
+    const auto id = applySudoFixture(options, kSudoPolicy, "passwd_tries", "Defaults passwd_tries=3", "3");
+    const auto validator = tree.tree.root / "validator";
+    writeFile(validator, "#!/bin/sh\ngrep -q 'passwd_tries=3' '" + options.managedPath.string() + "'\n");
+    require(::chmod(validator.c_str(), 0700) == 0, "validator fixture mode");
+    options.validatorPath = validator;
     RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
-    const RollbackReport report = rollbackPolicyBeforeDisable(
-        kSudoPolicy, "passwd_tries", deps);
-    require(report.status == RollbackStatus::Failed,
-            "visudo failure must fail the rollback closed: " + report.message);
-    require(!report.rollbackCompleted(),
-            "failed rollback must refuse the disable");
-    require(std::filesystem::exists(options.managedPath) &&
-                readFile(options.managedPath).find("passwd_tries=3") !=
-                    std::string::npos,
-            "managed entry must be restored after validation failure");
-
+    const auto report = rollbackPolicyBeforeDisable(kSudoPolicy, "passwd_tries", deps);
+    require(report.status == RollbackStatus::Failed && !report.rollbackCompleted(), report.message);
+    require(std::filesystem::exists(options.managedPath), "unresolved inert container must retain ownership");
     MutationJournal stored(journal.tree.root / "journal.json");
-    std::string storedError;
-    require(stored.load(storedError), storedError);
-    require(stored.records().size() == 1 &&
-                stored.records().front().id == id &&
-                stored.records().front().status != MutationStatus::RolledBack,
-            "failed rollback must not mark the mutation as rolled back");
+    std::string error;
+    require(stored.load(error), error);
+    require(stored.records().front().id == id &&
+            stored.records().front().status == MutationStatus::RollbackFailed, "failed release lost durable provenance");
 }
 
 void testSudoRepeatedDisableIsIdempotent() {
     SudoersTree tree;
     const auto options = tree.options("Defaults passwd_tries=2");
-    {
-        SudoersConfiguration configuration(options);
-        std::string error;
-        require(configuration.load(error), error);
-        const SudoersOperationResult first = configuration
-            .ensureManagedGlobalDefault("passwd_tries",
-                                        "Defaults passwd_tries=3", "3");
-        require(first.ok && first.changed, first.message);
-        const SudoersOperationResult second = configuration
-            .ensureManagedGlobalDefault(
-                "secure_path",
-                "Defaults secure_path=/usr/sbin:/usr/bin",
-                "/usr/sbin:/usr/bin");
-        require(second.ok && second.changed, second.message);
-    }
-
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    recordApplied(kSudoPolicy, "passwd_tries",
-                  UndoAction{MutationBackend::Sudo,
-                             UndoRemoveManagedSetting{"passwd_tries", "3"}});
-
-    const RollbackReport first = rollbackPolicyBeforeDisable(
-        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=2"));
+    applySudoFixture(options, kSudoPolicy, "passwd_tries", "Defaults passwd_tries=3", "3");
+    applySudoFixture(options, {"DAC", "SudoEdit", "sudo_securepath"}, "secure_path",
+                     "Defaults secure_path=/usr/sbin:/usr/bin", "/usr/sbin:/usr/bin");
+    const auto first = rollbackPolicyBeforeDisable(kSudoPolicy, "passwd_tries", tree.deps(""));
     require(first.status == RollbackStatus::Success, first.message);
-
-    const RollbackReport second = rollbackPolicyBeforeDisable(
-        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=2"));
-    require(second.status == RollbackStatus::NothingToDo,
-            "repeated disable after a completed rollback must be idempotent: " +
-                second.message);
-    require(second.rollbackCompleted(),
-            "repeated nothing-to-do must still allow the disable");
-    require(std::filesystem::exists(options.managedPath) &&
-                readFile(options.managedPath).find("secure_path") !=
-                    std::string::npos,
-            "other managed sudo defaults must survive repeated disables");
+    const auto second = rollbackPolicyBeforeDisable(kSudoPolicy, "passwd_tries", tree.deps(""));
+    require(second.status == RollbackStatus::NothingToDo && second.rollbackCompleted(), second.message);
+    require(readFile(options.managedPath).find("secure_path") != std::string::npos, "other owner lost");
 }
 
 void testSysctlRollbackRetryIsIdempotent() {
@@ -1716,40 +1599,17 @@ void testExecutorResolvesPreparedRecordAfterFailedCommit() {
 void testSudoRollbackKeepsOtherManagedDefault() {
     SudoersTree tree;
     const auto options = tree.options("Defaults passwd_tries=2");
-    {
-        SudoersConfiguration configuration(options);
-        std::string error;
-        require(configuration.load(error), error);
-        const SudoersOperationResult first = configuration
-            .ensureManagedGlobalDefault("passwd_tries",
-                                        "Defaults passwd_tries=3", "3");
-        require(first.ok && first.changed, first.message);
-        const SudoersOperationResult second = configuration
-            .ensureManagedGlobalDefault("secure_path",
-                                        "Defaults secure_path=/usr/sbin:/usr/bin",
-                                        "/usr/sbin:/usr/bin");
-        require(second.ok && second.changed, second.message);
-    }
-
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
-    recordApplied(kSudoPolicy, "passwd_tries",
-                  UndoAction{MutationBackend::Sudo,
-                             UndoRemoveManagedSetting{"passwd_tries", "3"}});
-
-    const RollbackReport report = rollbackPolicyBeforeDisable(
-        kSudoPolicy, "passwd_tries", tree.deps("Defaults passwd_tries=2"));
+    applySudoFixture(options, kSudoPolicy, "passwd_tries", "Defaults passwd_tries=3", "3");
+    applySudoFixture(options, {"DAC", "SudoEdit", "sudo_securepath"}, "secure_path",
+                     "Defaults secure_path=/usr/sbin:/usr/bin", "/usr/sbin:/usr/bin");
+    const auto report = rollbackPolicyBeforeDisable(kSudoPolicy, "passwd_tries", tree.deps(""));
     require(report.status == RollbackStatus::Success, report.message);
-
-    const std::string managed = readFile(options.managedPath);
-    require(managed.find("passwd_tries") == std::string::npos,
-            "rolled back sudo default must be removed");
-    require(managed.find("secure_path") != std::string::npos,
-            "another FIC managed sudo default must survive");
-    require(std::filesystem::exists(options.managedPath),
-            "non-empty managed sudoers file must not be removed");
+    const auto managed = readFile(options.managedPath);
+    require(managed.find("passwd_tries") == std::string::npos &&
+            managed.find("secure_path") != std::string::npos, "independent ownership release incorrect");
 }
-
 
 void testFirewallUndoInvokesBackend() {
     const PolicyRef policy{"FIREWALL", "HostFiltering", "block_rdp"};

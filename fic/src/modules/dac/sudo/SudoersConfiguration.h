@@ -2,6 +2,7 @@
 #define SUDOERSCONFIGURATION_H
 
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -34,7 +35,14 @@ struct SudoersConfigurationOptions {
     std::filesystem::path managedPath;
     std::string validatorPath;
     bool verifyValidatorHash = true;
+    bool requireValidator = false;
+    // A proven provider transition may require removing ONLY an owned
+    // setting the new provider cannot parse. Post-release native validation
+    // remains mandatory; this flag never authorizes ordinary apply.
+    bool releaseOwnedUnsupportedSetting = false;
+    std::function<bool(std::string&)> verifyProviderUnchanged;
     bool enforceOwnership = true;
+    unsigned managedFileMode = 0440;
     size_t maximumIncludeDepth = 128;
 };
 
@@ -62,20 +70,6 @@ public:
     // is independent of which sudoers source currently wins precedence.
     SudoersValueObservation inspectManagedGlobalDefault(
         const std::string& key) const;
-
-    SudoersOperationResult ensureManagedGlobalDefault(
-        const std::string& key,
-        const std::string& renderedLine,
-        const std::string& expectedValue);
-
-    // Rollback support: remove the FIC-managed global Defaults entry for the
-    // given key. Ownership is the managed artifact content: an external
-    // sudoers source may shadow the FIC entry while the entry still exists
-    // and is FIC-owned. Fails closed on drift (conflict) and reports
-    // targetMissing when the managed file has no entry for the key.
-    SudoersOperationResult removeManagedGlobalDefault(
-        const std::string& key,
-        const std::string& expectedValue);
 
     SudoersOperationResult enforceAuthentication();
     std::vector<std::string> authenticationViolations() const;
@@ -202,7 +196,6 @@ private:
                                        std::string& error);
 
     bool validate(std::string& error) const;
-    bool isManagedDirectoryIncluded() const;
     bool checkDocumentSafety(const std::filesystem::path& path, std::string& error) const;
     bool checkDirectorySafety(const std::filesystem::path& path, std::string& error) const;
     bool contentUnchanged(const Document& document, std::string& error) const;
@@ -210,9 +203,6 @@ private:
                        const std::string& content,
                        bool managedFile,
                        std::string& error) const;
-    bool restoreManagedFile(bool existed,
-                            const std::string& content,
-                            std::string& error) const;
 
     void clear();
 };

@@ -216,8 +216,10 @@ void testSelectedProfile() {
             "SSH socket activation topology is incorrect");
     require(profile.sudo.mainConfigPath == "/etc/sudoers",
             "sudoers main configuration path is incorrect");
-    require(profile.sudo.managedConfigPath == "/etc/sudoers.d/zzzz-fic",
+    require(profile.sudo.managedConfigPath == "/etc/sudoers.d/99-fic.conf",
             "managed sudoers path is incorrect");
+    require(profile.sudo.managedFileMode == (profile.id == "alt-p11" ? 0400u : 0440u),
+            "managed sudoers native mode is incorrect");
     require(profile.sysctl.loader == fic::platform::SysctlLoaderKind::SystemdSysctl,
             "SYSCTL loader kind is incorrect");
     require(profile.sysctl.managedConfigPath == "/etc/sysctl.d/zzzz-fic.conf",

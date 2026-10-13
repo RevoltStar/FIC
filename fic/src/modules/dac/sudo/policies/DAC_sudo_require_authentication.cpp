@@ -9,7 +9,8 @@ DAC_sudo_require_authentication::DAC_sudo_require_authentication(
     // This policy owns NOPASSWD -> PASSWD and !authenticate -> authenticate.
     // exempt_group is owned by sudo_exempt_group_disable, so a contextual
     // `Defaults:alice exempt_group=...` must not be able to restore the bypass.
-    addRequiredDependency({"DAC", "SudoEdit", "sudo_exempt_group_disable"});
+    addRequiredDependency({"DAC", "SudoEdit", "sudo_exempt_group_disable"},
+                          whenBackendRequiresCapability("exempt_group"));
 }
 
 bool DAC_sudo_require_authentication::apply() {

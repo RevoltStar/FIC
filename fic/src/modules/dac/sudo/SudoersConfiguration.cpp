@@ -199,11 +199,6 @@ bool parseGlobalDefaults(const std::string& logicalLine,
     return found;
 }
 
-bool startsManagedDefault(const std::string& line, const std::string& key) {
-    std::string ignored;
-    return parseGlobalDefaults(line, key, ignored);
-}
-
 bool tokenBoundary(char c) {
     return !(std::isalnum(static_cast<unsigned char>(c)) || c == '_');
 }
@@ -904,12 +899,6 @@ SudoersValueObservation SudoersConfiguration::inspectManagedGlobalDefault(
     return result;
 }
 
-bool SudoersConfiguration::isManagedDirectoryIncluded() const {
-    const auto managedDirectory = normalizedExistingPath(options_.managedPath.parent_path());
-    return std::find(includedDirectories_.begin(), includedDirectories_.end(), managedDirectory) !=
-           includedDirectories_.end();
-}
-
 bool SudoersConfiguration::checkDocumentSafety(const std::filesystem::path& path,
                                                std::string& error) const {
     struct stat info {};
@@ -990,7 +979,12 @@ bool SudoersConfiguration::writeDocument(const std::filesystem::path& path,
 }
 
 bool SudoersConfiguration::validate(std::string& error) const {
+    if (options_.verifyProviderUnchanged && !options_.verifyProviderUnchanged(error)) return false;
     if (options_.validatorPath.empty()) {
+        if (options_.requireValidator) {
+            error = "Authoritative native sudoers validator is unavailable";
+            return false;
+        }
         return true;
     }
     ProcessOptions processOptions;
@@ -1000,134 +994,13 @@ bool SudoersConfiguration::validate(std::string& error) const {
         ? VerifiedProcessExecutor::execute(options_.validatorPath, arguments, processOptions)
         : ProcessExecutor::execute(options_.validatorPath, arguments, processOptions);
     if (result.success()) {
-        return true;
+        return !options_.verifyProviderUnchanged || options_.verifyProviderUnchanged(error);
     }
     error = !result.error.empty() ? result.error : trimCopy(result.standardError);
     if (error.empty()) {
         error = "visudo завершился с кодом " + std::to_string(result.exitCode);
     }
     return false;
-}
-
-bool SudoersConfiguration::restoreManagedFile(bool existed,
-                                              const std::string& content,
-                                              std::string& error) const {
-    if (existed) {
-        return writeDocument(options_.managedPath, content, true, error);
-    }
-    std::error_code removeError;
-    std::filesystem::remove(options_.managedPath, removeError);
-    if (removeError) {
-        error = "Не удалось удалить неэффективный managed-файл: " + removeError.message();
-        return false;
-    }
-    const std::filesystem::path directory = options_.managedPath.parent_path();
-    const int directoryFd = ::open(directory.c_str(), O_RDONLY | O_DIRECTORY);
-    if (directoryFd < 0) {
-        error = "Не удалось открыть каталог managed-файла после отката";
-        return false;
-    }
-    const bool synced = ::fsync(directoryFd) == 0;
-    const bool closed = ::close(directoryFd) == 0;
-    if (!synced || !closed) {
-        error = "Не удалось синхронизировать каталог managed-файла после отката";
-        return false;
-    }
-    return true;
-}
-
-SudoersOperationResult SudoersConfiguration::ensureManagedGlobalDefault(
-    const std::string& key,
-    const std::string& renderedLine,
-    const std::string& expectedValue) {
-    SudoersOperationResult result;
-    std::string error;
-    if (!validate(error)) {
-        result.message = "Исходная конфигурация sudoers не прошла проверку: " + error;
-        return result;
-    }
-    if (!isManagedDirectoryIncluded()) {
-        result.message = "Каталог managed-файла не подключен через includedir: " +
-                         options_.managedPath.parent_path().string();
-        return result;
-    }
-
-    const SudoersValueObservation before = inspectGlobalDefault(key);
-    if (before.found && before.value == expectedValue) {
-        result.ok = true;
-        result.message = "Эффективное значение уже соответствует эталону";
-        result.diagnostics.push_back(before.source.path.string() + ":" +
-                                     std::to_string(before.source.line));
-        return result;
-    }
-
-    std::error_code existsError;
-    const bool managedExisted = std::filesystem::exists(options_.managedPath, existsError);
-    if (existsError) {
-        result.message = "Не удалось проверить managed-файл: " + existsError.message();
-        return result;
-    }
-    std::string originalContent;
-    if (managedExisted && !readExistingFile(options_.managedPath, originalContent, error)) {
-        result.message = error;
-        return result;
-    }
-
-    std::vector<std::string> lines;
-    for (const auto& [number, line] : physicalLines(originalContent)) {
-        (void)number;
-        if (!startsManagedDefault(line, key)) {
-            lines.push_back(line);
-        }
-    }
-    if (lines.empty()) {
-        lines.push_back("# Managed by FIC. Manual changes may be overwritten.");
-    }
-    lines.push_back(renderedLine);
-
-    std::string newContent;
-    for (const std::string& line : lines) {
-        newContent += line + "\n";
-    }
-    if (!writeDocument(options_.managedPath, newContent, true, error)) {
-        result.message = "Не удалось записать managed sudoers-файл: " + error;
-        return result;
-    }
-
-    result.changed = true;
-    if (!validate(error)) {
-        std::string restoreError;
-        restoreManagedFile(managedExisted, originalContent, restoreError);
-        result.message = "Измененная конфигурация sudoers не прошла проверку: " + error;
-        if (!restoreError.empty()) {
-            result.diagnostics.push_back("Ошибка отката: " + restoreError);
-        }
-        return result;
-    }
-
-    if (!load(error)) {
-        std::string restoreError;
-        restoreManagedFile(managedExisted, originalContent, restoreError);
-        result.message = "Не удалось перечитать sudoers после изменения: " + error;
-        return result;
-    }
-    const SudoersValueObservation after = inspectGlobalDefault(key);
-    if (!after.found || after.value != expectedValue) {
-        std::string restoreError;
-        restoreManagedFile(managedExisted, originalContent, restoreError);
-        result.message = "Managed-файл не определяет эффективное значение параметра " + key;
-        if (after.found) {
-            result.diagnostics.push_back("Перекрывающий источник: " + after.source.path.string() +
-                                         ":" + std::to_string(after.source.line));
-        }
-        return result;
-    }
-
-    result.ok = true;
-    result.message = "Эталон записан в " + options_.managedPath.string();
-    result.diagnostics.push_back(after.source.path.string() + ":" +
-                                 std::to_string(after.source.line));
-    return result;
 }
 
 std::vector<std::string> SudoersConfiguration::authenticationViolations() const {
@@ -1280,119 +1153,5 @@ SudoersOperationResult SudoersConfiguration::enforceAuthentication() {
     result.message = anyChange
         ? "Все локальные правила sudoers требуют аутентификацию"
         : "Нарушения требования аутентификации не обнаружены";
-    return result;
-}
-
-SudoersOperationResult SudoersConfiguration::removeManagedGlobalDefault(
-    const std::string& key,
-    const std::string& expectedValue) {
-    SudoersOperationResult result;
-    std::string error;
-    if (!validate(error)) {
-        result.message = "Исходная конфигурация sudoers не прошла проверку: " + error;
-        return result;
-    }
-    if (!isManagedDirectoryIncluded()) {
-        result.message = "Каталог managed-файла не подключен через includedir: " +
-                         options_.managedPath.parent_path().string();
-        return result;
-    }
-
-    // Ownership is the managed artifact content, not the current effective
-    // source: an external sudoers file may shadow the FIC entry while the
-    // entry still exists and is FIC-owned. Such an entry must still be
-    // removed so it cannot become effective again later.
-    const SudoersValueObservation managed = inspectManagedGlobalDefault(key);
-    if (!managed.found) {
-        result.ok = true;
-        result.targetMissing = true;
-        result.message = "Managed запись параметра " + key +
-                         " отсутствует в managed-файле FIC";
-        return result;
-    }
-    if (!expectedValue.empty() && managed.value != expectedValue) {
-        result.conflict = true;
-        result.message = "Управляемое значение " + key +
-                         " изменилось с момента применения: ожидалось '" +
-                         expectedValue + "', найдено '" + managed.value + "'";
-        return result;
-    }
-
-    std::error_code existsError;
-    const bool managedExisted = std::filesystem::exists(options_.managedPath, existsError);
-    if (existsError) {
-        result.message = "Не удалось проверить managed-файл: " + existsError.message();
-        return result;
-    }
-    std::string originalContent;
-    if (managedExisted && !readExistingFile(options_.managedPath, originalContent, error)) {
-        result.message = error;
-        return result;
-    }
-
-    std::vector<std::string> lines;
-    size_t removedLines = 0;
-    for (const auto& [number, line] : physicalLines(originalContent)) {
-        (void)number;
-        if (startsManagedDefault(line, key) ||
-            line == "# Managed by FIC. Manual changes may be overwritten.") {
-            // The header marker is FIC-owned content too: it must not keep
-            // an otherwise-empty managed fragment alive.
-            ++removedLines;
-            continue;
-        }
-        lines.push_back(line);
-    }
-    const bool onlyBlankLinesRemain =
-        std::all_of(lines.begin(), lines.end(), [](const std::string& line) {
-            return line.find_first_not_of(" \t\r") == std::string::npos;
-        });
-
-    std::string newContent;
-    for (const std::string& line : lines) {
-        newContent += line + "\n";
-    }
-    if (managedExisted && onlyBlankLinesRemain) {
-        // The FIC-owned file became empty: remove it entirely instead of
-        // leaving an empty managed sudoers fragment behind.
-        std::error_code removeError;
-        std::filesystem::remove(options_.managedPath, removeError);
-        if (removeError) {
-            result.message = "Не удалось удалить пустой managed sudoers-файл: " +
-                             removeError.message();
-            return result;
-        }
-    } else if (!writeDocument(options_.managedPath, newContent, true, error)) {
-        result.message = "Не удалось записать managed sudoers-файл: " + error;
-        return result;
-    }
-    result.changed = removedLines > 0;
-
-    if (!validate(error)) {
-        std::string restoreError;
-        restoreManagedFile(managedExisted, originalContent, restoreError);
-        result.message = "Конфигурация sudoers не прошла проверку после удаления: " + error;
-        if (!restoreError.empty()) {
-            result.diagnostics.push_back("Ошибка отката: " + restoreError);
-        }
-        return result;
-    }
-
-    if (!load(error)) {
-        std::string restoreError;
-        restoreManagedFile(managedExisted, originalContent, restoreError);
-        result.message = "Не удалось перечитать sudoers после удаления: " + error;
-        return result;
-    }
-    const SudoersValueObservation after = inspectGlobalDefault(key);
-    if (after.found) {
-        result.diagnostics.push_back(
-            "Эффективное значение после удаления определяет: " +
-            after.source.path.string() + ":" + std::to_string(after.source.line));
-    }
-
-    result.ok = true;
-    result.message = "Managed значение " + key + " удалено из " +
-                     options_.managedPath.string();
     return result;
 }

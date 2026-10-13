@@ -29,6 +29,16 @@ PlatformProfile makeBuildPlatformProfile() {
             {"/usr/bin/loginctl", "/bin/loginctl"}
         },
         {
+            ExecutableId::Sudo,
+            {"/usr/lib/cargo/bin/sudo", "/usr/bin/sudo.ws"},
+            true,
+            "/usr/bin/sudo",
+            {
+                {"/usr/lib/cargo/bin/sudo", "/usr/lib/cargo/bin/sudo"},
+                {"/usr/bin/sudo.ws", "/usr/bin/sudo.ws"}
+            }
+        },
+        {
             ExecutableId::Visudo,
             {"/usr/lib/cargo/bin/visudo", "/usr/sbin/visudo.ws"},
             true,
@@ -91,7 +101,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.ssh.optionFile = "/etc/default/ssh";
     profile.ssh.pamServiceRouting = SshPamServiceRouting::ConfigurablePamServiceName;
     profile.sudo.mainConfigPath = "/etc/sudoers";
-    profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";
+    profile.sudo.managedConfigPath = "/etc/sudoers.d/99-fic.conf";
     profile.sysctl.loader = SysctlLoaderKind::SystemdSysctl;
     profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
     profile.pam.configDirectories = {

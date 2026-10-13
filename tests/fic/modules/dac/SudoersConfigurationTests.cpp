@@ -1,4 +1,5 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
 #include "modules/dac/sudo/SudoersIncludeDirective.h"
 #include "modules/dac/sudo/SudoersScopedDefaults.h"
 #include "modules/dac/sudo/SudoersDisabledWrapper.h"
@@ -60,11 +61,26 @@ std::string readFile(const std::filesystem::path& path) {
 SudoersConfigurationOptions optionsFor(const TempTree& tree) {
     SudoersConfigurationOptions options;
     options.mainPath = tree.root / "sudoers";
-    options.managedPath = tree.root / "sudoers.d" / "zzzz-fic";
+    options.managedPath = tree.root / "sudoers.d" / "99-fic.conf";
     options.validatorPath.clear();
     options.verifyValidatorHash = false;
     options.enforceOwnership = false;
     return options;
+}
+
+SudoersOperationResult manageGlobal(SudoersConfiguration& configuration,
+    const SudoersConfigurationOptions& options, const std::string& key,
+    const std::string& line, const std::string& expected) {
+    fic::rollback::MutationJournal journal(options.mainPath.parent_path() / "journal.json");
+    std::string error;
+    require(journal.load(error), error);
+    const std::string policy = key == "exempt_group" ? "sudo_exempt_group_disable"
+        : key == "timestamp_timeout" ? "sudo_timeout" : key == "secure_path" ? "sudo_securepath"
+        : key == "env_reset" ? "sudo_env_reset" : "sudo_passwd_tries";
+    const auto result = fic::sudoers::GlobalDefaultsTransaction(options, journal).reconcile(
+        {"DAC", "SudoEdit", policy}, key, line, expected);
+    if (result.ok) require(configuration.load(error), error);
+    return result;
 }
 
 void testIncludeOrderAndManagedOverride() {
@@ -81,7 +97,7 @@ void testIncludeOrderAndManagedOverride() {
     const auto before = configuration.inspectGlobalDefault("passwd_tries");
     require(before.found && before.value == "4", "included value must be effective");
 
-    const auto operation = configuration.ensureManagedGlobalDefault(
+    const auto operation = manageGlobal(configuration, options,
         "passwd_tries", "Defaults passwd_tries=3", "3");
     require(operation.ok && operation.changed, operation.message);
     require(readFile(options.managedPath).find("Defaults passwd_tries=3") != std::string::npos,
@@ -94,19 +110,20 @@ void testIncludeOrderAndManagedOverride() {
 
     require(::chmod(options.managedPath.c_str(), 0644) == 0,
             "failed to alter managed file mode fixture");
-    const auto secondOperation = configuration.ensureManagedGlobalDefault(
+    const auto secondOperation = manageGlobal(configuration, options,
         "passwd_tries", "Defaults passwd_tries=2", "2");
-    require(secondOperation.ok && secondOperation.changed, secondOperation.message);
-    require((std::filesystem::status(options.managedPath).permissions() &
-             std::filesystem::perms::all) ==
-                (std::filesystem::perms::owner_read |
-                 std::filesystem::perms::group_read),
-            "existing managed file mode must be corrected to 0440");
+    require(!secondOperation.ok && secondOperation.conflict,
+            "managed mode drift must fail closed");
+    require(::chmod(options.managedPath.c_str(), 0440) == 0,
+            "failed to restore fixture metadata");
+    const auto recovered = manageGlobal(configuration, options,
+        "passwd_tries", "Defaults passwd_tries=2", "2");
+    require(recovered.ok, recovered.message);
     const auto after = configuration.inspectGlobalDefault("passwd_tries");
     require(after.found && after.value == "2", "managed value must be effective");
 }
 
-void testManagedOverrideRollsBackWhenNotEffective() {
+void testManagedOverrideWinsAtEof() {
     TempTree tree;
     const auto options = optionsFor(tree);
     writeFile(options.mainPath,
@@ -117,10 +134,11 @@ void testManagedOverrideRollsBackWhenNotEffective() {
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    const auto operation = configuration.ensureManagedGlobalDefault(
+    const auto operation = manageGlobal(configuration, options,
         "passwd_tries", "Defaults passwd_tries=3", "3");
-    require(!operation.ok, "ineffective managed override must fail");
-    require(!std::filesystem::exists(options.managedPath), "failed override must be rolled back");
+    require(operation.ok, operation.message);
+    require(configuration.inspectGlobalDefault("passwd_tries").value == "3",
+            "EOF include must override preceding foreign global Defaults");
 }
 
 void testManagedInspectionIsIndependentFromEffectiveSource() {
@@ -128,8 +146,9 @@ void testManagedInspectionIsIndependentFromEffectiveSource() {
     const auto options = optionsFor(tree);
     writeFile(options.mainPath,
               "Defaults timestamp_timeout=2\n"
+              "@include " + options.managedPath.string() + "\n"
               "@includedir " + (tree.root / "sudoers.d").string() + "\n");
-    // Sorts after zzzz-fic: shadows the FIC managed entry effectively.
+    // This is a read-only candidate observation, not an ownership proof.
     writeFile(tree.root / "sudoers.d" / "zzzzz-external",
               "Defaults timestamp_timeout=10\n");
     writeFile(options.managedPath, "Defaults timestamp_timeout=5\n");
@@ -739,7 +758,7 @@ void testExemptGroupSingleOwnership() {
             "require_authentication must not own exempt_group");
 
     // sudo_exempt_group_disable owns it through the managed global Defaults.
-    const auto managed = configuration.ensureManagedGlobalDefault(
+    const auto managed = manageGlobal(configuration, options,
         "exempt_group", "Defaults !exempt_group", "DISABLE");
     require(managed.ok, managed.message);
     require(configuration.inspectGlobalDefault("exempt_group").value == "DISABLE",
@@ -771,7 +790,7 @@ void testExemptGroupSingleOwnership() {
             "after the blocker no contextual exempt_group may remain active");
 }
 
-void testManagedExemptGroupFailsWhenShadowed() {
+void testManagedExemptGroupWinsThroughEofInclude() {
     TempTree tree;
     const auto options = optionsFor(tree);
     writeFile(options.mainPath,
@@ -781,7 +800,7 @@ void testManagedExemptGroupFailsWhenShadowed() {
     SudoersConfiguration configuration(options);
     std::string error;
     require(configuration.load(error), error);
-    const auto firstWrite = configuration.ensureManagedGlobalDefault(
+    const auto firstWrite = manageGlobal(configuration, options,
         "exempt_group", "Defaults !exempt_group", "DISABLE");
     require(firstWrite.ok, "the first managed write must succeed: " + firstWrite.message);
     const std::string managedContent = readFile(options.managedPath);
@@ -796,15 +815,12 @@ void testManagedExemptGroupFailsWhenShadowed() {
     // exempt_group=wheel is a string-valued key, so the effective observation
     // is the raw value, not the ENABLE/DISABLE flag form.
     const auto shadowing = shadowed.inspectGlobalDefault("exempt_group");
-    require(shadowing.value == "wheel",
-            "the later external override must win, got: " + shadowing.value);
-    require(shadowing.source.path.filename() == "zzzzzz-later-external",
-            "the winning source must be the later external file");
+    require(shadowing.value == "DISABLE" && shadowing.source.path == options.managedPath,
+            "the owned EOF include must win over foreign includedir sources");
 
-    const auto second = shadowed.ensureManagedGlobalDefault(
+    const auto second = manageGlobal(shadowed, options,
         "exempt_group", "Defaults !exempt_group", "DISABLE");
-    require(!second.ok,
-            "an apply must fail when the desired value is not effective");
+    require(second.ok, second.message);
     require(readFile(options.managedPath) == managedContent,
             "the managed mutation must be compensated on failure");
 }
@@ -830,7 +846,7 @@ void testMissingMainAndSymlinkAreRejected() {
 int main() {
     try {
         testIncludeOrderAndManagedOverride();
-        testManagedOverrideRollsBackWhenNotEffective();
+        testManagedOverrideWinsAtEof();
         testManagedInspectionIsIndependentFromEffectiveSource();
         testAuthenticationRewrite();
         testIncludeCycleAndMissingInclude();
@@ -850,7 +866,7 @@ int main() {
         testMissingIncludeKeepsExistingSemantics();
         testScopedDefaultsDetection();
         testExemptGroupSingleOwnership();
-        testManagedExemptGroupFailsWhenShadowed();
+        testManagedExemptGroupWinsThroughEofInclude();
         testMissingMainAndSymlinkAreRejected();
         testRealVisudoWhenAvailable();
     } catch (const std::exception& error) {

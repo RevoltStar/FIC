@@ -5,6 +5,8 @@
 #include <fic/core/fs/AtomicFileWriter.h>
 
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
+#include "modules/dac/sudo/SudoProviderCapabilities.h"
 #include "modules/dac/sudo/SudoersScopedDefaultsTransaction.h"
 #include "modules/firewall/FirewallPolicies.h"
 #include "modules/net/ssh/SshConfigFile.h"
@@ -270,46 +272,11 @@ MutationRollbackOutcome undoSysctlSetting(
 }
 
 MutationRollbackOutcome undoSudoSetting(
-    const RollbackExecutorDeps& deps,
+    const RollbackExecutorDeps&,
     const MutationRecord& record,
-    const UndoRemoveManagedSetting& undo) {
-    // The SHARED SUDO mutation mutex, not the generic backend mutex: apply and
-    // rollback must observe the same lock.
-    const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
-
-    SudoersConfigurationOptions options = deps.sudoersOptions
-        ? deps.sudoersOptions()
-        : SudoersConfigurationOptions{};
-
-    SudoersConfiguration configuration(options);
-    std::string error;
-    if (!configuration.load(error)) {
-        MutationRollbackOutcome outcome;
-        outcome.id = record.id;
-        outcome.resource = record.resource;
-        outcome.status = RollbackStatus::Failed;
-        outcome.message = "Не удалось проанализировать sudoers: " + error;
-        return outcome;
-    }
-
-    const SudoersOperationResult removal =
-        configuration.removeManagedGlobalDefault(undo.key, undo.appliedValue);
-    MutationRollbackOutcome outcome;
-    outcome.id = record.id;
-    outcome.resource = record.resource;
-    outcome.message = removal.message;
-    if (removal.ok && removal.conflict) {
-        outcome.status = RollbackStatus::Conflict;
-    } else if (removal.ok && removal.targetMissing) {
-        outcome.status = RollbackStatus::NothingToDo;
-    } else if (removal.ok) {
-        outcome.status = RollbackStatus::Success;
-    } else if (removal.conflict) {
-        outcome.status = RollbackStatus::Conflict;
-    } else {
-        outcome.status = RollbackStatus::Failed;
-    }
-    return outcome;
+    const UndoRemoveManagedSetting&) {
+    return {record.id, record.resource, RollbackStatus::Conflict,
+        "Legacy SUDO global mutation lacks shared-container ownership provenance; explicit resolution required"};
 }
 
 // True when the current sudoers graph still carries at least one
@@ -632,6 +599,21 @@ MutationRollbackOutcome undoPamProviderManagedFlagMutation(
 MutationRollbackOutcome undoMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record) {
+    if (std::holds_alternative<UndoReleaseSudoGlobalDefault>(record.undo.payload)) {
+        const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
+        std::string error;
+        auto* journal = DaemonMutationJournal::instance().tryGet(error);
+        if (!journal || !deps.sudoersOptions)
+            return {record.id, record.resource, RollbackStatus::Failed,
+                    error.empty() ? "SUDO journal or route unavailable" : error};
+        fic::sudoers::GlobalDefaultsTransaction transaction(deps.sudoersOptions(), *journal);
+        const auto released = transaction.release(record);
+        const auto status = released.conflict ? RollbackStatus::Conflict
+            : !released.ok ? RollbackStatus::Failed
+            : released.targetMissing && !released.changed ? RollbackStatus::NothingToDo
+            : RollbackStatus::Success;
+        return {record.id, record.resource, status, released.message};
+    }
     if (std::holds_alternative<UndoRemoveDisplayManagerBlock>(record.undo.payload)) {
         return {record.id, record.resource, RollbackStatus::Unsupported, "DM block requires verified joint release"};
     }
@@ -1170,13 +1152,10 @@ RollbackReport checkUnrecordedOwnership(
             report.message = "Не удалось проанализировать sudoers: " + error;
             return report;
         }
-        // Legacy provenance check uses the FIC managed artifact content, not
-        // the effective source: an entry shadowed by the main sudoers or
-        // another include is still FIC-owned persistent state and must not
-        // be silently kept.
-        const SudoersValueObservation managed =
-            configuration.inspectManagedGlobalDefault(resourceHint);
-        if (managed.found) {
+        auto* journal = DaemonMutationJournal::instance().tryGet(error);
+        if (!journal) return provenanceUnavailable(policy);
+        fic::sudoers::GlobalDefaultsTransaction transaction(options, *journal);
+        if (!transaction.verifyNoOwnedSetting(resourceHint, error)) {
             return provenanceUnavailable(policy);
         }
         return report;
@@ -1475,11 +1454,24 @@ RollbackExecutorDeps productionRollbackDeps(
         SudoersConfigurationOptions options;
         options.mainPath = sudoConfig.mainConfigPath;
         options.managedPath = sudoConfig.managedConfigPath;
-        std::filesystem::path validator;
+        options.managedFileMode = sudoConfig.managedFileMode;
+        options.requireValidator = true;
         std::string error;
-        if (executables.resolve(
-                fic::platform::ExecutableId::Visudo, validator, error)) {
-            options.validatorPath = validator.string();
+        fic::sudoers::SudoProviderCapabilities capabilities;
+        if (fic::sudoers::detectSudoProviderCapabilities(sudoConfig, executables, capabilities, error)) {
+            options.validatorPath = capabilities.validator.string();
+            options.releaseOwnedUnsupportedSetting = capabilities.exemptGroupDisabled ==
+                fic::sudoers::SudoCapabilityGuarantee::VerifiedByConstruction;
+            options.verifyProviderUnchanged = [sudoConfig, &executables, capabilities](std::string& error) {
+                fic::sudoers::SudoProviderCapabilities current;
+                if (!fic::sudoers::detectSudoProviderCapabilities(sudoConfig, executables, current, error)) return false;
+                if (current.provider != capabilities.provider || current.version != capabilities.version ||
+                    current.executable != capabilities.executable || current.validator != capabilities.validator) {
+                    error = "Active SUDO provider changed during rollback";
+                    return false;
+                }
+                return true;
+            };
         }
         return options;
     };

@@ -11,10 +11,11 @@ DAC_sudo_securepath::DAC_sudo_securepath(
     this->policyName = "sudo_securepath";
     this->policyTypeValue = std::make_unique<SudoSecurePathPolicyTypeValue>(
         platformConfig.securePathDefault);
-    addRequiredDependency({"DAC", "SudoEdit", "sudo_disable_scoped_defaults"});
+    addRecommendedDependency({"DAC", "SudoEdit", "sudo_disable_scoped_defaults"});
     // Upstream sudoers: "Users in the group specified by the exempt_group
     // option are not affected by secure_path".
-    addRequiredDependency({"DAC", "SudoEdit", "sudo_exempt_group_disable"});
+    addRequiredDependency({"DAC", "SudoEdit", "sudo_exempt_group_disable"},
+                          whenBackendRequiresCapability("exempt_group"));
 }
 
 DAC_sudo_securepath::~DAC_sudo_securepath() {

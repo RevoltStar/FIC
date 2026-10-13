@@ -1,6 +1,9 @@
 #include <fic/policy/PolicyDependency.h>
-
 #include <utility>
+
+PolicyDependencyCondition whenBackendRequiresCapability(std::string capability) {
+    return {PolicyDependencyConditionType::BackendRequiresCapability, std::move(capability)};
+}
 
 PolicyDependencyCondition whenOwnerValueEquals(std::string value) {
     return {

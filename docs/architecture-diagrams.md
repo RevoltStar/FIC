@@ -577,19 +577,21 @@ flowchart LR
     graph --> effective[effective Defaults and source locations]
     effective --> preflight[whole-graph preflight]
     preflight --> strategy{remediation strategy}
-    strategy -->|scalar Defaults| managed[/etc/sudoers.d/zzzz-fic]
+    strategy -->|scalar Defaults| managed[/etc/sudoers.d/99-fic.conf]
     strategy -->|authentication bypass| origin[atomic source token replacement]
     strategy -->|scoped Defaults| wrappers[FIC_SUDO_DISABLED wrappers]
     managed --> visudo[verified visudo validation]
+    managed --> provenance[durable global ownership journal]
     origin --> visudo
     wrappers --> visudo
     visudo --> reload[reload graph and verify postcondition]
-    visudo -->|failure| rollback[rollback all written sources]
+    visudo -->|failure| rollback[compensation or retained ownership provenance]
+    provenance --> recovery[global failure retains provenance for recovery]
 ```
 
 Клиенты не передают пути sudoers-файлов через IPC. Пути появляются только из
 фиксированного `/etc/sudoers` и доверенного include-графа. Для `Defaults`
-изменяется только managed-файл; политика `sudo_require_authentication` изменяет
+изменяются owned managed-файл и собственный EOF include-блок; политика `sudo_require_authentication` изменяет
 в источнике только `NOPASSWD` и `authenticate`, не расширяя список разрешенных
 команд.
 
@@ -600,10 +602,13 @@ flowchart LR
 * **Managed scalar Defaults.** `sudo_env_reset`, `sudo_passwd_tries`,
   `sudo_securepath`, `sudo_timeout`, `sudo_exempt_group_disable` управляют
   значением через глобальную запись `Defaults` в FIC-owned
-  `/etc/sudoers.d/zzzz-fic`. Чужие глобальные `Defaults` FIC не редактирует
-  никогда: если более поздний внешний источник перекрывает значение, apply
-  перечитывает граф, видит, что желаемое значение не эффективно, откатывает своё
-  изменение и возвращает failure.
+  `/etc/sudoers.d/99-fic.conf`. Чужие глобальные `Defaults` FIC не редактирует
+  никогда. Typed journal связывает независимые ключи с общим container ID;
+  durable file→EOF include→native proof предшествуют Applied. Последний
+  release сначала делает файл инертным, снимает свой include, валидирует граф
+  и условно удаляет disconnected файл. Для доказанного sudo-rs env_reset и
+  отсутствие exempt_group удовлетворяются VerifiedByConstruction без записи.
+  Подробнее: [SUDO rollback](rollback.md#sudo-rollback-dac--sudoedit).
 * **Source-edit wrapper.** `sudo_disable_scoped_defaults` вынуждена временно
   деактивировать чужие записи, потому что глобальная запись не может отменить
   контекстную. Она оборачивает исходные физические строки в явные маркеры

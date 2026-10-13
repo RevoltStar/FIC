@@ -2,6 +2,7 @@
 #include "rollback/MutationJournal.h"
 #include "rollback/MutationRecord.h"
 #include "rollback/ScopeTransition.h"
+#include "modules/dac/sudo/SudoersDisabledWrapper.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <nlohmann/json.hpp>
@@ -2950,11 +2951,51 @@ void testSssdKerberosWriterLoaderParity() {
             "rejected records must never be persisted");
 }
 
+void testSudoGlobalJournalContract() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationRecord record;
+    record.policy = {"DAC", "SudoEdit", "sudo_passwd_tries"};
+    record.resource = "passwd_tries";
+    record.undo = {MutationBackend::Sudo, UndoReleaseSudoGlobalDefault{
+        "passwd_tries", "Defaults passwd_tries=3", "",
+        fic::sudoers::generateSudoWrapperMutationId(0), false, ""}};
+    MutationId id = 0;
+    for (const std::string field : {"route", "backend", "line", "separator", "container"}) {
+        auto invalid = record;
+        auto& payload = std::get<UndoReleaseSudoGlobalDefault>(invalid.undo.payload);
+        if (field == "route") invalid.policy.policyName = "sudo_timeout";
+        if (field == "backend") invalid.undo.backend = MutationBackend::Sysctl;
+        if (field == "line") payload.appliedLine += "\nDefaults !authenticate";
+        if (field == "separator") payload.addedSeparator = true;
+        if (field == "container") payload.containerId = "guessed";
+        require(!journal.prepareMutation(invalid, id, error), "invalid SUDO ownership admitted: " + field);
+    }
+    require(journal.prepareMutation(record, id, error), error);
+    require(journal.setStatus(id, MutationStatus::Applied, error), error);
+    MutationJournal restarted(file.path);
+    require(restarted.load(error), error);
+    const auto active = restarted.activeRecords(record.policy);
+    require(active.size() == 1 && active.front().id == id, "SUDO global roundtrip lost identity");
+    const auto original = nlohmann::json::parse(file.read());
+    for (const std::string field : {"key", "applied_line", "previous_line", "container_id",
+                                    "separator_prefix_digest", "added_separator"}) {
+        auto malformed = original;
+        malformed["records"][0]["undo"].erase(field);
+        file.write(malformed.dump());
+        MutationJournal rejected(file.path);
+        require(!rejected.load(error), "SUDO loader accepted missing ownership field: " + field);
+    }
+}
+
 int main() {
     const struct {
         const char* name;
         void (*test)();
     } tests[] = {
+        {"SUDO global journal contract", testSudoGlobalJournalContract},
         {"scope checkpoint lifecycle", testScopeCheckpointLifecycle},
         {"DE artifact creation contract", testDesktopArtifactJournalContract},
         {"scope crash and malformed provenance", testScopeCrashAndMalformedProvenance},

@@ -1,0 +1,13 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+USER root
+ARG PLATFORM
+# Some cached ALT builders lost package permission metadata. Restore it only
+# inside the test image; the host filesystem is never mounted here.
+RUN if [ "$PLATFORM" = alt-p11 ]; then \
+        rpm --setperms -a && rpm --setugids -a; \
+    elif [ "$PLATFORM" = debian12 ]; then \
+        unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; \
+        apt-get update && apt-get install -y sudo libssl3; \
+    fi
+ENTRYPOINT ["/bin/sh"]

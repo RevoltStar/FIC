@@ -44,6 +44,10 @@ PlatformProfile makeBuildPlatformProfile() {
             {"/usr/bin/loginctl", "/bin/loginctl"}
         },
         {
+            ExecutableId::Sudo,
+            {"/usr/bin/sudo"}
+        },
+        {
             ExecutableId::Visudo,
             {"/usr/sbin/visudo"}
         },
@@ -97,7 +101,8 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.ssh.optionFileOptional = false;
     profile.ssh.pamServiceRouting = SshPamServiceRouting::LegacyExecutableName;
     profile.sudo.mainConfigPath = "/etc/sudoers";
-    profile.sudo.managedConfigPath = "/etc/sudoers.d/zzzz-fic";
+    profile.sudo.managedConfigPath = "/etc/sudoers.d/99-fic.conf";
+    profile.sudo.managedFileMode = 0400;
     profile.sysctl.loader = SysctlLoaderKind::SystemdSysctl;
     profile.sysctl.managedConfigPath = "/etc/sysctl.d/zzzz-fic.conf";
     profile.pam.configDirectories = {

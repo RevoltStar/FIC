@@ -20,6 +20,7 @@ enum class ExecutableId {
     Systemctl,
     Loginctl,
     Visudo,
+    Sudo,
     Lscpu,
     Dmidecode,
     Udevadm,
@@ -92,6 +93,7 @@ struct SudoPlatformConfig {
     std::filesystem::path mainConfigPath;
     std::filesystem::path managedConfigPath;
     std::string securePathDefault = FIC_SUDO_SECURE_PATH_DEFAULT;
+    unsigned managedFileMode = 0440;
 };
 
 enum class SysctlLoaderKind {

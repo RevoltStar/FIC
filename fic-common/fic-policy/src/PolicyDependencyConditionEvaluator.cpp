@@ -8,6 +8,8 @@ bool dependencyConditionMatches(
     switch (condition.type) {
     case PolicyDependencyConditionType::Always:
         return true;
+    case PolicyDependencyConditionType::BackendRequiresCapability:
+        return owner.requiresDependencyCapability(condition.value);
     case PolicyDependencyConditionType::OwnerValueEquals: {
         const std::optional<std::string> ownerValue = owner.getValue();
         return ownerValue.has_value() && *ownerValue == condition.value;
@@ -31,6 +33,12 @@ bool validateDependencyCondition(
         if (!owner.validate(condition.value)) {
             error = "OwnerValueEquals dependency condition contains an invalid "
                 "owner policy value: " + condition.value;
+            return false;
+        }
+        return true;
+    case PolicyDependencyConditionType::BackendRequiresCapability:
+        if (condition.value.empty() || !owner.supportsDependencyCapability(condition.value)) {
+            error = "BackendRequiresCapability dependency condition is not supported by its owner";
             return false;
         }
         return true;

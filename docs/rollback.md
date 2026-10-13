@@ -1688,12 +1688,46 @@ PamPackagingChecks.py`.
 
 Две независимые модели владения; их нельзя смешивать.
 
-**Managed scalar Defaults.** `sudo_env_reset`, `sudo_passwd_tries`,
-`sudo_securepath`, `sudo_timeout`, `sudo_exempt_group_disable` пишут одну
-глобальную запись `Defaults` в FIC-owned `/etc/sudoers.d/zzzz-fic`
-(`UndoRemoveManagedSetting`). Чужие глобальные `Defaults` никогда не
-редактируются. Если более поздний внешний источник перекрывает значение, apply
-возвращает failure и компенсирует собственную запись.
+**Managed scalar Defaults.** Для classic sudo `sudo_env_reset`,
+`sudo_passwd_tries`, `sudo_securepath`, `sudo_timeout` и
+`sudo_exempt_group_disable` владеют отдельными записями в общем
+`/etc/sudoers.d/99-fic.conf` (`UndoReleaseSudoGlobalDefault`). Файл имеет
+journal-bound container ID; имя файла и комментарии сами по себе ownership
+не доказывают. Чужие global Defaults не переписываются. Даже уже выполненное
+чужое значение создаёт собственное владение.
+
+Файл подключается явно на физическом EOF `/etc/sudoers`:
+
+```sudoers
+#@FIC_INCLUDE_BEGIN
+@include /etc/sudoers.d/99-fic.conf
+#@FIC_INCLUDE_END
+```
+
+`.conf` игнорируется native includedir. FIC сохраняет исходные байты main
+перед каноническим блоком; malformed markers или foreign suffix означают
+Conflict, а не автоматический ремонт. Повторный foreign include допускается
+при доказанном native синтаксисе/постусловии.
+
+Prepared сохраняется до записи owned файла; затем долговечно устанавливаются
+файл и include, проверяются native validator, граф, topology и постусловие,
+и только затем Applied. Ошибка сохраняет unresolved provenance для recovery.
+Повторное применение/смена значения сохраняют mutation ID. При release
+удаляется только собственный ключ. Последний release оставляет инертный
+контейнер, долговечно удаляет доказанный include, валидирует detached graph
+и условно удаляет файл. Если foreign include всё ещё подключает контейнер,
+release возвращает Conflict и сохраняет инертный файл/provenance. Если main
+изначально не имел LF, удаление добавленного разделителя требует digest
+неизменённого prefix; чужая правка prefix также даёт Conflict.
+
+Для подтверждённого sudo-rs отсутствие exempt_group и безусловный env_reset
+дают VerifiedByConstruction (`sudo_env_reset=ENABLE`): без фиктивной записи
+или mutation. Прежнее доказанное classic владение сначала освобождается.
+Unknown provider/version/config route и смена provider во время операции
+fail closed. FIC не переключает alternatives. Глобальный SUCCESS относится
+к global Defaults, а contextual suppression выполняет отдельная политика;
+provider-specific precedence проверяется native. Результаты и ограничения
+текущей незавершённой реализации: [native validation](sudo-native-validation.md).
 
 **Source-edit wrapper.** `sudo_disable_scoped_defaults` запрещает все четыре
 формы контекстных `Defaults`:
@@ -1941,8 +1975,10 @@ Snapshot всего `/etc/sudoers` не используется.
 state означали бы две разные rollback provenance.
 
 **Граф зависимостей.** Глобальные `Defaults`-политики остаются глобальными и не
-становятся evaluator'ом scoped `Defaults`; зависимость от
-`sudo_disable_scoped_defaults` гарантирует отсутствие контекстных override'ов:
+становятся evaluator'ом scoped `Defaults`. Пять зависимостей от
+`sudo_disable_scoped_defaults` являются Recommended: их отключение даёт
+предупреждение, но не блокирует global apply. Следующие exemption edges
+остаются Required только если активный provider поддерживает этот bypass:
 
 ```
 sudo_env_reset          ┐

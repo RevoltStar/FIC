@@ -1,5 +1,6 @@
 #include "modules/dac/sudo/Sudo.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
+#include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
 #include "rollback/DaemonMutationJournal.h"
 
 #include <filesystem>
@@ -23,6 +24,8 @@ bool productionSudoersOptions(
     std::string& error) {
     options.mainPath = platformConfig.mainConfigPath;
     options.managedPath = platformConfig.managedConfigPath;
+    options.managedFileMode = platformConfig.managedFileMode;
+    options.requireValidator = true;
     std::filesystem::path validator;
     if (!executables.resolve(
             fic::platform::ExecutableId::Visudo, validator, error)) {
@@ -61,6 +64,32 @@ Sudo::~Sudo() {
     // Реализация деструктора
 }
 
+bool Sudo::requiresDependencyCapability(const std::string& name) const {
+    if (name != "exempt_group") return true;
+    fic::sudoers::SudoProviderCapabilities capabilities;
+    std::string error;
+    const bool proven = fic::sudoers::detectSudoProviderCapabilities(
+        platformConfig_, executables_, capabilities, error);
+    const std::lock_guard<std::mutex> lock(capabilityMutex_);
+    if (!proven) { dependencyProvider_.reset(); return true; }
+    dependencyProvider_ = capabilities;
+    return capabilities.exemptGroupDisabled !=
+        fic::sudoers::SudoCapabilityGuarantee::VerifiedByConstruction;
+}
+
+bool Sudo::verifyProviderWitness(
+    const fic::sudoers::SudoProviderCapabilities& current, std::string& error) const {
+    const std::lock_guard<std::mutex> lock(capabilityMutex_);
+    if (dependencyProvider_ && (dependencyProvider_->provider != current.provider ||
+        dependencyProvider_->version != current.version ||
+        dependencyProvider_->executable != current.executable ||
+        dependencyProvider_->validator != current.validator)) {
+        error = "Active SUDO provider changed after dependency evaluation";
+        return false;
+    }
+    return true;
+}
+
 Sudo::Sudo(
     fic::platform::SudoPlatformConfig platformConfig,
     const fic::platform::PlatformExecutableResolver& executables)
@@ -81,6 +110,15 @@ bool Sudo::apply() {
 
     const std::lock_guard<std::mutex> lock(sudoersMutex());
 
+    fic::sudoers::SudoProviderCapabilities capabilities;
+    std::string capabilityError;
+    if (!fic::sudoers::detectSudoProviderCapabilities(
+            platformConfig_, executables_, capabilities, capabilityError) ||
+        !verifyProviderWitness(capabilities, capabilityError)) {
+        this->log(capabilityError, logLevel::ERROR);
+        return false;
+    }
+
     SudoersConfigurationOptions configurationOptions;
     std::string resolverError;
     if (!productionSudoersOptions(
@@ -88,7 +126,17 @@ bool Sudo::apply() {
         this->log("Не удалось выбрать visudo: " + resolverError, logLevel::ERROR);
         return false;
     }
-    SudoersConfiguration configuration(std::move(configurationOptions));
+    configurationOptions.verifyProviderUnchanged = [this, capabilities](std::string& error) {
+        fic::sudoers::SudoProviderCapabilities current;
+        if (!fic::sudoers::detectSudoProviderCapabilities(platformConfig_, executables_, current, error)) return false;
+        if (current.provider != capabilities.provider || current.version != capabilities.version ||
+            current.executable != capabilities.executable || current.validator != capabilities.validator) {
+            error = "Active SUDO provider changed during transaction";
+            return false;
+        }
+        return true;
+    };
+    SudoersConfiguration configuration(configurationOptions);
     std::string loadError;
     if (!configuration.load(loadError)) {
         this->log("Не удалось проанализировать sudoers: " + loadError, logLevel::ERROR);
@@ -126,70 +174,83 @@ bool Sudo::apply() {
         return false;
     }
 
-    const SudoersValueObservation observation = configuration.inspectGlobalDefault(key);
-    const std::string valueOld = observation.found ? observation.value : "[NOT SET]";
-
-    // Crash-consistent journaling: prepare the rollback record before the
-    // system mutation; record only a real FIC-owned change.
-    fic::rollback::MutationId mutationId = 0;
-    bool mutationPrepared = false;
-    const bool sudoNeedsChange = valueOld != valueNew;
-    if (sudoNeedsChange) {
-        std::string journalError;
-        fic::rollback::UndoAction undo{
-            fic::rollback::MutationBackend::Sudo,
-            fic::rollback::UndoRemoveManagedSetting{key, expectedValue}};
-        if (!fic::rollback::recordPreparedMutation(
-                this->policyRef(), key, undo, mutationId, journalError)) {
-            this->log("Не удалось подготовить запись mutation journal: " +
-                          journalError,
-                      logLevel::ERROR);
-            return false;
-        }
-        mutationPrepared = true;
-    }
-
-    if(valueOld == valueNew){
-        const std::string source = observation.source.path.empty()
-            ? ""
-            : " Источник: " + observation.source.path.string() + ":" +
-                  std::to_string(observation.source.line);
-        this->log("Отклонений не обнаружено." + source, logLevel::INFO);
-    } else {
-        this->log("Обнаружено отклонение параметра: '" +
-                  this->Sudo::sudoParameter->getParamString() + "'", logLevel::WARN);
-        this->log("Фактическое:'" + valueOld + "' Ожидаемое:'" + valueNew + "'", logLevel::WARN);
-    }
-
-    const SudoersOperationResult operation = configuration.ensureManagedGlobalDefault(
-        key, renderedLine, expectedValue);
-    for (const std::string& diagnostic : operation.diagnostics) {
-        this->log(diagnostic, operation.ok ? logLevel::INFO : logLevel::WARN);
-    }
-    if (!operation.ok) {
-        std::string discardError;
-        if (mutationPrepared &&
-            !fic::rollback::discardMutation(mutationId, discardError)) {
-            this->log("Ошибка удаления подготовленной записи mutation journal: " +
-                          discardError,
-                      logLevel::WARN);
-        }
-        this->log(operation.message, logLevel::ERROR);
-        return false;
-    }
-
     std::string journalError;
-    if (mutationPrepared && !fic::rollback::commitMutation(mutationId, journalError)) {
-        // The sudoers mutation already happened: apply must not report
-        // success without reliable provenance. The Prepared record stays
-        // active on disk and remains safely resolvable.
-        this->log("Ошибка фиксации записи mutation journal: " + journalError,
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(journalError);
+    if (!journal) {
+        this->log(journalError.empty() ? "Mutation journal недоступен" : journalError,
                   logLevel::ERROR);
         return false;
     }
-
-    this->log(operation.message, logLevel::INFO);
-    return true;
+    if (capabilities.exemptGroupDisabled == fic::sudoers::SudoCapabilityGuarantee::VerifiedByConstruction) {
+        const PolicyRef exempt{"DAC", "SudoEdit", "sudo_exempt_group_disable"};
+        const auto obsolete = journal->activeRecords(exempt);
+        if (obsolete.size() > 1) {
+            this->log("Conflicting exempt_group ownership during provider transition", logLevel::ERROR);
+            return false;
+        }
+        if (!obsolete.empty()) {
+            if (!std::holds_alternative<fic::rollback::UndoReleaseSudoGlobalDefault>(obsolete.front().undo.payload)) {
+                this->log("Legacy exempt_group provenance cannot be retired by construction", logLevel::ERROR);
+                return false;
+            }
+            auto releaseOptions = configurationOptions;
+            releaseOptions.releaseOwnedUnsupportedSetting = true;
+            const auto retired = fic::sudoers::GlobalDefaultsTransaction(releaseOptions, *journal).release(obsolete.front());
+            if (!retired.ok || !journal->setStatus(obsolete.front().id,
+                    fic::rollback::MutationStatus::RolledBack, journalError)) {
+                this->log(retired.ok ? journalError : retired.message, logLevel::ERROR);
+                return false;
+            }
+        }
+    }
+    fic::sudoers::GlobalDefaultsTransaction transaction(configurationOptions, *journal);
+    const bool byConstruction =
+        (key == "env_reset" && expectedValue == "ENABLE" &&
+         capabilities.envReset == fic::sudoers::SudoCapabilityGuarantee::VerifiedByConstruction) ||
+        (key == "exempt_group" && expectedValue == "DISABLE" &&
+         capabilities.exemptGroupDisabled == fic::sudoers::SudoCapabilityGuarantee::VerifiedByConstruction);
+    if (byConstruction) {
+        const auto records = journal->activeRecords(this->policyRef());
+        if (records.size() > 1) {
+            this->log("Conflicting global SUDO ownership records", logLevel::ERROR);
+            return false;
+        }
+        if (!records.empty()) {
+            if (!std::holds_alternative<fic::rollback::UndoReleaseSudoGlobalDefault>(records.front().undo.payload)) {
+                this->log("Legacy SUDO ownership requires explicit resolution", logLevel::ERROR);
+                return false;
+            }
+            configurationOptions.releaseOwnedUnsupportedSetting = key == "exempt_group";
+            fic::sudoers::GlobalDefaultsTransaction release(configurationOptions, *journal);
+            const auto outcome = release.release(records.front());
+            if (!outcome.ok || !journal->setStatus(records.front().id,
+                    fic::rollback::MutationStatus::RolledBack, journalError)) {
+                this->log(outcome.ok ? journalError : outcome.message, logLevel::ERROR);
+                return false;
+            }
+        } else if (!configuration.validateConfiguration(journalError)) {
+            this->log(journalError, logLevel::ERROR);
+            return false;
+        }
+        if (!transaction.verifyNoOwnedSetting(key, journalError)) {
+            this->log(journalError, logLevel::ERROR);
+            return false;
+        }
+        if (!configurationOptions.verifyProviderUnchanged(journalError)) {
+            this->log(journalError, logLevel::ERROR);
+            return false;
+        }
+        this->log("VerifiedByConstruction: " + key + " (" + capabilities.version + ")", logLevel::INFO);
+        return true;
+    }
+    if (key == "env_reset" &&
+        capabilities.envReset == fic::sudoers::SudoCapabilityGuarantee::VerifiedByConstruction) {
+        this->log("The active provider enforces env_reset unconditionally", logLevel::ERROR);
+        return false;
+    }
+    const auto operation = transaction.reconcile(this->policyRef(), key, renderedLine, expectedValue);
+    this->log(operation.message, operation.ok ? logLevel::INFO : logLevel::ERROR);
+    return operation.ok;
 }
 
 bool Sudo::applyRequireAuthentication() {

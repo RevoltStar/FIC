@@ -49,6 +49,22 @@ struct UndoRemoveManagedSetting {
     std::string appliedValue; // value/line FIC last applied; drift fingerprint
 };
 
+// One global sudoers setting in a shared, exclusively created FIC container.
+// containerId binds the owned file to journal provenance, independent of the
+// policy which first created it. Surviving owners keep the same identity.
+// Neither field contains foreign sudoers bytes. previousLine is ONLY an
+// earlier FIC-owned assignment, retained while a refresh is Prepared.
+struct UndoReleaseSudoGlobalDefault {
+    std::string key;
+    std::string appliedLine;
+    std::string previousLine;
+    std::string containerId;
+    // Whether FIC added a separator before the EOF block to an unterminated
+    // main file. Release may remove only that proven separator.
+    bool addedSeparator = false;
+    std::string separatorPrefixDigest;
+};
+
 // GRUB ownership-release payload. The record proves ONLY that FIC owns the
 // managed setting (key, appliedValue); the storage location (Debian/Ubuntu
 // owned drop-in vs ALT shared-defaults EOF managed block) is derived from
@@ -347,6 +363,7 @@ struct UndoRemoveDisplayManagerBlock {
 
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
+    UndoReleaseSudoGlobalDefault,
     UndoReleaseSudoScopedDefaults,
     UndoRemoveSshManagedPolicy,
     UndoRemoveUserCreationManagedPolicy,

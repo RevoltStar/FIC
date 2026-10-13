@@ -190,6 +190,11 @@ public:
 
     const std::vector<PolicyDependency>& dependencies() const;
 
+    // Runtime backend capabilities may make a security dependency irrelevant.
+    // Unknown/unproven capabilities retain the dependency (fail closed).
+    virtual bool supportsDependencyCapability(const std::string&) const { return false; }
+    virtual bool requiresDependencyCapability(const std::string&) const { return true; }
+
     //Логгировать (через this->logger)
     bool log(std::string message, logLevel logLev);
 

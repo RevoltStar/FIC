@@ -20,6 +20,8 @@ const char* executableIdName(ExecutableId id) {
         return "loginctl";
     case ExecutableId::Visudo:
         return "visudo";
+    case ExecutableId::Sudo:
+        return "sudo";
     case ExecutableId::Lscpu:
         return "lscpu";
     case ExecutableId::Dmidecode:
@@ -54,6 +56,7 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::Systemctl,
         ExecutableId::Loginctl,
         ExecutableId::Visudo,
+        ExecutableId::Sudo,
         ExecutableId::Lscpu,
         ExecutableId::Dmidecode,
         ExecutableId::Udevadm,

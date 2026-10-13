@@ -4,6 +4,7 @@
 #include "modules/dac/DAC.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
+#include "modules/dac/sudo/SudoProviderCapabilities.h"
 
 #include <memory>
 #include <string>
@@ -85,11 +86,19 @@ protected:
     const fic::platform::PlatformExecutableResolver& executables_;
 
     bool applyRequireAuthentication();
+    bool verifyProviderWitness(const fic::sudoers::SudoProviderCapabilities& current,
+                               std::string& error) const;
+    mutable std::mutex capabilityMutex_;
+    mutable std::optional<fic::sudoers::SudoProviderCapabilities> dependencyProvider_;
 
 public:
     Sudo(fic::platform::SudoPlatformConfig platformConfig,
          const fic::platform::PlatformExecutableResolver& executables);
     bool apply() override;
+    bool supportsDependencyCapability(const std::string& name) const override {
+        return name == "exempt_group";
+    }
+    bool requiresDependencyCapability(const std::string& name) const override;
     ~Sudo() override;
 
     // Managed resource identifier for the rollback system (the sudoers

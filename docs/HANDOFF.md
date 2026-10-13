@@ -1,33 +1,42 @@
-# FIC handoff
+# Current working state
 
 ## Current base
-* Branch `main`; follow-up base `d06ac87e5c839d44dfcf11d12692dcdf56aff46a`.
-* This snapshot accompanies `Fix duplicate incident history events and status polling audit noise`.
+* Branch main; initial clean HEAD cf0819dbf86414ffd856a6e0c8852616f5dbb42e.
+* No task commits/push. User requires commits A/B/C only after their gates pass.
 
 ## Current task
-* Incident history multiplicity and read-only incident_status audit noise corrected in one follow-up commit.
+* SUDO global ownership/apply/rollback (A), integration with scoped Defaults (B), reversible authentication (C).
+* Original request: attachment e4f55516-ceba-4baf-984e-5b90472dd8ea/Вставленный текст.txt. Provider clarification is in docs/sudo-apply-rollback-design.md.
 
 ## Accepted architecture / invariants
-* Each valid physical audit record returned by log_records is retained independently, even for identical JSON/source/timestamp. Incremental acquisition relies on cursor, never content deduplication.
-* Reload/rotation clears only the candidate snapshot and cursor. A successful bounded reconstruction atomically replaces published history; failure preserves old records/boot/cursor/time with STALE. One automatic restart per refresh; reload control responses do not consume the four-successful-page budget. Pages read before reload still count toward the total bound.
-* Qt snapshot generation identifies replacement/eviction boundaries, not physical events. Positional content comparison only optimizes rendering; insert preserves identical neighboring rows, reconstruction/eviction forces reset.
-* Valid incident_status is excluded from administrative audit only after real parsing/schema validation. Invalid status requests and mutation/unknown commands remain audited; legacy boot_id/log_records/access_gate_status/prelogin_status exclusion semantics unchanged.
-* IncidentController audit sink and always-on SecurityAudit remain independent of administrative request filtering and AUDIT/log_level, including NoLog.
-* No changes to busy_, worker/threading, cancellation/timeouts, priorities/polling, enforcement, PAM/FIREWALL/logind/prelogin, rollback or severity/mode semantics.
+* Classic: five globals in fully owned /etc/sudoers.d/99-fic.conf, canonical physical EOF FIC_INCLUDE block; durable Prepared before mutation, file→include protocol; independent rollback, inert file→detach include→validate→conditional delete for last owner.
+* Active provider detection must prove executable/version/config/native validator. Unknown semantics fail closed; never switch alternatives in production. sudo-rs env_reset and exempt_group_disable are VerifiedByConstruction without fictitious values/records. Classic exemption checks remain required where relevant.
+* Five scoped dependencies are Recommended; authentication exemption dependency is provider-aware. Typed authentication rewrites must preserve commands, arguments and all non-authentication tags, with exact original bytes and journal-backed recovery.
+* All native experiments confined to disposable Podman containers. Required matrix: Debian12/13, Ubuntu24.04, Ubuntu26.04 default sudo-rs and classic, ALT p11. No host security state mutation.
 
 ## Completed / changed areas
-* IncidentHistoryService, IncidentAuditModel and HistoryView: content identity/QSet/hash removed, bounded independent reconstruction and explicit model replacement generation.
-* AdminAudit classification extracted from main; main passes actual validation result. Audit JSONL format and existing IPC endpoints unchanged.
-* Regression tests cover identical records within/across pages and incremental requests, empty reads, reconstruction replacement/failure/repeated reload/page budget, bounds, boot changes, model insert/reset, 10000 status polls, administrative success/refusal, invalid/unknown commands, legacy exclusions and real controller events with NoLog.
-* GUI README, relevant audit architecture paragraph and RU/EN reload message corrected.
+* A implementation in progress: ManagedInclude parser, GlobalDefaultsTransaction, typed UndoReleaseSudoGlobalDefault journal codec/identity guards, independent/shared artifact release, CAS and durability/full-graph proofs, provider rechecks.
+* Old global mutation helpers removed. Scalar production apply/rollback use typed ownership. Legacy unproven SUDO records fail Conflict; foreign filename/markers never imply ownership.
+* Provider detection admits tested classic versions and sudo-rs0.2.13(-0ubuntu1.2); env/exempt construction paths retire proven prior ownership. New BackendRequiresCapability dependency condition and planner tests.
+* Profiles use 99-fic.conf; ALT owned mode0400, other profiles0440. Sudo is now a required verified executable.
+* Added native container-only production driver and provider/global gates; focused CMake builds for each platform. Preparation scripts updated for clean Debian12 runtime and ALT package metadata; newest runtime Containerfile changes have not been built yet.
+* New tests cover durable-boundary recovery, fault/drift, changed requests, duplicate foreign include conflict, provider-witness switch before include, orphan-include no-record refusal and malformed journal route/fields. Existing configuration/rollback tests migrated.
 
 ## Validation
-* Native Qt5 builds: fic-gui, fic, incident_history_tests, incident_gui_tests, admin_audit_tests, incident_controller_tests PASS.
-* Related CTest 9/9 PASS: GUI/history/static checks, platform/module static checks, admin/security audit, controller and LogRecordsReader.
-* Docker CLI via temporary rootless Podman-compatible API; Debian12 existing image, read-only source, network none, DAC_OVERRIDE/DAC_READ_SEARCH dropped. Full configure/build PASS; full CTest 178/178 PASS, 38.63 s.
-* git diff --check PASS. Evidence: ignored build-incident-docker/followup-configure.log and followup-final-{build,ctest}.log and /tmp/fic-followup-target-*.
+* Current targeted build: fic, global/provider/configuration/rollback/planner/platform/journal tests PASS.
+* ctest --test-dir build-check -R '(sudo|mutation_journal|rollback_executor|policy_execution_planner|platform_profile)' --output-on-failure: 12/12 PASS. Additional changed-request recovery test rebuilt and PASS after this run.
+* Native global gate PASS on Debian12 classic1.9.13p3, Debian13 classic1.9.16p2, Ubuntu24 classic1.9.15p5, Ubuntu26 classic1.9.17p2, ALT p11 classic1.9.17p2. Real policy apply, repeated apply/value refresh, native explicit EOF/include precedence, contextual coexistence, refusal of foreign suffix, independent/last rollback and exact main bytes verified.
+* Logs: build-sudo-native/debian12/global-gate.log and build-sudo-native/min-{debian13,ubuntu2404,ubuntu2604,alt-p11}/global-gate*.log. Ubuntu26 classic log is global-gate-classic.log. Builds are platform-native Podman, not host binaries.
+* sudo-rs behavioral native gate PASS (rust-behavior-gate.log): actual secure PATH/env filtering, password attempts3→4, cache timeout10/0, explicit EOF/include precedence, repeated apply, foreign suffix refusal and independent exact rollback. Classic sudo -l-based gate is inapplicable because rs does not show Defaults. Native rs later global timeout overrides earlier contextual timeout; classic precedence differs. See docs/sudo-native-validation.md.
+* Earlier provider native probes PASS all six rows: real env_reset behavior, unsupported rs exempt_group syntax, multiline arguments/authorization and PASSWD; rs continuation inside arguments is rejected while command-list continuation preserves restrictions. Preserve specific-version admission.
+* ALT native preparation: image restores RPM perms/owners, disposable root directory0755, exact /etc/sudoers.d/99-sudopw0400. Provider user probes use native control sudo wheelonly + fixture user wheel. Global gate adds a separate root query permission because packaged ALT grants no root commands. Host untouched.
+* git diff --check PASS. Full final B/C matrix remains pending.
 
-## Remaining / limits
-* No unfinished implementation. History bounds remain 200 records/page, 4 successful pages/refresh, 1000 events/4 MiB accounted data, 16 KiB raw lines; partial/truncated/stale handling preserved.
-* log_records has no physical offsets/IDs. Reconstruction cannot identify events across independent generations or recover removed log files; reconstruction/rotation and incomplete ranges explicitly show PARTIAL.
-* Real host incident operations/desktop/physical containment not exercised; tests use mocks and disposable containers. No packages installed and no host permissions/policies changed.
+## Remaining
+* A implementation/gates ready for commit: scalar native matrix, provider transition, 15 native process-crash boundaries per six rows (90 total), duplicate-include safe release conflict, provider-witness drift, changed-request recovery, journal malformed fields/route/backend rejection. Diff reviewed; commit A next, then B/C remain.
+* Other RollbackFailed owner currently blocks reconcile; evaluate safe recovery/liveness without adopting foreign state. Applied clears previousLine; changed-request regression proves no stale transition evidence.
+* Last release refuses a still-connected foreign duplicate include (keeps inert owned file + provenance). Added separator digest conservatively rejects modified prefix when original main lacked LF. Document/test these conflicts and scoped/auth interaction.
+* B/C not implemented. Authentication remains old irreversible path and enrollment Unsupported; do not claim complete support. Need typed parser/wrapper/undo/recovery, both scoped/auth orders, provider-aware requested-policy rollback guards, and native all-platform gates before B/C commits.
+* provider-transition-native-gate.sh PASS Ubuntu26 classic→rs→classic with safe env/exempt release, surviving other owner and exact last release. Docs scalar contract updated in rollback.md/fic README/architecture diagrams; review remains.
+* Full project build PASS. Final CTest outside sandbox excluding two root-only tests PASS179/179; root-only display-manager and command-hash tests built/run Debian12 Podman with dropped DAC caps PASS2/2. Initial sandbox failures/skips resolved by suitable access. Final scalar+15 crash cases per six native rows and provider-transition gate rerun after orphan-include hardening: all PASS. Logs final-scalar*.log/crash-gate*.log/provider-transition-gate.log; full CTest /tmp/fic-sudo-final-ctest.log.
+* Task containers/images are prefixed fic-sudo-native*. Clean up only owned task containers; never prune unrelated user images/containers. No pending tool sessions.

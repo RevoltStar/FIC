@@ -26,6 +26,57 @@
 
 namespace fic::rollback {
 
+bool validateSudoGlobalDefaultPayload(const UndoReleaseSudoGlobalDefault& payload,
+                                      std::string& error) {
+    if ((payload.addedSeparator && (payload.separatorPrefixDigest.size() != 64 ||
+         !std::all_of(payload.separatorPrefixDigest.begin(), payload.separatorPrefixDigest.end(),
+                      [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))) ||
+        (!payload.addedSeparator && !payload.separatorPrefixDigest.empty())) {
+        error = "Invalid SUDO include separator provenance";
+        return false;
+    }
+    const auto validLine = [&](const std::string& line) {
+        if (payload.key == "exempt_group") return line == "Defaults !exempt_group";
+        if (payload.key == "env_reset")
+            return line == "Defaults " + payload.key || line == "Defaults !" + payload.key;
+        const std::string prefix = "Defaults " + payload.key + "=";
+        if (line.compare(0, prefix.size(), prefix) != 0 || line.size() == prefix.size()) return false;
+        const std::string value = line.substr(prefix.size());
+        if (payload.key == "passwd_tries" || payload.key == "timestamp_timeout")
+            return std::all_of(value.begin(), value.end(), [](unsigned char c) { return c >= '0' && c <= '9'; });
+        if (payload.key != "secure_path") return false;
+        // No additional assignment, scoped selector, comment or continuation
+        // may be smuggled into an ownership proof. Native syntax and the
+        // policy's secure-path validator still run independently.
+        return value.find_first_of("\r\n,=#\\") == std::string::npos &&
+            value.find('\0') == std::string::npos;
+    };
+    if (!fic::sudoers::isCanonicalSudoWrapperId(payload.containerId) ||
+        !validLine(payload.appliedLine) ||
+        (!payload.previousLine.empty() && !validLine(payload.previousLine))) {
+        error = "Invalid SUDO global ownership payload";
+        return false;
+    }
+    return true;
+}
+
+bool validateSudoGlobalRecord(const MutationRecord& record, std::string& error) {
+    const auto* payload = std::get_if<UndoReleaseSudoGlobalDefault>(&record.undo.payload);
+    if (!payload) return true;
+    const std::map<std::string, std::string> policies{
+        {"env_reset", "sudo_env_reset"}, {"passwd_tries", "sudo_passwd_tries"},
+        {"secure_path", "sudo_securepath"}, {"timestamp_timeout", "sudo_timeout"},
+        {"exempt_group", "sudo_exempt_group_disable"}};
+    const auto route = policies.find(payload->key);
+    if (route == policies.end() || record.undo.backend != MutationBackend::Sudo ||
+        record.policy.moduleName != "DAC" || record.policy.submoduleName != "SudoEdit" ||
+        record.policy.policyName != route->second || record.resource != payload->key) {
+        error = "SUDO global record identity does not match ownership";
+        return false;
+    }
+    return validateSudoGlobalDefaultPayload(*payload, error);
+}
+
 // Write/read parity validators for the SUDO scoped-Defaults payload: the writer
 // must never persist a record the loader would reject.
 bool validateSudoScopedDefaultsProof(
@@ -360,6 +411,13 @@ json serializeUndoAction(const UndoAction& action) {
         value["original_lock_line"] = scalar->originalLockLine ? json(*scalar->originalLockLine) : json(nullptr);
         value["compiled_before_digest"] = scalar->compiledBeforeDigest;
         value["compiled_target_digest"] = scalar->compiledTargetDigest;
+    } else if (const auto* global = std::get_if<UndoReleaseSudoGlobalDefault>(&action.payload)) {
+        value["key"] = global->key;
+        value["applied_line"] = global->appliedLine;
+        value["previous_line"] = global->previousLine;
+        value["container_id"] = global->containerId;
+        value["added_separator"] = global->addedSeparator;
+        value["separator_prefix_digest"] = global->separatorPrefixDigest;
     } else if (const auto* setting =
             std::get_if<UndoRemoveManagedSetting>(&action.payload)) {
         value["key"] = setting->key;
@@ -1197,6 +1255,29 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
+    if (actionName == "release_sudo_global_default" && backend == MutationBackend::Sudo) {
+        for (const auto* field : {"key", "applied_line", "previous_line", "container_id", "separator_prefix_digest"}) {
+            const auto found = value.find(field);
+            if (found == value.end() || !found->is_string()) {
+                error = "SUDO global payload requires canonical string fields";
+                return false;
+            }
+        }
+        if (!value.contains("added_separator") || !value.at("added_separator").is_boolean()) {
+            error = "SUDO global payload requires separator provenance";
+            return false;
+        }
+        UndoReleaseSudoGlobalDefault payload;
+        payload.key = value.value("key", "");
+        payload.appliedLine = value.value("applied_line", "");
+        payload.previousLine = value.value("previous_line", "");
+        payload.containerId = value.value("container_id", "");
+        payload.addedSeparator = value.value("added_separator", false);
+        payload.separatorPrefixDigest = value.value("separator_prefix_digest", "");
+        if (!validateSudoGlobalDefaultPayload(payload, error)) return false;
+        action.payload = std::move(payload);
+        return true;
+    }
     if (actionName == "remove_managed_setting" &&
         (backend == MutationBackend::Sysctl || backend == MutationBackend::Sudo)) {
         UndoRemoveManagedSetting payload;
@@ -1730,6 +1811,7 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
     if ((record.undo.backend == MutationBackend::Scope ||
          std::holds_alternative<ScopeTransitionCheckpoint>(record.undo.payload)) &&
         !validScopeRecord(record, error)) return false;
+    if (!validateSudoGlobalRecord(record, error)) return false;
     // Cross-field consistency: for GRUB the record identity carries the
     // managed key. record.resource MUST equal UndoRemoveGrubManagedSetting
     // .key — a disagreement means malformed provenance, which must never
@@ -1953,6 +2035,8 @@ std::string undoActionTypeName(const UndoAction& action) {
         return "restore_desktop_scalar";
     if (std::holds_alternative<ScopeTransitionCheckpoint>(action.payload))
         return "scope_transition_checkpoint";
+    if (std::holds_alternative<UndoReleaseSudoGlobalDefault>(action.payload))
+        return "release_sudo_global_default";
     if (std::holds_alternative<UndoRemoveManagedSetting>(action.payload)) {
         return "remove_managed_setting";
     }
@@ -2806,6 +2890,7 @@ MutationJournal::PersistOutcome MutationJournal::persist(std::string& error) {
 bool MutationJournal::prepareMutation(MutationRecord record,
                                       MutationId& id,
                                       std::string& error) {
+    if (!validateSudoGlobalRecord(record, error)) return false;
     if (!loaded_) {
         error = "Mutation journal не загружен";
         return false;
@@ -3012,6 +3097,7 @@ bool MutationJournal::prepareMutation(MutationRecord record,
         }
     }
     if (record.undo.backend == MutationBackend::Sudo) {
+        if (!validateSudoGlobalRecord(record, error)) return false;
         const auto* sudoPayload = std::get_if<UndoReleaseSudoScopedDefaults>(
             &record.undo.payload);
         if (sudoPayload != nullptr) {
@@ -3288,6 +3374,21 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             // ownership set, never replace it. A wrapper FIC already created
             // must never lose its journal permission.
             if (record.undo.backend == MutationBackend::Sudo) {
+                const auto* nextGlobal = std::get_if<UndoReleaseSudoGlobalDefault>(&record.undo.payload);
+                const auto* oldGlobal = std::get_if<UndoReleaseSudoGlobalDefault>(&existing.undo.payload);
+                if (nextGlobal || oldGlobal) {
+                    if (!nextGlobal || !oldGlobal || nextGlobal->key != oldGlobal->key ||
+                        nextGlobal->containerId != oldGlobal->containerId ||
+                        nextGlobal->addedSeparator != oldGlobal->addedSeparator ||
+                        nextGlobal->separatorPrefixDigest != oldGlobal->separatorPrefixDigest ||
+                        (existing.status == MutationStatus::Prepared
+                            ? (nextGlobal->appliedLine != oldGlobal->appliedLine ||
+                               nextGlobal->previousLine != oldGlobal->previousLine)
+                            : nextGlobal->previousLine != oldGlobal->appliedLine)) {
+                        error = "SUDO global refresh conflicts with durable ownership";
+                        return false;
+                    }
+                }
                 const auto* newSudo = std::get_if<
                     UndoReleaseSudoScopedDefaults>(&record.undo.payload);
                 const auto* oldSudo = std::get_if<
@@ -3673,6 +3774,10 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
     }
     const MutationRecord previous = *record;
     record->status = status;
+    if (status == MutationStatus::Applied) {
+        if (auto* global = std::get_if<UndoReleaseSudoGlobalDefault>(&record->undo.payload))
+            global->previousLine.clear();
+    }
     if ((record->undo.backend == MutationBackend::Desktop ||
          std::holds_alternative<UndoRestoreDesktopScalar>(record->undo.payload) ||
          std::holds_alternative<UndoOwnDesktopArtifact>(record->undo.payload)) &&

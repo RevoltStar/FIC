@@ -1,0 +1,7 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+USER root
+RUN unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; \
+    mkdir -p /var/lib/apt/lists/partial /var/cache/apt/archives/partial && \
+    apt-get update && apt-get install -y sudo
+ENTRYPOINT ["/bin/sh"]
