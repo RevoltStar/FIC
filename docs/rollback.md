@@ -1737,6 +1737,22 @@ Defaults:user ...      Defaults@host ...
 Defaults>runas ...     Defaults!command ...
 ```
 
+Scoped lifecycle проверяет global-контейнер и EOF include до recovery/мутаций
+и перед завершением journal lifecycle. Global assignments не становятся
+scoped targets и не переходят во владение wrapper-политики. Drift, orphan
+include или неподтверждённый policy name внутри `FIC_SUDO_DISABLED` блокируют
+операцию. Apply и rollback проверяют активный provider/native validator;
+все SUDO ownership checks, включая no-record disable, используют общий mutex.
+
+Для main без исходного LF изменения prefix обёртками могут препятствовать
+доказанному удалению добавленного разделителя: global release возвращает
+Conflict до мутации. Scoped release может сохранить такой RollbackFailed
+global-владелец, только если его точный target по-прежнему физически доказан.
+Это не разрешает его journal state. После восстановления scoped prefix
+повторный global release освобождает контейнер и возвращает точные исходные
+байты. Prepared либо missing/drifted target этим исключением не допускаются;
+VerifiedByConstruction использует более строгую проверку без исключения.
+
 FIC намеренно **не вычисляет** семантику scoped Defaults: не разрешает
 `User_Alias` / `Host_Alias` / `Runas_Alias` / `Cmnd_Alias`, `%group`, netgroups,
 отрицание и `ALL,!foo`. Само наличие активной scoped-записи является

@@ -10,6 +10,8 @@
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/dac/sudo/SudoersScopedDefaultsLifecycle.h"
 #include "modules/dac/sudo/SudoersScopedDefaultsTransaction.h"
+#include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
+#include "modules/dac/sudo/SudoersManagedInclude.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/MutationJournal.h"
 #include "rollback/RollbackExecutor.h"
@@ -123,7 +125,8 @@ PolicyRef scopedPolicy() {
 SudoersConfigurationOptions sudoOptions(const std::filesystem::path& root) {
     SudoersConfigurationOptions value;
     value.mainPath = root / "sudoers";
-    value.managedPath = root / "sudoers.d" / "zzzz-fic";
+    value.managedPath = root / "sudoers.d" / "99-fic.conf";
+    std::filesystem::create_directories(value.managedPath.parent_path());
     value.validatorPath.clear();
     value.verifyValidatorHash = false;
     value.enforceOwnership = false;
@@ -3506,6 +3509,176 @@ void testCompensationSeesTargetOnlyWrapperOutsideGraph() {
 // the single source of truth for the reported counts.
 // ---------------------------------------------------------------------------
 
+void testUnprovenOtherWrapperPolicyBlocksScopedMutation() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    auto lines = fic::sudoers::splitPhysicalLines("Defaults:alice !authenticate\n");
+    fic::sudoers::disableSudoEntry(lines, 0, 1, "unregistered_policy",
+                                  fic::sudoers::generateSudoWrapperMutationId(0));
+    const std::string original = kRootLine + fic::sudoers::joinPhysicalLines(lines) +
+                                 "Defaults:bob passwd_tries=5\n";
+    writeFile(options.mainPath, original);
+    SudoersConfiguration configuration(options);
+    const auto result = reconcile(configuration, productionHooks(configuration));
+    require(!result.ok && readFile(options.mainPath) == original && activeOwned().empty(),
+            "unproven other wrapper policy was ignored during scoped mutation");
+    fic::rollback::RollbackExecutorDeps deps;
+    deps.sudoersOptions = [options] { return options; };
+    const auto released = fic::rollback::rollbackPolicyBeforeDisable(scopedPolicy(), kScopedDefaultsResource, deps);
+    require(released.status != fic::rollback::RollbackStatus::Success &&
+            released.status != fic::rollback::RollbackStatus::NothingToDo &&
+            readFile(options.mainPath) == original, "unknown wrapper policy was ignored during no-record disable");
+}
+
+void testSharedGlobalScopedApplyReleaseOrders() {
+    const PolicyRef globalPolicy{"DAC", "SudoEdit", "sudo_passwd_tries"};
+    for (const bool globalFirst : {false, true}) {
+        for (const bool releaseGlobalFirst : {false, true}) {
+            TempTree tree;
+            JournalOverride override(tree.root / "journal.json");
+            const auto options = sudoOptions(tree.root);
+            const std::string original = "# foreign bytes\r\nDefaults:alice passwd_tries=5\n" + kRootLine;
+            writeFile(options.mainPath, original);
+            std::string error;
+            auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+            require(journal != nullptr, error);
+            SudoersConfiguration configuration(options);
+            auto deps = productionDeps(configuration, productionHooks(configuration));
+            deps.verifySharedOwnership = [journal, options](std::string& error) {
+                return fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", error, true);
+            };
+            const auto applyGlobal = [&] {
+                const auto result = fic::sudoers::GlobalDefaultsTransaction(options, *journal).reconcile(
+                    globalPolicy, "passwd_tries", "Defaults passwd_tries=3", "3");
+                require(result.ok, result.message);
+            };
+            const auto applyScoped = [&] {
+                const auto result = ScopedDefaultsLifecycle(deps).reconcile(kPolicyName);
+                require(result.ok, result.message);
+            };
+            if (globalFirst) applyGlobal(); else applyScoped();
+            const std::string firstGlobal = globalFirst ? readFile(options.managedPath) : "";
+            if (globalFirst) applyScoped(); else applyGlobal();
+            if (globalFirst) require(readFile(options.managedPath) == firstGlobal,
+                                     "scoped apply changed global owned bytes");
+            const auto globalBytes = readFile(options.managedPath);
+            const auto globalId = journal->activeRecords(globalPolicy).front().id;
+            const auto scopedId = journal->activeRecords(scopedPolicy()).front().id;
+            applyScoped();
+            applyGlobal();
+            require(readFile(options.managedPath) == globalBytes &&
+                    journal->activeRecords(globalPolicy).front().id == globalId &&
+                    journal->activeRecords(scopedPolicy()).front().id == scopedId,
+                    "shared reapply stole ownership or changed global bytes");
+            require(configuration.load(error), error);
+            require(configuration.scopedDefaultsViolations().empty(), "shared apply left active contextual Defaults");
+            require(fic::sudoers::inspectManagedInclude(readFile(options.mainPath), options.managedPath).state ==
+                    fic::sudoers::ManagedIncludeState::Present, "scoped wrapper displaced EOF include");
+            fic::rollback::RollbackExecutorDeps rollback;
+            rollback.sudoersOptions = [options] { return options; };
+            const auto release = [&](const PolicyRef& policy, const std::string& resource) {
+                const auto result = fic::rollback::rollbackPolicyBeforeDisable(policy, resource, rollback);
+                require(result.status == fic::rollback::RollbackStatus::Success, result.message);
+            };
+            if (releaseGlobalFirst) {
+                release(globalPolicy, "passwd_tries");
+                require(!std::filesystem::exists(options.managedPath) && activeOwned().size() == 1,
+                        "global release stole surviving scoped ownership");
+                applyScoped();
+                release(scopedPolicy(), kScopedDefaultsResource);
+            } else {
+                release(scopedPolicy(), kScopedDefaultsResource);
+                require(readFile(options.managedPath) == globalBytes,
+                        "scoped release changed surviving global ownership");
+                release(globalPolicy, "passwd_tries");
+            }
+            require(readFile(options.mainPath) == original && !std::filesystem::exists(options.managedPath),
+                    "shared release orders did not preserve exact foreign main bytes");
+            require(journal->activeRecords(globalPolicy).empty() && journal->activeRecords(scopedPolicy()).empty(),
+                    "shared release left active provenance");
+        }
+    }
+}
+
+void testUnterminatedSharedPrefixConflictRecovery() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    const std::string original = kRootLine + "Defaults:alice passwd_tries=5";
+    writeFile(options.mainPath, original);
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    const PolicyRef globalPolicy{"DAC", "SudoEdit", "sudo_passwd_tries"};
+    const auto applied = fic::sudoers::GlobalDefaultsTransaction(options, *journal).reconcile(
+        globalPolicy, "passwd_tries", "Defaults passwd_tries=3", "3");
+    require(applied.ok, applied.message);
+    SudoersConfiguration configuration(options);
+    auto deps = productionDeps(configuration, productionHooks(configuration));
+    deps.verifySharedOwnership = [journal, options](std::string& error) {
+        return fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", error, true);
+    };
+    const auto scoped = ScopedDefaultsLifecycle(deps).reconcile(kPolicyName);
+    require(scoped.ok, scoped.message);
+    fic::rollback::RollbackExecutorDeps rollback;
+    rollback.sudoersOptions = [options] { return options; };
+    const auto refused = fic::rollback::rollbackPolicyBeforeDisable(globalPolicy, "passwd_tries", rollback);
+    require(refused.status == fic::rollback::RollbackStatus::Conflict,
+            "unproven prefix separator release was not refused: " + refused.message);
+    require(journal->activeRecords(globalPolicy).front().status == MutationStatus::RollbackFailed,
+            "prefix conflict lost failed owner provenance");
+    const auto restored = fic::rollback::rollbackPolicyBeforeDisable(scopedPolicy(), kScopedDefaultsResource, rollback);
+    require(restored.status == fic::rollback::RollbackStatus::Success,
+            "safe scoped release was blocked by the still-proven failed global owner: " + restored.message);
+    const auto released = fic::rollback::rollbackPolicyBeforeDisable(globalPolicy, "passwd_tries", rollback);
+    require(released.status == fic::rollback::RollbackStatus::Success && readFile(options.mainPath) == original &&
+            !std::filesystem::exists(options.managedPath),
+            "prefix conflict retry did not restore exact unterminated bytes: " + released.message);
+}
+
+void testSharedGlobalDriftBlocksScopedMutationAndCommit() {
+    TempTree tree;
+    JournalOverride override(tree.root / "journal.json");
+    const auto options = sudoOptions(tree.root);
+    writeFile(options.mainPath, kRootLine + "Defaults:alice passwd_tries=5\n");
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    const PolicyRef globalPolicy{"DAC", "SudoEdit", "sudo_passwd_tries"};
+    const auto applied = fic::sudoers::GlobalDefaultsTransaction(options, *journal).reconcile(
+        globalPolicy, "passwd_tries", "Defaults passwd_tries=3", "3");
+    require(applied.ok, applied.message);
+    const auto globalBytes = readFile(options.managedPath);
+    const auto mainBefore = readFile(options.mainPath);
+    const auto replace = [&](const std::string& bytes) {
+        AtomicWriteOptions atomic;
+        atomic.rejectSymlink = true;
+        require(AtomicFileWriter::write(options.managedPath.string(), bytes, atomic, &error), error);
+    };
+    SudoersConfiguration configuration(options);
+    auto deps = productionDeps(configuration, productionHooks(configuration));
+    deps.verifySharedOwnership = [journal, options](std::string& error) {
+        return fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", error, true);
+    };
+    const std::string drift = globalBytes + "Defaults:alice !authenticate\n";
+    replace(drift);
+    auto result = ScopedDefaultsLifecycle(deps).reconcile(kPolicyName);
+    require(!result.ok && readFile(options.mainPath) == mainBefore && activeOwned().empty() &&
+            readFile(options.managedPath) == drift, "scoped policy adopted or mutated drifted global container");
+    replace(globalBytes);
+    deps.journal.beforeFinalTopologyGuard = [&] { replace(drift); };
+    result = ScopedDefaultsLifecycle(deps).reconcile(kPolicyName);
+    require(!result.ok && activePreparedCount() == 1 && readFile(options.managedPath) == drift,
+            "late global drift incorrectly committed or discarded scoped ownership");
+    const auto id = journal->activeRecords(scopedPolicy()).front().id;
+    replace(globalBytes);
+    deps.journal.beforeFinalTopologyGuard = {};
+    result = ScopedDefaultsLifecycle(deps).reconcile(kPolicyName);
+    require(result.ok && activePreparedCount() == 0 && journal->activeRecords(scopedPolicy()).front().id == id,
+            "shared drift recovery did not resolve the same scoped mutation");
+}
+
 struct LifecycleCase {
     const char* label;
     void (*run)();
@@ -3513,6 +3686,10 @@ struct LifecycleCase {
 
 const std::vector<LifecycleCase>& lifecycleCases() {
     static const std::vector<LifecycleCase> cases = {
+        {"unproven other wrapper policy blocks scoped mutation", testUnprovenOtherWrapperPolicyBlocksScopedMutation},
+        {"shared global/scoped apply and release orders", testSharedGlobalScopedApplyReleaseOrders},
+        {"shared global drift blocks scoped mutation and commit", testSharedGlobalDriftBlocksScopedMutationAndCommit},
+        {"unterminated shared prefix conflict and safe recovery", testUnterminatedSharedPrefixConflictRecovery},
         {"A  normal lifecycle + journal reload + rollback", testNormalLifecycle},
         {"B  reconciliation grows ownership", testReconciliationGrowsOwnership},
         {"C  payload drift refuses unwrap", testPayloadDriftRefusesUnwrap},

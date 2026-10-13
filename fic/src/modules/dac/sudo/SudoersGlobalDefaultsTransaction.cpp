@@ -191,7 +191,8 @@ GlobalDefaultsTransaction::GlobalDefaultsTransaction(
     GlobalDefaultsPhaseHook hook)
     : options_(std::move(options)), journal_(journal), hook_(std::move(hook)) {}
 
-bool GlobalDefaultsTransaction::verifyNoOwnedSetting(const std::string& key, std::string& error) {
+bool GlobalDefaultsTransaction::verifyNoOwnedSetting(const std::string& key, std::string& error,
+                                                   bool allowProvenFailedOwners) {
     if (options_.verifyProviderUnchanged && !options_.verifyProviderUnchanged(error)) return false;
     Owners owners;
     std::string container;
@@ -228,7 +229,10 @@ bool GlobalDefaultsTransaction::verifyNoOwnedSetting(const std::string& key, std
     std::map<std::string, std::string> lines;
     if (!proveFile(*managed, owners, container, lines, error, options_.managedFileMode)) return false;
     for (const auto& [ownedKey, record] : owners) {
-        if (record.status != MutationStatus::Applied || !lines.count(ownedKey)) {
+        const auto& payload = std::get<UndoReleaseSudoGlobalDefault>(record.undo.payload);
+        const bool provenFailed = allowProvenFailedOwners && record.status == MutationStatus::RollbackFailed &&
+                                  lines.count(ownedKey) && lines.at(ownedKey) == payload.appliedLine;
+        if ((record.status != MutationStatus::Applied && !provenFailed) || !lines.count(ownedKey)) {
             error = "Unresolved SUDO ownership cannot be ignored by construction";
             return false;
         }

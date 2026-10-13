@@ -25,7 +25,11 @@ public:
                                     const std::string& renderedLine,
                                     const std::string& expectedValue);
     SudoersOperationResult release(const rollback::MutationRecord& record);
-    bool verifyNoOwnedSetting(const std::string& key, std::string& error);
+    // Shared source editors may preserve a failed rollback owner whose exact
+    // target is still physically present, without resolving its journal state.
+    // Construction guarantees keep the stricter default.
+    bool verifyNoOwnedSetting(const std::string& key, std::string& error,
+                              bool allowProvenFailedOwners = false);
 
 private:
     SudoersConfigurationOptions options_;

@@ -613,6 +613,9 @@ flowchart LR
   деактивировать чужие записи, потому что глобальная запись не может отменить
   контекстную. Она оборачивает исходные физические строки в явные маркеры
   `#@FIC_SUDO_DISABLED_*` внутри того же файла и ничего не переписывает.
+  Shared global ownership проверяется до мутаций и journal resolution;
+  scoped release сохраняет чужие global assignments. Подробности порядка
+  release для unterminated main и Conflict recovery — в SUDO rollback.
 
 Диапазон include-подграммы, который понимает FIC, и fail-closed: директива
 `@include` / `@includedir` / `#include` / `#includedir` распознаётся **до**

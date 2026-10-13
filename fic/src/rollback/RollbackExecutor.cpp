@@ -322,6 +322,12 @@ MutationRollbackOutcome undoSudoScopedDefaults(
         : SudoersConfigurationOptions{};
     SudoersConfiguration configuration(options);
     std::string error;
+    auto* journal = DaemonMutationJournal::instance().tryGet(error);
+    if (!journal || !fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", error, true)) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = "Shared SUDO global ownership is not proven: " + error;
+        return outcome;
+    }
     if (!configuration.load(error)) {
         outcome.status = RollbackStatus::Failed;
         outcome.message = "Не удалось проанализировать sudoers: " + error;
@@ -358,6 +364,11 @@ MutationRollbackOutcome undoSudoScopedDefaults(
         deps.beforeSudoRollbackTopologyGuard();
     }
     std::string topologyError;
+    if (!fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", topologyError, true)) {
+        outcome.status = RollbackStatus::Failed;
+        outcome.message = "Shared SUDO global ownership changed during scoped rollback: " + topologyError;
+        return outcome;
+    }
     if (!configuration.verifyIncludedDirectoryTopologyUnchanged(topologyError)) {
         outcome.status = RollbackStatus::Failed;
         outcome.message =
@@ -1113,6 +1124,7 @@ RollbackReport checkUnrecordedOwnership(
         return report;
     }
     if (isScopedDefaultsSudoPolicy(policy)) {
+        const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
         // Provenance for the scoped-Defaults blocker lives in the
         // FIC_SUDO_DISABLED wrappers inside the foreign sudoers files: a
         // wrapper of this policy without an active journal record is
@@ -1123,6 +1135,13 @@ RollbackReport checkUnrecordedOwnership(
             : SudoersConfigurationOptions{};
         SudoersConfiguration configuration(options);
         std::string error;
+        auto* journal = DaemonMutationJournal::instance().tryGet(error);
+        if (!journal || !fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", error, true)) {
+            RollbackReport report;
+            report.status = RollbackStatus::Failed;
+            report.message = "Shared SUDO global ownership is not proven: " + error;
+            return report;
+        }
         if (!configuration.load(error)) {
             RollbackReport report;
             report.status = RollbackStatus::Failed;
@@ -1139,6 +1158,7 @@ RollbackReport checkUnrecordedOwnership(
         return report;
     }
     if (policy.moduleName == "DAC" && policy.submoduleName == "SudoEdit") {
+        const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
         if (resourceHint.empty()) {
             return provenanceUnavailable(policy);
         }

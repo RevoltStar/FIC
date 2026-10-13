@@ -142,7 +142,8 @@ PreparedRecovery ScopedDefaultsTransaction::classifyCaptured(
             canonicalizeSudoProofPath(document.path);
         for (const SudoDisabledWrapper& wrapper : wrappers) {
             if (wrapper.policy != policyName_) {
-                continue;
+                error = "Unproven SUDO disabled-wrapper policy: " + wrapper.policy;
+                return PreparedRecovery::Indeterminate;
             }
             // A duplicate id across files makes the state unclassifiable.
             const auto seen = idOwner.find(wrapper.mutationId);
@@ -198,7 +199,8 @@ ScopedDefaultsStateProof ScopedDefaultsTransaction::proveCapturedState(
         }
         for (const SudoDisabledWrapper& wrapper : wrappers) {
             if (wrapper.policy != policyName_) {
-                continue;
+                proof.message = "Unproven SUDO disabled-wrapper policy: " + wrapper.policy;
+                return proof;
             }
             // GLOBAL uniqueness over the captured snapshot: one id is
             // permission for exactly one physical wrapper.
@@ -424,6 +426,10 @@ bool ScopedDefaultsTransaction::globalInventory(
             return false;
         }
         for (const SudoDisabledWrapper& wrapper : wrappers) {
+            if (wrapper.policy != policyName_) {
+                error = "Unproven SUDO disabled-wrapper policy: " + wrapper.policy;
+                return false;
+            }
             const auto owner = idOwner.find(wrapper.mutationId);
             if (owner != idOwner.end() && owner->second != document.path) {
                 error = "wrapper id '" + wrapper.mutationId +

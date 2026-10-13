@@ -1,42 +1,43 @@
 # Current working state
 
 ## Current base
-* Branch main; initial clean HEAD cf0819dbf86414ffd856a6e0c8852616f5dbb42e.
-* No task commits/push. User requires commits A/B/C only after their gates pass.
+* Branch main; initial base cf0819dbf86414ffd856a6e0c8852616f5dbb42e.
+* HEAD efbd679f16a913233524ba0ab30cd7752f6a2103 = commit A, Global Defaults ownership/provider capabilities. No push.
+* B diff ready for final review/commit; user explicitly requires A/B/C commits only after their gates pass.
 
 ## Current task
-* SUDO global ownership/apply/rollback (A), integration with scoped Defaults (B), reversible authentication (C).
-* Original request: attachment e4f55516-ceba-4baf-984e-5b90472dd8ea/Вставленный текст.txt. Provider clarification is in docs/sudo-apply-rollback-design.md.
+* Complete SUDO A/B/C request (attachment e4f55516-ceba-4baf-984e-5b90472dd8ea/Вставленный текст.txt) and accepted provider clarification in docs/sudo-apply-rollback-design.md.
+* A committed; B implemented/validated; C not started.
 
 ## Accepted architecture / invariants
-* Classic: five globals in fully owned /etc/sudoers.d/99-fic.conf, canonical physical EOF FIC_INCLUDE block; durable Prepared before mutation, file→include protocol; independent rollback, inert file→detach include→validate→conditional delete for last owner.
-* Active provider detection must prove executable/version/config/native validator. Unknown semantics fail closed; never switch alternatives in production. sudo-rs env_reset and exempt_group_disable are VerifiedByConstruction without fictitious values/records. Classic exemption checks remain required where relevant.
-* Five scoped dependencies are Recommended; authentication exemption dependency is provider-aware. Typed authentication rewrites must preserve commands, arguments and all non-authentication tags, with exact original bytes and journal-backed recovery.
-* All native experiments confined to disposable Podman containers. Required matrix: Debian12/13, Ubuntu24.04, Ubuntu26.04 default sudo-rs and classic, ALT p11. No host security state mutation.
+* Five classic globals: fully owned99-fic.conf + canonical physical EOF FIC_INCLUDE, journal before mutation, ordered durable file→include, independent owners, inert→detach→validate→conditional delete on last release.
+* Active provider/version/config/validator proof; unknown fails closed; no automatic alternatives switching. sudo-rs env_reset and unavailable exempt_group are VerifiedByConstruction, with no fake value/mutation. Classic exemption dependencies retained; provider-aware dependency condition; five scoped edges Recommended.
+* Shared SUDO mutex. Scoped wrappers preserve exact bytes/digest/path/ID and existing recovery/topology protocol. Global ownership checks protect scoped apply/release without adopting global parameters.
+* A failed global release on changed unterminated prefix is Conflict before writes. Source editors may preserve RollbackFailed global owners only when their exact target is physically proven; no journal resolution implied. Construction checks remain stricter. Restore scoped prefix, retry global release.
+* All live security experiments disposable Podman only; never host sudo/PAM apply. Required six native rows: Debian12/13, Ubuntu24, Ubuntu26 rs+classic, ALTp11.
 
 ## Completed / changed areas
-* A implementation in progress: ManagedInclude parser, GlobalDefaultsTransaction, typed UndoReleaseSudoGlobalDefault journal codec/identity guards, independent/shared artifact release, CAS and durability/full-graph proofs, provider rechecks.
-* Old global mutation helpers removed. Scalar production apply/rollback use typed ownership. Legacy unproven SUDO records fail Conflict; foreign filename/markers never imply ownership.
-* Provider detection admits tested classic versions and sudo-rs0.2.13(-0ubuntu1.2); env/exempt construction paths retire proven prior ownership. New BackendRequiresCapability dependency condition and planner tests.
-* Profiles use 99-fic.conf; ALT owned mode0400, other profiles0440. Sudo is now a required verified executable.
-* Added native container-only production driver and provider/global gates; focused CMake builds for each platform. Preparation scripts updated for clean Debian12 runtime and ALT package metadata; newest runtime Containerfile changes have not been built yet.
-* New tests cover durable-boundary recovery, fault/drift, changed requests, duplicate foreign include conflict, provider-witness switch before include, orphan-include no-record refusal and malformed journal route/fields. Existing configuration/rollback tests migrated.
+* A globals/include/provider/journal/rollback/planner implementation; scalar native+90 process-crash scenarios; provider switch safe artifact release. See docs/sudo-native-validation.md.
+* B scoped policy uses provider/mode/mandatory validator, shared global proof before recovery and final journal transitions; rollback proves globals before/after release; no-record SUDO checks now share mutex (follow-up to A).
+* Scoped transaction rejects wrappers of an unproven other policy before ownership resolution/mutation. Generic lower-level wrapper format remains unchanged.
+* Extended native driver with actual scoped policy/transaction, status persistence on successful disable, failed-release journaling; scoped-native-gate.sh. Four apply/release orders, early/late global drift, unterminated prefix conflict recovery and unknown-owner regression added.
+* B docs updated in rollback.md/architecture-diagrams.md/sudo-native-validation.md.
 
 ## Validation
-* Current targeted build: fic, global/provider/configuration/rollback/planner/platform/journal tests PASS.
-* ctest --test-dir build-check -R '(sudo|mutation_journal|rollback_executor|policy_execution_planner|platform_profile)' --output-on-failure: 12/12 PASS. Additional changed-request recovery test rebuilt and PASS after this run.
-* Native global gate PASS on Debian12 classic1.9.13p3, Debian13 classic1.9.16p2, Ubuntu24 classic1.9.15p5, Ubuntu26 classic1.9.17p2, ALT p11 classic1.9.17p2. Real policy apply, repeated apply/value refresh, native explicit EOF/include precedence, contextual coexistence, refusal of foreign suffix, independent/last rollback and exact main bytes verified.
-* Logs: build-sudo-native/debian12/global-gate.log and build-sudo-native/min-{debian13,ubuntu2404,ubuntu2604,alt-p11}/global-gate*.log. Ubuntu26 classic log is global-gate-classic.log. Builds are platform-native Podman, not host binaries.
-* sudo-rs behavioral native gate PASS (rust-behavior-gate.log): actual secure PATH/env filtering, password attempts3→4, cache timeout10/0, explicit EOF/include precedence, repeated apply, foreign suffix refusal and independent exact rollback. Classic sudo -l-based gate is inapplicable because rs does not show Defaults. Native rs later global timeout overrides earlier contextual timeout; classic precedence differs. See docs/sudo-native-validation.md.
-* Earlier provider native probes PASS all six rows: real env_reset behavior, unsupported rs exempt_group syntax, multiline arguments/authorization and PASSWD; rs continuation inside arguments is rejected while command-list continuation preserves restrictions. Preserve specific-version admission.
-* ALT native preparation: image restores RPM perms/owners, disposable root directory0755, exact /etc/sudoers.d/99-sudopw0400. Provider user probes use native control sudo wheelonly + fixture user wheel. Global gate adds a separate root query permission because packaged ALT grants no root commands. Host untouched.
-* git diff --check PASS. Full final B/C matrix remains pending.
+* B full cmake --build build-check -j2 PASS (/tmp/fic-sudo-B-final-build.log).
+* ctest --test-dir build-check -E '^(display_manager_transaction_tests|command_hash_batch_tests)$' --output-on-failure outside sandbox PASS179/179 (/tmp/fic-sudo-B-final-ctest.log).
+* Root-only two targets rebuilt/run Debian12 Podman with DAC_OVERRIDE/DAC_READ_SEARCH dropped PASS2/2; build-sudo-native/debian12/root-tests-B-ctest.log.
+* Scoped suite81 functions PASS; related configuration/rollback tests PASS after unknown-wrapper hardening.
+* B native gate six rows PASS: classic7 checks each, rs8;43 total,24 apply/release orders, permissions/byte-exact rollback/drift/unknown owner. Logs scoped-gate*.log in build-sudo-native/{debian12,min-debian13,min-ubuntu2404,min-ubuntu2604,min-alt-p11}. Drivers compiled in matching distro containers.
+* Native rs rejects unterminated original rules/main; tests assert failure BEFORE mutation and preserve bytes. Classic supports exact no-LF restoration.
+* git diff --check PASS; final staged review/commit B next. No live tool sessions expected (interruption may have discarded process handles, all validation logs show completion).
 
 ## Remaining
-* A implementation/gates ready for commit: scalar native matrix, provider transition, 15 native process-crash boundaries per six rows (90 total), duplicate-include safe release conflict, provider-witness drift, changed-request recovery, journal malformed fields/route/backend rejection. Diff reviewed; commit A next, then B/C remain.
-* Other RollbackFailed owner currently blocks reconcile; evaluate safe recovery/liveness without adopting foreign state. Applied clears previousLine; changed-request regression proves no stale transition evidence.
-* Last release refuses a still-connected foreign duplicate include (keeps inert owned file + provenance). Added separator digest conservatively rejects modified prefix when original main lacked LF. Document/test these conflicts and scoped/auth interaction.
-* B/C not implemented. Authentication remains old irreversible path and enrollment Unsupported; do not claim complete support. Need typed parser/wrapper/undo/recovery, both scoped/auth orders, provider-aware requested-policy rollback guards, and native all-platform gates before B/C commits.
-* provider-transition-native-gate.sh PASS Ubuntu26 classic→rs→classic with safe env/exempt release, surviving other owner and exact last release. Docs scalar contract updated in rollback.md/fic README/architecture diagrams; review remains.
-* Full project build PASS. Final CTest outside sandbox excluding two root-only tests PASS179/179; root-only display-manager and command-hash tests built/run Debian12 Podman with dropped DAC caps PASS2/2. Initial sandbox failures/skips resolved by suitable access. Final scalar+15 crash cases per six native rows and provider-transition gate rerun after orphan-include hardening: all PASS. Logs final-scalar*.log/crash-gate*.log/provider-transition-gate.log; full CTest /tmp/fic-sudo-final-ctest.log.
-* Task containers/images are prefixed fic-sudo-native*. Clean up only owned task containers; never prune unrelated user images/containers. No pending tool sessions.
+* Commit B after final diff review, then implement C: typed authentication parser, exact original+active replacement wrappers, independent digest/path/ID proofs, durable multi-file journal/compensation/recovery, actual rollback/enrollment.
+* Authentication currently old irreversible path, enrollment Unsupported. Do not claim completed task.
+* C must coordinate both scoped/auth orders and rollback against OTHER REQUESTED policies, even when those have no mutation records. Inject requested-state checks through daemon registry/rollback deps; never restore a bypass contrary to enabled authentication or contextual suppression. Explicit Conflict allowed when independent release cannot be proven.
+* Known sudo-rs command-list continuation preserves args/inherited tags; continuation inside arguments rejected. Do not normalize potentially widening rules or trust validator SUCCESS alone.
+* Existing scoped SUDO marker namespace now rejects another policy name. Choose/prove authentication framing that cooperates with scoped transactions; no nested independent owners.
+* Last global release refuses a still-connected foreign duplicate include (inert file/provenance retained). Other RollbackFailed owner blocks scalar reconcile; preserve fail-closed proof/liveness in C interactions.
+* Native image preparation runtime Containerfile changes added in A match manual preparation but not yet separately rebuilt as recipes. ALT needs disposable root0755/exact99-sudopw0400 and native control wheelonly for user probes; never host repairs.
+* Task containers/images prefixed fic-sudo-native*. Clean up only task-owned containers after final evidence; never prune unrelated user state. Full final C/native/docs/report remain.

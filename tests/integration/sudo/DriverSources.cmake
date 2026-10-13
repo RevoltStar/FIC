@@ -8,6 +8,8 @@ set(FIC_SUDO_DRIVER_SOURCES
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp"
+    "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp"
+    "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/SudoersScopedDefaultsLifecycle.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/SudoSecurePathPolicyTypeValue.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/policies/DAC_sudo_env_reset.cpp"
@@ -15,5 +17,6 @@ set(FIC_SUDO_DRIVER_SOURCES
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/policies/DAC_sudo_securepath.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/policies/DAC_sudo_timeout.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/policies/DAC_sudo_exempt_group_disable.cpp"
+    "${FIC_SUDO_SOURCE_ROOT}/fic/src/modules/dac/sudo/policies/DAC_sudo_disable_scoped_defaults.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/rollback/MutationJournal.cpp"
     "${FIC_SUDO_SOURCE_ROOT}/fic/src/rollback/DaemonMutationJournal.cpp")

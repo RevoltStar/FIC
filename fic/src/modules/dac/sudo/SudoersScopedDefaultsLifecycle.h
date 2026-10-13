@@ -69,6 +69,9 @@ struct ScopedDefaultsJournalAccess {
 
 struct ScopedDefaultsLifecycleDeps {
     SudoersConfiguration* configuration = nullptr;
+    // Protect shared global artifacts before mutations and every durable
+    // ownership resolution; scoped wrappers never own global assignments.
+    std::function<bool(std::string&)> verifySharedOwnership;
     ScopedDefaultsJournalAccess journal;
     SudoScopedDefaultsHooks hooks;
 };

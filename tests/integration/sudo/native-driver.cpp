@@ -5,6 +5,8 @@
 #include "modules/dac/sudo/policies/DAC_sudo_securepath.h"
 #include "modules/dac/sudo/policies/DAC_sudo_timeout.h"
 #include "modules/dac/sudo/policies/DAC_sudo_exempt_group_disable.h"
+#include "modules/dac/sudo/policies/DAC_sudo_disable_scoped_defaults.h"
+#include "modules/dac/sudo/SudoersScopedDefaultsTransaction.h"
 #include "rollback/DaemonMutationJournal.h"
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
@@ -64,14 +66,16 @@ int main(int argc, char** argv) {
     const std::map<std::string, std::string> keys{
         {"sudo_env_reset", "env_reset"}, {"sudo_passwd_tries", "passwd_tries"},
         {"sudo_securepath", "secure_path"}, {"sudo_timeout", "timestamp_timeout"},
-        {"sudo_exempt_group_disable", "exempt_group"}};
+        {"sudo_exempt_group_disable", "exempt_group"},
+        {"sudo_disable_scoped_defaults", "scoped_defaults"}};
     if (!keys.count(name)) return 2;
     if (!std::filesystem::exists(paths.configDir / "DAC.conf")) {
         std::ofstream config(paths.configDir / "DAC.conf");
         config << "_schema_version=1\n";
         for (const auto& [policy, key] : keys) {
             (void)key;
-            const std::string value = policy == "sudo_exempt_group_disable" ? "DISABLE"
+            const std::string value = policy == "sudo_disable_scoped_defaults" ? "ENABLE"
+                : policy == "sudo_exempt_group_disable" ? "DISABLE"
                 : policy == "sudo_env_reset" ? "ENABLE"
                 : policy == "sudo_securepath" ? platform.sudo.securePathDefault
                 : policy == "sudo_timeout" ? "10" : "3";
@@ -84,6 +88,10 @@ int main(int argc, char** argv) {
     }
     auto* journal = DaemonMutationJournal::instance().tryGet(error);
     if (!journal) { std::cerr << error << '\n'; return 1; }
+    const auto finishDisable = [&name] {
+        ModuleConfigFileHandler config("DAC");
+        return config.loadConfig() && config.setPolicyStatus(name, "DISABLE") && config.saveConfig();
+    };
     const PolicyRef identity{"DAC", "SudoEdit", name};
     if (action == "release" || action == "crash-release" || action == "crash-apply") {
         const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
@@ -125,6 +133,39 @@ int main(int argc, char** argv) {
             };
         }
         GlobalDefaultsTransaction transaction(options, *journal, hook);
+        if (name == "sudo_disable_scoped_defaults") {
+            if (action != "release" || !transaction.verifyNoOwnedSetting("", error, true)) {
+                std::cerr << error << '\n'; return 1;
+            }
+            SudoersConfiguration configuration(options);
+            if (!configuration.load(error)) { std::cerr << error << '\n'; return 1; }
+            ScopedDefaultsTransaction scoped(configuration, name);
+            const auto records = journal->activeRecords(identity);
+            if (records.empty()) {
+                error = scoped.validateCurrentOwnership({});
+                if (!error.empty()) { std::cerr << error << '\n'; return 1; }
+                std::cout << "NothingToDo\n";
+                return finishDisable() ? 0 : 1;
+            }
+            if (records.size() != 1) return 1;
+            const auto* payload = std::get_if<UndoReleaseSudoScopedDefaults>(&records.front().undo.payload);
+            if (!payload) return 1;
+            SudoScopedDefaultsHooks hooks;
+            hooks.validate = [&configuration](std::string& error) {
+                return configuration.validateConfiguration(error);
+            };
+            hooks.reloadAndVerify = [&configuration](std::string& error) {
+                return configuration.load(error);
+            };
+            const auto restored = scoped.release(payload->targetProofs, hooks);
+            if (!restored.ok() || !transaction.verifyNoOwnedSetting("", error, true) ||
+                !configuration.verifyIncludedDirectoryTopologyUnchanged(error) ||
+                !journal->setStatus(records.front().id, MutationStatus::RolledBack, error)) {
+                std::cerr << (restored.ok() ? error : restored.operation.message) << '\n'; return 1;
+            }
+            std::cout << "Released scoped Defaults ownership\n";
+            return finishDisable() ? 0 : 1;
+        }
         if (action == "crash-apply") {
             // The native crash fixture intentionally admits only this narrow
             // value grammar; normal apply still exercises production Policy.
@@ -141,25 +182,32 @@ int main(int argc, char** argv) {
                 std::cerr << error << '\n'; return 1;
             }
             std::cout << "NothingToDo\n";
-            return 0;
+            return finishDisable() ? 0 : 1;
         }
         if (records.size() != 1) return 1;
         const auto result = transaction.release(records.front());
-        if (!result.ok || !journal->setStatus(records.front().id, MutationStatus::RolledBack, error)) {
-            std::cerr << (result.ok ? error : result.message) << '\n'; return 1;
+        if (!result.ok) {
+            if (!journal->setStatusWithMessage(records.front().id, MutationStatus::RollbackFailed,
+                                               result.message, error)) std::cerr << error << '\n';
+            std::cerr << result.message << '\n'; return 1;
+        }
+        if (!journal->setStatus(records.front().id, MutationStatus::RolledBack, error)) {
+            std::cerr << error << '\n'; return 1;
         }
         std::cout << result.message << '\n';
-        return 0;
+        return finishDisable() ? 0 : 1;
     }
     if (action != "apply" || argc != 4) return 2;
     ModuleConfigFileHandler config("DAC");
-    if (!config.loadConfig() || !config.setPolicyValue(name, argv[3]) || !config.saveConfig()) return 1;
+    if (!config.loadConfig() || !config.setPolicyStatus(name, "ENABLE") ||
+        !config.setPolicyValue(name, argv[3]) || !config.saveConfig()) return 1;
     std::unique_ptr<Sudo> policy;
     if (name == "sudo_env_reset") policy = std::make_unique<DAC_sudo_env_reset>(platform.sudo, executables);
     if (name == "sudo_passwd_tries") policy = std::make_unique<DAC_sudo_passwd_tries>(platform.sudo, executables);
     if (name == "sudo_securepath") policy = std::make_unique<DAC_sudo_securepath>(platform.sudo, executables);
     if (name == "sudo_timeout") policy = std::make_unique<DAC_sudo_timeout>(platform.sudo, executables);
     if (name == "sudo_exempt_group_disable") policy = std::make_unique<DAC_sudo_exempt_group_disable>(platform.sudo, executables);
+    if (name == "sudo_disable_scoped_defaults") policy = std::make_unique<DAC_sudo_disable_scoped_defaults>(platform.sudo, executables);
     if (!policy || !policy->validate(argv[3]) || !policy->apply()) return 1;
     std::cout << "active-policy-records=" << journal->activeRecords(identity).size() << '\n';
     return 0;

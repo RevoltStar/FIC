@@ -64,6 +64,23 @@ production исходников. Локальные полные logs наход
 
 ## Оставшиеся проверки
 
+Этап B: `scoped-native-gate.sh` PASS во всех шести строках матрицы —
+по7 проверок на classic и8 на sudo-rs, всего43 проверяемых результата,
+FAIL0/SKIP0. Среди них24 сочетания global/scoped apply/release, сохранение
+command argument permissions, native PATH/environment, byte-exact foreign
+source rollback, отказ от injected contextual Defaults внутри owned global
+файла и wrappers с неподтверждённым policy name. На classic дополнительно
+доказан Conflict при изменённом unterminated prefix и безопасный retry после
+scoped release. sudo-rs отвергает no-final-LF rules/main до мутаций; negative
+tests подтверждают сохранение исходных байтов, это не успешная поддержка
+такой грамматики. Logs — `scoped-gate*.log` в тех же native build directories.
+
+После B: полная build PASS, non-root CTest PASS179/179, два root-only tests
+пересобраны/выполнены в Debian12 Podman PASS2/2. Scoped lifecycle suite
+содержит81 реально выполненную test function, включая новые shared-resource
+проверки; native harness вызывает production policy apply и production
+transaction release, а не daemon IPC.
+
 `crash-native-gate.sh` PASS по всем шести строкам матрицы: 15 process-crash
 boundaries на строку, всего90. Принудительный `_exit` проверяет fresh/refresh
 до Prepared, после Prepared, после file/include/postcondition, last release
@@ -81,5 +98,5 @@ PASS179/179; root-only Podman PASS2/2. Итого все181 test cases выпо�
 успешно в подходящих окружениях; это два отдельных CTest запуска. Дополнительные global recovery и
 malformed-journal regressions после полной сборки также PASS.
 
-Полный scoped/authentication contract и финальная валидация B/C остаются.
+Authentication contract и финальная валидация C остаются.
 Успех scalar gates не означает завершение всей задачи A/B/C.

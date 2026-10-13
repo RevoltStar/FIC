@@ -88,6 +88,7 @@ bool ScopedDefaultsLifecycle::verifyTopologyUnchanged(
         error = "нет конфигурации sudoers";
         return false;
     }
+    if (deps_.verifySharedOwnership && !deps_.verifySharedOwnership(error)) return false;
     std::string verifyError;
     if (!deps_.configuration->verifyIncludedDirectoryTopologyUnchanged(
             verifyError)) {
@@ -192,6 +193,10 @@ bool ScopedDefaultsLifecycle::resolveFreshPreparedToNoOwnership(
 ScopedDefaultsRecoveryOutcome ScopedDefaultsLifecycle::recoverPrepared(
     const std::string& policyName) {
     ScopedDefaultsRecoveryOutcome outcome;
+    if (deps_.verifySharedOwnership && !deps_.verifySharedOwnership(outcome.message)) {
+        outcome.result = PreparedRecoveryResult::FailClosed;
+        return outcome;
+    }
     const PolicyRef policy{std::string(kSudoModuleName),
                            std::string(kSudoSubmoduleName), policyName};
 

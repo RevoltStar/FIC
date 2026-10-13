@@ -1,6 +1,8 @@
 #include "modules/dac/sudo/policies/DAC_sudo_disable_scoped_defaults.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/dac/sudo/SudoersScopedDefaultsLifecycle.h"
+#include "modules/dac/sudo/SudoProviderCapabilities.h"
+#include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
 #include "rollback/DaemonMutationJournal.h"
 
 #include <filesystem>
@@ -44,16 +46,29 @@ bool DAC_sudo_disable_scoped_defaults::apply() {
     SudoersConfigurationOptions options;
     options.mainPath = platformConfig_.mainConfigPath;
     options.managedPath = platformConfig_.managedConfigPath;
-    std::filesystem::path validator;
+    options.managedFileMode = platformConfig_.managedFileMode;
+    options.requireValidator = true;
+    fic::sudoers::SudoProviderCapabilities capabilities;
     std::string resolverError;
-    if (!executables_.resolve(fic::platform::ExecutableId::Visudo, validator,
-                              resolverError)) {
+    if (!fic::sudoers::detectSudoProviderCapabilities(platformConfig_, executables_,
+                                                   capabilities, resolverError) ||
+        !verifyProviderWitness(capabilities, resolverError)) {
         this->log("Не удалось выбрать visudo: " + resolverError, logLevel::ERROR);
         return false;
     }
-    options.validatorPath = validator.string();
+    options.validatorPath = capabilities.validator.string();
+    options.verifyProviderUnchanged = [this, capabilities](std::string& error) {
+        fic::sudoers::SudoProviderCapabilities current;
+        if (!fic::sudoers::detectSudoProviderCapabilities(platformConfig_, executables_, current, error)) return false;
+        if (current.provider != capabilities.provider || current.version != capabilities.version ||
+            current.executable != capabilities.executable || current.validator != capabilities.validator) {
+            error = "Active SUDO provider changed during scoped Defaults transaction";
+            return false;
+        }
+        return true;
+    };
 
-    SudoersConfiguration configuration(std::move(options));
+    SudoersConfiguration configuration(options);
 
     // The journal state machine (Prepared recovery, ownership validation,
     // planning, prepare -> mutate -> commit/discard) lives in
@@ -71,6 +86,9 @@ bool DAC_sudo_disable_scoped_defaults::apply() {
                   logLevel::ERROR);
         return false;
     }
+    deps.verifySharedOwnership = [journal, options](std::string& error) {
+        return fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", error, true);
+    };
     const PolicyRef policyRef = this->policyRef();
     deps.journal.activeRecords = [journal, policyRef](const PolicyRef&) {
         return journal->activeRecords(policyRef);
