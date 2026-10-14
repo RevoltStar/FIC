@@ -1,0 +1,8 @@
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+USER root
+# Native adduser is absent from several focused SUDO builder images. Install
+# the distribution package in the disposable image, never on the host.
+RUN unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; \
+    apt-get update && apt-get install -y --no-install-recommends adduser
+ENTRYPOINT ["/bin/bash"]

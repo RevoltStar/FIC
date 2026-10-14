@@ -35,21 +35,26 @@ enum class ValueDomain {
     Uid                // 0..numeric_limits<uid_t>::max(), canonical decimal
 };
 
+// USER_CREATION establishes ownership even for compliant foreign defaults.
+// PASSWORD_AGING retains its existing observation-only fresh no-op contract.
+enum class OwnershipRequirement { ObserveCompliantForeign, OwnWhileEnabled };
+
 struct SharedLoginDefsPolicySpec {
     const char* policyName;
     const char* submodule; // USER_CREATION / PASSWORD_AGING
     const char* key;       // managed login.defs key
     ValueDomain domain;
     Relation relation;
+    OwnershipRequirement ownership = OwnershipRequirement::ObserveCompliantForeign;
 };
 
 inline const SharedLoginDefsPolicySpec* findSharedLoginDefsPolicySpec(
     const std::string& policyName) {
     static const SharedLoginDefsPolicySpec kSpecs[] = {
         {"user_create_home", "USER_CREATION", "CREATE_HOME",
-            ValueDomain::Boolean, Relation::None},
+            ValueDomain::Boolean, Relation::None, OwnershipRequirement::OwnWhileEnabled},
         {"user_create_private_group", "USER_CREATION", "USERGROUPS_ENAB",
-            ValueDomain::Boolean, Relation::None},
+            ValueDomain::Boolean, Relation::None, OwnershipRequirement::OwnWhileEnabled},
         {"password_min_age_days", "PASSWORD_AGING", "PASS_MIN_DAYS",
             ValueDomain::NonNegativeDays, Relation::PasswordMinimum},
         {"password_max_age_days", "PASSWORD_AGING", "PASS_MAX_DAYS",

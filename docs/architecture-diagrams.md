@@ -928,6 +928,13 @@ assignment `GROUPS=`. Shadow 4.17 очищает внутренний `user_grou
 provider empty задаётся managed `ADD_EXTRA_GROUPS=0` без managed
 `EXTRA_GROUPS`. Foreign значения при этом не удаляются.
 
+Каждая включённая поддерживаемая USER_CREATION политика устанавливает собственный
+sub-block и journal даже при совпадающем foreign default; только доказанный
+owned repeat допускает zero-write. Shared PASSWORD_AGING fresh no-op не меняется.
+`GROUP` и `USERGROUPS_ENAB` независимы: SUCCESS настройки GROUP не означает
+назначение этой группы при private-group механизме. Подробнее —
+[USER_CREATION ownership/native contract](rollback.md#user_creation-ownership-и-native-consumer).
+
 USER_CREATION rollback использует ownership-release: journal хранит только
 точные FIC assignments текущего/предыдущего refresh, но не foreign значения и
 не snapshot файла. Apply добавляет один policy sub-block в общий EOF container;

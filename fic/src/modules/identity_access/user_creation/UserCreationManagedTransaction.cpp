@@ -247,13 +247,9 @@ bool applyManagedPolicy(
         error = "unrecorded USER_CREATION ownership (fail closed)";
         return false;
     }
-    if (!active.has_value()) {
-        std::string semanticError;
-        if (effectiveAssignmentsMatch(before.content, route.kind,
-                platform.useraddDefaultsLookup, desired, semanticError)) {
-            return true; // compliant foreign state is never adopted
-        }
-    }
+    // Enabled USER_CREATION always establishes its own persistent override.
+    // Foreign compliance is not ownership; only the proven Applied path
+    // above may return an idempotent no-write success.
 
     std::string candidate;
     bool changed = false;

@@ -147,9 +147,9 @@
 [module:IDENTITY_ACCESS][policy:user_default_shell]=Default login shell
 [module:IDENTITY_ACCESS][policy:user_default_shell][description]=Manages SHELL in /etc/default/useradd. The path must resolve to an executable regular file and, when /etc/shells exists, be listed there.
 [module:IDENTITY_ACCESS][policy:user_create_private_group]=Create a private primary group
-[module:IDENTITY_ACCESS][policy:user_create_private_group][description]=Manages USERGROUPS_ENAB in /etc/login.defs for future local shadow-utils users.
+[module:IDENTITY_ACCESS][policy:user_create_private_group][description]=Manages USERGROUPS_ENAB in /etc/login.defs for new local shadow-utils users. yes creates a same-name primary group with ordinary useradd; no uses GROUP from /etc/default/useradd. Command-line arguments can override this behavior. This policy is independent of the GROUP setting.
 [module:IDENTITY_ACCESS][policy:user_default_primary_group]=Default primary group
-[module:IDENTITY_ACCESS][policy:user_default_primary_group][description]=Manages GROUP in /etc/default/useradd. Only the name of an existing local group is accepted, not a numeric GID.
+[module:IDENTITY_ACCESS][policy:user_default_primary_group][description]=Sets the default primary group for new users. The value is used when USERGROUPS_ENAB=no. When USERGROUPS_ENAB=yes, ordinary user creation creates a same-name group and GROUP is not used. Command-line arguments can override this behavior. Only an existing local group name is accepted, not a numeric GID.
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups]=Supplementary groups for new users
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups][description]=Sets supplementary groups assigned to new local users by the platform's native user-creation provider. Only the provider-specific list is managed; other frontend options may add memberships.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=SSSD cached credential lifetime

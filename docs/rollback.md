@@ -826,10 +826,14 @@ I/O), это ошибка загрузки — fail closed. Существующ
   сверяют его с CURRENT `PlatformProfile` и ожидаемым route/key set.
 
   Все FIC sub-blocks одного physical config находятся в одном строгом
-  `FIC_USER_CREATION_BLOCK` в logical EOF, потому что `/etc/login.defs`,
-  `/etc/default/useradd` и `/etc/adduser.conf` используют last-wins semantics.
-  Foreign bytes никогда не переписываются. Fresh compliant foreign state —
-  no-op без journal/adoption. Refresh одного owned sub-block A→B выполняется
+  `FIC_USER_CREATION_BLOCK` в logical EOF: `/etc/default/useradd` и
+  `/etc/adduser.conf` используют last-wins semantics. Две USER_CREATION
+  политики `/etc/login.defs` используют общий `IdentityLoginDefs` контейнер,
+  описанный ниже. Foreign bytes никогда не переписываются. Даже fresh
+  compliant foreign state требует собственного sub-block и persistent
+  journal: совпадение значения не доказывает ownership. Только уже доказанный,
+  эффективный owned блок допускает повторный apply без физической записи.
+  Refresh одного owned sub-block A→B выполняется
   одной snapshot-bound atomic replacement; `previousAppliedAssignments`
   существует только для crash recovery этой Prepared-транзакции.
 
@@ -867,6 +871,50 @@ I/O), это ошибка загрузки — fail closed. Существующ
   canonical value domain политики (неверный key, `-0`/`+1`/`01`, выход за
   диапазон — reject и на записи, и на load).
 
+## USER_CREATION: ownership и native consumer
+
+Все семь включённых политик создают собственный sub-block и durable mutation
+provenance, если provider поддерживается. `HOME`, `SKEL`, `SHELL`, `GROUP`
+живут в `/etc/default/useradd`; `CREATE_HOME` и `USERGROUPS_ENAB` — в общем
+`/etc/login.defs`. Свежий apply пишет и при совпадающем foreign значении;
+доказанный owned repeat не пишет; refresh меняет только собственный sub-block
+одной CAS replacement. Rollback освобождает только текущее доказанное владение,
+не восстанавливает ни foreign before-value, ни предыдущее owned значение.
+Последний release удаляет контейнер. Отсутствующие системные файлы не создаются.
+
+Нужно различать три уровня:
+
+* **Configured** — значение политики FIC прошло валидацию.
+* **Native-effective** — собственный journal-proven блок находится в
+  эффективной позиции и native consumer получает целевой default. SUCCESS
+  требует этого доказательства, сохранности foreign/peer bytes и durability.
+* **Фактическое создание account** — соответствующий consumer использует
+  defaults с учётом других настроек и явных аргументов команды. FIC не
+  перехватывает создание пользователей и не изменяет существующие accounts.
+
+`GROUP` и `USERGROUPS_ENAB` независимы, без Required/Recommended dependencies.
+`GROUP` принимает только имя существующей однозначной локальной группы, не GID.
+При обычном `useradd` с `USERGROUPS_ENAB=no` применяется `GROUP`; с `yes`
+создаётся одноимённая первичная группа. Во всех четырёх сочетаниях
+`no/yes × users/staff` обе политики могут иметь SUCCESS: эффективная настройка
+`GROUP` сохраняется даже при выборе первичной группы другим механизмом.
+Аргументы `-g`, `-N`, `-U` переопределяют выбор; `-G`, `-m`, `-M`, `-d`,
+`-k`, `-s` соответственно переопределяют memberships, создание home, путь,
+шаблон и shell. Они не нарушают FIC-owned defaults.
+
+Дополнительные группы зависят от платформы:
+
+| Платформы | Consumer / ownership |
+|---|---|
+| Debian12, Ubuntu24.04 | `adduser`, `/etc/adduser.conf`: непустой список — `ADD_EXTRA_GROUPS=1` + `EXTRA_GROUPS`; пустой — только `ADD_EXTRA_GROUPS=0`, foreign `EXTRA_GROUPS` остаётся без FIC ownership. Raw `useradd` этот файл не читает. |
+| Debian13, Ubuntu26.04 | `useradd`, `/etc/default/useradd`: `GROUPS=audio,video` или обязательное `GROUPS=`, даже при отсутствующем foreign ключе. Empty очищает фактическое membership; `useradd -D` может отображать предыдущее непустое значение. |
+| ALT p11 | Шесть базовых политик поддерживаются; supplementary groups — явно `Unsupported`, без фиктивного SUCCESS или mutation. |
+
+`adduser` имеет собственные defaults и аргументы вызова `useradd`; совпадение
+поведения одного frontend не обещает такой же результат для всех способов
+создания accounts. Native evidence, версии пакетов и воспроизводимые Podman
+команды: [USER_CREATION native validation](user-creation-native-validation.md).
+
 ## Shared login.defs rollback (IDENTITY_ACCESS: USER_CREATION + PASSWORD_AGING)
 
 Все скалярные политики `/etc/login.defs` — семь штук: USER_CREATION
@@ -901,7 +949,12 @@ I/O), это ошибка загрузки — fail closed. Существующ
   PASSWORD_AGING политик (bulk `chage`), а apply/rollback-решения
   принимаются на native effective состоянии кандидата.
 
-* **Apply**: durable-target-first Prepared/Applied модель. CAS-write
+* **Apply**: durable-target-first Prepared/Applied модель. Typed
+  `OwnershipRequirement` в общей таблице policy specs требует
+  `OwnWhileEnabled` для двух USER_CREATION политик, включая fresh compliant
+  foreign. Пять PASSWORD_AGING политик сохраняют `ObserveCompliantForeign`:
+  fresh compliance без ownership остаётся no-op. Обе группы используют тот же
+  transaction backend; owned repeat/refresh/release механика общая. CAS-write
   (`expectedTargetState`, no truncate+write), refresh `A → B` — одна
   физическая атомарная замена, контейнер всегда переносится в логический
   EOF с сохранением appended foreign байтов. Relation-валидация

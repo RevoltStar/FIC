@@ -2,6 +2,7 @@
 #include "modules/identity_access/user_creation/configuration/UseraddDefaultsFileHandler.h"
 #include "modules/identity_access/user_creation/UserCreationPolicies.h"
 #include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
+#include "modules/identity_access/shared/login_defs/IdentityLoginDefsManagedTransaction.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include "policy/registry/PolicyRegistryMutation.h"
 #include "rollback/DaemonMutationJournal.h"
@@ -348,8 +349,12 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
     UserDefaultSupplementaryGroupsPolicy orderInsensitive(platform);
     const std::string reordered = readFile(platform.useraddDefaultsPath);
     require(orderInsensitive.apply() &&
-                readFile(platform.useraddDefaultsPath) == reordered,
-            "equivalent native group order caused mutation");
+                readFile(platform.useraddDefaultsPath).substr(0, reordered.size()) == reordered &&
+                readFile(platform.useraddDefaultsPath).find("name=user_default_supplementary_groups") != std::string::npos,
+            "equivalent foreign group order did not establish ownership");
+    const auto ownedReordered = readFile(platform.useraddDefaultsPath);
+    require(orderInsensitive.apply() && readFile(platform.useraddDefaultsPath) == ownedReordered,
+            "proven owned equivalent group list was rewritten");
 
     writeSupplementaryConfig(root, "[]");
     UserDefaultSupplementaryGroupsPolicy clear(platform);
@@ -377,8 +382,9 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
     useJournal(root, "shadow-empty-fresh");
     UserDefaultSupplementaryGroupsPolicy freshEmpty(platform);
     require(freshEmpty.apply() &&
-                readFile(platform.useraddDefaultsPath) == "HOME=/home\n",
-            "already-empty shadow state was not a foreign no-op");
+                readFile(platform.useraddDefaultsPath).find("GROUPS=\n") != std::string::npos &&
+                readFile(platform.useraddDefaultsPath).find("name=user_default_supplementary_groups") != std::string::npos,
+            "already-empty shadow state did not establish owned GROUPS=");
 
     useJournal(root, "shadow-empty-override-foreign");
     writeFile(platform.useraddDefaultsPath,
@@ -386,8 +392,9 @@ void testShadowSupplementaryPolicy(const fs::path& root) {
     const std::string foreignEmpty = readFile(platform.useraddDefaultsPath);
     UserDefaultSupplementaryGroupsPolicy foreignOverrideEmpty(platform);
     require(foreignOverrideEmpty.apply() &&
-                readFile(platform.useraddDefaultsPath) == foreignEmpty,
-            "foreign GROUPS= empty override caused an unnecessary write");
+                readFile(platform.useraddDefaultsPath).substr(0, foreignEmpty.size()) == foreignEmpty &&
+                readFile(platform.useraddDefaultsPath).find("name=user_default_supplementary_groups") != std::string::npos,
+            "foreign GROUPS= empty override did not establish ownership or changed foreign bytes");
 
     writeSupplementaryConfig(root, "[\"audio\"]");
     UserDefaultSupplementaryGroupsPolicy ownedNonEmpty(platform);
@@ -501,8 +508,14 @@ void testAdduserSupplementaryPolicy(const fs::path& root) {
     writeSupplementaryConfig(root, "[\"audio\"]");
     UserDefaultSupplementaryGroupsPolicy duplicate(platform);
     const std::string before = readFile(platform.adduserConfigPath);
-    require(duplicate.apply() && readFile(platform.adduserConfigPath) == before,
-            "last-wins compliant adduser config was adopted or mutated");
+    require(duplicate.apply() &&
+                readFile(platform.adduserConfigPath).find(before) == 0 &&
+                readFile(platform.adduserConfigPath).find(
+                    "name=user_default_supplementary_groups") != std::string::npos,
+            "last-wins compliant adduser config did not acquire independent ownership");
+    const std::string duplicateOwned = readFile(platform.adduserConfigPath);
+    require(duplicate.apply() && readFile(platform.adduserConfigPath) == duplicateOwned,
+            "owned last-wins adduser config was rewritten");
 
     const fs::path real = root / "etc/adduser.real";
     writeFile(real, "ADD_EXTRA_GROUPS=0\nEXTRA_GROUPS=audio\n");
@@ -680,6 +693,9 @@ void testDefaultsAndMetadata() {
     UserSkeletonDirectoryPolicy skeleton(platform);
     UserDefaultShellPolicy defaultShell(platform);
     UserDefaultPrimaryGroupPolicy primaryGroup(platform);
+    UserCreatePrivateGroupPolicy privateGroup(platform);
+    require(primaryGroup.dependencies().empty() && privateGroup.dependencies().empty(),
+            "GROUP and USERGROUPS_ENAB gained an artificial policy dependency");
     for (const Policy* stringPolicy :
          std::vector<const Policy*>{
              &policy, &skeleton, &defaultShell, &primaryGroup}) {
@@ -874,6 +890,166 @@ void testManagedDriftAndCas(const fs::path& root) {
     setBeforeUserCreationWriteHookForTests({});
     require(readFile(path) == "HOME=/admin-race\n",
             "CAS failure overwrote the external writer");
+}
+
+void testRequiredOwnershipForCompliantForeign(const fs::path& root) {
+    using namespace fic::identity::user_creation;
+    namespace login = fic::identity::login_defs;
+    struct Case { std::string policy, key, first, next; bool shared; bool adduser; };
+    const std::vector<Case> cases{
+        {"user_home_base_directory", "HOME", "/home", "/srv/home", false, false},
+        {"user_skeleton_directory", "SKEL", "/etc/skel", "/srv/skel", false, false},
+        {"user_default_shell", "SHELL", "/bin/sh", "/bin/bash", false, false},
+        {"user_default_primary_group", "GROUP", "users", "staff", false, false},
+        {"user_create_home", "CREATE_HOME", "yes", "no", true, false},
+        {"user_create_private_group", "USERGROUPS_ENAB", "yes", "no", true, false},
+        {"user_default_supplementary_groups", "GROUPS", "", "audio,video", false, false},
+        {"user_default_supplementary_groups", "ADD_EXTRA_GROUPS", "0", "1", false, true}
+    };
+    int ordinal = 0;
+    for (const auto& item : cases) {
+        useJournal(root, "required-ownership-" + std::to_string(ordinal++));
+        auto platform = platformFor(root);
+        platform.adduserConfigPath = root / "etc/adduser.conf";
+        platform.supplementaryGroupsProvider = item.adduser
+            ? fic::platform::UserSupplementaryGroupsProviderKind::DebianAdduser
+            : fic::platform::UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
+        const auto path = item.shared ? platform.loginDefsPath : item.adduser ? platform.adduserConfigPath : platform.useraddDefaultsPath;
+        const std::string foreign = "# foreign\r\n" + item.key + (item.shared ? " " : "=") + item.first + "\n" +
+            (item.adduser ? "EXTRA_GROUPS=\"audio video\"\n" : "");
+        writeFile(path, foreign);
+        std::string error;
+        auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+        require(journal != nullptr, error);
+        const PolicyRef policy{"IDENTITY_ACCESS", "USER_CREATION", item.policy};
+        auto apply = [&](const std::string& value) {
+            if (item.shared) return login::applyManagedPolicy(path.string(), policy, value, *journal, {}, error);
+            std::vector<Assignment> desired{{item.key, item.key + "=" + value}};
+            if (item.adduser && value == "1") desired.push_back({"EXTRA_GROUPS", "EXTRA_GROUPS=\"audio video\""});
+            return applyManagedPolicy(platform, item.policy, desired, *journal, error);
+        };
+        auto release = [&] {
+            auto records = journal->activeRecords(policy); require(records.size() == 1, "missing owned record");
+            bool ok = item.shared ? login::releaseManagedPolicy(path.string(), records[0], *journal, {}, error) == login::ReleaseStatus::Success
+                : releaseManagedPolicy(platform, records[0], *journal, error) == ReleaseStatus::Success;
+            require(ok, error); require(journal->setStatus(records[0].id, fic::rollback::MutationStatus::RolledBack, error), error);
+        };
+        require(apply(item.first), item.policy + ": " + error);
+        require(journal->activeRecords(policy).size() == 1 && readFile(path).substr(0, foreign.size()) == foreign &&
+                readFile(path).find(item.policy) != std::string::npos, "compliant foreign state lacks ownership");
+        int writes = 0;
+        setBeforeUserCreationWriteHookForTests([&] { ++writes; });
+        login::setBeforeIdentityLoginDefsWriteHookForTests([&] { ++writes; });
+        require(apply(item.first) && writes == 0, "owned no-op performed writes");
+        require(apply(item.next) && writes == 1, "refresh was not one write");
+        setBeforeUserCreationWriteHookForTests({}); login::setBeforeIdentityLoginDefsWriteHookForTests({});
+        // Release exposes CURRENT foreign data, including changes made while
+        // FIC owned the setting, rather than restoring a historical snapshot.
+        const std::string currentForeign = "# changed while owned\n" + foreign;
+        writeFile(path, "# changed while owned\n" + readFile(path));
+        release(); require(readFile(path) == currentForeign,
+                           "release restored history or damaged current foreign state");
+        writeFile(path, foreign);
+        // Fresh release and repeated release never reconstruct a before-value.
+        require(apply(item.first), error);
+        const auto releasedRecord = journal->activeRecords(policy).front();
+        release();
+        require(readFile(path) == foreign, "fresh release damaged foreign configuration");
+        const bool repeated = item.shared
+            ? login::releaseManagedPolicy(path.string(), releasedRecord, *journal, {}, error) == login::ReleaseStatus::NothingToDo
+            : releaseManagedPolicy(platform, releasedRecord, *journal, error) == ReleaseStatus::NothingToDo;
+        require(repeated && readFile(path) == foreign, "repeated release performed a mutation");
+
+        // Every supported route must refuse an external CAS race without losing
+        // the writer's bytes or retaining a phantom fresh mutation.
+        auto race = [&] { writeFile(path, foreign + "# external race\n"); };
+        if (item.shared) login::setBeforeIdentityLoginDefsWriteHookForTests(race);
+        else setBeforeUserCreationWriteHookForTests(race);
+        require(!apply(item.first), "fresh CAS race was accepted");
+        setBeforeUserCreationWriteHookForTests({}); login::setBeforeIdentityLoginDefsWriteHookForTests({});
+        require(readFile(path) == foreign + "# external race\n" && journal->activeRecords(policy).empty(),
+                "CAS race lost foreign bytes or retained phantom ownership");
+        writeFile(path, foreign);
+
+        require(apply(item.first), error);
+        const std::string proven = readFile(path);
+        std::string drift = proven;
+        const std::string line = item.key + (item.shared ? " " : "=") + item.first;
+        const auto offset = drift.rfind(line);
+        require(offset != std::string::npos, "owned assignment missing");
+        drift.replace(offset, line.size(), item.key + (item.shared ? " " : "=") + item.next);
+        writeFile(path, drift);
+        require(!apply(item.first) && readFile(path) == drift, "manual owned drift was overwritten");
+        const auto driftRecord = journal->activeRecords(policy).front();
+        const bool conflict = item.shared
+            ? login::releaseManagedPolicy(path.string(), driftRecord, *journal, {}, error) == login::ReleaseStatus::Conflict
+            : releaseManagedPolicy(platform, driftRecord, *journal, error) == ReleaseStatus::Conflict;
+        require(conflict && readFile(path) == drift, "manual owned drift was released");
+        writeFile(path, proven);
+        release();
+
+        // A new journal cannot adopt the exact same physical orphan block.
+        require(apply(item.first), error);
+        const std::string orphan = readFile(path);
+        useJournal(root, "required-orphan-" + std::to_string(ordinal++));
+        journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+        require(journal != nullptr && !apply(item.first) && readFile(path) == orphan,
+                "orphan block was adopted");
+        writeFile(path, foreign);
+
+        // Other policies sharing a physical ownership domain survive release.
+        // adduser.conf has only one enrolled policy: use a peer in useradd's
+        // separate domain instead of inventing a fictitious adduser policy.
+        const std::string peerName = item.shared ? "user_create_private_group"
+            : item.policy == "user_default_shell" ? "user_home_base_directory" : "user_default_shell";
+        const std::string actualPeer = item.shared && item.policy == peerName ? "user_create_home" : peerName;
+        const auto peerPath = item.adduser ? platform.useraddDefaultsPath : path;
+        if (item.adduser) writeFile(peerPath, "# independent useradd peer\n");
+        const PolicyRef peerPolicy{"IDENTITY_ACCESS", "USER_CREATION", actualPeer};
+        const bool peerOk = item.shared
+            ? login::applyManagedPolicy(path.string(), peerPolicy, "yes", *journal, {}, error)
+            : applyManagedPolicy(platform, actualPeer,
+                actualPeer == "user_home_base_directory" ? std::vector<Assignment>{{"HOME", "HOME=/home"}}
+                    : std::vector<Assignment>{{"SHELL", "SHELL=/bin/sh"}}, *journal, error);
+        require(peerOk, error);
+        const std::string peerBytes = readFile(peerPath);
+        require(apply(item.first), error);
+        release();
+        require(readFile(peerPath) == peerBytes && journal->activeRecords(peerPolicy).size() == 1,
+                "release damaged peer ownership");
+        const auto peerRecord = journal->activeRecords(peerPolicy).front();
+        const bool peerReleased = item.shared
+            ? login::releaseManagedPolicy(peerPath.string(), peerRecord, *journal, {}, error) == login::ReleaseStatus::Success
+            : releaseManagedPolicy(platform, peerRecord, *journal, error) == ReleaseStatus::Success;
+        require(peerReleased && journal->setStatus(peerRecord.id, fic::rollback::MutationStatus::RolledBack, error), error);
+        require(readFile(path) == foreign, "last sub-block left its container or changed foreign bytes");
+
+        require(apply(item.first), error);
+        const auto externalRecord = journal->activeRecords(policy).front();
+        writeFile(path, foreign); // externally released physical block
+        const bool externallyAbsent = item.shared
+            ? login::releaseManagedPolicy(path.string(), externalRecord, *journal, {}, error) == login::ReleaseStatus::NothingToDo
+            : releaseManagedPolicy(platform, externalRecord, *journal, error) == ReleaseStatus::NothingToDo;
+        require(externallyAbsent && readFile(path) == foreign &&
+                    journal->setStatus(externalRecord.id, fic::rollback::MutationStatus::RolledBack, error),
+                "external release was not safely resolved");
+
+        for (bool after : {false, true}) {
+            auto cut = [] { throw std::runtime_error("process cut"); };
+            if (item.shared) {
+                if (after) login::setAfterIdentityLoginDefsWriteHookForTests(cut); else login::setBeforeIdentityLoginDefsWriteHookForTests(cut);
+            } else {
+                if (after) setAfterUserCreationWriteHookForTests(cut); else setBeforeUserCreationWriteHookForTests(cut);
+            }
+            try { apply(item.first); } catch (const std::runtime_error&) {}
+            setBeforeUserCreationWriteHookForTests({}); setAfterUserCreationWriteHookForTests({});
+            login::setBeforeIdentityLoginDefsWriteHookForTests({}); login::setAfterIdentityLoginDefsWriteHookForTests({});
+            auto records = journal->activeRecords(policy);
+            require(records.size() == 1 && records[0].status == fic::rollback::MutationStatus::Prepared, "crash lost Prepared provenance");
+            require(apply(item.first), error);
+            release(); require(readFile(path) == foreign, "crash recovery damaged foreign bytes");
+        }
+    }
 }
 
 void testNativeConsumerSemantics() {
@@ -1149,6 +1325,7 @@ int main() {
         testGeneratedConfig();
         testManagedOwnershipLifecycle(root);
         testManagedDriftAndCas(root);
+        testRequiredOwnershipForCompliantForeign(root);
         testNativeConsumerSemantics();
         testManagedPreparedRecovery(root);
         testManagedReleaseCrashRecovery(root);

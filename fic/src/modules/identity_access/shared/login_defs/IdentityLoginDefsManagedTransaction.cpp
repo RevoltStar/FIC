@@ -349,7 +349,9 @@ bool applyManagedPolicy(const std::string& loginDefsPath,
         error = "unrecorded shared login.defs ownership (fail closed)";
         return false;
     }
-    if (!active.has_value()) {
+    const auto* ownershipSpec = findSharedLoginDefsPolicySpec(policy.policyName);
+    if (!active.has_value() && ownershipSpec != nullptr &&
+        ownershipSpec->ownership == OwnershipRequirement::ObserveCompliantForeign) {
         std::string relationError;
         if (currentEffective.has_value() && *currentEffective == value &&
             relationsValidInCandidate(before.content, policy,

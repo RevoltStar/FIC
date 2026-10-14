@@ -147,9 +147,9 @@
 [module:IDENTITY_ACCESS][policy:user_default_shell]=Командная оболочка по умолчанию
 [module:IDENTITY_ACCESS][policy:user_default_shell][description]=Управляет SHELL в /etc/default/useradd. Путь оболочки должен разрешаться в исполняемый обычный файл и, при наличии /etc/shells, быть указан в нём.
 [module:IDENTITY_ACCESS][policy:user_create_private_group]=Создавать одноимённую основную группу
-[module:IDENTITY_ACCESS][policy:user_create_private_group][description]=Управляет USERGROUPS_ENAB в /etc/login.defs для будущих локальных пользователей shadow-utils.
+[module:IDENTITY_ACCESS][policy:user_create_private_group][description]=Управляет USERGROUPS_ENAB в /etc/login.defs для новых локальных пользователей shadow-utils. yes — при обычном useradd создаётся одноимённая основная группа; no — используется группа GROUP из /etc/default/useradd. Параметры командной строки могут переопределять это поведение. Политика независима от настройки GROUP.
 [module:IDENTITY_ACCESS][policy:user_default_primary_group]=Основная группа по умолчанию
-[module:IDENTITY_ACCESS][policy:user_default_primary_group][description]=Управляет GROUP в /etc/default/useradd. Принимается только имя уже существующей локальной группы, не числовой GID.
+[module:IDENTITY_ACCESS][policy:user_default_primary_group][description]=Задаёт основную группу по умолчанию для новых пользователей. Значение используется, когда USERGROUPS_ENAB=no. Если USERGROUPS_ENAB=yes, при обычном создании пользователя создаётся одноимённая группа, и параметр GROUP не используется. Параметры командной строки могут переопределять это поведение. Принимается только имя существующей локальной группы, не числовой GID.
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups]=Дополнительные группы новых пользователей
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups][description]=Задаёт дополнительные группы, назначаемые новым локальным пользователям штатным provider создания пользователей данной платформы. Управляется только provider-specific список; другие frontend options могут добавить дополнительные memberships.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=Срок действия кешированных учётных данных SSSD
