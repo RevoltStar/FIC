@@ -980,3 +980,6 @@ Where possible, a lock against modification is applied
 [incident:source]=Source
 [incident:reason]=Reason
 [incident:result]=Result / diagnostic
+
+[module:GLOBAL][policy:lock_exempt_fic_members]=Exempt fic group members from containment
+[module:GLOBAL][policy:lock_exempt_fic_members][description]=ENABLE preserves recovery access for fic group members; DISABLE removes this exemption. Local root recovery remains independent. Status changes reconcile current containment; previously terminated sessions are not restored.

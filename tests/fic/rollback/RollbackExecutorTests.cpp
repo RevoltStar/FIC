@@ -1717,6 +1717,7 @@ void testFirewallUndoFailureFailsClosed() {
 }
 
 void testDeviceCategoriesAreNotEnrolled() {
+    require(rollbackEnrollment({"GLOBAL","lock_settings","lock_exempt_fic_members"}) == RollbackEnrollment::NotEnrolled,"recovery exemption must not enroll rollback");
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
     RollbackExecutorDeps deps;

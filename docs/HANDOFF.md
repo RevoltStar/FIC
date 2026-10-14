@@ -1,34 +1,30 @@
 # Current working state
 
 ## Current base
-* Branch `main`; USER_CREATION task base `dc1b746dd40d30108b0ffb7d4a917610accd0cf4` (completed SUDO C).
-* Completion commit is HEAD after final validation; resolve exact SHA with `git log -1`. No push.
+* Branch main; base `40811135683e566534e755122f6d9234c5973810`. Initially clean tree; completion commit follows this base. No push.
 
 ## Current task
-* USER_CREATION mandatory ownership apply/rollback for seven policies; native Podman five-platform acceptance. Implementation and all mandatory gates complete. User-authorized completion commit; no push.
+* Register lock_exempt_fic_members as GLOBAL/lock_settings status-only policy; one completion commit, no push. User replaced Podman requirement with Docker for Debian12/13, Ubuntu24/26 and ALT p11.
 
 ## Accepted architecture / invariants
-* Every enabled supported USER_CREATION policy owns a journal-proven sub-block even on compliant foreign defaults. Only proven effective owned repeat is zero-write; refresh A→B is one CAS replacement.
-* Shared IdentityLoginDefs backend retained. Typed ownership in central policy specs: USER_CREATION OwnWhileEnabled; PASSWORD_AGING ObserveCompliantForeign (old fresh no-op preserved).
-* Rollback releases current exact ownership, preserves current foreign bytes/peer owners, removes final container; never restores foreign history. Prepared recovery, orphan/drift refusal, symlink/CAS/durability protections unchanged.
-* GROUP and USERGROUPS_ENAB independent, no dependencies/automatic coupling. GROUP is an existing local name, not numeric GID; SUCCESS describes configured native default, not unconditional actual account group.
-* D12/U24 supplementary adduser ADD_EXTRA_GROUPS/EXTRA_GROUPS; empty owns only flag0. D13/U26 useradd GROUPS; empty always GROUPS=. ALT supplementary Unsupported.
-* All actual account/group/native /etc experiments ONLY disposable Podman, source read-only, build-cache writable, no host security mounts/apply.
+* Existing IncidentRecoveryConfigReader and standalone PAM unchanged. Shipped default ENABLE is not a permissive fallback for missing/unproven keys. Local root recovery independent; no Required dependencies.
+* FixedPolicyTypeValue(ENABLE); read-only apply proves trusted effective status, cached intent and configuration snapshot stability. Explicit NotEnrolled, no previous-state restoration or session recreation.
+* Enable/disable reload registry, verify status including DISABLE, then force existing containment reconciliation even for established ACTIVE SOFT/HARD. Failed rebuild skips dependent work. saved/applied distinguish persistence from successful verification/reconciliation. Existing SSH preflight retained.
 
 ## Completed / changed areas
-* Removed USER_CREATION fresh foreign no-op; two shared policies opt into mandatory ownership. RU/EN descriptions explain GROUP/private-group interaction.
-* Existing foreign-compliance tests retained/converted; per-route ownership lifecycle matrix includes current foreign changes, peers, drift/orphan/CAS, Prepared recovery, external/repeated release. PASSWORD_AGING regression retained.
-* tests/integration/user_creation: actual production driver, OS compatibility check, native gate, focused build, reproducible runner and distro adduser runtime preparation.
-* docs/rollback.md, architecture-diagrams.md and user-creation-native-validation.md describe lasting contract/native evidence.
+* New GLOBAL policy and production registration, RU/EN generic GUI/CLI descriptors, rollback enrollment.
+* main.cpp status verification and forceContainment routing; saved/applied survive error responses.
+* New policy tests/native gate and routing check; ModelA secure-reader-driven active HARD flag changes, malformed status and independent root; standalone access-gate root recovery and rollback regression.
+* fic/README.md and docs/rollback.md describe lifecycle. History reviewed: 90712a5 introduced flag, e171cba unified authority proof, 943b34b added optional containment status.
 
 ## Validation
-* Final user_creation_tests + identity_login_defs_tests PASS as part of full CTest, including all additional ownership cases.
-* Native five-platform matrix PASS with actual vendor shadow/adduser, all4 GROUP×USERGROUPS combinations, real HOME/SKEL/SHELL/create-home/accounts/memberships, CLI overrides. Final frontend distinctions PASS; counts D12/U24=118 each, D13/U26=120 each, ALT=100; total576,0 FAIL0 SKIP. /tmp/podman-fic-UC-final.log.
-* Per-policy real process cuts Prepared before/after:68 crashes across five rows. ALT supplementary explicit Unsupported refusal,6 supported policies.
-* Full configure/build PASS; final non-root CTest181/181 PASS (15 static checks included), /tmp/fic-UC-configure.log and /tmp/fic-UC-final-{build,ctest}.log. Root-only2/2 PASS in Debian12 Podman with DAC_OVERRIDE/DAC_READ_SEARCH dropped (build-sudo-native/debian12/root-tests-UC-{build,ctest}.log).
-* Bash syntax and packaging language staging inspected; no packaging contract change.
+* Docker recovered after user freed disk. Debian12 full project build PASS and full CTest 185/185 PASS; native production reader/status gate PASS. Logs /tmp/fic-recovery-debian12-{final-build,full-ctest}.log.
+* Debian13, Ubuntu24/26 and ALT p11: current fic + pam_fic_access builds PASS; focused8/8 and native production gate PASS on each. Logs /tmp/fic-recovery-{debian13,ubuntu2404,ubuntu2604}-restored.log and /tmp/fic-recovery-alt-final.log.
+* Native gate is restricted to disposable root Docker; creates root:fic production /opt/fic/config and verifies actual default reader plus status writes and malformed-config rejection. Does not run daemon or alter host security state.
+* git diff --check, direct routing Python and bash -n native-gate.sh PASS.
 
-## Remaining / known limits
-* No required unfinished work. Final diff reviewed, bash syntax and git diff --check PASS. Task committed after validation; no push.
-* Existing conditional CAS is not kernel-atomic against arbitrary writers. Process cuts are not physical power-loss tests.
-* No universal account-creation interception, no existing-account mutation, no ALT supplementary provider, no arbitrary frontends/-r/LDAP guarantee. See native report for scope and commands.
+## Remaining / limits
+* Implementation and requested Docker matrix complete; one completion commit, NO PUSH. No remaining implementation blockers.
+* No real PAM login or live logind containment validation; controller tests use fake transport. Full CTest only Debian12, other rows focused tests.
+* Docker builders remain available: fic-deb-builder:debian12-final, fic-recovery-builder:{debian13,ubuntu2404,ubuntu2604,alt-p11-ctest}. ALT cache build-recovery-alt-p11; other caches build-recovery-policy/<row>; Debian12 build-prelogin-validation/final.
+* Ubuntu26 temporary builder uses official HTTPS archive with trusted host CA after HTTP libpng failures. ALT temporary builder uses existing native ALT p11 base, HTTPS distrib-coffee mirror and separate ctest package. TLS/repository signatures retained; source packaging unchanged. Environment failures were resolved before final validation.

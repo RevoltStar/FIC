@@ -16,6 +16,8 @@
 //   R7  — a service identity WITH a genuine login session is a target;
 //   R8  — UID reuse (same UID, different account) is refused and DEGRADES.
 #include "incident/IncidentController.h"
+#include "incident/IncidentRecoveryConfigReader.h"
+#include <fic/core/config/ConfigAuthority.h>
 #include "incident/IncidentSessionTargetStore.h"
 #include "session/LogindSessionContainmentBackend.h"
 
@@ -247,6 +249,36 @@ int main(int argc, char** argv) {
         ::geteuid(), ::geteuid());
     IncidentSessionTargetStore::setOwnershipExpectationForTests(
         ::geteuid(), ::geteuid());
+
+    // A saved recovery flag changes classification during an already active
+    // HARD incident. Real secure reader + controller + production logind backend.
+    {
+        std::filesystem::path recoveryFile;
+        auto expected=fic::core::configAuthorityExpectation({geteuid(),getegid()});
+        World world([&](uid_t uid,const std::string& name,
+                        fic::session::ContainmentIdentityEvidence& evidence,std::string& diagnostic) {
+            const auto enabled=fic::incident::IncidentRecoveryConfigReader::readStatus(recoveryFile,expected,diagnostic);
+            if(!enabled)return false;
+            evidence={uid,name,"/bin/bash",*enabled,name=="rescue"};return true;
+        });
+        std::filesystem::create_directories(world.root/"recovery/config");
+        ::chmod((world.root/"recovery").c_str(),02750);
+        ::chmod((world.root/"recovery/config").c_str(),02750);recoveryFile=world.root/"recovery/config/GLOBAL.conf";
+        const auto save=[&](const std::string& status) {std::ofstream(recoveryFile)<<"lock_exempt_fic_members.status="<<status<<"\n";::chmod(recoveryFile.c_str(),0640);};
+        save("ENABLE");
+        world.logind->sessions={loginSession("root",0,"root"),loginSession("rescue",1001,"rescue")};
+        world.logind->users={loginUser(0,"root"),loginUser(1001,"rescue")};
+        const auto raised=world.controller->raise(fic::core::IncidentSeverity::Hard,{"test"},"existing incident");
+        require(raised.ok&&world.logind->terminatedSessions==0&&world.logind->terminatedUsers==0,"enabled recovery member contained: "+raised.detail);
+        save("DISABLE");const auto disabled=world.controller->reconcile();
+        require(disabled.ok&&world.controller->status().severity==fic::core::IncidentSeverity::Hard&&world.logind->terminatedSessions==1&&world.logind->terminatedUsers==0,
+                "disabling exemption failed to reconcile an active HARD incident");
+        require(world.logind->sessions.size()==1&&world.logind->sessions[0].uid==0,"root recovery was contained");
+        save("ENABLE");world.logind->sessions.push_back(loginSession("new",1001,"rescue"));
+        require(world.controller->reconcile().ok&&world.logind->terminatedSessions==1&&world.logind->terminatedUsers==0,"re-enabled exemption did not protect new session");
+        save("INVALID");require(!world.controller->reconcile().ok,"broken recovery config falsely reported containment success");
+        require(world.controller->status().severity==fic::core::IncidentSeverity::Hard&&world.logind->terminatedSessions==1,"broken config changed incident or targeted root");
+    }
 
     // ---- R5/A6/A7: root and recovery identities are never selected --------
     {

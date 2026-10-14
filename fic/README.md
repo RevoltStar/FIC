@@ -830,6 +830,25 @@ fallback `ACTIVE`, а не автоматическое смягчение ре�
 условно требует `NET/SshEdit/ssh_use_pam`; эта Required dependency участвует
 в планировании применения и диагностике policy API.
 
+`GLOBAL/lock_settings/lock_exempt_fic_members` — status-only политика:
+`ENABLE` (в поставляемом конфиге по умолчанию) разрешает существующее исключение
+recovery-группы `fic`, `DISABLE` выключает его. Отдельного `.value` не требуется.
+Она доступна в обычном списке политик GUI/CLI, например:
+`fic-cli policy disable GLOBAL lock_exempt_fic_members`.
+`apply()` только подтверждает доверенную конфигурацию и соответствие эффективного
+флага registry; автономный `IncidentRecoveryConfigReader` и `pam_fic_access.so`
+продолжают работать без daemon. Отсутствующий, повреждённый или недоказанный ключ
+не получает permissive default: прежняя fail-closed семантика сохраняется.
+
+После enable/disable daemon reload-ит registry, проверяет новый статус (также
+`DISABLE`) и пересогласовывает текущий containment, включая уже активный SOFT/HARD.
+Ответ содержит `saved` и `applied`: при ошибке после записи — `saved=true`,
+`applied=false`, `ok=false`; это не означает восстановления прежнего конфига.
+При failed registry rebuild зависимое согласование пропускается. Rollback —
+`NotEnrolled`: предыдущий флаг не восстанавливается; завершённые сессии также не
+воссоздаются. Локальный root recovery остаётся независимым от флага; удалённый
+root не получает это локальное исключение. Зависимостей от других политик нет.
+
 В `ACTIVE` контроллер получает инвентаризацию сессий из systemd-logind через
 системный D-Bus и выбирает цели containment по **Model A**: целями являются
 только реально существующие обычные login-сессии, доказанные logind.

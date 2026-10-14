@@ -1,0 +1,18 @@
+from pathlib import Path
+root = Path(__file__).resolve().parents[3]
+main = (root / 'fic/src/main.cpp').read_text()
+registration = (root / 'fic/src/daemon/main_function.cpp').read_text()
+assert 'std::make_unique<GLOBAL_lock_exempt_fic_members>()' in registration
+assert 'const bool needsContainment = forceContainment ||' in main
+assert 'policyRegistry, platform, executables, recoverySaved)' in main
+assert 'enteringActive || modePolicyTouched || recoverySaved ||' in main
+assert 'response["saved"] = true' in main
+assert 'response["applied"] = recoveryVerified && response.value("ok", false)' in main
+assert main.count('if (recoveryStatusMutation) return recoveryMutationResponse(reloadError)') == 2
+assert 'const bool verified = !reloadError && changed && changed->apply()' in main
+for lang in ('ru', 'en'):
+    translations = (root / f'fic/src/resources/lang/{lang}.lang').read_text()
+    assert '[module:GLOBAL][policy:lock_exempt_fic_members]=' in translations
+    assert '[module:GLOBAL][policy:lock_exempt_fic_members][description]=' in translations
+assert 'lock_exempt_fic_members.status=ENABLE' in (root / 'fic/src/resources/config/GLOBAL.conf').read_text()
+print('recovery exemption registry/mutation routing: PASS')

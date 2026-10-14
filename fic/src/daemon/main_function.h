@@ -115,6 +115,7 @@
 #include "modules/audit/logging/policies/AUDIT_log_level.h"
 #include "modules/global/system_settings/policies/GLOBAL_lang.h"
 #include "modules/global/lock_settings/GLOBAL_incident_response_mode.h"
+#include "modules/global/lock_settings/GLOBAL_lock_exempt_fic_members.h"
 
 //Контроль устройств: общие настройки
 #include "modules/dc/DC.h"

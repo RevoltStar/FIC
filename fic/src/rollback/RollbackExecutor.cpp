@@ -974,6 +974,9 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
             ? RollbackEnrollment::NotEnrolled
             : RollbackEnrollment::Unsupported;
     }
+    if (policy.moduleName == "GLOBAL" && policy.submoduleName == "lock_settings" &&
+        policy.policyName == "lock_exempt_fic_members")
+        return RollbackEnrollment::NotEnrolled; // Configuration flag; no inverse OS mutation.
     return RollbackEnrollment::NotEnrolled;
 }
 

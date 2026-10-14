@@ -1018,6 +1018,19 @@ target_link_libraries(alt_incident_access_gate_topology_tests PRIVATE
 add_test(NAME alt_incident_access_gate_topology_tests
     COMMAND alt_incident_access_gate_topology_tests)
 
+add_executable(recovery_exemption_policy_tests
+    fic/incident/RecoveryExemptionPolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/GLOBAL.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/lock_settings/GLOBAL_lock_exempt_fic_members.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryInitialization.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyDependencyGraph.cpp)
+target_include_directories(recovery_exemption_policy_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(recovery_exemption_policy_tests PRIVATE fic-core fic-policy)
+add_test(NAME recovery_exemption_policy_tests COMMAND recovery_exemption_policy_tests)
+add_test(NAME recovery_exemption_routing_checks COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/fic/incident/RecoveryExemptionRoutingChecks.py.in)
+
 add_executable(incident_recovery_config_reader_tests
     fic/incident/IncidentRecoveryConfigReaderTests.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp)

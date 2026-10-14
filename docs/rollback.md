@@ -2403,3 +2403,11 @@ occurrences. Неполный serial/WWN не даёт known exception; filesyst
 ошибке desired state остаётся в SQLite для повторного reconcile. Отключение,
 all → new и удаление FIC не отменяют физические `authorized=0`, SCSI `delete=1`
 и PCI `remove=1`: может потребоваться reconnect/rescan.
+
+## Recovery exemption flag
+
+`GLOBAL/lock_settings/lock_exempt_fic_members` is intentionally `NotEnrolled`.
+Disable saves `DISABLE` and reconciles current incident containment; rollback
+does not restore the previous flag or recreate terminated sessions. The secure
+reader and local root recovery contract remain independent of the daemon.
+See the incident-response section in `fic/README.md` for saved/applied semantics.

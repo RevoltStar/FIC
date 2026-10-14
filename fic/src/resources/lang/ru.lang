@@ -980,3 +980,6 @@
 [incident:source]=Источник
 [incident:reason]=Причина
 [incident:result]=Результат / диагностика
+
+[module:GLOBAL][policy:lock_exempt_fic_members]=Исключать участников группы fic из блокировки
+[module:GLOBAL][policy:lock_exempt_fic_members][description]=ENABLE сохраняет recovery-доступ участников группы fic; DISABLE отключает это исключение. Локальный root recovery сохраняется независимо. Изменение статуса пересогласовывает текущий containment; уже завершённые сессии не восстанавливаются.

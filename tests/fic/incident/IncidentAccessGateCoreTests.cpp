@@ -113,4 +113,11 @@ int main() {
                                  dependencies).disposition ==
             AccessGateDisposition::Deny);
     require(requests == 8);
+    // Local root recovery must not consult the exemption flag or daemon,
+    // even when trusted recovery configuration cannot be read.
+    dependencies.recoveryEnabled = [](std::string&) -> bool {
+        throw std::runtime_error("local root consulted broken recovery config");
+    };
+    require(decideIncidentAccess({"root", "login", ""}, config, dependencies).disposition == AccessGateDisposition::Pass);
+    require(requests == 8);
 }

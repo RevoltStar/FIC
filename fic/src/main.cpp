@@ -427,7 +427,8 @@ struct IncidentPrerequisiteResult {
 IncidentPrerequisiteResult recomputeAccessReadiness(
     PolicyRegistry& policyRegistry,
     const fic::platform::PlatformProfile& platform,
-    const fic::platform::PlatformExecutableResolver& executables) {
+    const fic::platform::PlatformExecutableResolver& executables,
+    bool forceContainment = false) {
     auto& sshGuard = incidentSshGuard();
     static bool activeEstablished = false;
     static std::string lastFailure;
@@ -513,7 +514,7 @@ IncidentPrerequisiteResult recomputeAccessReadiness(
         }
         return {false, diagnostic};
     }
-    const bool needsContainment = !activeEstablished ||
+    const bool needsContainment = forceContainment || !activeEstablished ||
         daemonReadiness().state() == fic::incident::DaemonReadinessState::Degraded ||
         incidentController().status().severity == fic::core::IncidentSeverity::Isolate ||
         incidentController().status().runtime == fic::incident::RuntimeState::Degraded;
@@ -807,6 +808,19 @@ json handle_request(json request,
         return std::nullopt;
     };
 
+    const bool recoveryStatusMutation = module == "GLOBAL" &&
+        policy == "lock_exempt_fic_members" &&
+        (command == "enable_policy" || command == "disable_policy");
+    const auto recoveryMutationResponse = [&](const std::optional<std::string>& reloadError) {
+        Policy* changed = getPolicyClass(policyRegistry, module, policy);
+        // Verify DISABLE too: the ordinary planner intentionally skips disabled
+        // policies, but this administrative change must prove its new status.
+        const bool verified = !reloadError && changed && changed->apply();
+        return json{{"ok", verified}, {"saved", true}, {"applied", verified},
+            {"message", reloadError ? "recovery status saved; registry reconciliation failed: " + *reloadError :
+                verified ? "recovery status saved and verified" : "recovery status saved; effective status is not proven"}};
+    };
+
     try {
         if (command == "status") {
             return json{
@@ -904,7 +918,9 @@ json handle_request(json request,
         if (command == "enable_policy") {
             bool ok = enable(policyRegistry, module, policy);
             if (ok) {
-                if (auto reloadError = reloadRegistryAndGlobalConfig()) {
+                const auto reloadError = reloadRegistryAndGlobalConfig();
+                if (recoveryStatusMutation) return recoveryMutationResponse(reloadError);
+                if (reloadError) {
                     return fic::ipc::make_error_response(
                         "policy was enabled in configuration, but reconciliation failed: " +
                         reloadError.value());
@@ -920,7 +936,9 @@ json handle_request(json request,
             const fic::daemon::PolicyMutationResult mutation = disable(
                 policyRegistry, platform, executables, module, policy);
             if (mutation.ok) {
-                if (auto reloadError = reloadRegistryAndGlobalConfig()) {
+                const auto reloadError = reloadRegistryAndGlobalConfig();
+                if (recoveryStatusMutation) return recoveryMutationResponse(reloadError);
+                if (reloadError) {
                     return fic::ipc::make_error_response(
                         "policy was disabled in configuration, but reconciliation failed: " +
                         reloadError.value());
@@ -1350,6 +1368,12 @@ std::string handle_client_packet(
                                         notifyLevel::ERROR);
                 return fic::ipc::make_error_response(diagnostic);
             });
+        const bool recoverySaved = request.value("module", "") == "GLOBAL" &&
+            request.value("policy", "") == "lock_exempt_fic_members" &&
+            (request.value("command", "") == "enable_policy" ||
+             request.value("command", "") == "disable_policy") &&
+            response.value("saved", false);
+        const bool recoveryVerified = recoverySaved && response.value("ok", false);
         if (mayChangeSshPamBridge(requestText) && !preflightFailed) {
             const auto after = fic::incident::IncidentResponseModeResolver::production();
             if (registryRebuildFailedThisRequest() &&
@@ -1377,17 +1401,18 @@ std::string handle_client_packet(
                     "; containment reconciliation skipped after failed registry rebuild");
             } else {
                 const auto readiness = recomputeAccessReadiness(
-                    policyRegistry, platform, executables);
+                    policyRegistry, platform, executables, recoverySaved);
                 const bool modePolicyTouched =
                     request.value("module", "") == "GLOBAL" &&
                     request.value("policy", "") == "incident_response_mode";
                 if (!readiness.ready &&
-                    (enteringActive || modePolicyTouched ||
+                    (enteringActive || modePolicyTouched || recoverySaved ||
                      before.mode != after.mode ||
                      after.mode == fic::incident::IncidentResponseMode::Active) &&
                     response.value("ok", false)) {
                     response = fic::ipc::make_error_response(
-                        "configuration may be saved, but incident reconciliation failed: " +
+                        std::string(recoverySaved ? "recovery status was saved, but incident reconciliation failed: " :
+                                    "configuration may be saved, but incident reconciliation failed: ") +
                         readiness.diagnostic);
                 } else if (!readiness.ready && enteringActive &&
                            before.proven && before.mode !=
@@ -1397,6 +1422,12 @@ std::string handle_client_packet(
                         "; SSH block cleanup failed: " + readiness.diagnostic);
                 }
             }
+        }
+        if (recoverySaved) {
+            response["saved"] = true;
+            response["applied"] = recoveryVerified && response.value("ok", false);
+            if (response["applied"].get<bool>())
+                response["message"] = "recovery status saved; current incident containment reconciled";
         }
     } else {
         response = fic::ipc::make_error_response("invalid request: " + error);
