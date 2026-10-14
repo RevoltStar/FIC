@@ -1,3 +1,5 @@
+#include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
+#include "modules/dac/sudo/policies/DAC_sudo_require_authentication.h"
 #include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
 #include "modules/dac/sudo/SudoProviderCapabilities.h"
 #include "modules/dac/sudo/policies/DAC_sudo_env_reset.h"
@@ -67,19 +69,20 @@ int main(int argc, char** argv) {
         {"sudo_env_reset", "env_reset"}, {"sudo_passwd_tries", "passwd_tries"},
         {"sudo_securepath", "secure_path"}, {"sudo_timeout", "timestamp_timeout"},
         {"sudo_exempt_group_disable", "exempt_group"},
-        {"sudo_disable_scoped_defaults", "scoped_defaults"}};
+        {"sudo_disable_scoped_defaults", "scoped_defaults"},
+        {"sudo_require_authentication", kAuthenticationResource}};
     if (!keys.count(name)) return 2;
     if (!std::filesystem::exists(paths.configDir / "DAC.conf")) {
         std::ofstream config(paths.configDir / "DAC.conf");
         config << "_schema_version=1\n";
         for (const auto& [policy, key] : keys) {
             (void)key;
-            const std::string value = policy == "sudo_disable_scoped_defaults" ? "ENABLE"
+            const std::string value = (policy == "sudo_disable_scoped_defaults" || policy == kAuthenticationPolicy) ? "ENABLE"
                 : policy == "sudo_exempt_group_disable" ? "DISABLE"
                 : policy == "sudo_env_reset" ? "ENABLE"
                 : policy == "sudo_securepath" ? platform.sudo.securePathDefault
                 : policy == "sudo_timeout" ? "10" : "3";
-            config << policy << ".status=ENABLE\n" << policy << ".value=" << value << '\n';
+            config << policy << ".status=" << (policy == kAuthenticationPolicy ? "DISABLE" : "ENABLE") << "\n" << policy << ".value=" << value << '\n';
         }
     }
     if (!std::filesystem::exists(paths.configDir / "AUDIT.conf")) {
@@ -93,6 +96,11 @@ int main(int argc, char** argv) {
         return config.loadConfig() && config.setPolicyStatus(name, "DISABLE") && config.saveConfig();
     };
     const PolicyRef identity{"DAC", "SudoEdit", name};
+    if (action == "intent" && argc == 4) {
+        ModuleConfigFileHandler config("DAC");
+        return config.loadConfig() && config.setPolicyStatus(name, argv[3]) && config.saveConfig() ? 0 : 1;
+    }
+
     if (action == "release" || action == "crash-release" || action == "crash-apply") {
         const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
         SudoersConfigurationOptions options;
@@ -113,6 +121,34 @@ int main(int argc, char** argv) {
         };
         options.releaseOwnedUnsupportedSetting = capabilities.provider == SudoProvider::Rust &&
                                                 keys.at(name) == "exempt_group";
+        if (name == kAuthenticationPolicy) {
+            if ((action == "crash-apply" && argc != 5) || (action == "crash-release" && argc != 4)) return 2;
+            AuthenticationHooks hooks;
+            hooks.requestedScopedState = [](bool& scoped, std::string& error) { bool auth; return readSudoRequestedState(auth, scoped, error); };
+            if (action != "release") {
+                const auto phase = std::string(argv[action == "crash-apply" ? 4 : 3]);
+                hooks.checkpoint = [phase](const char* reached) { if (phase == reached) ::_exit(86); };
+            }
+            AuthenticationTransaction auth(options, *journal, hooks);
+            if (action == "crash-apply") {
+                const auto result = auth.reconcile(); std::cerr << result.message << '\n'; return result.ok ? 0 : 1;
+            }
+            const auto records = journal->activeRecords(identity);
+            if (records.empty()) {
+                if (!auth.verifyOwnership(error)) { std::cerr << error << '\n'; return 1; }
+                return finishDisable() ? 0 : 1;
+            }
+            if (records.size() != 1) return 1;
+            const auto* payload = std::get_if<UndoReleaseSudoAuthentication>(&records.front().undo.payload);
+            if (!payload) return 1;
+            const auto result = auth.release(*payload);
+            if (!result.ok) {
+                journal->setStatusWithMessage(records.front().id, MutationStatus::RollbackFailed, result.message, error);
+                std::cerr << result.message << '\n'; return 1;
+            }
+            if (!journal->setStatus(records.front().id, MutationStatus::RolledBack, error)) return 1;
+            return finishDisable() ? 0 : 1;
+        }
         GlobalDefaultsPhaseHook hook;
         if (action != "release") {
             const int phaseArgument = action == "crash-apply" ? 4 : 3;
@@ -157,6 +193,12 @@ int main(int argc, char** argv) {
             hooks.reloadAndVerify = [&configuration](std::string& error) {
                 return configuration.load(error);
             };
+            bool authRequested, scopeRequested;
+            if (!readSudoRequestedState(authRequested, scopeRequested, error) ||
+                !AuthenticationTransaction(options, *journal).verifyOwnership(error) ||
+                !guardScopedAuthenticationRelease(configuration, payload->targetProofs, authRequested, error)) {
+                std::cerr << error << '\n'; return 1;
+            }
             const auto restored = scoped.release(payload->targetProofs, hooks);
             if (!restored.ok() || !transaction.verifyNoOwnedSetting("", error, true) ||
                 !configuration.verifyIncludedDirectoryTopologyUnchanged(error) ||
@@ -208,6 +250,7 @@ int main(int argc, char** argv) {
     if (name == "sudo_timeout") policy = std::make_unique<DAC_sudo_timeout>(platform.sudo, executables);
     if (name == "sudo_exempt_group_disable") policy = std::make_unique<DAC_sudo_exempt_group_disable>(platform.sudo, executables);
     if (name == "sudo_disable_scoped_defaults") policy = std::make_unique<DAC_sudo_disable_scoped_defaults>(platform.sudo, executables);
+    if (name == kAuthenticationPolicy) policy = std::make_unique<DAC_sudo_require_authentication>(platform.sudo, executables);
     if (!policy || !policy->validate(argv[3]) || !policy->apply()) return 1;
     std::cout << "active-policy-records=" << journal->activeRecords(identity).size() << '\n';
     return 0;

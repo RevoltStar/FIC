@@ -2,8 +2,8 @@
 
 Это уточнение задания на три последовательных этапа: A — global Defaults
 ownership, B — integration scoped Defaults, C — reversible authentication.
-Реализация и проверки ещё не завершены. Авторитетный итоговый контракт после
-приёмки должен быть отражён в `rollback.md`.
+Этапы A/B/C реализованы и проверены. Авторитетный контракт находится в
+`rollback.md`, фактическая платформенная матрица — в `sudo-native-validation.md`.
 
 ## Активный provider
 
@@ -76,3 +76,17 @@ SUCCESS валидатора сам по себе не доказывает бе
 [visudo](https://github.com/sudo-project/sudo/blob/main/docs/visudo.man.in),
 [sudo-rs provider differences](https://github.com/trifectatechfoundation/sudo-rs),
 [sudo-rs releases](https://github.com/trifectatechfoundation/sudo-rs/releases).
+
+## C: реализованная граница parser-а и приёмки
+
+Typed parser сохраняет физические аргументы, Runas, aliases, отрицания и
+известные command tags. Оригинал и active replacement имеют независимые
+journal proofs; replacement обязательно выводится из original заново.
+Scope/auth ownership не вкладывается; release охраняется requested status
+другой политики, включая no-record состояние. Неоднозначные дополнительные
+Host_Spec, digests/regex, single quotes и ambiguous whitespace lists дают
+Unsupported до writes; command-list continuation не нормализуется.
+
+C проверен на шести native rows, process crash/recovery gates, переходах
+classic↔sudo-rs и production disable dispatcher. Enrollment — Supported.
+Результаты и конкретные версии находятся в sudo-native-validation.md.

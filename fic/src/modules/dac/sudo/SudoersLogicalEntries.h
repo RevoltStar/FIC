@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -16,6 +17,12 @@ namespace fic::sudoers {
 // physical coordinates, so the assembler is the single place that decides which
 // physical lines belong to one logical entry.
 struct SudoLogicalEntry {
+    struct SourcePosition {
+        static constexpr std::size_t synthetic = std::numeric_limits<std::size_t>::max();
+        std::size_t physicalLine = synthetic;
+        std::size_t column = synthetic;
+        bool isPhysical() const { return physicalLine != synthetic && column != synthetic; }
+    };
     // Zero-based index of the first physical line, as produced by
     // splitPhysicalLines(). Callers that need a human-readable 1-based number
     // add one themselves.
@@ -24,6 +31,9 @@ struct SudoLogicalEntry {
     std::size_t lineCount = 1;
     // The assembled logical text, WITHOUT any terminator.
     std::string text;
+    // Optional byte coordinates, one per logical character. An inserted
+    // continuation separator has no physical source and cannot be rewritten.
+    std::vector<SourcePosition> sourcePositions;
 };
 
 // THE single physical -> logical assembly step for sudoers.
@@ -48,6 +58,23 @@ struct SudoLogicalEntry {
 // recognize comments, include directives, scoped Defaults or FIC wrappers:
 // those stay in the existing layers that run after assembly.
 std::vector<SudoLogicalEntry> assembleSudoLogicalEntries(
-    const std::vector<SudoPhysicalLine>& lines);
+    const std::vector<SudoPhysicalLine>& lines,
+    bool withSourcePositions = false);
+
+// A parser supplies the exact token it recognized. The renderer must not
+// infer token roles or normalize the surrounding sudoers bytes.
+struct SudoTokenReplacement {
+    std::size_t logicalOffset = 0;
+    std::string expected;
+    std::string replacement;
+};
+
+// All edits are checked before changing any physical line. Tokens spanning a
+// continuation, overlapping edits and stale physical token bytes are rejected.
+// The transaction must separately compare the complete document snapshot.
+bool replaceSudoLogicalTokens(const SudoLogicalEntry& entry,
+                              const std::vector<SudoTokenReplacement>& edits,
+                              std::vector<SudoPhysicalLine>& lines,
+                              std::string& error);
 
 } // namespace fic::sudoers

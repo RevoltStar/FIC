@@ -1,3 +1,4 @@
+#include "modules/dac/sudo/SudoersAuthenticationWrapper.h"
 #include "modules/dac/sudo/SudoersLogicalEntries.h"
 #include "modules/dac/sudo/SudoersScopedDefaults.h"
 #include "modules/dac/sudo/SudoersScopedDefaultsTransaction.h"
@@ -712,6 +713,12 @@ SudoScopedDefaultsTransactionResult ScopedDefaultsTransaction::apply(
     const std::vector<SudoersConfiguration::GraphDocument> documents =
         configuration_.graphDocuments();
 
+    for (const auto& document : documents) {
+        std::vector<AuthenticationWrapper> authFrames;
+        if (!parseAuthenticationWrappers(linesOf(document.content), authFrames, error)) return refuse(error);
+        for (const auto& frame : authFrames) usedIds.insert(frame.id);
+    }
+
     if (fresh.empty()) {
         result.kind = SudoScopedDefaultsResultKind::Success;
         result.operation.ok = true;
@@ -720,6 +727,17 @@ SudoScopedDefaultsTransactionResult ScopedDefaultsTransaction::apply(
     }
 
     for (const PlannedScopedDefaultsMutation& mutation : fresh) {
+        for (const auto& document : documents) {
+            if (document.path != mutation.target.path) continue;
+            std::vector<AuthenticationWrapper> authFrames;
+            if (!parseAuthenticationWrappers(linesOf(document.content), authFrames, error)) return refuse(error);
+            const auto first = lineOffset(linesOf(document.content), mutation.target.firstLine);
+            const auto last = first + mutation.target.lineCount;
+            for (const auto& frame : authFrames) {
+                if (first <= frame.last && last > frame.first)
+                    return refuse("Conflict: scoped target overlaps independent authentication frame");
+            }
+        }
         const SudoScopedDefaultsWrapperProof& proof = mutation.proof;
         if (!isCanonicalSudoWrapperId(proof.wrapperId) ||
             !fic::core::ContentDigest::isCanonicalSha256Hex(

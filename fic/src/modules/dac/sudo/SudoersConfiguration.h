@@ -71,7 +71,6 @@ public:
     SudoersValueObservation inspectManagedGlobalDefault(
         const std::string& key) const;
 
-    SudoersOperationResult enforceAuthentication();
     std::vector<std::string> authenticationViolations() const;
 
     // --- Contextual/scoped Defaults policy (sudo_disable_scoped_defaults) ---
@@ -198,12 +197,6 @@ private:
     bool validate(std::string& error) const;
     bool checkDocumentSafety(const std::filesystem::path& path, std::string& error) const;
     bool checkDirectorySafety(const std::filesystem::path& path, std::string& error) const;
-    bool contentUnchanged(const Document& document, std::string& error) const;
-    bool writeDocument(const std::filesystem::path& path,
-                       const std::string& content,
-                       bool managedFile,
-                       std::string& error) const;
-
     void clear();
 };
 

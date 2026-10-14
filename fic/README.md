@@ -494,21 +494,19 @@ Drift/orphan artifacts означают безопасный отказ. Пол�
 records. Provider определяется по реальному executable/version/config и
 native validator; FIC никогда автоматически не переключает alternatives.
 
-Политика `sudo_require_authentication` имеет другую семантику: она точечно
-заменяет `NOPASSWD` на `PASSWD`, включает `authenticate` и отключает
-`exempt_group` в тех активных локальных sudoers-файлах, где обнаружено
-нарушение. Пользователи, группы, `RunAs`, хосты и разрешенные команды не
-изменяются. Политика не очищает timestamp-кэш sudo и не анализирует PAM,
-LDAP/SSSD или другой внешний источник правил.
+`sudo_require_authentication` использует отдельную transaction для исходных
+правил: оригинал подавляется внутри `FIC_AUTH` frame, рядом записывается активная
+версия с обязательной аутентификацией. Typed parser меняет только command tag
+`NOPASSWD` и unary Defaults `!authenticate`; `exempt_group` остаётся за своей
+политикой. Аргументы, отрицания, Runas, остальные tags, CRLF/LF и continuation
+сохраняются. Неоднозначный синтаксис отклоняется до любых sudoers writes.
+Ownership, Prepared recovery и selective compensation описаны в
+[rollback](../docs/rollback.md#sudo-authentication-этап-c).
 
-Составные строки с несколькими `Host_Spec` и многострочные правила с `\\`,
-которые отключают аутентификацию, в первой версии намеренно не переписываются:
-политика завершается безопасной ошибкой с путем и номером строки. Это исключает
-частичное изменение сложного правила; администратор может предварительно
-разделить его на отдельные однострочные записи. Перед записью проверяется весь
-include-граф: если неподдерживаемое правило найдено хотя бы в одном источнике,
-ни один файл не изменяется. Если ошибка возникает уже во время последовательной
-записи или проверки `visudo`, ранее записанные файлы откатываются.
+Automatic disable поддерживается через typed journal rollback. Requested
+состояние другой SUDO policy защищает release даже без её mutation record.
+Native различия provider-ов и результаты матрицы приведены в
+[platform report](../docs/sudo-native-validation.md).
 
 Перед любой записью конфигурация проверяется через `visudo`. Путь валидатора
 выбирается общим platform resolver по `ExecutableId::Visudo`, а запуск

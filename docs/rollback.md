@@ -1686,7 +1686,7 @@ PamPackagingChecks.py`.
 
 ## SUDO rollback (DAC / SudoEdit)
 
-Две независимые модели владения; их нельзя смешивать.
+Независимые модели global Defaults, scoped suppression и authentication rewrite; их нельзя смешивать.
 
 **Managed scalar Defaults.** Для classic sudo `sudo_env_reset`,
 `sudo_passwd_tries`, `sudo_securepath`, `sudo_timeout` и
@@ -1727,7 +1727,73 @@ Unknown provider/version/config route и смена provider во время о�
 fail closed. FIC не переключает alternatives. Глобальный SUCCESS относится
 к global Defaults, а contextual suppression выполняет отдельная политика;
 provider-specific precedence проверяется native. Результаты и ограничения
-текущей незавершённой реализации: [native validation](sudo-native-validation.md).
+реализации: [native validation](sudo-native-validation.md).
+
+### SUDO authentication: этап C
+
+`AuthenticationTransaction` использует typed action
+`UndoReleaseSudoAuthentication`; политика enrolled `Supported`. Native apply,
+recovery, release и provider transitions подтверждены в шести строках матрицы
+(см. [platform report](sudo-native-validation.md)).
+
+Canonical frame имеет отдельную marker family:
+
+```text
+#@FIC_AUTH_BEGIN id=FIC-SUDO-...
+#@FIC_AUTH_ORIGINAL eol=LF@<original physical line>
+#@FIC_AUTH_ACTIVE
+<active replacement physical lines>
+#@FIC_AUTH_END id=FIC-SUDO-...
+```
+
+Original lines несут `LF`, `CRLF` или `NONE`; marker lines всегда LF. Для
+исходной final line без LF separator перед END принадлежит frame. Original
+и replacement имеют независимые SHA-256; journal хранит только ID, canonical
+source path и оба digest, а также previous/target proofs для refresh.
+При каждом разборе replacement заново выводится из original typed parser'ом
+и сравнивается byte-exact с активной частью. Даже совпавший journal digest
+не разрешает подмену NOEXEC/INTERCEPT/аргументов. Unknown/malformed markers,
+перемещение, повтор ID или drift — Conflict до writes.
+
+Parser сохраняет User/Host/Runas/Cmnd roles, command aliases, отрицания,
+наследование PASSWD/NOPASSWD и остальные известные tags; преобразует только
+проверенные физические spans `NOPASSWD → PASSWD` и unary
+`!authenticate → authenticate`. Arguments не нормализуются. Поддерживаются
+command-list continuations, если изменяемый token целиком на одной physical
+line. Не поддерживаются дополнительные Host_Spec, command digests/regex,
+неоднозначные whitespace lists, single quotes и unquoted parentheses вне
+Runas. Такой синтаксис отказывается до Prepared и любых sudoers writes.
+Native validator остаётся обязательным и независимым доказательством.
+
+Полный граф анализируется до Prepared. Conditional atomic writes сохраняют
+metadata; после записи проверяются native syntax, прежний include graph,
+топология каталогов, exact ownership, отсутствие active bypass и durability.
+Refresh сохраняет прежний journal ID и permission на все старые wrappers.
+Prepared target завершается на том же ID; partial/fresh previous восстанавливается
+selective compensation, refresh нормализуется к previous на том же ID.
+Свежий compensated Prepared разрешается и новый план получает новый ID:
+дублированных active records нет. Компенсация сохраняет посторонние изменения
+и отказывается при недоказанном wrapper/CAS. Перед proven restore допустим
+structural ownership proof без native syntax: иначе отвергнутый native
+candidate невозможно компенсировать. Native syntax обязательна после restore
+и до любой journal resolution. Ошибка сохраняет unresolved provenance.
+
+Release захватывает текущий граф UNION journal-known paths, включая detached
+файлы. Исчезнувшие wrappers — released subset, никогда не воссоздаются.
+Существующие frame удаляются с byte-exact восстановлением original; partial
+release сохраняет record для retry. Unterminated original с чужим suffix
+нельзя восстановить без склейки строк: Conflict.
+
+`FIC_AUTH` и `FIC_SUDO_DISABLED` не вкладываются. Scoped apply отказывает при
+существующем auth-owned contextual frame. Scoped-first auth пропускает
+подавленный original; active command rules имеют отдельный auth owner.
+Перед release проверяется requested состояние другого policy из актуальной
+DAC configuration, даже если у него нет mutation record. Auth release,
+восстанавливающий contextual Defaults при requested scoped suppression, и
+scoped release, восстанавливающий !authenticate/exempt_group при requested
+authentication, возвращают Conflict. Отсутствие configured status — unknown,
+fail closed. Disable policy без собственного frame позволяет разорвать
+конфликт до освобождения владельца.
 
 **Source-edit wrapper.** `sudo_disable_scoped_defaults` запрещает все четыре
 формы контекстных `Defaults`:
@@ -2067,7 +2133,8 @@ unproven legacy state и orphan markers не усыновляются.
   * `DAC/SudoEdit` managed Defaults (`sudo_env_reset`, `sudo_passwd_tries`,
     `sudo_securepath`, `sudo_timeout`, `sudo_exempt_group_disable`) и
     `sudo_disable_scoped_defaults` (ownership-release через
-    `FIC_SUDO_DISABLED` обёртки, см. раздел «Undo actions»);
+    `FIC_SUDO_DISABLED` обёртки), `sudo_require_authentication`
+    (`FIC_AUTH` original/replacement frames, см. «SUDO authentication»);
   * `NET/SshEdit` (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
     `ssh_pubkey_auth`, `ssh_use_pam`);
   * `FIREWALL/HostFiltering` (`block_ftp`, `block_rdp`, `custom_rules`);
@@ -2087,8 +2154,7 @@ unproven legacy state и orphan markers не усыновляются.
     подмодуля — `NotEnrolled` (намеренный non-reverting lifecycle, см.
     раздел «Shared login.defs rollback»), неизвестные — `Unsupported`;
 * `Unsupported` — модуль в системе rollback, но автоматический откат не
-  реализован: `sudo_require_authentication` (чужие NOPASSWD/PASSWD specs),
-  `exclusive_firewall_control` (уничтожает внешнее состояние), DC
+  реализован: `exclusive_firewall_control` (уничтожает внешнее состояние), DC
   non-category policies и **любая неизвестная политика** внутри
   rollback-enrolled submodule — будущая SUDO/FIREWALL policy никогда не
   становится автоматически rollback-Supported без собственной journal

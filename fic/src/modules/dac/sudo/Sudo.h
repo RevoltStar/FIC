@@ -104,6 +104,7 @@ public:
     // Managed resource identifier for the rollback system (the sudoers
     // Defaults key), empty when the parameter type has no managed key.
     std::string managedResource() const {
+        if (policyName == "sudo_require_authentication") return "sudoers/authentication";
         if (!sudoParameter) {
             return {};
         }

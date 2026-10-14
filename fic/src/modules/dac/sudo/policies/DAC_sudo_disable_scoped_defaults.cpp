@@ -1,3 +1,4 @@
+#include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
 #include "modules/dac/sudo/policies/DAC_sudo_disable_scoped_defaults.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/dac/sudo/SudoersScopedDefaultsLifecycle.h"
@@ -87,7 +88,8 @@ bool DAC_sudo_disable_scoped_defaults::apply() {
         return false;
     }
     deps.verifySharedOwnership = [journal, options](std::string& error) {
-        return fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", error, true);
+        return fic::sudoers::GlobalDefaultsTransaction(options, *journal).verifyNoOwnedSetting("", error, true) &&
+            fic::sudoers::AuthenticationTransaction(options, *journal).verifyOwnership(error, true);
     };
     const PolicyRef policyRef = this->policyRef();
     deps.journal.activeRecords = [journal, policyRef](const PolicyRef&) {

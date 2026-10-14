@@ -631,6 +631,8 @@ add_executable(sudoers_global_defaults_transaction_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
@@ -689,6 +691,8 @@ add_test(NAME sudoers_logical_entries_tests COMMAND sudoers_logical_entries_test
 add_executable(sudoers_configuration_tests
     fic/modules/dac/SudoersConfigurationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
@@ -1202,6 +1206,8 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
@@ -1318,6 +1324,8 @@ add_executable(sudo_scoped_defaults_lifecycle_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
@@ -1784,6 +1792,8 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
@@ -2382,6 +2392,8 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
@@ -2497,6 +2509,8 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
@@ -2609,6 +2623,8 @@ add_executable(ssh_apply_rollback_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
@@ -3107,3 +3123,37 @@ target_include_directories(incident_history_tests PRIVATE ${CMAKE_SOURCE_DIR}/fi
 target_link_libraries(incident_history_tests PRIVATE Qt${QT_VERSION_MAJOR}::Widgets fic-ipc fic-core)
 add_test(NAME incident_history_tests COMMAND incident_history_tests)
 set_tests_properties(incident_history_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;FIC_SOCKET_PATH=/tmp/fic-incident-tests-no-daemon.sock" TIMEOUT 30)
+
+add_executable(sudoers_authentication_tests
+    fic/modules/dac/SudoersAuthenticationTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp)
+target_include_directories(sudoers_authentication_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sudoers_authentication_tests PRIVATE fic-core)
+add_test(NAME sudoers_authentication_tests COMMAND sudoers_authentication_tests)
+
+# Source editors and their rollback dispatcher share the same transaction.
+get_property(fic_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(fic_test_target IN LISTS fic_test_targets)
+    get_target_property(fic_test_sources ${fic_test_target} SOURCES)
+    foreach(fic_test_source IN LISTS fic_test_sources)
+        if(fic_test_source MATCHES "(/Sudo.cpp|/RollbackExecutor.cpp)$")
+            target_sources(${fic_test_target} PRIVATE
+                ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationTransaction.cpp)
+            break()
+        endif()
+    endforeach()
+endforeach()
+get_target_property(fic_auth_transaction_sources sudoers_global_defaults_transaction_tests SOURCES)
+list(FILTER fic_auth_transaction_sources EXCLUDE REGEX "SudoersGlobalDefaultsTransactionTests.cpp$")
+add_executable(sudoers_authentication_transaction_tests
+    fic/modules/dac/SudoersAuthenticationTransactionTests.cpp
+    ${fic_auth_transaction_sources}
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp)
+target_include_directories(sudoers_authentication_transaction_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sudoers_authentication_transaction_tests PRIVATE fic-core fic-policy Threads::Threads)
+add_test(NAME sudoers_authentication_transaction_tests COMMAND sudoers_authentication_transaction_tests)

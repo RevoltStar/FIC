@@ -186,6 +186,9 @@ public:
         MutationId id,
         const std::vector<SudoScopedDefaultsWrapperProof>& provenPrevious,
         std::string& error);
+    bool normalizeSudoAuthenticationPreparedToPrevious(
+        MutationId id, const std::vector<fic::sudoers::AuthenticationProof>& provenPrevious,
+        std::string& error);
     bool setStatus(MutationId id, MutationStatus status, std::string& error);
     bool setStatusWithMessage(MutationId id, MutationStatus status,
                               const std::string& message, std::string& error);

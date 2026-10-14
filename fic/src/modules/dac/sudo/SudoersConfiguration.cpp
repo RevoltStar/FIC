@@ -1,3 +1,5 @@
+#include "SudoersAuthenticationGrammar.h"
+#include "SudoersAuthenticationWrapper.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/dac/sudo/SudoersDisabledWrapper.h"
 #include "modules/dac/sudo/SudoersIncludeDirective.h"
@@ -46,23 +48,6 @@ bool readExistingFile(const std::filesystem::path& path, std::string& content, s
     return true;
 }
 
-std::vector<std::pair<size_t, std::string>> physicalLines(const std::string& content) {
-    std::vector<std::pair<size_t, std::string>> result;
-    std::istringstream stream(content);
-    std::string line;
-    size_t number = 1;
-    while (std::getline(stream, line)) {
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        result.emplace_back(number++, line);
-    }
-    if (content.empty()) {
-        return result;
-    }
-    return result;
-}
-
 size_t commentPosition(const std::string& line) {
     bool single = false;
     bool doubleQuoted = false;
@@ -95,18 +80,6 @@ size_t commentPosition(const std::string& line) {
 std::string stripInlineComment(const std::string& line) {
     const size_t position = commentPosition(line);
     return position == std::string::npos ? line : line.substr(0, position);
-}
-
-bool hasContinuation(const std::string& line) {
-    std::string trimmed = trimCopy(line);
-    if (trimmed.empty() || trimmed.back() != '\\') {
-        return false;
-    }
-    size_t slashCount = 0;
-    for (size_t i = trimmed.size(); i > 0 && trimmed[i - 1] == '\\'; --i) {
-        ++slashCount;
-    }
-    return slashCount % 2 == 1;
 }
 
 // NOTE: include directive lexing lives in the dedicated
@@ -197,381 +170,6 @@ bool parseGlobalDefaults(const std::string& logicalLine,
         }
     }
     return found;
-}
-
-bool tokenBoundary(char c) {
-    return !(std::isalnum(static_cast<unsigned char>(c)) || c == '_');
-}
-
-bool outsideQuotesAt(const std::string& text, size_t requestedPosition) {
-    bool single = false;
-    bool doubleQuoted = false;
-    bool escaped = false;
-    for (size_t i = 0; i < requestedPosition && i < text.size(); ++i) {
-        const char c = text[i];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (c == '\\') {
-            escaped = true;
-            continue;
-        }
-        if (c == '\'' && !doubleQuoted) {
-            single = !single;
-        } else if (c == '"' && !single) {
-            doubleQuoted = !doubleQuoted;
-        }
-    }
-    return !single && !doubleQuoted;
-}
-
-bool sudoersOptionName(const std::string& name) {
-    return name == "CWD" || name == "CHROOT" || name == "TIMEOUT" ||
-           name == "NOTBEFORE" || name == "NOTAFTER" || name == "ROLE" ||
-           name == "TYPE" || name == "APPARMOR_PROFILE" || name == "PRIVS" ||
-           name == "LIMITPRIVS";
-}
-
-bool sudoersOptionToken(const std::string& token) {
-    const size_t equals = token.find('=');
-    return equals != std::string::npos && sudoersOptionName(token.substr(0, equals));
-}
-
-size_t rewriteCommandSpecSegment(std::string& segment) {
-    size_t cursor = 0;
-    while (cursor < segment.size() && std::isspace(static_cast<unsigned char>(segment[cursor]))) {
-        ++cursor;
-    }
-
-    if (cursor < segment.size() && segment[cursor] == '(') {
-        bool single = false;
-        bool doubleQuoted = false;
-        bool escaped = false;
-        int depth = 0;
-        for (; cursor < segment.size(); ++cursor) {
-            const char c = segment[cursor];
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if (c == '\\') {
-                escaped = true;
-                continue;
-            }
-            if (c == '\'' && !doubleQuoted) {
-                single = !single;
-            } else if (c == '"' && !single) {
-                doubleQuoted = !doubleQuoted;
-            } else if (!single && !doubleQuoted && c == '(') {
-                ++depth;
-            } else if (!single && !doubleQuoted && c == ')' && --depth == 0) {
-                ++cursor;
-                break;
-            }
-        }
-    }
-
-    size_t changes = 0;
-    while (cursor < segment.size()) {
-        while (cursor < segment.size() && std::isspace(static_cast<unsigned char>(segment[cursor]))) {
-            ++cursor;
-        }
-        const size_t tokenStart = cursor;
-        while (cursor < segment.size() &&
-               !std::isspace(static_cast<unsigned char>(segment[cursor])) &&
-               segment[cursor] != ':') {
-            ++cursor;
-        }
-        if (tokenStart == cursor) {
-            break;
-        }
-        const std::string token = segment.substr(tokenStart, cursor - tokenStart);
-        size_t afterToken = cursor;
-        while (afterToken < segment.size() &&
-               std::isspace(static_cast<unsigned char>(segment[afterToken]))) {
-            ++afterToken;
-        }
-
-        if (afterToken < segment.size() && segment[afterToken] == ':') {
-            if (token == "NOPASSWD") {
-                segment.replace(tokenStart, token.size(), "PASSWD");
-                const size_t shrink = token.size() - std::string("PASSWD").size();
-                afterToken -= shrink;
-                ++changes;
-            }
-            cursor = afterToken + 1;
-            continue;
-        }
-        if (sudoersOptionToken(token)) {
-            cursor = afterToken;
-            continue;
-        }
-        if (sudoersOptionName(token) && afterToken < segment.size() &&
-            segment[afterToken] == '=') {
-            cursor = afterToken + 1;
-            while (cursor < segment.size() &&
-                   std::isspace(static_cast<unsigned char>(segment[cursor]))) {
-                ++cursor;
-            }
-            while (cursor < segment.size() &&
-                   !std::isspace(static_cast<unsigned char>(segment[cursor]))) {
-                ++cursor;
-            }
-            continue;
-        }
-        break;
-    }
-    return changes;
-}
-
-size_t replaceNoPasswordTags(std::string& code) {
-    const size_t firstEquals = code.find('=');
-    if (firstEquals == std::string::npos) {
-        return 0;
-    }
-
-    std::string rewritten = code.substr(0, firstEquals + 1);
-    const std::string commandList = code.substr(firstEquals + 1);
-    size_t segmentStart = 0;
-    bool single = false;
-    bool doubleQuoted = false;
-    bool escaped = false;
-    int parenthesisDepth = 0;
-    size_t changes = 0;
-
-    for (size_t i = 0; i <= commandList.size(); ++i) {
-        const bool atEnd = i == commandList.size();
-        const char c = atEnd ? '\0' : commandList[i];
-        if (!atEnd) {
-            if (escaped) {
-                escaped = false;
-                continue;
-            }
-            if (c == '\\') {
-                escaped = true;
-                continue;
-            }
-            if (c == '\'' && !doubleQuoted) {
-                single = !single;
-            } else if (c == '"' && !single) {
-                doubleQuoted = !doubleQuoted;
-            } else if (!single && !doubleQuoted && c == '(') {
-                ++parenthesisDepth;
-            } else if (!single && !doubleQuoted && c == ')' && parenthesisDepth > 0) {
-                --parenthesisDepth;
-            }
-        }
-
-        if (!atEnd && (c != ',' || single || doubleQuoted || parenthesisDepth != 0)) {
-            continue;
-        }
-
-        std::string segment = commandList.substr(segmentStart, i - segmentStart);
-        changes += rewriteCommandSpecSegment(segment);
-        rewritten += segment;
-        if (!atEnd) {
-            rewritten.push_back(',');
-        }
-        segmentStart = i + 1;
-    }
-
-    code = std::move(rewritten);
-    return changes;
-}
-
-bool containsTokenFollowedByColon(const std::string& code, const std::string& token,
-                                  size_t start = 0) {
-    size_t position = start;
-    while ((position = code.find(token, position)) != std::string::npos) {
-        const bool leftBoundary = position == 0 || tokenBoundary(code[position - 1]);
-        size_t after = position + token.size();
-        const bool rightBoundary = after == code.size() || tokenBoundary(code[after]);
-        if (leftBoundary && rightBoundary && outsideQuotesAt(code, position)) {
-            while (after < code.size() &&
-                   std::isspace(static_cast<unsigned char>(code[after]))) {
-                ++after;
-            }
-            if (after < code.size() && code[after] == ':') {
-                return true;
-            }
-        }
-        position += token.size();
-    }
-    return false;
-}
-
-size_t findTopLevelCharacter(const std::string& text, char requested, size_t start) {
-    bool single = false;
-    bool doubleQuoted = false;
-    bool escaped = false;
-    int parenthesisDepth = 0;
-    for (size_t position = 0; position < text.size(); ++position) {
-        const char current = text[position];
-        if (escaped) {
-            escaped = false;
-            continue;
-        }
-        if (current == '\\') {
-            escaped = true;
-            continue;
-        }
-        if (current == '\'' && !doubleQuoted) {
-            single = !single;
-            continue;
-        }
-        if (current == '"' && !single) {
-            doubleQuoted = !doubleQuoted;
-            continue;
-        }
-        if (single || doubleQuoted) {
-            continue;
-        }
-        if (current == '(') {
-            ++parenthesisDepth;
-            continue;
-        }
-        if (current == ')' && parenthesisDepth > 0) {
-            --parenthesisDepth;
-            continue;
-        }
-        if (position >= start && parenthesisDepth == 0 && current == requested) {
-            return position;
-        }
-    }
-    return std::string::npos;
-}
-
-bool hasAmbiguousAdditionalHostSpec(const std::string& code) {
-    const size_t firstEquals = code.find('=');
-    if (firstEquals == std::string::npos) {
-        return false;
-    }
-
-    size_t colon = findTopLevelCharacter(code, ':', firstEquals + 1);
-    while (colon != std::string::npos) {
-        const size_t additionalEquals = findTopLevelCharacter(code, '=', colon + 1);
-        if (additionalEquals == std::string::npos) {
-            return false;
-        }
-        if (containsTokenFollowedByColon(code, "NOPASSWD", additionalEquals + 1)) {
-            return true;
-        }
-        colon = findTopLevelCharacter(code, ':', colon + 1);
-    }
-    return false;
-}
-
-size_t replacePlainToken(std::string& code,
-                         const std::string& from,
-                         const std::string& to) {
-    size_t changes = 0;
-    size_t position = 0;
-    while ((position = code.find(from, position)) != std::string::npos) {
-        const bool leftBoundary = position == 0 || tokenBoundary(code[position - 1]);
-        const size_t end = position + from.size();
-        const bool rightBoundary = end == code.size() || tokenBoundary(code[end]);
-        if (leftBoundary && rightBoundary && outsideQuotesAt(code, position)) {
-            code.replace(position, from.size(), to);
-            position += to.size();
-            ++changes;
-        } else {
-            position = end;
-        }
-    }
-    return changes;
-}
-
-// exempt_group is deliberately NOT neutralized here. Its single owner is the
-// sudo_exempt_group_disable policy, which manages `Defaults !exempt_group` as
-// a FIC-owned global Defaults entry in /etc/sudoers.d/zzzz-fic. Rewriting it
-// here as well would create two independent mutation owners of the same
-// security state, with two different rollback provenances.
-
-struct RewriteResult {
-    std::string content;
-    std::vector<std::string> diagnostics;
-    size_t changes = 0;
-    bool unsupported = false;
-};
-
-bool multilineBlockMayDisableAuthentication(
-    const std::vector<std::pair<size_t, std::string>>& lines,
-    size_t begin,
-    size_t end) {
-    std::string logical;
-    for (size_t index = begin; index <= end; ++index) {
-        std::string code = stripInlineComment(lines[index].second);
-        if (hasContinuation(code)) {
-            const size_t slash = code.find_last_not_of(" \t\r\n");
-            code.erase(slash);
-        }
-        logical += " " + code;
-    }
-    if (containsTokenFollowedByColon(logical, "NOPASSWD")) {
-        return true;
-    }
-    std::string rewritten = logical;
-    return replacePlainToken(rewritten, "!authenticate", "authenticate") > 0;
-}
-
-RewriteResult rewriteAuthentication(const std::filesystem::path& path,
-                                    const std::string& content) {
-    RewriteResult result;
-    const bool finalNewline = !content.empty() && content.back() == '\n';
-    const auto lines = physicalLines(content);
-    for (size_t index = 0; index < lines.size(); ++index) {
-        size_t blockEnd = index;
-        while (blockEnd + 1 < lines.size() && hasContinuation(lines[blockEnd].second)) {
-            ++blockEnd;
-        }
-        if (blockEnd > index && multilineBlockMayDisableAuthentication(lines, index, blockEnd)) {
-            result.unsupported = true;
-            result.diagnostics.push_back(path.string() + ":" +
-                                         std::to_string(lines[index].first) +
-                                         " (неподдерживаемое многострочное правило)");
-            for (size_t originalIndex = index; originalIndex <= blockEnd; ++originalIndex) {
-                result.content += lines[originalIndex].second;
-                if (originalIndex + 1 < lines.size() || finalNewline) {
-                    result.content.push_back('\n');
-                }
-            }
-            index = blockEnd;
-            continue;
-        }
-
-        std::string line = lines[index].second;
-        const size_t comment = commentPosition(line);
-        std::string code = comment == std::string::npos ? line : line.substr(0, comment);
-        const std::string suffix = comment == std::string::npos ? "" : line.substr(comment);
-        const std::string trimmed = trimCopy(code);
-        size_t lineChanges = 0;
-
-        if (trimmed.compare(0, 8, "Defaults") == 0) {
-            // exempt_group is owned by sudo_exempt_group_disable, not here.
-            lineChanges += replacePlainToken(code, "!authenticate", "authenticate");
-        } else {
-            if (hasAmbiguousAdditionalHostSpec(code)) {
-                result.unsupported = true;
-                result.diagnostics.push_back(path.string() + ":" +
-                                             std::to_string(lines[index].first) +
-                                             " (неподдерживаемый составной Host_Spec)");
-            } else {
-                lineChanges += replaceNoPasswordTags(code);
-            }
-        }
-
-        if (lineChanges > 0) {
-            result.diagnostics.push_back(path.string() + ":" +
-                                         std::to_string(lines[index].first));
-            result.changes += lineChanges;
-        }
-        result.content += code + suffix;
-        if (index + 1 < lines.size() || finalNewline) {
-            result.content.push_back('\n');
-        }
-    }
-    return result;
 }
 
 std::filesystem::path normalizedExistingPath(const std::filesystem::path& path) {
@@ -948,36 +546,6 @@ bool SudoersConfiguration::checkDirectorySafety(const std::filesystem::path& pat
     return true;
 }
 
-bool SudoersConfiguration::contentUnchanged(const Document& document, std::string& error) const {
-    std::string current;
-    if (!readExistingFile(document.path, current, error)) {
-        return false;
-    }
-    if (current != document.content) {
-        error = "Sudoers-файл изменился после чтения: " + document.path.string();
-        return false;
-    }
-    return true;
-}
-
-bool SudoersConfiguration::writeDocument(const std::filesystem::path& path,
-                                         const std::string& content,
-                                         bool managedFile,
-                                         std::string& error) const {
-    AtomicWriteOptions options;
-    options.rejectSymlink = true;
-    if (managedFile) {
-        options.createIfMissing = true;
-        options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
-        options.fileMode = 0440;
-        if (options_.enforceOwnership) {
-            options.fileOwner = 0;
-            options.fileGroup = 0;
-        }
-    }
-    return AtomicFileWriter::write(path.string(), content, options, &error);
-}
-
 bool SudoersConfiguration::validate(std::string& error) const {
     if (options_.verifyProviderUnchanged && !options_.verifyProviderUnchanged(error)) return false;
     if (options_.validatorPath.empty()) {
@@ -1005,9 +573,22 @@ bool SudoersConfiguration::validate(std::string& error) const {
 
 std::vector<std::string> SudoersConfiguration::authenticationViolations() const {
     std::vector<std::string> result;
-    for (const Document& document : documents_) {
-        const RewriteResult rewrite = rewriteAuthentication(document.path, document.content);
-        result.insert(result.end(), rewrite.diagnostics.begin(), rewrite.diagnostics.end());
+    for (const auto& document : documents_) {
+        const auto lines = fic::sudoers::splitPhysicalLines(document.content);
+        std::vector<fic::sudoers::AuthenticationWrapper> frames;
+        std::string error;
+        if (!fic::sudoers::parseAuthenticationWrappers(lines, frames, error)) {
+            result.push_back(document.path.string() + ": " + error); continue;
+        }
+        for (const auto& entry : fic::sudoers::assembleSudoLogicalEntries(lines, true)) {
+            if (std::any_of(frames.begin(), frames.end(), [&](const auto& frame) {
+                return entry.firstPhysicalLine >= frame.first && entry.firstPhysicalLine <= frame.last;
+            })) continue;
+            fic::sudoers::AuthenticationRule rule;
+            if (!fic::sudoers::parseAuthenticationRule(entry, rule, error) || !rule.edits.empty())
+                result.push_back(document.path.string() + ":" + std::to_string(entry.firstPhysicalLine + 1) +
+                                 (error.empty() ? "" : ": " + error));
+        }
     }
     return result;
 }
@@ -1046,112 +627,4 @@ SudoersConfiguration::graphEntries() const {
                             line.text});
     }
     return entries;
-}
-
-SudoersOperationResult SudoersConfiguration::enforceAuthentication() {
-    SudoersOperationResult result;
-    std::string error;
-    if (!validate(error)) {
-        result.message = "Исходная конфигурация sudoers не прошла проверку: " + error;
-        return result;
-    }
-
-    std::vector<RewriteResult> rewrites;
-    rewrites.reserve(documents_.size());
-    bool hasUnsupportedRule = false;
-    for (const Document& document : documents_) {
-        rewrites.push_back(rewriteAuthentication(document.path, document.content));
-        hasUnsupportedRule = hasUnsupportedRule || rewrites.back().unsupported;
-    }
-    if (hasUnsupportedRule) {
-        for (const RewriteResult& rewrite : rewrites) {
-            result.diagnostics.insert(result.diagnostics.end(),
-                                      rewrite.diagnostics.begin(), rewrite.diagnostics.end());
-        }
-        result.message = "Обнаружены неподдерживаемые правила, sudoers не изменен";
-        return result;
-    }
-
-    for (const Document& document : documents_) {
-        if (!contentUnchanged(document, error)) {
-            result.message = error;
-            return result;
-        }
-    }
-
-    std::vector<std::pair<std::filesystem::path, std::string>> writtenDocuments;
-    const auto rollback = [&]() {
-        if (writtenDocuments.empty()) {
-            return true;
-        }
-        bool restored = true;
-        for (auto item = writtenDocuments.rbegin(); item != writtenDocuments.rend(); ++item) {
-            std::string restoreError;
-            if (!writeDocument(item->first, item->second, false, restoreError)) {
-                restored = false;
-                result.diagnostics.push_back("Ошибка отката " + item->first.string() +
-                                             ": " + restoreError);
-            }
-        }
-        if (restored) {
-            std::string validationError;
-            if (!validate(validationError)) {
-                restored = false;
-                result.diagnostics.push_back(
-                    "Конфигурация не прошла visudo после отката: " + validationError);
-            }
-        }
-        return restored;
-    };
-
-    bool anyChange = false;
-    for (size_t index = 0; index < documents_.size(); ++index) {
-        Document& document = documents_[index];
-        const RewriteResult& rewrite = rewrites[index];
-        if (rewrite.changes == 0) {
-            continue;
-        }
-        if (!contentUnchanged(document, error)) {
-            result.message = error;
-            result.changed = !rollback();
-            return result;
-        }
-        const std::string original = document.content;
-        if (!writeDocument(document.path, rewrite.content, false, error)) {
-            result.message = "Не удалось обновить " + document.path.string() + ": " + error;
-            result.changed = !rollback();
-            return result;
-        }
-        writtenDocuments.emplace_back(document.path, original);
-        if (!validate(error)) {
-            result.message = "Конфигурация не прошла visudo после изменения " +
-                             document.path.string() + ": " + error;
-            result.changed = !rollback();
-            return result;
-        }
-        document.content = rewrite.content;
-        result.diagnostics.insert(result.diagnostics.end(),
-                                  rewrite.diagnostics.begin(), rewrite.diagnostics.end());
-        anyChange = true;
-    }
-
-    if (!load(error)) {
-        result.message = "Не удалось перечитать sudoers после исправления: " + error;
-        result.changed = !rollback();
-        return result;
-    }
-    const auto remaining = authenticationViolations();
-    if (!remaining.empty()) {
-        result.message = "После исправления остались способы запуска без аутентификации";
-        result.diagnostics.insert(result.diagnostics.end(), remaining.begin(), remaining.end());
-        result.changed = !rollback();
-        return result;
-    }
-
-    result.ok = true;
-    result.changed = anyChange;
-    result.message = anyChange
-        ? "Все локальные правила sudoers требуют аутентификацию"
-        : "Нарушения требования аутентификации не обнаружены";
-    return result;
 }

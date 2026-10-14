@@ -1,3 +1,4 @@
+#include "SudoersAuthenticationTransaction.h"
 #include "modules/dac/sudo/Sudo.h"
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
@@ -268,17 +269,24 @@ bool Sudo::applyRequireAuthentication() {
         this->log("Не удалось выбрать visudo: " + resolverError, logLevel::ERROR);
         return false;
     }
-    SudoersConfiguration configuration(std::move(configurationOptions));
-    std::string loadError;
-    if (!configuration.load(loadError)) {
-        this->log("Не удалось проанализировать sudoers: " + loadError, logLevel::ERROR);
-        return false;
+    fic::sudoers::SudoProviderCapabilities capabilities;
+    if (!fic::sudoers::detectSudoProviderCapabilities(platformConfig_, executables_, capabilities, resolverError) ||
+        !verifyProviderWitness(capabilities, resolverError)) {
+        this->log(resolverError, logLevel::ERROR); return false;
     }
-
-    const SudoersOperationResult operation = configuration.enforceAuthentication();
-    for (const std::string& diagnostic : operation.diagnostics) {
-        this->log(diagnostic, operation.ok ? logLevel::WARN : logLevel::ERROR);
-    }
+    configurationOptions.validatorPath = capabilities.validator.string();
+    configurationOptions.verifyProviderUnchanged = [this, capabilities](std::string& error) {
+        fic::sudoers::SudoProviderCapabilities current;
+        if (!fic::sudoers::detectSudoProviderCapabilities(platformConfig_, executables_, current, error)) return false;
+        if (current.provider != capabilities.provider || current.version != capabilities.version ||
+            current.executable != capabilities.executable || current.validator != capabilities.validator) {
+            error = "Active provider changed during authentication transaction"; return false;
+        }
+        return true;
+    };
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(resolverError);
+    if (!journal) { this->log(resolverError, logLevel::ERROR); return false; }
+    const auto operation = fic::sudoers::AuthenticationTransaction(configurationOptions, *journal).reconcile();
     this->log(operation.message, operation.ok ? logLevel::INFO : logLevel::ERROR);
     return operation.ok;
 }

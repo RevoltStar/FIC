@@ -1,3 +1,4 @@
+#include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
 #include "rollback/RollbackExecutor.h"
 #include "rollback/ScopeTransition.h"
 
@@ -69,7 +70,8 @@ bool isSupportedSudoPolicy(const std::string& policyName) {
            policyName == "sudo_securepath" ||
            policyName == "sudo_timeout" ||
            policyName == "sudo_exempt_group_disable" ||
-           policyName == "sudo_disable_scoped_defaults";
+           policyName == "sudo_disable_scoped_defaults" ||
+           policyName == "sudo_require_authentication";
 }
 
 // The scoped-Defaults blocker is owned through FIC_SUDO_DISABLED wrappers,
@@ -348,6 +350,14 @@ MutationRollbackOutcome undoSudoScopedDefaults(
     };
     const std::vector<fic::rollback::SudoScopedDefaultsWrapperProof> proofs(
         undo.targetProofs.begin(), undo.targetProofs.end());
+    bool authenticationRequested = false, scopedRequested = false;
+    if (!deps.sudoRequestedState || !deps.sudoRequestedState(authenticationRequested, scopedRequested, error) ||
+        !fic::sudoers::AuthenticationTransaction(options, *journal).verifyOwnership(error) ||
+        !fic::sudoers::guardScopedAuthenticationRelease(configuration, proofs, authenticationRequested, error)) {
+        outcome.status = RollbackStatus::Conflict;
+        outcome.message = "Scoped release refused: " + error;
+        return outcome;
+    }
     const fic::sudoers::SudoScopedDefaultsTransactionResult restoration =
         transaction.release(proofs, hooks);
     outcome.message = restoration.operation.message;
@@ -642,6 +652,21 @@ MutationRollbackOutcome undoMutation(
             return undoSudoSetting(deps, record, *setting);
         }
     }
+    if (const auto* auth = std::get_if<UndoReleaseSudoAuthentication>(&record.undo.payload)) {
+        const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
+        std::string error;
+        auto* journal = DaemonMutationJournal::instance().tryGet(error);
+        if (!journal || !deps.sudoersOptions) return {record.id, record.resource, RollbackStatus::Failed, error};
+        fic::sudoers::AuthenticationHooks hooks;
+        hooks.requestedScopedState = [&](bool& scoped, std::string& e) {
+            bool authentication;
+            return deps.sudoRequestedState && deps.sudoRequestedState(authentication, scoped, e);
+        };
+        const auto release = fic::sudoers::AuthenticationTransaction(deps.sudoersOptions(), *journal, hooks).release(*auth);
+        const auto status = release.ok ? (release.targetMissing ? RollbackStatus::NothingToDo : RollbackStatus::Success)
+            : (release.conflict ? RollbackStatus::Conflict : RollbackStatus::Failed);
+        return {record.id, record.resource, status, release.message};
+    }
     if (const auto* scopedDefaults =
             std::get_if<UndoReleaseSudoScopedDefaults>(&record.undo.payload)) {
         if (record.undo.backend == MutationBackend::Sudo) {
@@ -848,9 +873,6 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
         return RollbackEnrollment::NotEnrolled;
     }
     if (policy.moduleName == "DAC" && policy.submoduleName == "SudoEdit") {
-        if (policy.policyName == "sudo_require_authentication") {
-            return RollbackEnrollment::Unsupported;
-        }
         return isSupportedSudoPolicy(policy.policyName)
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
@@ -1121,6 +1143,14 @@ RollbackReport checkUnrecordedOwnership(
         if (managed.found) {
             return provenanceUnavailable(policy);
         }
+        return report;
+    }
+    if (policy.moduleName == "DAC" && policy.submoduleName == "SudoEdit" && policy.policyName == fic::sudoers::kAuthenticationPolicy) {
+        const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
+        std::string error;
+        auto* journal = DaemonMutationJournal::instance().tryGet(error);
+        if (!journal || !deps.sudoersOptions ||
+            !fic::sudoers::AuthenticationTransaction(deps.sudoersOptions(), *journal).verifyOwnership(error)) return provenanceUnavailable(policy);
         return report;
     }
     if (isScopedDefaultsSudoPolicy(policy)) {
@@ -1584,6 +1614,7 @@ RollbackExecutorDeps productionRollbackDeps(
             outcome.error = error;
             return outcome;
         };
+    deps.sudoRequestedState = fic::sudoers::readSudoRequestedState;
     deps.pamPasswordRequestedState =
         [](bool& qualityRequested, bool& historyRequested,
            std::string& error) {

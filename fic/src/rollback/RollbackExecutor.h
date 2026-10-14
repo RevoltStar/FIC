@@ -85,6 +85,7 @@ struct RollbackExecutorDeps {
     std::filesystem::path sysctlRuntimeRoot;
     // SUDO backend configuration (managed sudoers etc.).
     std::function<SudoersConfigurationOptions()> sudoersOptions;
+    std::function<bool(bool& authentication, bool& scoped, std::string& error)> sudoRequestedState;
     // Test-only seam immediately BEFORE the final @includedir topology guard of a
     // SUDO rollback resolution, so a test can change directory membership in
     // the exact window the guard protects.

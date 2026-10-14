@@ -3,6 +3,7 @@
 
 #include <fic/policy/PolicyDependency.h>
 #include <modules/dac/sudo/SudoersDisabledWrapper.h>
+#include <modules/dac/sudo/SudoersAuthenticationWrapper.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -129,6 +130,12 @@ struct UndoReleaseSudoScopedDefaults {
     std::string policyName;
     std::vector<SudoScopedDefaultsWrapperProof> previousProofs;
     std::vector<SudoScopedDefaultsWrapperProof> targetProofs;
+};
+
+// Provenance only: foreign entry bytes live in FIC_AUTH frames.
+struct UndoReleaseSudoAuthentication {
+    std::vector<fic::sudoers::AuthenticationProof> previousProofs;
+    std::vector<fic::sudoers::AuthenticationProof> targetProofs;
 };
 
 enum class UserCreationConfigKind { UseraddDefaults, LoginDefs, Adduser };
@@ -365,6 +372,7 @@ using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoReleaseSudoGlobalDefault,
     UndoReleaseSudoScopedDefaults,
+    UndoReleaseSudoAuthentication,
     UndoRemoveSshManagedPolicy,
     UndoRemoveUserCreationManagedPolicy,
     UndoRemoveFirewallPolicy,

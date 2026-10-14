@@ -148,6 +148,64 @@ void physicalSpans() {
     ++executed;
 }
 
+void physicalSourceCoordinates() {
+    const auto lines = fic::sudoers::splitPhysicalLines(
+        "  alice ALL=(root) NOPASSWD: /usr/bin/true, \\\r\n\t  PASSWD: /usr/bin/printf literal\r\n");
+    const auto entries = fic::sudoers::assembleSudoLogicalEntries(lines, true);
+    check(entries.size() == 1, "mapped continuation remains one logical entry");
+    const auto& entry = entries.front();
+    check(entry.sourcePositions.size() == entry.text.size(), "every logical byte has coordinates");
+    unsigned synthetic = 0;
+    for (std::size_t index = 0; index < entry.text.size(); ++index) {
+        const auto& position = entry.sourcePositions[index];
+        if (!position.isPhysical()) {
+            ++synthetic;
+            check(entry.text[index] == ' ', "synthetic coordinate denotes only inserted separator");
+        } else {
+            check(position.physicalLine < lines.size() &&
+                  position.column < lines[position.physicalLine].text.size() &&
+                  lines[position.physicalLine].text[position.column] == entry.text[index],
+                  "source coordinate names the exact original byte");
+        }
+    }
+    check(synthetic == 1, "exactly one synthetic continuation separator");
+    const auto token = entry.text.rfind("PASSWD:");
+    check(token != std::string::npos && entry.sourcePositions[token].physicalLine == 1 &&
+          entry.sourcePositions[token].column == 3, "second-line tag retains tab/space source offset");
+    check(fic::sudoers::assembleSudoLogicalEntries(lines).front().sourcePositions.empty(),
+          "ordinary consumers do not allocate source coordinates");
+    ++executed;
+}
+
+void physicalTokenReplacement() {
+    using fic::sudoers::replaceSudoLogicalTokens;
+    const std::string original = "alice ALL=(root) NOPASSWD: /bin/echo NOPASSWD, \\\r\n\tNOPASSWD: /bin/true";
+    auto lines = fic::sudoers::splitPhysicalLines(original);
+    const auto entry = fic::sudoers::assembleSudoLogicalEntries(lines, true).front();
+    std::string error;
+    const auto first = entry.text.find("NOPASSWD:");
+    const auto last = entry.text.rfind("NOPASSWD:");
+    check(replaceSudoLogicalTokens(entry, {{first, "NOPASSWD", "PASSWD"},
+          {last, "NOPASSWD", "PASSWD"}}, lines, error), "two physical tag replacements accepted");
+    check(fic::sudoers::joinPhysicalLines(lines) ==
+          "alice ALL=(root) PASSWD: /bin/echo NOPASSWD, \\\r\n\tPASSWD: /bin/true",
+          "argument bytes, CRLF, continuation and missing final LF preserved");
+    lines = fic::sudoers::splitPhysicalLines(original);
+    check(!replaceSudoLogicalTokens(entry, {{first, "NOPASSWD", "PASSWD"},
+          {first + 1, "OPASSWD", "PASSWD"}}, lines, error), "overlapping edits refused");
+    check(fic::sudoers::joinPhysicalLines(lines) == original, "rejection is atomic");
+    lines[1].text.replace(1, 8, "PASSWD");
+    const auto drifted = fic::sudoers::joinPhysicalLines(lines);
+    check(!replaceSudoLogicalTokens(entry, {{first, "NOPASSWD", "PASSWD"},
+          {last, "NOPASSWD", "PASSWD"}}, lines, error), "late physical drift refused");
+    check(fic::sudoers::joinPhysicalLines(lines) == drifted, "earlier edit not applied on late drift");
+    auto split = fic::sudoers::splitPhysicalLines("NOPASS\\\nWD");
+    const auto splitEntry = fic::sudoers::assembleSudoLogicalEntries(split, true).front();
+    check(!replaceSudoLogicalTokens(splitEntry, {{0, splitEntry.text, "PASSWD"}}, split, error),
+          "synthetic continuation bytes cannot be rewritten");
+    ++executed;
+}
+
 } // namespace
 
 int main() {
@@ -159,6 +217,8 @@ int main() {
     crlfInput();
     noFinalNewline();
     physicalSpans();
+    physicalSourceCoordinates();
+    physicalTokenReplacement();
 
     std::cout << "Executed " << executed << " logical-entry contract tests\n";
     if (failures != 0) {

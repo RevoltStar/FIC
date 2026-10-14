@@ -304,6 +304,7 @@ void testNormalLifecycle() {
 
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         policy, kScopedDefaultsResource, deps);
     require(report.status == fic::rollback::RollbackStatus::Success,
@@ -648,6 +649,7 @@ void testMultipleFreshViolationsMapping() {
     }
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         policy, kScopedDefaultsResource, deps);
     require(report.status == fic::rollback::RollbackStatus::Success,
@@ -1237,6 +1239,7 @@ void testRollbackDurabilityBlocksResolution() {
 
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
 
     // The unwrap is published but the directory fsync never completes, so the
     // released state is NOT durable and the rollback must not be reported as
@@ -1410,6 +1413,7 @@ void testDuplicateIdBeforeReleaseCaptureRefused() {
 
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         policy, kScopedDefaultsResource, deps);
     require(report.status == fic::rollback::RollbackStatus::Conflict,
@@ -1584,6 +1588,7 @@ void testDuplicateInsertedAfterGraphLoadBeforeCapture() {
 
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     // The graph is ALREADY loaded; the duplicate appears only afterwards, inside
     // the window the beforeCapture seam models.
     std::string mainBefore = readFile(tree.root / "sudoers");
@@ -1630,6 +1635,7 @@ void runNonRegularProofTarget(bool asDirectory) {
 
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         policy, kScopedDefaultsResource, deps);
     require(report.status != fic::rollback::RollbackStatus::Success,
@@ -1667,6 +1673,7 @@ void testGenuinelyAbsentProofFile() {
 
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         policy, kScopedDefaultsResource, deps);
     require(report.status == fic::rollback::RollbackStatus::NothingToDo ||
@@ -2655,6 +2662,7 @@ void testCopiedWrapperViaNewDropinBeforeRollback() {
     require(rollbackConfiguration.load(loadError), loadError);
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [fixture]() { return fixture.options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     deps.beforeSudoRollbackTopologyGuard = [&fixture, &wrapperBody]() {
         // A COPY of wrapper A appears in a brand-new eligible member that no
         // capture path knows about.
@@ -3306,6 +3314,7 @@ void testMultilineByteExactRollback(const std::string& original,
 
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options]() { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     const auto report = fic::rollback::rollbackPolicyBeforeDisable(
         scopedPolicy(), kScopedDefaultsResource, deps);
     require(report.status == fic::rollback::RollbackStatus::Success,
@@ -3525,6 +3534,7 @@ void testUnprovenOtherWrapperPolicyBlocksScopedMutation() {
             "unproven other wrapper policy was ignored during scoped mutation");
     fic::rollback::RollbackExecutorDeps deps;
     deps.sudoersOptions = [options] { return options; };
+    deps.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     const auto released = fic::rollback::rollbackPolicyBeforeDisable(scopedPolicy(), kScopedDefaultsResource, deps);
     require(released.status != fic::rollback::RollbackStatus::Success &&
             released.status != fic::rollback::RollbackStatus::NothingToDo &&
@@ -3577,6 +3587,7 @@ void testSharedGlobalScopedApplyReleaseOrders() {
                     fic::sudoers::ManagedIncludeState::Present, "scoped wrapper displaced EOF include");
             fic::rollback::RollbackExecutorDeps rollback;
             rollback.sudoersOptions = [options] { return options; };
+    rollback.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
             const auto release = [&](const PolicyRef& policy, const std::string& resource) {
                 const auto result = fic::rollback::rollbackPolicyBeforeDisable(policy, resource, rollback);
                 require(result.status == fic::rollback::RollbackStatus::Success, result.message);
@@ -3623,6 +3634,7 @@ void testUnterminatedSharedPrefixConflictRecovery() {
     require(scoped.ok, scoped.message);
     fic::rollback::RollbackExecutorDeps rollback;
     rollback.sudoersOptions = [options] { return options; };
+    rollback.sudoRequestedState = [](bool& auth, bool& scope, std::string&) { auth = false; scope = false; return true; };
     const auto refused = fic::rollback::rollbackPolicyBeforeDisable(globalPolicy, "passwd_tries", rollback);
     require(refused.status == fic::rollback::RollbackStatus::Conflict,
             "unproven prefix separator release was not refused: " + refused.message);

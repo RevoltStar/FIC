@@ -60,7 +60,37 @@ bool validateSudoGlobalDefaultPayload(const UndoReleaseSudoGlobalDefault& payloa
     return true;
 }
 
+bool validateSudoAuthenticationPayload(const UndoReleaseSudoAuthentication& payload, std::string& error) {
+    auto validate = [&](const auto& proofs) {
+        std::set<std::string> ids;
+        for (const auto& proof : proofs) {
+            if (!fic::sudoers::isCanonicalSudoWrapperId(proof.wrapperId) ||
+                !fic::sudoers::isCanonicalSudoProofPath(proof.canonicalPath) ||
+                !fic::core::ContentDigest::isCanonicalSha256Hex(proof.originalDigest) ||
+                !fic::core::ContentDigest::isCanonicalSha256Hex(proof.replacementDigest) ||
+                !ids.insert(proof.wrapperId).second) return false;
+        }
+        return true;
+    };
+    if (payload.targetProofs.empty() || !validate(payload.previousProofs) || !validate(payload.targetProofs)) {
+        error = "Invalid SUDO authentication ownership proofs"; return false;
+    }
+    for (const auto& proof : payload.previousProofs)
+        if (std::find(payload.targetProofs.begin(), payload.targetProofs.end(), proof) == payload.targetProofs.end()) {
+            error = "Authentication refresh would orphan previous ownership"; return false;
+        }
+    return true;
+}
+
 bool validateSudoGlobalRecord(const MutationRecord& record, std::string& error) {
+    if (const auto* auth = std::get_if<UndoReleaseSudoAuthentication>(&record.undo.payload)) {
+        if (record.undo.backend != MutationBackend::Sudo || record.policy.moduleName != "DAC" ||
+            record.policy.submoduleName != "SudoEdit" || record.policy.policyName != fic::sudoers::kAuthenticationPolicy ||
+            record.resource != fic::sudoers::kAuthenticationResource) {
+            error = "SUDO authentication record identity mismatch"; return false;
+        }
+        return validateSudoAuthenticationPayload(*auth, error);
+    }
     const auto* payload = std::get_if<UndoReleaseSudoGlobalDefault>(&record.undo.payload);
     if (!payload) return true;
     const std::map<std::string, std::string> policies{
@@ -422,6 +452,16 @@ json serializeUndoAction(const UndoAction& action) {
             std::get_if<UndoRemoveManagedSetting>(&action.payload)) {
         value["key"] = setting->key;
         value["applied_value"] = setting->appliedValue;
+    } else if (const auto* auth = std::get_if<UndoReleaseSudoAuthentication>(&action.payload)) {
+        auto proofs = [](const auto& source) {
+            json result = json::array();
+            for (const auto& proof : source) result.push_back({
+                {"wrapper_id", proof.wrapperId}, {"canonical_path", proof.canonicalPath},
+                {"original_digest", proof.originalDigest}, {"replacement_digest", proof.replacementDigest}});
+            return result;
+        };
+        value["previous_proofs"] = proofs(auth->previousProofs);
+        value["target_proofs"] = proofs(auth->targetProofs);
     } else if (const auto* scopedDefaults =
                    std::get_if<UndoReleaseSudoScopedDefaults>(&action.payload)) {
         value["policy"] = scopedDefaults->policyName;
@@ -1291,6 +1331,22 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
+    if (actionName == "release_sudo_authentication" && backend == MutationBackend::Sudo) {
+        UndoReleaseSudoAuthentication payload;
+        auto read = [&](const char* field, auto& out) {
+            auto it = value.find(field);
+            if (it == value.end() || !it->is_array()) { error = "Missing authentication proof array"; return false; }
+            for (const auto& item : *it) {
+                if (!item.is_object()) { error = "Invalid authentication proof object"; return false; }
+                out.push_back({item.value("wrapper_id", ""), item.value("canonical_path", ""),
+                    item.value("original_digest", ""), item.value("replacement_digest", "")});
+            }
+            return true;
+        };
+        if (!read("previous_proofs", payload.previousProofs) || !read("target_proofs", payload.targetProofs) ||
+            !validateSudoAuthenticationPayload(payload, error)) return false;
+        action.payload = std::move(payload); return true;
+    }
     if (actionName == "release_sudo_scoped_defaults" &&
         backend == MutationBackend::Sudo) {
         UndoReleaseSudoScopedDefaults payload;
@@ -2035,6 +2091,8 @@ std::string undoActionTypeName(const UndoAction& action) {
         return "restore_desktop_scalar";
     if (std::holds_alternative<ScopeTransitionCheckpoint>(action.payload))
         return "scope_transition_checkpoint";
+    if (std::holds_alternative<UndoReleaseSudoAuthentication>(action.payload))
+        return "release_sudo_authentication";
     if (std::holds_alternative<UndoReleaseSudoGlobalDefault>(action.payload))
         return "release_sudo_global_default";
     if (std::holds_alternative<UndoRemoveManagedSetting>(action.payload)) {
@@ -3098,6 +3156,13 @@ bool MutationJournal::prepareMutation(MutationRecord record,
     }
     if (record.undo.backend == MutationBackend::Sudo) {
         if (!validateSudoGlobalRecord(record, error)) return false;
+        if (const auto* auth = std::get_if<UndoReleaseSudoAuthentication>(&record.undo.payload)) {
+            const bool existing = std::any_of(records_.begin(), records_.end(), [&](const auto& current) {
+                return current.isActive() && current.policy == record.policy && current.resource == record.resource;
+            });
+            if (!existing && !auth->previousProofs.empty()) { error = "Fresh authentication record claims previous ownership"; return false; }
+        }
+
         const auto* sudoPayload = std::get_if<UndoReleaseSudoScopedDefaults>(
             &record.undo.payload);
         if (sudoPayload != nullptr) {
@@ -3387,6 +3452,16 @@ bool MutationJournal::prepareMutation(MutationRecord record,
                             : nextGlobal->previousLine != oldGlobal->appliedLine)) {
                         error = "SUDO global refresh conflicts with durable ownership";
                         return false;
+                    }
+                }
+                const auto* nextAuth = std::get_if<UndoReleaseSudoAuthentication>(&record.undo.payload);
+                const auto* oldAuth = std::get_if<UndoReleaseSudoAuthentication>(&existing.undo.payload);
+                if (nextAuth || oldAuth) {
+                    if (!nextAuth || !oldAuth || existing.status == MutationStatus::RollbackFailed ||
+                        (existing.status == MutationStatus::Prepared
+                            ? nextAuth->previousProofs != oldAuth->previousProofs || nextAuth->targetProofs != oldAuth->targetProofs
+                            : nextAuth->previousProofs != oldAuth->targetProofs)) {
+                        error = "Authentication refresh conflicts with durable ownership"; return false;
                     }
                 }
                 const auto* newSudo = std::get_if<
@@ -3732,6 +3807,69 @@ bool MutationJournal::normalizeSudoScopedDefaultsPreparedToPrevious(
     record->error.clear();
     record->updatedAtEpoch = currentEpochSeconds();
     if (!validateSudoScopedDefaultsUndoPayload(*payload, error)) {
+        *record = previous;
+        return false;
+    }
+    const PersistOutcome outcome = persist(error);
+    if (outcome == PersistOutcome::Persisted) {
+        return true;
+    }
+    if (outcome == PersistOutcome::NotInstalled) {
+        *record = previous;
+        return false;
+    }
+    // Indeterminate: keep the installed logical state and poison the journal,
+    // exactly like the other normalization APIs.
+    health_ = JournalHealth::Indeterminate;
+    return false;
+}
+
+bool MutationJournal::normalizeSudoAuthenticationPreparedToPrevious(
+    MutationId id,
+    const std::vector<fic::sudoers::AuthenticationProof>& provenPrevious,
+    std::string& error) {
+    if (!loaded_) {
+        error = "Mutation journal не загружен";
+        return false;
+    }
+    if (health_ == JournalHealth::Indeterminate) {
+        error = "Mutation journal в состоянии Indeterminate: normalization "
+                "запрещена до успешного reload";
+        return false;
+    }
+    MutationRecord* record = find(id);
+    if (record == nullptr || record->status != MutationStatus::Prepared ||
+        record->undo.backend != MutationBackend::Sudo ||
+        record->resource != fic::sudoers::kAuthenticationResource) {
+        error = "SUDO refresh normalization требует существующую Prepared-запись "
+                "для канонического authentication ресурса";
+        return false;
+    }
+    auto* payload = std::get_if<UndoReleaseSudoAuthentication>(
+        &record->undo.payload);
+    // This API exists ONLY for a refresh: with an empty previous side there is
+    // no pre-existing ownership to preserve and a plain discard is correct.
+    if (payload == nullptr || payload->previousProofs.empty() ||
+        payload->previousProofs != provenPrevious) {
+        error = "SUDO refresh normalization does not match the proven "
+                "previous-side provenance";
+        return false;
+    }
+    if (record->policy.moduleName != fic::sudoers::kSudoModuleName ||
+        record->policy.submoduleName != fic::sudoers::kSudoSubmoduleName ||
+        record->policy.policyName != fic::sudoers::kAuthenticationPolicy) {
+        error = "SUDO refresh normalization: несовпадение policy identity "
+                "(fail closed)";
+        return false;
+    }
+    const MutationRecord previous = *record;
+    // Canonical post-state: the surviving ownership IS the target again.
+    payload->targetProofs = provenPrevious;
+    payload->previousProofs.clear();
+    record->status = MutationStatus::Applied;
+    record->error.clear();
+    record->updatedAtEpoch = currentEpochSeconds();
+    if (!validateSudoAuthenticationPayload(*payload, error)) {
         *record = previous;
         return false;
     }

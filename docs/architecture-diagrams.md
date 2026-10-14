@@ -578,11 +578,12 @@ flowchart LR
     effective --> preflight[whole-graph preflight]
     preflight --> strategy{remediation strategy}
     strategy -->|scalar Defaults| managed[/etc/sudoers.d/99-fic.conf]
-    strategy -->|authentication bypass| origin[atomic source token replacement]
+    strategy -->|authentication bypass| origin[typed FIC_AUTH original and replacement frames]
     strategy -->|scoped Defaults| wrappers[FIC_SUDO_DISABLED wrappers]
     managed --> visudo[verified visudo validation]
     managed --> provenance[durable global ownership journal]
-    origin --> visudo
+    origin --> authJournal[Prepared ownership and selective compensation]
+    authJournal --> visudo
     wrappers --> visudo
     visudo --> reload[reload graph and verify postcondition]
     visudo -->|failure| rollback[compensation or retained ownership provenance]
@@ -597,7 +598,7 @@ flowchart LR
 
 #### Модели владения политик SUDO
 
-Существуют две разные модели владения, и их нельзя смешивать:
+Global Defaults, scoped suppression и authentication frames имеют независимое владение:
 
 * **Managed scalar Defaults.** `sudo_env_reset`, `sudo_passwd_tries`,
   `sudo_securepath`, `sudo_timeout`, `sudo_exempt_group_disable` управляют
@@ -616,6 +617,14 @@ flowchart LR
   Shared global ownership проверяется до мутаций и journal resolution;
   scoped release сохраняет чужие global assignments. Подробности порядка
   release для unterminated main и Conflict recovery — в SUDO rollback.
+
+* **Authentication rewrite.** `sudo_require_authentication` сохраняет original
+  и derived active replacement в `FIC_AUTH` frames. Journal независимо
+  связывает ID/path с обоими digest. Typed parser и physical renderer меняют
+  только auth tokens; compensation/recovery/release сохраняют foreign bytes.
+  Requested другой policy защищает rollback даже при no-record состоянии;
+  независимые source owners не вкладываются. Подробности:
+  [authentication rollback](rollback.md#sudo-authentication-этап-c).
 
 Диапазон include-подграммы, который понимает FIC, и fail-closed: директива
 `@include` / `@includedir` / `#include` / `#includedir` распознаётся **до**

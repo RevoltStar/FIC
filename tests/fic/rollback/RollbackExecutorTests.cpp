@@ -1,3 +1,5 @@
+#include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
+#include "modules/dac/sudo/SudoersAuthenticationGrammar.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
 #include "rollback/PamRollback.h"
@@ -413,8 +415,8 @@ void testEnrollmentMatrix() {
             "known supported sudo policies stay enrolled");
     require(rollbackEnrollment({"DAC", "SudoEdit",
                                 "sudo_require_authentication"}) ==
-                RollbackEnrollment::Unsupported,
-            "sudo_require_authentication must refuse automatic rollback");
+                RollbackEnrollment::Supported,
+            "authentication typed journal rollback must be enrolled");
     require(rollbackEnrollment({"DAC", "SudoEdit", "sudo_future_policy"}) ==
                 RollbackEnrollment::Unsupported,
             "unknown future sudo policy must not be auto-enrolled");
@@ -1102,11 +1104,53 @@ void testModeAndOwnerProductionDisableFlowIsReleaseOnly() {
             "DAC disable created rollback records");
 }
 
+void testAuthenticationProductionDisable() {
+    TempJournal tree;
+    JournalOverride overrideGuard(tree.tree.root / "journal.json");
+    SudoersConfigurationOptions options;
+    options.mainPath = tree.tree.root / "sudoers";
+    options.managedPath = tree.tree.root / "99-fic.conf";
+    options.enforceOwnership = false;
+    const std::string original = "Defaults:alice !authenticate\r\n"
+        "alice ALL=(root) NOPASSWD: /bin/echo allowed, \\\n    /bin/true";
+    writeFile(options.mainPath, original);
+    std::string error;
+    auto* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    const auto applied = fic::sudoers::AuthenticationTransaction(options, *journal).reconcile();
+    require(applied.ok, applied.message);
+    const PolicyRef auth{"DAC", "SudoEdit", "sudo_require_authentication"};
+    const auto owned = readFile(options.mainPath);
+    bool scopeRequested = true;
+    RollbackExecutorDeps deps;
+    deps.sudoersOptions = [options] { return options; };
+    deps.sudoRequestedState = [&](bool& a, bool& scoped, std::string&) { a = true; scoped = scopeRequested; return true; };
+    auto report = rollbackPolicyBeforeDisable(auth, fic::sudoers::kAuthenticationResource, deps);
+    require(report.status == RollbackStatus::Conflict && readFile(options.mainPath) == owned,
+            "production disable ignored requested scope without its record");
+    require(journal->activeRecords(auth).front().status == MutationStatus::RollbackFailed,
+            "failed disable lost authentication provenance");
+    scopeRequested = false;
+    report = rollbackPolicyBeforeDisable(auth, fic::sudoers::kAuthenticationResource, deps);
+    require(report.rollbackCompleted() && readFile(options.mainPath) == original && journal->activeRecords(auth).empty(),
+            "production auth disable did not restore exact bytes: " + report.message);
+    report = rollbackPolicyBeforeDisable(auth, fic::sudoers::kAuthenticationResource, deps);
+    require(report.status == RollbackStatus::NothingToDo, "no-record auth disable failed");
+    std::string replacement; bool scoped;
+    require(fic::sudoers::authenticationReplacement(original.substr(original.find("alice ALL=")), replacement, scoped, error), error);
+    auto frame = fic::sudoers::makeAuthenticationWrapper(fic::sudoers::generateSudoWrapperMutationId(0),
+        original.substr(original.find("alice ALL=")), replacement);
+    writeFile(options.mainPath, fic::sudoers::joinPhysicalLines(frame));
+    const auto orphan = readFile(options.mainPath);
+    report = rollbackPolicyBeforeDisable(auth, fic::sudoers::kAuthenticationResource, deps);
+    require(!report.rollbackCompleted() && readFile(options.mainPath) == orphan, "orphan auth ownership adopted by disable");
+}
+
 void testUnsupportedPolicyRefusesDisable() {
     TempJournal journal;
     JournalOverride overrideGuard(journal.tree.root / "journal.json");
     const RollbackReport report = rollbackPolicyBeforeDisable(
-        {"DAC", "SudoEdit", "sudo_require_authentication"}, "",
+        {"DAC", "SudoEdit", "sudo_future_policy"}, "",
         RollbackExecutorDeps{});
     require(report.status == RollbackStatus::Unsupported,
             "enrolled but unsupported policy must refuse disable");
@@ -2994,6 +3038,7 @@ int main(int argc, char** argv) {
          testPasswordAgingOperationalNotEnrolledLifecycle},
         {"mode-and-owner production disable is release-only",
          testModeAndOwnerProductionDisableFlowIsReleaseOnly},
+        {"authentication production disable and requested-state guard", testAuthenticationProductionDisable},
         {"unsupported policy refuses disable", testUnsupportedPolicyRefusesDisable},
         {"sysctl rollback removes managed key and moves runtime",
          testSysctlRollbackRemovesManagedKeyAndMovesRuntime},
