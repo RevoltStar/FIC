@@ -15,6 +15,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <utility>
@@ -28,6 +29,16 @@ using fic::rollback::MutationJournal;
 using fic::rollback::MutationRecord;
 using fic::rollback::MutationStatus;
 using fic::rollback::RollbackEnrollment;
+
+// Removing a member initializer alone still permits omission in an aggregate.
+// Both default construction and a five-field spec must remain ill-formed.
+static_assert(!std::is_aggregate_v<SharedLoginDefsPolicySpec>);
+static_assert(!std::is_default_constructible_v<SharedLoginDefsPolicySpec>);
+static_assert(!std::is_constructible_v<SharedLoginDefsPolicySpec,
+    const char*, const char*, const char*, ValueDomain, Relation>);
+static_assert(std::is_constructible_v<SharedLoginDefsPolicySpec,
+    const char*, const char*, const char*, ValueDomain, Relation,
+    OwnershipRequirement>);
 
 void require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
@@ -144,6 +155,16 @@ void testEffectiveReader() {
 }
 
 void testPolicyTable() {
+    for (const char* name : {"user_create_home", "user_create_private_group",
+             "password_min_age_days", "password_max_age_days",
+             "password_expiration_warning_days", "regular_user_uid_min",
+             "regular_user_uid_max"}) {
+        const auto* spec = findSharedLoginDefsPolicySpec(name);
+        require(spec && spec->ownership == OwnershipRequirement::OwnWhileEnabled,
+                std::string("explicit ownership requirement missing: ") + name);
+    }
+    require(findSharedLoginDefsPolicySpec("unknown_policy") == nullptr,
+            "unknown policy received an ownership fallback");
     std::string error;
     PolicyRoute route;
     require(policyRoute("/etc/login.defs", aging("password_max_age_days"),

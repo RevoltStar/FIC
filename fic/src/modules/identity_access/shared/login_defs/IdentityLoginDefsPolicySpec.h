@@ -37,7 +37,7 @@ enum class ValueDomain {
 
 // Enabled enrolled policies establish ownership even for compliant foreign
 // defaults. Only a proven owned repeat may be a zero-write operation.
-enum class OwnershipRequirement { ObserveCompliantForeign, OwnWhileEnabled };
+enum class OwnershipRequirement { OwnWhileEnabled };
 
 struct SharedLoginDefsPolicySpec {
     const char* policyName;
@@ -45,7 +45,16 @@ struct SharedLoginDefsPolicySpec {
     const char* key;       // managed login.defs key
     ValueDomain domain;
     Relation relation;
-    OwnershipRequirement ownership = OwnershipRequirement::ObserveCompliantForeign;
+    OwnershipRequirement ownership;
+
+    // A required constructor argument also prevents aggregate initialization
+    // from silently value-initializing an omitted ownership field.
+    constexpr SharedLoginDefsPolicySpec(
+        const char* name, const char* owner, const char* managedKey,
+        ValueDomain valueDomain, Relation nativeRelation,
+        OwnershipRequirement requirement)
+        : policyName(name), submodule(owner), key(managedKey),
+          domain(valueDomain), relation(nativeRelation), ownership(requirement) {}
 };
 
 inline const SharedLoginDefsPolicySpec* findSharedLoginDefsPolicySpec(

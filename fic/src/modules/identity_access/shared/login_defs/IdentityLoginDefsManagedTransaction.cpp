@@ -349,19 +349,6 @@ bool applyManagedPolicy(const std::string& loginDefsPath,
         error = "unrecorded shared login.defs ownership (fail closed)";
         return false;
     }
-    const auto* ownershipSpec = findSharedLoginDefsPolicySpec(policy.policyName);
-    if (!active.has_value() && ownershipSpec != nullptr &&
-        ownershipSpec->ownership == OwnershipRequirement::ObserveCompliantForeign) {
-        std::string relationError;
-        if (currentEffective.has_value() && *currentEffective == value &&
-            relationsValidInCandidate(before.content, policy,
-                                      semantics.missingKey, relationError)) {
-            return true; // compliant foreign state is never adopted
-        }
-        // A compliant-looking value with provably invalid native relations
-        // still requires the FIC-owned write below; fall through.
-    }
-
     std::string candidate;
     bool changed = false;
     if (!upsertPolicyBlock(before.content, route.policyRef, route.key, value,
