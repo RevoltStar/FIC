@@ -1,4 +1,5 @@
 #include "modules/identity_access/shared/login_defs/IdentityLoginDefsManagedConfig.h"
+#include "modules/identity_access/shared/login_defs/IdentityLoginDefsPolicySpec.h"
 #include "modules/identity_access/shared/login_defs/IdentityLoginDefsManagedTransaction.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
@@ -308,17 +309,96 @@ void testApplyLifecycle(const fs::path& root) {
     setBeforeIdentityLoginDefsWriteHookForTests({});
     require(readFile(path) == beforeNoop, "no-op changed the file");
 
-    // Compliant foreign state is never adopted (no container, no record).
-    writeFile(path, "PASS_MIN_DAYS 3\nPASS_MAX_DAYS 99999\n");
+    // Fresh compliance still establishes independent durable ownership.
+    const std::string foreign = "PASS_MIN_DAYS 3\nPASS_MAX_DAYS 99999\n";
+    writeFile(path, foreign);
     useJournal(root, "login-defs-foreign");
     auto& foreignJournal = journal();
     require(applyManagedPolicy(path.string(), aging("password_min_age_days"),
                 "3", foreignJournal, {}, error), error);
-    require(readFile(path) == "PASS_MIN_DAYS 3\nPASS_MAX_DAYS 99999\n",
-            "compliant foreign state was adopted into FIC ownership");
-    require(foreignJournal.activeRecords(aging("password_min_age_days"))
-                    .empty(),
-            "compliant foreign state was journaled");
+    require(readFile(path).rfind(foreign, 0) == 0 &&
+                containsSubBlock(readFile(path), aging("password_min_age_days"),
+                                 "PASS_MIN_DAYS 3"),
+            "fresh compliant foreign state did not gain an independent block");
+    require(foreignJournal.activeRecords(aging("password_min_age_days")).size() == 1,
+            "fresh compliant ownership was not journaled");
+}
+
+void testPasswordAgingMandatoryOwnership(const fs::path& root) {
+    struct Case { const char* policy; const char* key; const char* first; const char* next; };
+    const Case cases[] = {
+        {"password_min_age_days", "PASS_MIN_DAYS", "1", "2"},
+        {"password_max_age_days", "PASS_MAX_DAYS", "90", "100"},
+        {"password_expiration_warning_days", "PASS_WARN_AGE", "8", "9"},
+        {"regular_user_uid_min", "UID_MIN", "1100", "1200"},
+        {"regular_user_uid_max", "UID_MAX", "59000", "58000"},
+    };
+    const fs::path path = root / "etc/login.defs";
+    for (const auto& c : cases) for (bool compliant : {false, true}) {
+        const auto policy = aging(c.policy);
+        const auto* spec = findSharedLoginDefsPolicySpec(c.policy);
+        require(spec && spec->ownership == OwnershipRequirement::OwnWhileEnabled,
+                "scalar ownership requirement is not explicit");
+        const std::string foreign = "# foreign bytes\nPASS_MIN_DAYS 0\n" + kForeign +
+            (compliant ? "  " + std::string(c.key) + "\t" + c.first + "\n" : "");
+        writeFile(path, foreign);
+        useJournal(root, std::string(c.policy) + (compliant ? "-matching" : "-different"));
+        auto& j = journal(); std::string error;
+        const auto peer = creation("user_create_home");
+        require(applyManagedPolicy(path.string(), peer, "no", j, {}, error), error);
+        int writes = 0;
+        setBeforeIdentityLoginDefsWriteHookForTests([&] { ++writes; });
+        require(applyManagedPolicy(path.string(), policy, c.first, j, {}, error), error);
+        require(writes == 1 && j.activeRecords(policy).size() == 1,
+                "fresh scalar apply did not durably acquire ownership");
+        const std::string owned = readFile(path);
+        const std::string journalBefore = readFile(root / ("data/" + std::string(c.policy) + (compliant ? "-matching" : "-different") + ".json"));
+        require(owned.rfind(foreign, 0) == 0 && containsSubBlock(owned, policy,
+                    std::string(c.key) + " " + c.first), "foreign bytes modified or block absent");
+        writes = 0;
+        require(applyManagedPolicy(path.string(), policy, c.first, j, {}, error), error);
+        require(writes == 0 && readFile(path) == owned && readFile(root / ("data/" + std::string(c.policy) + (compliant ? "-matching" : "-different") + ".json")) == journalBefore,
+                "owned repeat physically changed state");
+        require(applyManagedPolicy(path.string(), policy, c.next, j, {}, error), error);
+        require(writes == 1, "refresh was not one replacement");
+        const std::string append = std::string(c.key) + " " + c.first + "\n";
+        writeFile(path, readFile(path) + append);
+        writes = 0;
+        require(applyManagedPolicy(path.string(), policy, c.next, j, {}, error), error);
+        require(writes == 1 && readFile(path).rfind(foreign + append, 0) == 0,
+                "external append not preserved by recanonicalization");
+        setBeforeIdentityLoginDefsWriteHookForTests({});
+        const auto records = j.activeRecords(policy);
+        require(records.size() == 1 && releaseManagedPolicy(path.string(), records.front(),
+                    j, {}, error) == ReleaseStatus::Success, error);
+        require(j.setStatus(records.front().id, MutationStatus::RolledBack, error), error);
+        require(readFile(path) == foreign + append + std::string(kBlockBegin) + "\n" +
+                    canonicalPolicyBlock("IDENTITY_ACCESS/USER_CREATION/user_create_home", "CREATE_HOME", "no") +
+                    kBlockEnd + "\n", "release damaged peer/foreign bytes");
+        std::optional<std::string> effective;
+        require(effectiveValue(readFile(path), c.key, effective, error) && effective == c.first,
+                "release failed to reveal current foreign value");
+        // Every newly mandatory owner rejects edits and orphan provenance.
+        require(applyManagedPolicy(path.string(), policy, c.first, j, {}, error), error);
+        auto drift = readFile(path);
+        const std::string line = "\n" + std::string(c.key) + " " + c.first + "\n";
+        const auto blockAt = drift.find(std::string(kPolicyBegin) +
+            "IDENTITY_ACCESS/PASSWORD_AGING/" + c.policy + "@");
+        const auto lineAt = drift.find(line, blockAt);
+        require(lineAt != std::string::npos, "new owner line missing");
+        drift.replace(lineAt, line.size(), "\n" + std::string(c.key) + " " + c.next + "\n");
+        writeFile(path, drift);
+        error.clear();
+        require(!applyManagedPolicy(path.string(), policy, c.next, j, {}, error),
+                "manual owned edit was adopted");
+        const auto driftRecords = j.activeRecords(policy);
+        require(releaseManagedPolicy(path.string(), driftRecords.front(), j, {}, error) == ReleaseStatus::Conflict &&
+                    readFile(path) == drift, "release changed manually edited ownership");
+        useJournal(root, std::string(c.policy) + (compliant ? "-orphan-matching" : "-orphan-different"));
+        auto& orphan = journal(); error.clear();
+        require(inspectUnrecordedState(path.string(), policy, orphan, error) == InspectStatus::Conflict,
+                "orphan shared-domain ownership was accepted");
+    }
 }
 
 void testReleaseAndRelations(const fs::path& root) {
@@ -1276,6 +1356,7 @@ int main() {
         testGrammar();
         testValueValidation();
         testApplyLifecycle(root);
+        testPasswordAgingMandatoryOwnership(root);
         testReleaseAndRelations(root);
         testUidRelationFullRange(root);
         testDriftAndOrphans(root);

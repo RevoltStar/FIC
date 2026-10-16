@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Real shadow/chage gate. Writes accounts ONLY inside disposable containers."""
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+assert os.geteuid() == 0 and (Path('/.dockerenv').exists() or Path('/run/.containerenv').exists())
+driver, row = sys.argv[1:3]
+checks = 0
+
+def check(condition, message):
+    global checks
+    assert condition, message
+    checks += 1
+    print('PASS', message, flush=True)
+
+def run(args, expected=0):
+    p = subprocess.run(list(map(str, args)), text=True, capture_output=True)
+    assert p.returncode == expected, (args, p.returncode, p.stdout, p.stderr)
+    return p.stdout
+
+def invoke(action, policy='unused', value=None, expected=0, cut=None):
+    args = [driver, action, policy]
+    if value is not None:
+        args.append(value)
+    if cut:
+        args.append(cut)
+    return run(args, expected)
+
+def invoke_json(*args, **kwargs):
+    return json.loads(invoke(*args, **kwargs).strip().splitlines()[-1])
+
+def apply(policy, value, writes):
+    out = invoke_json('apply', policy, value)
+    check(out['ok'] and out['writes'] == writes and out['active_records'] == 1 and out['applied_record'],
+          f'{policy} apply writes={writes} durable ownership')
+
+def snapshot():
+    return invoke_json('snapshot')
+
+login = Path('/etc/login.defs')
+original = login.read_text()
+keys = ['PASS_MIN_DAYS', 'PASS_MAX_DAYS', 'PASS_WARN_AGE', 'UID_MIN', 'UID_MAX']
+base = ''.join(l for l in original.splitlines(keepends=True)
+               if not re.match(r'^\s*(?:' + '|'.join(keys) + r')(?:\s|$)', l))
+if not base.endswith('\n'):
+    base += '\n'
+values = ['1', '90', '7', '30000', '40000']
+
+def foreign(vals=values, missing=()):
+    return base + '# native PASSWORD_AGING foreign fixture\n' + ''.join(
+        f'{k} {v}\n' for k, v in zip(keys, vals) if k not in missing)
+
+def create(name, uid=None):
+    args = ['useradd', '-M', '-N', '-s', '/bin/sh']
+    if uid is not None:
+        args += ['-u', str(uid)]
+    run(args + [name])
+
+# Retain installed version evidence and native manpage evidence if available.
+version = run(['sh', '-c', "dpkg-query -W -f='${Package}=${Version}\\n' passwd 2>/dev/null || rpm -q shadow-utils"])
+print(version, flush=True)
+profile = invoke_json('profile')
+check(profile['missing'] == [-1, -1, -1], 'profile missing-key expectations explicit')
+check(profile['tcb'] == (row == 'alt-p11'), 'native shadow/TCB backend')
+for index, missing in enumerate([(), *[(k,) for k in keys[:3]], tuple(keys[:3])]):
+    login.write_text(foreign(missing=missing))
+    user = f'ficmissing{index}'
+    create(user, 45000 + index)
+    actual = snapshot()[user][1:]
+    expected = [-1 if k in missing else int(v) for k, v in zip(keys[:3], values)]
+    check(actual == expected, f'native missing {missing}: {actual}')
+    target = Path('/etc/tcb') / user / 'shadow' if row == 'alt-p11' else Path('/etc/shadow')
+    check(target.exists(), f'account storage {target}')
+
+# All five fresh matching and differing applies, zero-write repeats, refresh,
+# EOF recanonicalization, per-element release and real process cuts.
+policies = ['password_min_age_days', 'password_max_age_days', 'password_expiration_warning_days',
+            'regular_user_uid_min', 'regular_user_uid_max']
+next_values = ['2', '100', '9', '31000', '39000']
+root = Path('/var/lib/fic-password-aging-native')
+journal = root / 'journal.json'
+for i, policy in enumerate(policies):
+    for matching in [False, True]:
+        # Fresh journal + bytes, while preserving peer ownership within each lifecycle.
+        if root.exists():
+            shutil.rmtree(root)
+        foreign_values = values.copy()
+        if not matching:
+            foreign_values[i] = next_values[i]
+        text = foreign(foreign_values)
+        login.write_text(text)
+        invoke('peer')
+        apply(policy, values[i], 1)
+        owned = login.read_bytes()
+        provenance = journal.read_bytes()
+        versions = [(p.stat().st_ino, p.stat().st_mtime_ns, p.stat().st_ctime_ns) for p in [login, journal]]
+        apply(policy, values[i], 0)
+        check(login.read_bytes() == owned and journal.read_bytes() == provenance and
+              versions == [(p.stat().st_ino, p.stat().st_mtime_ns, p.stat().st_ctime_ns) for p in [login, journal]], 'repeat changed no bytes/journal')
+        apply(policy, next_values[i], 1)
+        appended = f'\t{keys[i]} {values[i]}\n'
+        with login.open('a') as f:
+            f.write(appended)
+        apply(policy, next_values[i], 1)
+        check(login.read_text().startswith(text + appended), 'foreign append preserved exactly at recanonicalization')
+        invoke('release', policy)
+        released = login.read_text()
+        check(f'PASSWORD_AGING/{policy}@' not in released and 'USER_CREATION/user_create_home@' in released,
+              'element release preserves USER_CREATION peer')
+        check(released.startswith(text + appended), 'release preserves current foreign bytes')
+    for cut in ['before', 'after']:
+        shutil.rmtree(root)
+        login.write_text(foreign())
+        invoke('crash-apply', policy, values[i], expected=86, cut=cut)
+        # Next actual process loads Prepared and completes/discards as appropriate.
+        apply(policy, values[i], 1 if cut == 'before' else 0)
+        invoke('release', policy)
+        check(login.read_text() == foreign(), f'{policy} recovery/release after process cut {cut}')
+
+# Install all five together and verify actual useradd values + UID allocation.
+shutil.rmtree(root)
+login.write_text(foreign())
+for policy, value in zip(policies, ['2', '80', '8', '31000', '32000']):
+    apply(policy, value, 1)
+create('ficfuture')
+check(snapshot()['ficfuture'][1:] == [2, 80, 8], 'real future account inherits FIC-effective days')
+uid = next(int(l.split(':')[2]) for l in Path('/etc/passwd').read_text().splitlines() if l.startswith('ficfuture:'))
+check(31000 <= uid <= 32000, 'real useradd uses effective UID range')
+
+# Operational policies use ALL current local records, real chage and independent
+# root-equivalent identities. Keep fixture users outside regular scope isolated.
+journal_before_operations = journal.read_bytes()
+create('ficage1', 31010)
+create('ficage2', 31011)
+create('ficoutside', 42000)
+for name in ['ficage1', 'ficage2']:
+    run(['chage', '-m', '0', '-M', '99999', '-W', '0', name])
+bulk = 'password_aging_apply_to_existing_accounts'
+root_policy = 'password_aging_enforce_for_root'
+before = snapshot()
+failed = invoke_json('fail-second', bulk, expected=1)
+check(failed['calls'] == ['ficage1', 'ficage2'] and not failed['ok'], 'native middle failure stops and returns Failed')
+check('changed_before_failure=ficage1' in ''.join(p.read_text(errors='replace') for p in (root / 'logs').rglob('*.txt')),
+      'Logger reports processed user before failure')
+check(snapshot()['ficage1'][1:] == [2, 80, 8], 'first real chage completed before failure')
+run(['chage', '-M', '40', 'ficage1'])
+retry = invoke_json('apply', bulk)
+check(retry['calls'] == ['ficage1', 'ficage2'], 'retry rereads drift and retries failed account')
+after = snapshot()
+check(all(after[n][1:] == [2, 80, 8] and after[n][0] == before[n][0] for n in ['ficage1', 'ficage2']),
+      'native chage preserves sp_lstchg')
+check(after['ficoutside'] == before['ficoutside'], 'outside UID scope unchanged')
+check(invoke_json('apply', bulk)['calls'] == [], 'compliant regular accounts skip chage')
+run(['chage', '-M', '40', 'ficage2'])
+check(invoke_json('apply', bulk)['calls'] == ['ficage2'], 'single drift changes one account')
+run(['useradd', '-o', '-u', '0', '-M', '-N', '-s', '/bin/sh', 'ficrescue'])
+uid_zero = [l.split(':')[0] for l in Path('/etc/passwd').read_text().splitlines() if l.split(':')[2] == '0']
+for name in uid_zero:
+    run(['chage', '-m', '0', '-M', '99999', '-W', '0', name])
+root_before = snapshot()
+root_result = invoke_json('apply', root_policy)
+uid_zero = [l.split(':')[0] for l in Path('/etc/passwd').read_text().splitlines() if l.split(':')[2] == '0']
+check(set(root_result['calls']) == set(uid_zero), 'all local UID0 identities enforced')
+root_after = snapshot()
+check(all(root_after[n][1:] == [2, 80, 8] and root_after[n][0] == root_before[n][0] for n in uid_zero),
+      'UID0 postcondition and sp_lstchg')
+check(invoke_json('apply', root_policy)['calls'] == [], 'compliant UID0 accounts skip chage')
+for policy, name in [(bulk, 'ficage1'), (root_policy, 'ficrescue')]:
+    invoke('disable', policy)
+    run(['chage', '-M', '47', name])
+    disabled_before = snapshot()
+    result = invoke_json('apply', policy)
+    check(not result['enabled'] and result['calls'] == [] and snapshot() == disabled_before,
+          f'{policy} DISABLE leaves accounts unchanged')
+check(journal.read_bytes() == journal_before_operations and
+      all(invoke_json('apply', policy)['active_records'] == 0 for policy in [bulk, root_policy]),
+      'operational policies create no active journal records')
+print(f'NATIVE PASSWORD_AGING {row}: {checks} checks PASS; 10 real process cuts; 0 SKIP', flush=True)

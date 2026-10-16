@@ -1,0 +1,4 @@
+ARG BASE_IMAGE=fic-recovery-builder:alt-p11-ctest
+FROM ${BASE_IMAGE}
+# ALT ships chage separately; keep the distro's matching shadow-utils/TCB.
+RUN mkdir -p /var/cache/apt/archives/partial && apt-get update && apt-get install -y shadow-change && apt-get clean

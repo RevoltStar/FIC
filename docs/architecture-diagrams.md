@@ -897,6 +897,19 @@ platform profile, а не из состояния build host. Одни и те �
 constants генерируют этот config и C++ header, из которого
 `PasswordAgingPolicyDefaults` инициализирует runtime policy metadata.
 
+Operational apply перечитывают effective defaults и локальные аккаунты на
+каждом проходе; fail-fast `Failed` не отменяет уже выполненные chage. Повторный
+проход проверяет всех заново, persistent cursor отсутствует. Disable
+operational policy не восстанавливает исторические параметры аккаунтов.
+
+`regular_user_uid_min/max` задают login.defs defaults native `useradd` и
+selection scope operational policy. Debian/Ubuntu `adduser` может выбирать UID
+по собственному adduser.conf (FIRST_UID/LAST_UID), передавая его в useradd явно.
+Единый scope для всех frontends — отдельный архитектурный вопрос, здесь не
+решается; новых UID-политик/изменений scope нет. Native доказательства и
+проверенные версии: [PASSWORD_AGING validation](password-aging-native-validation.md).
+
+
 Базовые политики `IDENTITY_ACCESS/USER_CREATION` управляют только defaults для
 будущих локальных пользователей backend `ShadowUseradd`: `HOME`, `SKEL`,
 `SHELL` и именованным `GROUP` в `/etc/default/useradd`, а также `CREATE_HOME`
@@ -930,7 +943,10 @@ provider empty задаётся managed `ADD_EXTRA_GROUPS=0` без managed
 
 Каждая включённая поддерживаемая USER_CREATION политика устанавливает собственный
 sub-block и journal даже при совпадающем foreign default; только доказанный
-owned repeat допускает zero-write. Shared PASSWORD_AGING fresh no-op не меняется.
+owned repeat допускает zero-write. Все пять scalar PASSWORD_AGING политик
+также требуют OwnWhileEnabled в общей таблице IdentityLoginDefs: совпадающий
+foreign default не заменяет собственные sub-block/journal. Поэлементный rollback
+освобождает только доказанную запись, без восстановления foreign snapshot.
 `GROUP` и `USERGROUPS_ENAB` независимы: SUCCESS настройки GROUP не означает
 назначение этой группы при private-group механизме. Подробнее —
 [USER_CREATION ownership/native contract](rollback.md#user_creation-ownership-и-native-consumer).

@@ -951,9 +951,9 @@ provenance, если provider поддерживается. `HOME`, `SKEL`, `SHE
 
 * **Apply**: durable-target-first Prepared/Applied модель. Typed
   `OwnershipRequirement` в общей таблице policy specs требует
-  `OwnWhileEnabled` для двух USER_CREATION политик, включая fresh compliant
-  foreign. Пять PASSWORD_AGING политик сохраняют `ObserveCompliantForeign`:
-  fresh compliance без ownership остаётся no-op. Обе группы используют тот же
+  `OwnWhileEnabled` для двух USER_CREATION и всех пяти scalar PASSWORD_AGING
+  политик, включая fresh compliant foreign: всегда создаются независимый
+  sub-block и durable journal. Только доказанный owned repeat — no-op. Обе группы используют тот же
   transaction backend; owned repeat/refresh/release механика общая. CAS-write
   (`expectedTargetState`, no truncate+write), refresh `A → B` — одна
   физическая атомарная замена, контейнер всегда переносится в логический
@@ -1005,7 +1005,15 @@ provenance, если provider поддерживается. `HOME`, `SKEL`, `SHE
   восстанавливаются, per-user journal provenance / baseline / `chage`
   rollback для них не существует и не планируется). Неизвестная политика
   PASSWORD_AGING — `Unsupported` (disable fail closed, никогда не
-  наследует silent `NotEnrolled`). No-record preflight
+  наследует silent `NotEnrolled`). Каждый operational apply заново читает
+  effective login.defs и все локальные passwd/shadow либо TCB записи. Уже
+  соответствующие аккаунты пропускаются; первая ошибка останавливает проход с
+  `Failed`, без `Partial` и undo предыдущих chage. Postcondition проверяет
+  параметры и неизменность `sp_lstchg`; root policy охватывает все UID 0.
+  При ошибке chage Logger содержит `changed_before_failure`. Следующий apply
+  проверяет всех заново, включая внешний drift уже обработанных аккаунтов;
+  persistent progress cursor отсутствует. Native evidence/missing-key semantics:
+  [PASSWORD_AGING validation](password-aging-native-validation.md). No-record preflight
   (`inspectUnrecordedState`) доказывает когерентность ВСЕГО shared домена
   (тот же `proveCoherence`): malformed контейнер, orphan/unknown peer
   sub-block или same-policy sub-block без provenance — `Conflict` fail

@@ -609,6 +609,46 @@ void testOperationalFailures(const fs::path& root) {
             "sp_lstchg mutation was not detected");
 }
 
+void testRetryRereadsAfterPartialFailure(const fs::path& root) {
+    auto platform = platformFor(root);
+    writePolicyConfig(root);
+    writeFile(platform.loginDefsPath,
+        "PASS_MIN_DAYS 1\nPASS_MAX_DAYS 90\nPASS_WARN_AGE 7\nUID_MIN 1000\nUID_MAX 60000\n");
+    auto resolver = resolverFor(root / "bin/chage");
+    auto state = sampleAccounts();
+    std::vector<std::string> calls;
+    bool failSecond = true;
+    auto reader = [&](const auto&, LocalAccountSnapshot& out, std::string&) { out = state; return true; };
+    auto runner = [&](const std::string&, const std::vector<std::string>& args) {
+        const std::string user = args.back(); calls.push_back(user);
+        ProcessResult result; result.started = true;
+        if (user == "locked" && failSecond) { result.exitCode = 1; return result; }
+        auto& aging = state.shadowAccounts.at(user);
+        aging.minDays = std::stol(args[1]); aging.maxDays = std::stol(args[3]);
+        aging.warningDays = std::stol(args[5]); result.exitCode = 0; return result;
+    };
+    PasswordAgingRuntime runtime(platform, resolver, runner,
+        [](const std::string&, std::string&) { return true; }, reader);
+    PasswordAgingApplyToExistingAccountsPolicy policy(platform, std::move(runtime));
+    require(!policy.apply() && calls == std::vector<std::string>{"alice", "locked"},
+            "middle failure did not stop the first pass");
+    require(state.shadowAccounts.at("alice").maxDays == 90, "first user was not changed");
+    state.shadowAccounts.at("alice").maxDays = 40; // external drift after failure
+    // The next invocation must re-read both expected settings and the accounts.
+    writeFile(platform.loginDefsPath,
+        "PASS_MIN_DAYS 2\nPASS_MAX_DAYS 95\nPASS_WARN_AGE 8\nUID_MIN 1000\nUID_MAX 60000\n");
+    calls.clear(); failSecond = false;
+    require(policy.apply() && calls == std::vector<std::string>{"alice", "locked"},
+            "retry skipped previously processed user or did not retry failed user");
+    for (const auto& name : {"alice", "locked"}) {
+        const auto& aging = state.shadowAccounts.at(name);
+        require(aging.minDays == 2 && aging.maxDays == 95 && aging.warningDays == 8 &&
+                    aging.lastChange == sampleAccounts().shadowAccounts.at(name).lastChange,
+                "retry did not use new settings or changed sp_lstchg");
+    }
+    calls.clear(); require(policy.apply() && calls.empty(), "compliant retry invoked chage");
+}
+
 PolicyRegistry makeRegistry(
     const fic::platform::PasswordAgingPlatformConfig& platform,
     const fic::platform::PlatformExecutableResolver& resolver,
@@ -788,6 +828,7 @@ int main() {
         testStructuredLocalReaders(root);
         testOperationalPolicies(root);
         testOperationalFailures(root);
+        testRetryRereadsAfterPartialFailure(root);
         testDependencies(root);
         testOperationalDisablePreservesAccounts(root);
         fs::remove_all(root);

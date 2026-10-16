@@ -35,8 +35,8 @@ enum class ValueDomain {
     Uid                // 0..numeric_limits<uid_t>::max(), canonical decimal
 };
 
-// USER_CREATION establishes ownership even for compliant foreign defaults.
-// PASSWORD_AGING retains its existing observation-only fresh no-op contract.
+// Enabled enrolled policies establish ownership even for compliant foreign
+// defaults. Only a proven owned repeat may be a zero-write operation.
 enum class OwnershipRequirement { ObserveCompliantForeign, OwnWhileEnabled };
 
 struct SharedLoginDefsPolicySpec {
@@ -56,15 +56,15 @@ inline const SharedLoginDefsPolicySpec* findSharedLoginDefsPolicySpec(
         {"user_create_private_group", "USER_CREATION", "USERGROUPS_ENAB",
             ValueDomain::Boolean, Relation::None, OwnershipRequirement::OwnWhileEnabled},
         {"password_min_age_days", "PASSWORD_AGING", "PASS_MIN_DAYS",
-            ValueDomain::NonNegativeDays, Relation::PasswordMinimum},
+            ValueDomain::NonNegativeDays, Relation::PasswordMinimum, OwnershipRequirement::OwnWhileEnabled},
         {"password_max_age_days", "PASSWORD_AGING", "PASS_MAX_DAYS",
-            ValueDomain::DaysWithUnlimited, Relation::PasswordMaximum},
+            ValueDomain::DaysWithUnlimited, Relation::PasswordMaximum, OwnershipRequirement::OwnWhileEnabled},
         {"password_expiration_warning_days", "PASSWORD_AGING",
-            "PASS_WARN_AGE", ValueDomain::DaysWithUnlimited, Relation::None},
+            "PASS_WARN_AGE", ValueDomain::DaysWithUnlimited, Relation::None, OwnershipRequirement::OwnWhileEnabled},
         {"regular_user_uid_min", "PASSWORD_AGING", "UID_MIN",
-            ValueDomain::Uid, Relation::UidMinimum},
+            ValueDomain::Uid, Relation::UidMinimum, OwnershipRequirement::OwnWhileEnabled},
         {"regular_user_uid_max", "PASSWORD_AGING", "UID_MAX",
-            ValueDomain::Uid, Relation::UidMaximum},
+            ValueDomain::Uid, Relation::UidMaximum, OwnershipRequirement::OwnWhileEnabled},
     };
     for (const auto& spec : kSpecs) {
         if (policyName == spec.policyName) return &spec;
