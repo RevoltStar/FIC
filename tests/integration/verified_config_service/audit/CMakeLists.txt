@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.16)
+project(fic_verified_config_readonly_audit LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+add_subdirectory(.. component EXCLUDE_FROM_ALL)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(NATIVE_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+get_filename_component(FIC_AUDIT_ROOT "../../../.." ABSOLUTE)
+add_executable(verified_config_readonly_audit
+    ReadOnlyAudit.cpp
+    ${FIC_AUDIT_ROOT}/fic/src/service/VerifiedConfigLaunchContract.cpp
+    ${FIC_AUDIT_ROOT}/fic/src/service/VerifiedConfigMountSupport.cpp
+    ${FIC_AUDIT_ROOT}/fic/src/modules/net/ssh/SshConfigAudit.cpp
+    ${FIC_AUDIT_ROOT}/fic/src/modules/net/ssh/SshConfigSyntax.cpp)
+target_include_directories(verified_config_readonly_audit PRIVATE ${FIC_AUDIT_ROOT}/fic/src)
+target_link_libraries(verified_config_readonly_audit PRIVATE fic-core fic-platform PkgConfig::NATIVE_SYSTEMD)
+# Deliberately does NOT link the activator or systemd activation implementation.

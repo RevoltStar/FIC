@@ -1,0 +1,4030 @@
+{
+  "base": "7e91772c0790f958cea6fc4aab23c9b878b053c7",
+  "date": "2026-10-17",
+  "environment": "Docker systemd PID1; all rows share WSL2 kernel; no stock SSH lifecycle/mount commands",
+  "platforms": {
+    "debian12": {
+      "metadata": {
+        "container": "fic-ssh-audit-debian12",
+        "os_release": {
+          "exit_code": 0,
+          "stdout": "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+          "stderr": ""
+        },
+        "kernel": {
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "systemd_version": {
+          "exit_code": 0,
+          "stdout": "systemd 252 (252.39-1~deb12u2)\n+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified\n",
+          "stderr": ""
+        },
+        "openssh_version": {
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "OpenSSH_9.2, OpenSSL 3.0.22 25 Aug 2026\n"
+        },
+        "pid1": {
+          "exit_code": 0,
+          "stdout": "systemd\n",
+          "stderr": ""
+        },
+        "unit_files": {
+          "exit_code": 0,
+          "stdout": "UNIT FILE    STATE    PRESET\nssh.service  enabled  enabled\nsshd.service alias    -\nssh.socket   disabled enabled\n\n3 unit files listed.\n",
+          "stderr": ""
+        },
+        "sockets": {
+          "exit_code": 0,
+          "stdout": "LISTEN UNIT ACTIVATES\n\n0 sockets listed.\nPass --all to see loaded but inactive sockets, too.\n",
+          "stderr": ""
+        },
+        "package": {
+          "exit_code": 0,
+          "stdout": "openssh-server 1:9.2p1-2+deb12u10 1:9.2p1-2+deb12u10\nsystemd 252.39-1~deb12u2 252.39-1~deb12u2\nopenssh-server:\n  Installed: 1:9.2p1-2+deb12u10\n  Candidate: 1:9.2p1-2+deb12u10\n  Version table:\n *** 1:9.2p1-2+deb12u10 500\n        500 https://deb.debian.org/debian bookworm/main amd64 Packages\n        100 /var/lib/dpkg/status\n     1:9.2p1-2+deb12u9 500\n        500 https://deb.debian.org/debian-security bookworm-security/main amd64 Packages\n     1:9.2p1-2+deb12u7 500\n        500 https://deb.debian.org/debian bookworm-updates/main amd64 Packages\n",
+          "stderr": ""
+        },
+        "units": {
+          "ssh.service": {
+            "exit_code": 0,
+            "stdout": "Type=notify\nNotifyAccess=main\nMainPID=54\nId=ssh.service\nNames=ssh.service sshd.service\nTriggers=\nTriggeredBy=\nLoadState=loaded\nActiveState=active\nSubState=running\nFragmentPath=/lib/systemd/system/ssh.service\nSourcePath=\nDropInPaths=\nUnitFileState=enabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=f4bda5926efe4b9d8dde0fff7be32947\n",
+            "stderr": ""
+          },
+          "sshd.service": {
+            "exit_code": 0,
+            "stdout": "Type=notify\nNotifyAccess=main\nMainPID=54\nId=ssh.service\nNames=ssh.service sshd.service\nTriggers=\nTriggeredBy=\nLoadState=loaded\nActiveState=active\nSubState=running\nFragmentPath=/lib/systemd/system/ssh.service\nSourcePath=\nDropInPaths=\nUnitFileState=enabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=f4bda5926efe4b9d8dde0fff7be32947\n",
+            "stderr": ""
+          },
+          "ssh.socket": {
+            "exit_code": 0,
+            "stdout": "Listen=[::]:22 (Stream)\nId=ssh.socket\nNames=ssh.socket\nTriggers=ssh.service\nTriggeredBy=\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nFragmentPath=/lib/systemd/system/ssh.socket\nSourcePath=\nDropInPaths=\nUnitFileState=disabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          },
+          "sshd.socket": {
+            "exit_code": 0,
+            "stdout": "Id=sshd.socket\nNames=sshd.socket\nTriggers=\nTriggeredBy=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nFragmentPath=\nSourcePath=\nDropInPaths=\nUnitFileState=\nUnitFilePreset=\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          }
+        },
+        "input_metadata": {
+          "exit_code": 0,
+          "stdout": "/etc/default/ssh mode=644 uid=0 gid=0\nassignment-name:SSHD_OPTS\n8ec4e7be86cf6d98c8b280ef6d71e6d97a635813bb06bf5ac5cdc756e98ef379  /etc/default/ssh\n/      overlay private\n/      overlay private\n/      overlay private\n/run   tmpfs  private\n35b2858970feb78e985900b33ba8cb84249dfadbf296155e5639cafcf1dd40a3  /lib/systemd/system/ssh.service\n",
+          "stderr": ""
+        },
+        "mountinfo_sha256": "fe3c09ec7fce966ca0b411cea2b74a893c2fdc07134ae24ac6d6a34677e3592a"
+      },
+      "preflight": {
+        "canonical_unit": "ssh.service",
+        "checks": [
+          {
+            "evidence": "root; CAP_SYS_ADMIN present",
+            "method": "actual FIC helper",
+            "name": "privileges",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "4:4026532505",
+            "method": "actual FIC helper",
+            "name": "manager_namespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC daemon is not installed/running in this stock OpenSSH audit image",
+            "method": "actual FIC helper",
+            "name": "fic_daemon_namespace",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "enforce file absent; production check also treats it as non-enforcing",
+            "method": "actual FIC helper",
+            "name": "selinux",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC reference hash store not deployed; no enrollment attempted",
+            "method": "actual FIC helper",
+            "name": "systemctl_trust",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "",
+            "method": "actual FIC helper",
+            "name": "sshd_platform_executable",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "ssh.service",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Id",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "active",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ActiveState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExitType",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.FileDescriptorStoreMax",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Job",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "loaded",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LoadState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NFileDescriptorStore",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NeedDaemonReload",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NotifyAccess",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "all",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProcSubset",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "default",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectProc",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RemainAfterExit",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "null",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardInput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "running",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SubState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Transient",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "notify",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Type",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "f4bda5926efe4b9d8dde0fff7be32947",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InvocationID",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateMounts",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateTmp",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateDevices",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectClock",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelTunables",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelModules",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelLogs",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectControlGroups",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHome",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHostname",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.DynamicUser",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateUsers",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateNetwork",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateIPC",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountAPIVFS",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootDirectory",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootImage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadWritePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InaccessiblePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountFlags",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TemporaryFileSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SourcePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TriggeredBy",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PIDFile",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/default/ssh (ignore_errors=yes)",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.EnvironmentFiles",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionDirectories",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionImages",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PAMName",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NetworkNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.IPCNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LogNamespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "journal",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardOutput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "inherit",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardError",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "4:4026532505",
+            "method": "actual FIC helper",
+            "name": "main_process_identity",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "open controlled path /lib/systemd/system/ssh.service: Not a directory",
+            "method": "actual FIC helper",
+            "name": "typed_launch_reader",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "effective parent is non-shared; no directories created",
+            "method": "actual FIC helper",
+            "name": "workspace_parent",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/ssh",
+            "method": "actual FIC helper",
+            "name": "parent.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "1 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/ssh",
+            "method": "actual FIC helper",
+            "name": "parent.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "observed file hashes form a legal request; this is not a trusted policy etalon",
+            "method": "actual FIC helper",
+            "name": "request_shape",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no target/nested/residual mount found",
+            "method": "actual FIC helper",
+            "name": "mount_targets_and_residuals",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "bab202deb7dbb5fcc4e805865d38f20e4260b1c1d603375a4fd8a77ee2bd14f2",
+            "method": "actual FIC helper",
+            "name": "ssh_include_authority",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "current parsed Include graph confined to proposed existing targets; arbitrary future Include not guaranteed",
+            "method": "actual FIC helper",
+            "name": "include_coverage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "workspace_lock",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "tmpfs_creation_RO",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "publication_RO_identity",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "controlled_restart_READY",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "post_activation_cleanup",
+            "status": "NOT_TESTED"
+          }
+        ],
+        "config": "/etc/ssh/sshd_config",
+        "include_base": "/etc/ssh",
+        "includes": {
+          "files": [
+            "/etc/ssh/sshd_config"
+          ],
+          "patterns": [
+            "/etc/ssh/sshd_config.d/*.conf"
+          ]
+        },
+        "input_manifest": {
+          "/etc/ssh/sshd_config": {
+            "files": 1,
+            "manifest": {},
+            "mount_id": 1667,
+            "sha256": "160f305635ece2300959616ab840adeb028dfc3a986bc14859675aaf55e70bbe"
+          },
+          "/etc/ssh/sshd_config.d": {
+            "files": 0,
+            "manifest": {},
+            "mount_id": 1667,
+            "sha256": ""
+          }
+        },
+        "namespaces": {
+          "diagnostic": "4:4026532505",
+          "pid1": "4:4026532505",
+          "pid1_comm": "systemd\n",
+          "sshd": "4:4026532505"
+        },
+        "profile_option_file": "/etc/default/ssh",
+        "profile_option_variable": "SSHD_OPTS",
+        "profile_services": [
+          "ssh.service",
+          "sshd.service"
+        ],
+        "profile_sockets": [
+          "ssh.socket",
+          "sshd.socket"
+        ],
+        "requested_unit": "ssh.service",
+        "trust_store_path": "/opt/fic/db/commandhash.txt",
+        "unit": {
+          "ActiveState": "active",
+          "DropInPaths": "",
+          "EnvironmentFiles": "/etc/default/ssh (ignore_errors=yes)",
+          "FragmentPath": "/lib/systemd/system/ssh.service",
+          "Id": "ssh.service",
+          "InvocationID": "f4bda5926efe4b9d8dde0fff7be32947",
+          "Job": "",
+          "LoadState": "loaded",
+          "MainPID": "54",
+          "Names": "ssh.service sshd.service",
+          "NeedDaemonReload": "no",
+          "NotifyAccess": "main",
+          "PIDFile": "",
+          "SubState": "running",
+          "TriggeredBy": "",
+          "Triggers": "",
+          "Type": "notify",
+          "UnitFileState": "enabled"
+        }
+      }
+    },
+    "debian13": {
+      "metadata": {
+        "container": "fic-ssh-audit-debian13",
+        "os_release": {
+          "exit_code": 0,
+          "stdout": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+          "stderr": ""
+        },
+        "kernel": {
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "systemd_version": {
+          "exit_code": 0,
+          "stdout": "systemd 257 (257.13-1~deb13u1)\n+PAM +AUDIT +SELINUX +APPARMOR +IMA +IPE +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBCRYPTSETUP_PLUGINS +LIBFDISK +PCRE2 +PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD +BPF_FRAMEWORK +BTF -XKBCOMMON -UTMP +SYSVINIT +LIBARCHIVE\n",
+          "stderr": ""
+        },
+        "openssh_version": {
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "OpenSSH_10.0p2 Debian-7+deb13u4, OpenSSL 3.5.7 9 Jun 2026\n"
+        },
+        "pid1": {
+          "exit_code": 0,
+          "stdout": "systemd\n",
+          "stderr": ""
+        },
+        "unit_files": {
+          "exit_code": 0,
+          "stdout": "UNIT FILE                STATE     PRESET\nssh.service              enabled   enabled\nsshd-keygen.service      enabled   enabled\nsshd-unix-local@.service alias     -\nsshd.service             alias     -\nsshd@.service            indirect  enabled\nssh.socket               disabled  enabled\nsshd-unix-local.socket   generated -\nssh-access.target        static    -\n\n8 unit files listed.\n",
+          "stderr": ""
+        },
+        "sockets": {
+          "exit_code": 0,
+          "stdout": "LISTEN                     UNIT                   ACTIVATES\n/run/ssh-unix-local/socket sshd-unix-local.socket -\n\n1 sockets listed.\nPass --all to see loaded but inactive sockets, too.\n",
+          "stderr": ""
+        },
+        "package": {
+          "exit_code": 0,
+          "stdout": "openssh-server 1:10.0p1-7+deb13u4 1:10.0p1-7+deb13u4\nsystemd 257.13-1~deb13u1 257.13-1~deb13u1\nopenssh-server:\n  Installed: 1:10.0p1-7+deb13u4\n  Candidate: 1:10.0p1-7+deb13u4\n  Version table:\n *** 1:10.0p1-7+deb13u4 500\n        500 https://deb.debian.org/debian trixie/main amd64 Packages\n        100 /var/lib/dpkg/status\n     1:10.0p1-7+deb13u2 500\n        500 https://deb.debian.org/debian-security trixie-security/main amd64 Packages\n",
+          "stderr": ""
+        },
+        "units": {
+          "ssh.service": {
+            "exit_code": 0,
+            "stdout": "Type=notify\nNotifyAccess=main\nMainPID=86\nId=ssh.service\nNames=ssh.service sshd.service\nTriggers=\nTriggeredBy=\nLoadState=loaded\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/system/ssh.service\nSourcePath=\nDropInPaths=\nUnitFileState=enabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=21556065f8b5465f9bb0141dd6a375f1\n",
+            "stderr": ""
+          },
+          "sshd.service": {
+            "exit_code": 0,
+            "stdout": "Type=notify\nNotifyAccess=main\nMainPID=86\nId=ssh.service\nNames=ssh.service sshd.service\nTriggers=\nTriggeredBy=\nLoadState=loaded\nActiveState=active\nSubState=running\nFragmentPath=/usr/lib/systemd/system/ssh.service\nSourcePath=\nDropInPaths=\nUnitFileState=enabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=21556065f8b5465f9bb0141dd6a375f1\n",
+            "stderr": ""
+          },
+          "ssh.socket": {
+            "exit_code": 0,
+            "stdout": "Listen=[::]:22 (Stream)\nId=ssh.socket\nNames=ssh.socket\nTriggers=ssh.service\nTriggeredBy=\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nFragmentPath=/usr/lib/systemd/system/ssh.socket\nSourcePath=\nDropInPaths=\nUnitFileState=disabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          },
+          "sshd.socket": {
+            "exit_code": 0,
+            "stdout": "Id=sshd.socket\nNames=sshd.socket\nTriggers=\nTriggeredBy=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nFragmentPath=\nSourcePath=\nDropInPaths=\nUnitFileState=\nUnitFilePreset=\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          }
+        },
+        "input_metadata": {
+          "exit_code": 0,
+          "stdout": "/etc/default/ssh mode=644 uid=0 gid=0\nassignment-name:SSHD_OPTS\n8ec4e7be86cf6d98c8b280ef6d71e6d97a635813bb06bf5ac5cdc756e98ef379  /etc/default/ssh\n/ overlay private\n/ overlay private\n/ overlay private\n/run tmpfs private\n1e3c11483cc51a6c7aa3ab92affa43a313cab65e9721a64ce7720404cf6de1c8  /lib/systemd/system/ssh.service\n",
+          "stderr": ""
+        },
+        "mountinfo_sha256": "bc36c27f83c61a58faf6670cdb101855b87b109046fa14dd147f43dfd74f9204"
+      },
+      "preflight": {
+        "canonical_unit": "ssh.service",
+        "checks": [
+          {
+            "evidence": "root; CAP_SYS_ADMIN present",
+            "method": "actual FIC helper",
+            "name": "privileges",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "4:4026532699",
+            "method": "actual FIC helper",
+            "name": "manager_namespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC daemon is not installed/running in this stock OpenSSH audit image",
+            "method": "actual FIC helper",
+            "name": "fic_daemon_namespace",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "enforce file absent; production check also treats it as non-enforcing",
+            "method": "actual FIC helper",
+            "name": "selinux",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC reference hash store not deployed; no enrollment attempted",
+            "method": "actual FIC helper",
+            "name": "systemctl_trust",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "",
+            "method": "actual FIC helper",
+            "name": "sshd_platform_executable",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "ssh.service",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Id",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "active",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ActiveState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExitType",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.FileDescriptorStoreMax",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Job",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "loaded",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LoadState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NFileDescriptorStore",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NeedDaemonReload",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NotifyAccess",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "all",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProcSubset",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "default",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectProc",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RemainAfterExit",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "null",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardInput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "running",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SubState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Transient",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "notify",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Type",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "21556065f8b5465f9bb0141dd6a375f1",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InvocationID",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateMounts",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateTmp",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateDevices",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectClock",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelTunables",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelModules",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelLogs",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectControlGroups",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHome",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHostname",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.DynamicUser",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateUsers",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateNetwork",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateIPC",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountAPIVFS",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootDirectory",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootImage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadWritePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InaccessiblePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountFlags",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TemporaryFileSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SourcePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TriggeredBy",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PIDFile",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/default/ssh (ignore_errors=yes)",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.EnvironmentFiles",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionDirectories",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionImages",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PAMName",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NetworkNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.IPCNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LogNamespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "journal",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardOutput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "inherit",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardError",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "4:4026532699",
+            "method": "actual FIC helper",
+            "name": "main_process_identity",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.ImportCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.LoadCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.LoadCredentialEncrypted",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.SetCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.SetCredentialEncrypted",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "external launch input unsupported: EnvironmentFiles",
+            "method": "actual FIC helper",
+            "name": "launch_validator",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "65 fields; values redacted",
+            "method": "actual FIC helper",
+            "name": "typed_launch_reader",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "effective parent is non-shared; no directories created",
+            "method": "actual FIC helper",
+            "name": "workspace_parent",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/ssh",
+            "method": "actual FIC helper",
+            "name": "parent.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "1 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/ssh",
+            "method": "actual FIC helper",
+            "name": "parent.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "observed file hashes form a legal request; this is not a trusted policy etalon",
+            "method": "actual FIC helper",
+            "name": "request_shape",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no target/nested/residual mount found",
+            "method": "actual FIC helper",
+            "name": "mount_targets_and_residuals",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "a37a9cb1b48a57313e14a00dee337a825cf0d7d20a16330580ec00823f6e32db",
+            "method": "actual FIC helper",
+            "name": "ssh_include_authority",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "current parsed Include graph confined to proposed existing targets; arbitrary future Include not guaranteed",
+            "method": "actual FIC helper",
+            "name": "include_coverage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "workspace_lock",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "tmpfs_creation_RO",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "publication_RO_identity",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "controlled_restart_READY",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "post_activation_cleanup",
+            "status": "NOT_TESTED"
+          }
+        ],
+        "config": "/etc/ssh/sshd_config",
+        "environment_names": [],
+        "include_base": "/etc/ssh",
+        "includes": {
+          "files": [
+            "/etc/ssh/sshd_config"
+          ],
+          "patterns": [
+            "/etc/ssh/sshd_config.d/*.conf"
+          ]
+        },
+        "input_manifest": {
+          "/etc/ssh/sshd_config": {
+            "files": 1,
+            "manifest": {},
+            "mount_id": 1528,
+            "sha256": "f1805313ad346bdb80dff4a560a080edfca9a998f620b64da2a1aba6bcf6782e"
+          },
+          "/etc/ssh/sshd_config.d": {
+            "files": 0,
+            "manifest": {},
+            "mount_id": 1528,
+            "sha256": ""
+          }
+        },
+        "namespaces": {
+          "diagnostic": "4:4026532699",
+          "pid1": "4:4026532699",
+          "pid1_comm": "systemd\n",
+          "sshd": "4:4026532699"
+        },
+        "profile_option_file": "/etc/default/ssh",
+        "profile_option_variable": "SSHD_OPTS",
+        "profile_services": [
+          "ssh.service",
+          "sshd.service"
+        ],
+        "profile_sockets": [
+          "ssh.socket",
+          "sshd.socket"
+        ],
+        "requested_unit": "ssh.service",
+        "trust_store_path": "/opt/fic/db/commandhash.txt",
+        "typed_properties": {
+          "launch.CacheDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ConfigurationDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.DropInPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.DynamicUser": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.Environment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.EnvironmentFiles": {
+            "empty": false,
+            "signature": "a(sb)"
+          },
+          "launch.ExecConditionEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExecReloadEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecSearchPath": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExecStartEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStartPostEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStartPreEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStopEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStopPostEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExitType": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ExtensionDirectories": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExtensionImages": {
+            "empty": true,
+            "signature": "a(sba(ss))"
+          },
+          "launch.FileDescriptorStoreMax": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.FragmentPath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.Group": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.IPCNamespacePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ImportCredential": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.LoadCredential": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.LoadCredentialEncrypted": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.LogNamespace": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.LogsDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.MountAPIVFS": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.NFileDescriptorStore": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.NeedDaemonReload": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.NetworkNamespacePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.NoExecPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.PAMName": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.PIDFile": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.PassEnvironment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.PrivateIPC": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.PrivateNetwork": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.PrivateUsers": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.ProcSubset": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ProtectProc": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RemainAfterExit": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.Restart": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootDirectory": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootHash": {
+            "empty": true,
+            "signature": "ay"
+          },
+          "launch.RootHashPath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootHashSignature": {
+            "empty": true,
+            "signature": "ay"
+          },
+          "launch.RootImage": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootImageOptions": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.RuntimeDirectory": {
+            "empty": false,
+            "signature": "as"
+          },
+          "launch.SetCredential": {
+            "empty": true,
+            "signature": "a(say)"
+          },
+          "launch.SetCredentialEncrypted": {
+            "empty": true,
+            "signature": "a(say)"
+          },
+          "launch.SourcePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardError": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardInput": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardOutput": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StateDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.SupplementaryGroups": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.Transient": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.TriggeredBy": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.UMask": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.UnsetEnvironment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.User": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.WorkingDirectory": {
+            "empty": false,
+            "signature": "s"
+          }
+        },
+        "typed_property_count": 65,
+        "unit": {
+          "ActiveState": "active",
+          "DropInPaths": "",
+          "EnvironmentFiles": "/etc/default/ssh (ignore_errors=yes)",
+          "FragmentPath": "/usr/lib/systemd/system/ssh.service",
+          "Id": "ssh.service",
+          "InvocationID": "21556065f8b5465f9bb0141dd6a375f1",
+          "Job": "",
+          "LoadState": "loaded",
+          "MainPID": "86",
+          "Names": "ssh.service sshd.service",
+          "NeedDaemonReload": "no",
+          "NotifyAccess": "main",
+          "PIDFile": "",
+          "SubState": "running",
+          "TriggeredBy": "",
+          "Triggers": "",
+          "Type": "notify",
+          "UnitFileState": "enabled"
+        }
+      }
+    },
+    "ubuntu2404": {
+      "metadata": {
+        "container": "fic-ssh-audit-ubuntu2404",
+        "os_release": {
+          "exit_code": 0,
+          "stdout": "PRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n",
+          "stderr": ""
+        },
+        "kernel": {
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "systemd_version": {
+          "exit_code": 0,
+          "stdout": "systemd 255 (255.4-1ubuntu8.18)\n+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified\n",
+          "stderr": ""
+        },
+        "openssh_version": {
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "OpenSSH_9.6p1 Ubuntu-3ubuntu13.20, OpenSSL 3.0.13 30 Jan 2024\n"
+        },
+        "pid1": {
+          "exit_code": 0,
+          "stdout": "systemd\n",
+          "stderr": ""
+        },
+        "unit_files": {
+          "exit_code": 0,
+          "stdout": "UNIT FILE   STATE    PRESET\nssh.service disabled enabled\nssh.socket  enabled  enabled\n\n2 unit files listed.\n",
+          "stderr": ""
+        },
+        "sockets": {
+          "exit_code": 0,
+          "stdout": "LISTEN     UNIT       ACTIVATES\n0.0.0.0:22 ssh.socket ssh.service\n[::]:22    ssh.socket ssh.service\n\n2 sockets listed.\nPass --all to see loaded but inactive sockets, too.\n",
+          "stderr": ""
+        },
+        "package": {
+          "exit_code": 0,
+          "stdout": "openssh-server 1:9.6p1-3ubuntu13.20 1:9.6p1-3ubuntu13.20\nsystemd 255.4-1ubuntu8.18 255.4-1ubuntu8.18\nopenssh-server:\n  Installed: 1:9.6p1-3ubuntu13.20\n  Candidate: 1:9.6p1-3ubuntu13.20\n  Version table:\n *** 1:9.6p1-3ubuntu13.20 500\n        500 https://security.ubuntu.com/ubuntu noble-security/main amd64 Packages\n        100 /var/lib/dpkg/status\n     1:9.6p1-3ubuntu13.19 500\n        500 https://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages\n     1:9.6p1-3ubuntu13 500\n        500 https://archive.ubuntu.com/ubuntu noble/main amd64 Packages\n",
+          "stderr": ""
+        },
+        "units": {
+          "ssh.service": {
+            "exit_code": 0,
+            "stdout": "Type=notify\nNotifyAccess=main\nMainPID=0\nId=ssh.service\nNames=ssh.service\nTriggers=\nTriggeredBy=ssh.socket\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nFragmentPath=/usr/lib/systemd/system/ssh.service\nSourcePath=\nDropInPaths=\nUnitFileState=disabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          },
+          "sshd.service": {
+            "exit_code": 0,
+            "stdout": "Type=\nNotifyAccess=none\nMainPID=0\nId=sshd.service\nNames=sshd.service\nTriggers=\nTriggeredBy=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nFragmentPath=\nSourcePath=\nDropInPaths=\nUnitFileState=\nUnitFilePreset=\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          },
+          "ssh.socket": {
+            "exit_code": 0,
+            "stdout": "Listen=0.0.0.0:22 (Stream)\nListen=[::]:22 (Stream)\nId=ssh.socket\nNames=ssh.socket\nTriggers=ssh.service\nTriggeredBy=\nLoadState=loaded\nActiveState=active\nSubState=listening\nFragmentPath=/usr/lib/systemd/system/ssh.socket\nSourcePath=\nDropInPaths=\nUnitFileState=enabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=de97d06eb4b146e8ad2f8b638819bde3\n",
+            "stderr": ""
+          },
+          "sshd.socket": {
+            "exit_code": 0,
+            "stdout": "Id=sshd.socket\nNames=sshd.socket\nTriggers=\nTriggeredBy=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nFragmentPath=\nSourcePath=\nDropInPaths=\nUnitFileState=\nUnitFilePreset=\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          }
+        },
+        "input_metadata": {
+          "exit_code": 0,
+          "stdout": "/etc/default/ssh mode=644 uid=0 gid=0\nassignment-name:SSHD_OPTS\n8ec4e7be86cf6d98c8b280ef6d71e6d97a635813bb06bf5ac5cdc756e98ef379  /etc/default/ssh\n/      overlay private\n/      overlay private\n/      overlay private\n/run   tmpfs  private\n160f839d750e815f666ebf92b0ce9571dc60772a851e1b55964b629f0511df20  /usr/lib/systemd/system-generators/sshd-socket-generator\n35b2858970feb78e985900b33ba8cb84249dfadbf296155e5639cafcf1dd40a3  /lib/systemd/system/ssh.service\n",
+          "stderr": ""
+        },
+        "mountinfo_sha256": "9e19c748916099773172bffda9834a37f7b9502628d238fe8da30bdf8edfc715"
+      },
+      "preflight": {
+        "canonical_unit": "ssh.service",
+        "checks": [
+          {
+            "evidence": "root; CAP_SYS_ADMIN present",
+            "method": "actual FIC helper",
+            "name": "privileges",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "4:4026532519",
+            "method": "actual FIC helper",
+            "name": "manager_namespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC daemon is not installed/running in this stock OpenSSH audit image",
+            "method": "actual FIC helper",
+            "name": "fic_daemon_namespace",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "enforce file absent; production check also treats it as non-enforcing",
+            "method": "actual FIC helper",
+            "name": "selinux",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC reference hash store not deployed; no enrollment attempted",
+            "method": "actual FIC helper",
+            "name": "systemctl_trust",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "",
+            "method": "actual FIC helper",
+            "name": "sshd_platform_executable",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "ssh.service",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Id",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "inactive",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ActiveState",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExitType",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.FileDescriptorStoreMax",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Job",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "loaded",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LoadState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NFileDescriptorStore",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NeedDaemonReload",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NotifyAccess",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "all",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProcSubset",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "default",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectProc",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RemainAfterExit",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "null",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardInput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "dead",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SubState",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Transient",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "notify",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Type",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InvocationID",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateMounts",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateTmp",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateDevices",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectClock",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelTunables",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelModules",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelLogs",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectControlGroups",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHome",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHostname",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.DynamicUser",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateUsers",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateNetwork",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateIPC",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountAPIVFS",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootDirectory",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootImage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadWritePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InaccessiblePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountFlags",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TemporaryFileSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SourcePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "ssh.socket",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TriggeredBy",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PIDFile",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/default/ssh (ignore_errors=yes)",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.EnvironmentFiles",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionDirectories",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionImages",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PAMName",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NetworkNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.IPCNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LogNamespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "journal",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardOutput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "inherit",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardError",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "MainPID=0; ActiveState/running gate already failed",
+            "method": "actual FIC helper",
+            "name": "main_process_identity",
+            "status": "NOT_APPLICABLE"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.ImportCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.LoadCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.LoadCredentialEncrypted",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.SetCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.SetCredentialEncrypted",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "activation triggers, retained FDs or alternate main identity unsupported",
+            "method": "actual FIC helper",
+            "name": "launch_validator",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "65 fields; values redacted",
+            "method": "actual FIC helper",
+            "name": "typed_launch_reader",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "effective parent is non-shared; no directories created",
+            "method": "actual FIC helper",
+            "name": "workspace_parent",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/ssh",
+            "method": "actual FIC helper",
+            "name": "parent.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "1 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/ssh",
+            "method": "actual FIC helper",
+            "name": "parent.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "observed file hashes form a legal request; this is not a trusted policy etalon",
+            "method": "actual FIC helper",
+            "name": "request_shape",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no target/nested/residual mount found",
+            "method": "actual FIC helper",
+            "name": "mount_targets_and_residuals",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "917a1b336b18ca1c948c00e87cb437d1b2b2a19bddc34c9af0f5defdd4cffd72",
+            "method": "actual FIC helper",
+            "name": "ssh_include_authority",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "current parsed Include graph confined to proposed existing targets; arbitrary future Include not guaranteed",
+            "method": "actual FIC helper",
+            "name": "include_coverage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "workspace_lock",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "tmpfs_creation_RO",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "publication_RO_identity",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "controlled_restart_READY",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "post_activation_cleanup",
+            "status": "NOT_TESTED"
+          }
+        ],
+        "config": "/etc/ssh/sshd_config",
+        "environment_names": [],
+        "include_base": "/etc/ssh",
+        "includes": {
+          "files": [
+            "/etc/ssh/sshd_config"
+          ],
+          "patterns": [
+            "/etc/ssh/sshd_config.d/*.conf"
+          ]
+        },
+        "input_manifest": {
+          "/etc/ssh/sshd_config": {
+            "files": 1,
+            "manifest": {},
+            "mount_id": 1681,
+            "sha256": "64325541513d33ea1d2ccd19c77750d458e67e7967fd2e7ef81d92f0aa2ffe21"
+          },
+          "/etc/ssh/sshd_config.d": {
+            "files": 0,
+            "manifest": {},
+            "mount_id": 1681,
+            "sha256": ""
+          }
+        },
+        "namespaces": {
+          "diagnostic": "4:4026532519",
+          "pid1": "4:4026532519",
+          "pid1_comm": "systemd\n"
+        },
+        "profile_option_file": "/etc/default/ssh",
+        "profile_option_variable": "SSHD_OPTS",
+        "profile_services": [
+          "ssh.service",
+          "sshd.service"
+        ],
+        "profile_sockets": [
+          "ssh.socket",
+          "sshd.socket"
+        ],
+        "requested_unit": "ssh.service",
+        "trust_store_path": "/opt/fic/db/commandhash.txt",
+        "typed_properties": {
+          "launch.CacheDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ConfigurationDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.DropInPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.DynamicUser": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.Environment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.EnvironmentFiles": {
+            "empty": false,
+            "signature": "a(sb)"
+          },
+          "launch.ExecConditionEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExecReloadEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecSearchPath": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExecStartEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStartPostEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStartPreEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStopEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStopPostEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExitType": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ExtensionDirectories": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExtensionImages": {
+            "empty": true,
+            "signature": "a(sba(ss))"
+          },
+          "launch.FileDescriptorStoreMax": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.FragmentPath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.Group": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.IPCNamespacePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ImportCredential": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.LoadCredential": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.LoadCredentialEncrypted": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.LogNamespace": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.LogsDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.MountAPIVFS": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.NFileDescriptorStore": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.NeedDaemonReload": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.NetworkNamespacePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.NoExecPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.PAMName": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.PIDFile": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.PassEnvironment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.PrivateIPC": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.PrivateNetwork": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.PrivateUsers": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.ProcSubset": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ProtectProc": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RemainAfterExit": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.Restart": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootDirectory": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootHash": {
+            "empty": true,
+            "signature": "ay"
+          },
+          "launch.RootHashPath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootHashSignature": {
+            "empty": true,
+            "signature": "ay"
+          },
+          "launch.RootImage": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootImageOptions": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.RuntimeDirectory": {
+            "empty": false,
+            "signature": "as"
+          },
+          "launch.SetCredential": {
+            "empty": true,
+            "signature": "a(say)"
+          },
+          "launch.SetCredentialEncrypted": {
+            "empty": true,
+            "signature": "a(say)"
+          },
+          "launch.SourcePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardError": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardInput": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardOutput": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StateDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.SupplementaryGroups": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.Transient": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.TriggeredBy": {
+            "empty": false,
+            "signature": "as"
+          },
+          "launch.UMask": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.UnsetEnvironment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.User": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.WorkingDirectory": {
+            "empty": false,
+            "signature": "s"
+          }
+        },
+        "typed_property_count": 65,
+        "unit": {
+          "ActiveState": "inactive",
+          "DropInPaths": "",
+          "EnvironmentFiles": "/etc/default/ssh (ignore_errors=yes)",
+          "FragmentPath": "/usr/lib/systemd/system/ssh.service",
+          "Id": "ssh.service",
+          "InvocationID": "",
+          "Job": "",
+          "LoadState": "loaded",
+          "MainPID": "0",
+          "Names": "ssh.service",
+          "NeedDaemonReload": "no",
+          "NotifyAccess": "main",
+          "PIDFile": "",
+          "SubState": "dead",
+          "TriggeredBy": "ssh.socket",
+          "Triggers": "",
+          "Type": "notify",
+          "UnitFileState": "disabled"
+        }
+      }
+    },
+    "ubuntu2604": {
+      "metadata": {
+        "container": "fic-ssh-audit-ubuntu2604",
+        "os_release": {
+          "exit_code": 0,
+          "stdout": "PRETTY_NAME=\"Ubuntu 26.04.1 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"26.04\"\nVERSION=\"26.04.1 LTS (Resolute Raccoon)\"\nVERSION_CODENAME=resolute\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=resolute\nLOGO=ubuntu-logo\n",
+          "stderr": ""
+        },
+        "kernel": {
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "systemd_version": {
+          "exit_code": 0,
+          "stdout": "systemd 259 (259.5-0ubuntu3.4)\n+PAM +AUDIT +SELINUX +APPARMOR +IMA +IPE +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +KMOD +LIBCRYPTSETUP +LIBCRYPTSETUP_PLUGINS +LIBFDISK +PCRE2 +PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD +BPF_FRAMEWORK +BTF -XKBCOMMON -UTMP +SYSVINIT +LIBARCHIVE\n",
+          "stderr": ""
+        },
+        "openssh_version": {
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "OpenSSH_10.2p1 Ubuntu-2ubuntu3.8, OpenSSL 3.5.5 27 Jan 2026\n"
+        },
+        "pid1": {
+          "exit_code": 0,
+          "stdout": "systemd\n",
+          "stderr": ""
+        },
+        "unit_files": {
+          "exit_code": 0,
+          "stdout": "UNIT FILE                STATE     PRESET\nssh.service              disabled  enabled\nsshd-keygen.service      enabled   enabled\nsshd-unix-local@.service alias     -\nsshd.service             alias     -\nsshd@.service            indirect  enabled\nssh.socket               enabled   enabled\nsshd-unix-local.socket   generated -\nssh-access.target        static    -\n\n8 unit files listed.\n",
+          "stderr": ""
+        },
+        "sockets": {
+          "exit_code": 0,
+          "stdout": "LISTEN                     UNIT                   ACTIVATES\n0.0.0.0:22                 ssh.socket             ssh.service\n[::]:22                    ssh.socket             ssh.service\n/run/ssh-unix-local/socket sshd-unix-local.socket -\n\n3 sockets listed.\nPass --all to see loaded but inactive sockets, too.\n",
+          "stderr": ""
+        },
+        "package": {
+          "exit_code": 0,
+          "stdout": "openssh-server 1:10.2p1-2ubuntu3.8 1:10.2p1-2ubuntu3.8\nsystemd 259.5-0ubuntu3.4 259.5-0ubuntu3.4\nopenssh-server:\n  Installed: 1:10.2p1-2ubuntu3.8\n  Candidate: 1:10.2p1-2ubuntu3.8\n  Version table:\n *** 1:10.2p1-2ubuntu3.8 500\n        500 https://security.ubuntu.com/ubuntu resolute-security/main amd64 Packages\n        100 /var/lib/dpkg/status\n     1:10.2p1-2ubuntu3.7 500\n        500 https://archive.ubuntu.com/ubuntu resolute-updates/main amd64 Packages\n     1:10.2p1-2ubuntu3 500\n        500 https://archive.ubuntu.com/ubuntu resolute/main amd64 Packages\n",
+          "stderr": ""
+        },
+        "units": {
+          "ssh.service": {
+            "exit_code": 0,
+            "stdout": "Id=ssh.service\nNames=ssh.service sshd.service\nTriggers=\nTriggeredBy=ssh.socket\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nFragmentPath=/usr/lib/systemd/system/ssh.service\nSourcePath=\nDropInPaths=\nUnitFileState=disabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=\nType=notify\nNotifyAccess=main\nMainPID=0\n",
+            "stderr": ""
+          },
+          "sshd.service": {
+            "exit_code": 0,
+            "stdout": "Id=ssh.service\nNames=ssh.service sshd.service\nTriggers=\nTriggeredBy=ssh.socket\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nFragmentPath=/usr/lib/systemd/system/ssh.service\nSourcePath=\nDropInPaths=\nUnitFileState=disabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=\nType=notify\nNotifyAccess=main\nMainPID=0\n",
+            "stderr": ""
+          },
+          "ssh.socket": {
+            "exit_code": 0,
+            "stdout": "Id=ssh.socket\nNames=ssh.socket\nTriggers=ssh.service\nTriggeredBy=\nLoadState=loaded\nActiveState=active\nSubState=listening\nFragmentPath=/usr/lib/systemd/system/ssh.socket\nSourcePath=\nDropInPaths=\nUnitFileState=enabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=12c2d410e4da4302b833847958d200f2\nListen=0.0.0.0:22 (Stream)\nListen=[::]:22 (Stream)\n",
+            "stderr": ""
+          },
+          "sshd.socket": {
+            "exit_code": 0,
+            "stdout": "Id=sshd.socket\nNames=sshd.socket\nTriggers=\nTriggeredBy=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nFragmentPath=\nSourcePath=\nDropInPaths=\nUnitFileState=\nUnitFilePreset=\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          }
+        },
+        "input_metadata": {
+          "exit_code": 0,
+          "stdout": "/etc/default/ssh mode=644 uid=0 gid=0\nassignment-name:SSHD_OPTS\n8ec4e7be86cf6d98c8b280ef6d71e6d97a635813bb06bf5ac5cdc756e98ef379  /etc/default/ssh\n/ overlay private\n/ overlay private\n/ overlay private\n/run tmpfs private\n2ff8680be4dacf72fc208a81854a54e130a6cc6ed38ddfc6f9e62ea585e0f94c  /usr/lib/systemd/system-generators/sshd-socket-generator\n1e3c11483cc51a6c7aa3ab92affa43a313cab65e9721a64ce7720404cf6de1c8  /lib/systemd/system/ssh.service\n1e3c11483cc51a6c7aa3ab92affa43a313cab65e9721a64ce7720404cf6de1c8  /usr/lib/systemd/system/sshd.service\n",
+          "stderr": ""
+        },
+        "mountinfo_sha256": "1a0174502a78ab9a4dd84f8e92b25ac24fe07350699a29960a0041d657803db7"
+      },
+      "preflight": {
+        "canonical_unit": "ssh.service",
+        "checks": [
+          {
+            "evidence": "root; CAP_SYS_ADMIN present",
+            "method": "actual FIC helper",
+            "name": "privileges",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "4:4026532700",
+            "method": "actual FIC helper",
+            "name": "manager_namespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC daemon is not installed/running in this stock OpenSSH audit image",
+            "method": "actual FIC helper",
+            "name": "fic_daemon_namespace",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "enforce file absent; production check also treats it as non-enforcing",
+            "method": "actual FIC helper",
+            "name": "selinux",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC reference hash store not deployed; no enrollment attempted",
+            "method": "actual FIC helper",
+            "name": "systemctl_trust",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "",
+            "method": "actual FIC helper",
+            "name": "sshd_platform_executable",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "ssh.service",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Id",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "inactive",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ActiveState",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExitType",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.FileDescriptorStoreMax",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Job",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "loaded",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LoadState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NFileDescriptorStore",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NeedDaemonReload",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NotifyAccess",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "all",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProcSubset",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "default",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectProc",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RemainAfterExit",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "null",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardInput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "dead",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SubState",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Transient",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "notify",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Type",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InvocationID",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateMounts",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateTmp",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateDevices",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectClock",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelTunables",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelModules",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelLogs",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectControlGroups",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHome",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHostname",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.DynamicUser",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateUsers",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateNetwork",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateIPC",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountAPIVFS",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootDirectory",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootImage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadWritePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InaccessiblePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountFlags",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TemporaryFileSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SourcePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "ssh.socket",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TriggeredBy",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PIDFile",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/default/ssh (ignore_errors=yes)",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.EnvironmentFiles",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionDirectories",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionImages",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PAMName",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NetworkNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.IPCNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LogNamespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "journal",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardOutput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "inherit",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardError",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "MainPID=0; ActiveState/running gate already failed",
+            "method": "actual FIC helper",
+            "name": "main_process_identity",
+            "status": "NOT_APPLICABLE"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.ImportCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.LoadCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.LoadCredentialEncrypted",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.SetCredential",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "actual FIC helper",
+            "name": "typed.launch.SetCredentialEncrypted",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "activation triggers, retained FDs or alternate main identity unsupported",
+            "method": "actual FIC helper",
+            "name": "launch_validator",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "65 fields; values redacted",
+            "method": "actual FIC helper",
+            "name": "typed_launch_reader",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "effective parent is non-shared; no directories created",
+            "method": "actual FIC helper",
+            "name": "workspace_parent",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/ssh",
+            "method": "actual FIC helper",
+            "name": "parent.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "1 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/ssh",
+            "method": "actual FIC helper",
+            "name": "parent.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "observed file hashes form a legal request; this is not a trusted policy etalon",
+            "method": "actual FIC helper",
+            "name": "request_shape",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no target/nested/residual mount found",
+            "method": "actual FIC helper",
+            "name": "mount_targets_and_residuals",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "ab0e70976535779a225bd87285642b13759d3e98bf76ad30ccad2ebb2618fcbf",
+            "method": "actual FIC helper",
+            "name": "ssh_include_authority",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "current parsed Include graph confined to proposed existing targets; arbitrary future Include not guaranteed",
+            "method": "actual FIC helper",
+            "name": "include_coverage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "workspace_lock",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "tmpfs_creation_RO",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "publication_RO_identity",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "controlled_restart_READY",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "post_activation_cleanup",
+            "status": "NOT_TESTED"
+          }
+        ],
+        "config": "/etc/ssh/sshd_config",
+        "environment_names": [],
+        "include_base": "/etc/ssh",
+        "includes": {
+          "files": [
+            "/etc/ssh/sshd_config"
+          ],
+          "patterns": [
+            "/etc/ssh/sshd_config.d/*.conf"
+          ]
+        },
+        "input_manifest": {
+          "/etc/ssh/sshd_config": {
+            "files": 1,
+            "manifest": {},
+            "mount_id": 1651,
+            "sha256": "f5f0b40412fd9a84b787d967efbcb576728d398e8d40d0d32c825004a04a4999"
+          },
+          "/etc/ssh/sshd_config.d": {
+            "files": 0,
+            "manifest": {},
+            "mount_id": 1651,
+            "sha256": ""
+          }
+        },
+        "namespaces": {
+          "diagnostic": "4:4026532700",
+          "pid1": "4:4026532700",
+          "pid1_comm": "systemd\n"
+        },
+        "profile_option_file": "/etc/default/ssh",
+        "profile_option_variable": "SSHD_OPTS",
+        "profile_services": [
+          "ssh.service",
+          "sshd.service"
+        ],
+        "profile_sockets": [
+          "ssh.socket",
+          "sshd.socket"
+        ],
+        "requested_unit": "ssh.service",
+        "trust_store_path": "/opt/fic/db/commandhash.txt",
+        "typed_properties": {
+          "launch.CacheDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ConfigurationDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.DropInPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.DynamicUser": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.Environment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.EnvironmentFiles": {
+            "empty": false,
+            "signature": "a(sb)"
+          },
+          "launch.ExecConditionEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExecReloadEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecSearchPath": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExecStartEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStartPostEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStartPreEx": {
+            "empty": false,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStopEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExecStopPostEx": {
+            "empty": true,
+            "signature": "a(sasasttttuii)"
+          },
+          "launch.ExitType": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ExtensionDirectories": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.ExtensionImages": {
+            "empty": true,
+            "signature": "a(sba(ss))"
+          },
+          "launch.FileDescriptorStoreMax": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.FragmentPath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.Group": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.IPCNamespacePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ImportCredential": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.LoadCredential": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.LoadCredentialEncrypted": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.LogNamespace": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.LogsDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.MountAPIVFS": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.NFileDescriptorStore": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.NeedDaemonReload": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.NetworkNamespacePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.NoExecPaths": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.PAMName": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.PIDFile": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.PassEnvironment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.PrivateIPC": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.PrivateNetwork": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.PrivateUsers": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.ProcSubset": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.ProtectProc": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RemainAfterExit": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.Restart": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootDirectory": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootHash": {
+            "empty": true,
+            "signature": "ay"
+          },
+          "launch.RootHashPath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootHashSignature": {
+            "empty": true,
+            "signature": "ay"
+          },
+          "launch.RootImage": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.RootImageOptions": {
+            "empty": true,
+            "signature": "a(ss)"
+          },
+          "launch.RuntimeDirectory": {
+            "empty": false,
+            "signature": "as"
+          },
+          "launch.SetCredential": {
+            "empty": true,
+            "signature": "a(say)"
+          },
+          "launch.SetCredentialEncrypted": {
+            "empty": true,
+            "signature": "a(say)"
+          },
+          "launch.SourcePath": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardError": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardInput": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StandardOutput": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.StateDirectory": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.SupplementaryGroups": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.Transient": {
+            "empty": false,
+            "signature": "b"
+          },
+          "launch.TriggeredBy": {
+            "empty": false,
+            "signature": "as"
+          },
+          "launch.UMask": {
+            "empty": false,
+            "signature": "u"
+          },
+          "launch.UnsetEnvironment": {
+            "empty": true,
+            "signature": "as"
+          },
+          "launch.User": {
+            "empty": false,
+            "signature": "s"
+          },
+          "launch.WorkingDirectory": {
+            "empty": false,
+            "signature": "s"
+          }
+        },
+        "typed_property_count": 65,
+        "unit": {
+          "ActiveState": "inactive",
+          "DropInPaths": "",
+          "EnvironmentFiles": "/etc/default/ssh (ignore_errors=yes)",
+          "FragmentPath": "/usr/lib/systemd/system/ssh.service",
+          "Id": "ssh.service",
+          "InvocationID": "",
+          "Job": "",
+          "LoadState": "loaded",
+          "MainPID": "0",
+          "Names": "ssh.service sshd.service",
+          "NeedDaemonReload": "no",
+          "NotifyAccess": "main",
+          "PIDFile": "",
+          "SubState": "dead",
+          "TriggeredBy": "ssh.socket",
+          "Triggers": "",
+          "Type": "notify",
+          "UnitFileState": "disabled"
+        }
+      }
+    },
+    "alt-p11": {
+      "metadata": {
+        "container": "fic-ssh-audit-alt-p11",
+        "os_release": {
+          "exit_code": 0,
+          "stdout": "NAME=\"ALT Container\"\nVERSION=\"11\"\nID=altlinux\nVERSION_ID=11\nPRETTY_NAME=\"ALT Container\"\nANSI_COLOR=\"1;33\"\nCPE_NAME=\"cpe:/o:alt:container:11\"\nBUILD_ID=\"ALT Container 11\"\nALT_BRANCH_ID=\"p11\"\nHOME_URL=\"https://basealt.ru/\"\n",
+          "stderr": ""
+        },
+        "kernel": {
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "systemd_version": {
+          "exit_code": 0,
+          "stdout": "systemd 258 (258.9-alt1)\n+PAM +AUDIT +SELINUX -APPARMOR +IMA +IPE +SMACK +SECCOMP +GCRYPT +GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBCRYPTSETUP_PLUGINS +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -BTF +XKBCOMMON +UTMP +SYSVINIT +LIBARCHIVE\n",
+          "stderr": ""
+        },
+        "openssh_version": {
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": "OpenSSH_9.6p1, OpenSSL 3.5.7 9 Jun 2026\n"
+        },
+        "pid1": {
+          "exit_code": 0,
+          "stdout": "systemd\n",
+          "stderr": ""
+        },
+        "unit_files": {
+          "exit_code": 0,
+          "stdout": "UNIT FILE                STATE     PRESET\nsshd-generated@.service  generated -\nsshd-unix-local@.service alias     -\nsshd.service             disabled  enabled\nsshd-unix-local.socket   generated -\nssh-access.target        static    -\n\n5 unit files listed.\n",
+          "stderr": ""
+        },
+        "sockets": {
+          "exit_code": 0,
+          "stdout": "LISTEN                     UNIT                   ACTIVATES\n/run/ssh-unix-local/socket sshd-unix-local.socket -\n\n1 sockets listed.\nPass --all to see loaded but inactive sockets, too.\n",
+          "stderr": ""
+        },
+        "package": {
+          "exit_code": 0,
+          "stdout": "openssh-server 9.6p1-alt7 openssh-9.6p1-alt7.src.rpm ALT Linux Team\nsystemd 258.9-alt1 systemd-258.9-alt1.src.rpm ALT Linux Team\n",
+          "stderr": ""
+        },
+        "units": {
+          "ssh.service": {
+            "exit_code": 0,
+            "stdout": "Id=ssh.service\nNames=ssh.service\nTriggers=\nTriggeredBy=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nFragmentPath=\nSourcePath=\nDropInPaths=\nUnitFileState=\nUnitFilePreset=\nNeedDaemonReload=no\nInvocationID=\nType=\nNotifyAccess=none\nMainPID=0\n",
+            "stderr": ""
+          },
+          "sshd.service": {
+            "exit_code": 0,
+            "stdout": "Id=sshd.service\nNames=sshd.service\nTriggers=\nTriggeredBy=\nLoadState=loaded\nActiveState=inactive\nSubState=dead\nFragmentPath=/usr/lib/systemd/system/sshd.service\nSourcePath=\nDropInPaths=\nUnitFileState=disabled\nUnitFilePreset=enabled\nNeedDaemonReload=no\nInvocationID=\nType=simple\nNotifyAccess=none\nMainPID=0\n",
+            "stderr": ""
+          },
+          "ssh.socket": {
+            "exit_code": 0,
+            "stdout": "Id=ssh.socket\nNames=ssh.socket\nTriggers=\nTriggeredBy=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nFragmentPath=\nSourcePath=\nDropInPaths=\nUnitFileState=\nUnitFilePreset=\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          },
+          "sshd.socket": {
+            "exit_code": 0,
+            "stdout": "Id=sshd.socket\nNames=sshd.socket\nTriggers=\nTriggeredBy=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\nFragmentPath=\nSourcePath=\nDropInPaths=\nUnitFileState=\nUnitFilePreset=\nNeedDaemonReload=no\nInvocationID=\n",
+            "stderr": ""
+          }
+        },
+        "input_metadata": {
+          "exit_code": 0,
+          "stdout": "/etc/sysconfig/sshd mode=600 uid=0 gid=0\nassignment-name:EXTRAOPTIONS\n9e5aed877eef8e828735224ccbbed0949942f1f42aaee05da474f340b4ff8170  /etc/sysconfig/sshd\n/      overlay private\n/      overlay private\n/      overlay private\n/run   tmpfs  private\ne106210c64d05bf7c866f0feea631394f408323dfec3ccf2c9be1bedc4e9aca8  /usr/lib/systemd/system/sshd.service\n",
+          "stderr": ""
+        },
+        "mountinfo_sha256": "22498f1bce1295089565d381ebef8ae31a686ca788b9e77f9b058ad6e5599ad6"
+      },
+      "preflight": {
+        "canonical_unit": "sshd.service",
+        "checks": [
+          {
+            "evidence": "root; CAP_SYS_ADMIN present",
+            "method": "actual FIC helper",
+            "name": "privileges",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "4:4026532473",
+            "method": "actual FIC helper",
+            "name": "manager_namespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC daemon is not installed/running in this stock OpenSSH audit image",
+            "method": "actual FIC helper",
+            "name": "fic_daemon_namespace",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "enforce file absent; production check also treats it as non-enforcing",
+            "method": "actual FIC helper",
+            "name": "selinux",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "FIC reference hash store not deployed; no enrollment attempted",
+            "method": "actual FIC helper",
+            "name": "systemctl_trust",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "",
+            "method": "actual FIC helper",
+            "name": "sshd_platform_executable",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "sshd.service",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Id",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "inactive",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ActiveState",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "main",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExitType",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.FileDescriptorStoreMax",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Job",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "loaded",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LoadState",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "0",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NFileDescriptorStore",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NeedDaemonReload",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "none",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NotifyAccess",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "all",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProcSubset",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "default",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectProc",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RemainAfterExit",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "null",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardInput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "dead",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SubState",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Transient",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "simple",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.Type",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InvocationID",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateMounts",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateTmp",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateDevices",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectClock",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelTunables",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelModules",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectKernelLogs",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectControlGroups",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHome",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ProtectHostname",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.DynamicUser",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateUsers",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateNetwork",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PrivateIPC",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountAPIVFS",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootDirectory",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.RootImage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadWritePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.InaccessiblePaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.MountFlags",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.BindReadOnlyPaths",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TemporaryFileSystem",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.SourcePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.TriggeredBy",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PIDFile",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/sysconfig/sshd (ignore_errors=no)",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.EnvironmentFiles",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.LoadCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredential",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "systemctl intentionally hides value; see typed_properties if reader succeeded",
+            "method": "systemctl show",
+            "name": "unit.SetCredentialEncrypted",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionDirectories",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.ExtensionImages",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.PAMName",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.NetworkNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.IPCNamespacePath",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "empty",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.LogNamespace",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "journal",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardOutput",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "inherit",
+            "method": "systemctl show + code-derived constraint",
+            "name": "unit.StandardError",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "MainPID=0; ActiveState/running gate already failed",
+            "method": "actual FIC helper",
+            "name": "main_process_identity",
+            "status": "NOT_APPLICABLE"
+          },
+          {
+            "evidence": "systemd launch contract unavailable: GetUnit: No such file or directory",
+            "method": "actual FIC helper",
+            "name": "typed_launch_reader",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "effective parent is non-shared; no directories created",
+            "method": "actual FIC helper",
+            "name": "workspace_parent",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/openssh",
+            "method": "actual FIC helper",
+            "name": "parent.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "1 files; actual RO descriptor/metadata/xattr/nested-mount checks",
+            "method": "actual FIC helper",
+            "name": "tree.config",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "/etc/openssh",
+            "method": "actual FIC helper",
+            "name": "parent.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "trustedSshInput accepted",
+            "method": "actual FIC helper",
+            "name": "authority.dropins",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "unsafe tree entry 20-systemd-userdb.conf: Too many levels of symbolic links",
+            "method": "actual FIC helper",
+            "name": "tree.dropins",
+            "status": "UNSUPPORTED"
+          },
+          {
+            "evidence": "observed file hashes form a legal request; this is not a trusted policy etalon",
+            "method": "actual FIC helper",
+            "name": "request_shape",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "no target/nested/residual mount found",
+            "method": "actual FIC helper",
+            "name": "mount_targets_and_residuals",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "9764d2cf0a6a46bdb7b4cf434176b6eaffc60d9962025ee7bec00a057537ce82",
+            "method": "actual FIC helper",
+            "name": "ssh_include_authority",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "current parsed Include graph confined to proposed existing targets; arbitrary future Include not guaranteed",
+            "method": "actual FIC helper",
+            "name": "include_coverage",
+            "status": "SUPPORTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "workspace_lock",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "tmpfs_creation_RO",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "publication_RO_identity",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "controlled_restart_READY",
+            "status": "NOT_TESTED"
+          },
+          {
+            "evidence": "requires state-changing operation; forbidden for stock SSH audit",
+            "method": "actual FIC helper",
+            "name": "post_activation_cleanup",
+            "status": "NOT_TESTED"
+          }
+        ],
+        "config": "/etc/openssh/sshd_config",
+        "include_base": "/etc/openssh",
+        "includes": {
+          "files": [
+            "/etc/openssh/sshd_config"
+          ],
+          "patterns": []
+        },
+        "input_manifest": {
+          "/etc/openssh/sshd_config": {
+            "files": 1,
+            "manifest": {},
+            "mount_id": 1695,
+            "sha256": "ccc0dad4fff3841aae2c2b4babf5d6f4fa66aba37fdb21174a43a9ded2350a0f"
+          }
+        },
+        "namespaces": {
+          "diagnostic": "4:4026532473",
+          "pid1": "4:4026532473",
+          "pid1_comm": "systemd\n"
+        },
+        "profile_option_file": "/etc/sysconfig/sshd",
+        "profile_option_variable": "EXTRAOPTIONS",
+        "profile_services": [
+          "sshd.service"
+        ],
+        "profile_sockets": [
+          "sshd.socket"
+        ],
+        "requested_unit": "sshd.service",
+        "trust_store_path": "/opt/fic/db/commandhash.txt",
+        "unit": {
+          "ActiveState": "inactive",
+          "DropInPaths": "",
+          "EnvironmentFiles": "/etc/sysconfig/sshd (ignore_errors=no)",
+          "FragmentPath": "/usr/lib/systemd/system/sshd.service",
+          "Id": "sshd.service",
+          "InvocationID": "",
+          "Job": "",
+          "LoadState": "loaded",
+          "MainPID": "0",
+          "Names": "sshd.service",
+          "NeedDaemonReload": "no",
+          "NotifyAccess": "none",
+          "PIDFile": "",
+          "SubState": "dead",
+          "TriggeredBy": "",
+          "Triggers": "",
+          "Type": "simple",
+          "UnitFileState": "disabled"
+        }
+      }
+    }
+  }
+}
