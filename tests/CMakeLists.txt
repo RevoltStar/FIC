@@ -3170,3 +3170,24 @@ add_executable(sudoers_authentication_transaction_tests
 target_include_directories(sudoers_authentication_transaction_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(sudoers_authentication_transaction_tests PRIVATE fic-core fic-policy Threads::Threads)
 add_test(NAME sudoers_authentication_transaction_tests COMMAND sudoers_authentication_transaction_tests)
+
+# Standalone component: no production policy adapters or callers.
+set(FIC_VERIFIED_CONFIG_SOURCES
+    ${CMAKE_SOURCE_DIR}/fic/src/service/VerifiedConfigServiceActivator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/VerifiedConfigMountSupport.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/VerifiedConfigSystemd.cpp)
+add_executable(verified_config_service_tests
+    fic/service/VerifiedConfigServiceTests.cpp ${FIC_VERIFIED_CONFIG_SOURCES})
+target_include_directories(verified_config_service_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(verified_config_service_tests PRIVATE fic-core fic-platform)
+add_test(NAME verified_config_service_tests COMMAND verified_config_service_tests)
+set_tests_properties(verified_config_service_tests PROPERTIES LABELS unit)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+add_executable(verified_config_service_native_tests
+    fic/service/VerifiedConfigServiceNativeTests.cpp ${FIC_VERIFIED_CONFIG_SOURCES})
+target_compile_definitions(verified_config_service_native_tests PRIVATE FIC_ACTIVATOR_TESTING=1)
+target_include_directories(verified_config_service_native_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(verified_config_service_native_tests PRIVATE fic-core fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+add_test(NAME verified_config_service_native_tests COMMAND verified_config_service_native_tests)
+set_tests_properties(verified_config_service_native_tests PROPERTIES SKIP_RETURN_CODE 77 LABELS "native;root")

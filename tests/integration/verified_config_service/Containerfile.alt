@@ -1,0 +1,8 @@
+ARG BASE_IMAGE=fic-dm-alt-native-cache:latest
+FROM ${BASE_IMAGE}
+ENV container=docker
+RUN mkdir -p /var/cache/apt/archives/partial && apt-get update && apt-get install -y \
+    cmake ctest gcc-c++ glibc-devel libsystemd-devel openssl-devel \
+    nlohmann-json-devel make pkg-config python3 systemd dbus && apt-get clean
+STOPSIGNAL SIGRTMIN+3
+CMD ["/usr/lib/systemd/systemd"]

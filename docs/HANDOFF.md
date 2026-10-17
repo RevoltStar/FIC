@@ -1,28 +1,31 @@
 # Current working state
 
 ## Current base
-* Branch main; base `aecd4a905deec5c47c5c96e7955d0775d128de35`. Initially clean; completion commit follows this base. No push.
+* Branch `main`, base `798c27a0ea1d310b5de530f925b4a9f7598f889d`; initially clean. One completion commit requested, no push.
 
 ## Current task
-* Remove implicit ownership fallback from SharedLoginDefsPolicySpec without changing policy behavior.
+* Standalone VerifiedConfigServiceActivator, not connected to any existing policy/apply/rollback/startup path. New production files only; tests/CMake and component docs allowed.
 
 ## Accepted architecture / invariants
-* All seven enrolled USER_CREATION/PASSWORD_AGING policies explicitly retain OwnWhileEnabled.
-* A required six-argument constructor prevents omitted ownership from being silently value-initialized by aggregate initialization. No default construction or five-argument spec.
-* Repository-wide dependencies checked: obsolete enum value was used only by its member default and an unreachable backend branch. Journal consumers read policy/key/domain metadata; ownership is not serialized.
-* Apply/rollback, CAS, journal/recovery, relation guards and USER_CREATION behavior remain unchanged; unknown policies still fail closed through existing route/whitelist validation.
+* Already active canonical Type=notify / NotifyAccess=main only; same mount namespace/root as PID1 systemd. Unsupported sandbox/readiness cases fail before mount. READY is the service's initialization declaration, combined with snapshot/observer/final checks, not independent proof of config.
+* Bounded private tmpfs, superblock RO, descriptor-based publication, exact manifests and pinned metadata, sticky mountinfo poll, final checks, reverse ordinary unmount. Existing ContentDigest/FileStats/VerifiedProcessExecutor/PlatformExecutableResolver reused.
+* Cleanup checks mount ID/object/source before ordinary umount; non-atomic check/unmount race against CAP_SYS_ADMIN explicitly accepted and documented. Cleanup failure never Success; primaryStatus retained.
+* Poll is NOT universal: other-namespace remount/fspick pure RO flips produce no event on tested WSL kernel; actual write/read/restore detected by pinned ctime/mtime. No claim of protection against arbitrary CAP_SYS_ADMIN.
+* SIGKILL can leave mounts. Next call refuses source-marked residuals; no adoption or startup changes. Docker explicitly approved instead of Podman; no host security mutations.
 
 ## Completed / changed areas
-* IdentityLoginDefsPolicySpec.h: removed default and unused enum alternative; mandatory explicit constructor argument.
-* IdentityLoginDefsManagedTransaction.cpp: removed unreachable foreign-compliance no-op branch.
-* IdentityLoginDefsTests.cpp: compile-time construction guards, all-seven ownership assertions and unknown-policy fallback rejection. Existing ownership/release/recovery lifecycle tests retained; included in normal CI target.
+* `fic/src/service/VerifiedConfig*`: API, snapshot/mount checks, systemd activation, cleanup and residual detection. No production callers added.
+* Unit/API/parser tests, real notify fixture, barrier-driven native race tests and fault injection compiled only into test variant.
+* `tests/CMakeLists.txt`, focused native CMake, Docker recipes/runner; `docs/verified-config-service-activator.md`.
 
 ## Validation
-* Docker Debian12 build PASS: fic, identity_login_defs_tests, user_creation_tests, password_aging_tests, mutation_journal_tests, rollback_executor_tests. Log /tmp/fic-explicit-ownership-validation.log.
-* Final related CTest5/5 PASS with DAC_OVERRIDE/DAC_READ_SEARCH dropped: /tmp/fic-explicit-ownership-final-ctest.log. Initial root-capable run bypassed read-only directory fault injection in mutation_journal_tests; corrected container capabilities, no production workaround.
-* git diff --check PASS; repository-wide git grep found no remaining obsolete enum references. Compile-time guards compiled successfully; existing shared ownership/release/recovery and USER_CREATION regressions PASS.
+* Latest native Docker Debian12/13, Ubuntu24.04, ALT p11: 31 PASS / 0 SKIP each, including real mount_setattr, other namespace, fspick, malicious write/read/restore, EBUSY, foreign overlay and SIGKILL. Logs `/tmp/fic-activator-native-{debian12,debian13,ubuntu2404,alt-p11}.log`.
+* Debian12 full configure/build PASS; full CTest: 186 PASS, 1 expected native opt-in SKIP, 0 FAIL (187 total), `/tmp/fic-activator-full-validation.log`. Docker unprivileged, DAC override/read-search dropped. All 185 existing tests PASS.
+
+* Exact final source: fic + both new test targets build PASS; related CTest PASS (native opt-in SKIP), `/tmp/fic-activator-final-targets.log`; native matrix repeated after final traversal bound, 31/0 each.
+* git diff --check and bash -n native runner PASS; no existing production source changed, no policy callers.
 
 ## Remaining / limits
 * No unfinished implementation. One completion commit, no push.
-* Previous five-platform native matrix not repeated: this task enforces compile-time metadata construction and removes unreachable code. No host security mutations.
-* Existing unrelated ALT platform_profile_tests SDDM-path mismatch remains outside scope (see password-aging-native-validation.md).
+* All four userspaces share WSL kernel 6.6.87.2; not separate distro kernels/real boot validation.
+* Existing unrelated ALT platform_profile_tests SDDM-path baseline mismatch remains outside scope; full CTest is Debian12.
