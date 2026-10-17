@@ -1,0 +1,3553 @@
+{
+  "base": "d0c7e2d642a15c6f7a126f8ec06f83df024ff71a",
+  "date": "2026-10-17",
+  "kind": "disposable systemd research fixture, not production activation or SSH test",
+  "fixture_sha256": "eb9a6843cb08d8a3bf2d05d94ce88ef3335fd252d503dd4be0f1afcfae0ebfb3",
+  "platforms": {
+    "debian12": {
+      "cases": [
+        {
+          "evidence": {
+            "namespace": "4:4026532631",
+            "reader_comm": "systemd\n",
+            "reader_pid": 1
+          },
+          "name": "actual-EnvironmentFile-reader-is-PID1-before-exec",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 166,
+            "role": "--fixture-main"
+          },
+          "name": "single-env-argv-config",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 199,
+            "role": "--fixture-main"
+          },
+          "name": "multiple-environment-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 3,
+              "mount_id": 1563,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 247,
+            "role": "--fixture-main"
+          },
+          "name": "RO-input-and-config-actual-read-mount-cleanup",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 286,
+            "role": "--fixture-main"
+          },
+          "name": "negative-original-replaced-production-CAS-refuses-despite-snapshot-bytes",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 331,
+            "role": "--fixture-main"
+          },
+          "name": "rename-original-during-start-pre-EBUSY",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 365,
+            "role": "--fixture-main"
+          },
+          "name": "preopened-original-writer-cannot-change-published-snapshot",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 398,
+            "role": "--fixture-main"
+          },
+          "name": "environment-copied-before-exec-not-late-path-read",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "later"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "later",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 441,
+            "role": "--fixture-main"
+          },
+          "name": "post-READY-write-affects-next-start-only",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 475,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 509,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-appears",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 552,
+            "role": "--fixture-main"
+          },
+          "name": "negative-absence-check-before-restart-is-insufficient",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "optional-file-vanishes-before-start",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "mandatory-file-vanishes-start-fails",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 664,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-protected-parent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 697,
+            "role": "--fixture-main"
+          },
+          "name": "optional-empty-file-environment-equivalence",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 730,
+            "role": "--fixture-main"
+          },
+          "name": "mandatory-empty-file-succeeds-unlike-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 763,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-directory",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 796,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-dangling-symlink",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 829,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-mode000",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "same_environment": true,
+            "same_existence": false
+          },
+          "name": "empty-placeholder-not-equivalent-filesystem-observation",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 913,
+            "role": "--fixture-main"
+          },
+          "name": "systemd-follows-symlink-FIC-source-refuses",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-f",
+              "/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 146,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-f /run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532631",
+            "pid": 946,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--f-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-o",
+              "FixtureConfig=/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 146,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-o FixtureConfig=/run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532631",
+            "pid": 979,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--o-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "main"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "main",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 1014,
+            "role": "--fixture-main"
+          },
+          "name": "condition-pre-start-each-loads-environment",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "reloaded"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "reloaded",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 1065,
+            "role": "--fixture-main"
+          },
+          "name": "daemon-reload-changes-next-command-launch-inputs",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "startup-exit-failure",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "READY-timeout",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "cleanup-EBUSY-is-not-success",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "foreign"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "foreign",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 1216,
+            "role": "--fixture-main"
+          },
+          "name": "negative-mount-ABA-endpoint-hashes-and-ID-pass-observer-rejects",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 1249,
+            "role": "--fixture-main"
+          },
+          "name": "glob-sorted-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 1282,
+            "role": "--fixture-main"
+          },
+          "name": "unit-specifier-resolved-before-load",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "fixed"
+            ],
+            "config": {
+              "inode": 145,
+              "mount_id": 1666,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "fixed",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532631",
+            "pid": 1315,
+            "role": "--fixture-main"
+          },
+          "name": "C-fixture-static-environment-ignores-external-file",
+          "result": "PASS"
+        }
+      ],
+      "failed": 0,
+      "kernel": "6.6.87.2-microsoft-standard-WSL2\n",
+      "namespace": "4:4026532631",
+      "passed": 33,
+      "systemd": "systemd 252 (252.39-1~deb12u2)\n+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified\n"
+    },
+    "debian13": {
+      "cases": [
+        {
+          "evidence": {
+            "namespace": "4:4026532489",
+            "reader_comm": "systemd\n",
+            "reader_pid": 1
+          },
+          "name": "actual-EnvironmentFile-reader-is-PID1-before-exec",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 198,
+            "role": "--fixture-main"
+          },
+          "name": "single-env-argv-config",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 234,
+            "role": "--fixture-main"
+          },
+          "name": "multiple-environment-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 3,
+              "mount_id": 1558,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 284,
+            "role": "--fixture-main"
+          },
+          "name": "RO-input-and-config-actual-read-mount-cleanup",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 323,
+            "role": "--fixture-main"
+          },
+          "name": "negative-original-replaced-production-CAS-refuses-despite-snapshot-bytes",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 373,
+            "role": "--fixture-main"
+          },
+          "name": "rename-original-during-start-pre-EBUSY",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 412,
+            "role": "--fixture-main"
+          },
+          "name": "preopened-original-writer-cannot-change-published-snapshot",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 448,
+            "role": "--fixture-main"
+          },
+          "name": "environment-copied-before-exec-not-late-path-read",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "later"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "later",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 495,
+            "role": "--fixture-main"
+          },
+          "name": "post-READY-write-affects-next-start-only",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 533,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 571,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-appears",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 618,
+            "role": "--fixture-main"
+          },
+          "name": "negative-absence-check-before-restart-is-insufficient",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "optional-file-vanishes-before-start",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "mandatory-file-vanishes-start-fails",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 740,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-protected-parent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 776,
+            "role": "--fixture-main"
+          },
+          "name": "optional-empty-file-environment-equivalence",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 812,
+            "role": "--fixture-main"
+          },
+          "name": "mandatory-empty-file-succeeds-unlike-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 848,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-directory",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 884,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-dangling-symlink",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 920,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-mode000",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "same_environment": true,
+            "same_existence": false
+          },
+          "name": "empty-placeholder-not-equivalent-filesystem-observation",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 1013,
+            "role": "--fixture-main"
+          },
+          "name": "systemd-follows-symlink-FIC-source-refuses",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-f",
+              "/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 163,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-f /run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532489",
+            "pid": 1049,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--f-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-o",
+              "FixtureConfig=/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 163,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-o FixtureConfig=/run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532489",
+            "pid": 1085,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--o-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "main"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "main",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 1125,
+            "role": "--fixture-main"
+          },
+          "name": "condition-pre-start-each-loads-environment",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "reloaded"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "reloaded",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 1182,
+            "role": "--fixture-main"
+          },
+          "name": "daemon-reload-changes-next-command-launch-inputs",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "startup-exit-failure",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "READY-timeout",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "cleanup-EBUSY-is-not-success",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "foreign"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "foreign",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 1350,
+            "role": "--fixture-main"
+          },
+          "name": "negative-mount-ABA-endpoint-hashes-and-ID-pass-observer-rejects",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 1386,
+            "role": "--fixture-main"
+          },
+          "name": "glob-sorted-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 1422,
+            "role": "--fixture-main"
+          },
+          "name": "unit-specifier-resolved-before-load",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "fixed"
+            ],
+            "config": {
+              "inode": 162,
+              "mount_id": 1648,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "fixed",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532489",
+            "pid": 1458,
+            "role": "--fixture-main"
+          },
+          "name": "C-fixture-static-environment-ignores-external-file",
+          "result": "PASS"
+        }
+      ],
+      "failed": 0,
+      "kernel": "6.6.87.2-microsoft-standard-WSL2\n",
+      "namespace": "4:4026532489",
+      "passed": 33,
+      "systemd": "systemd 257 (257.13-1~deb13u1)\n+PAM +AUDIT +SELINUX +APPARMOR +IMA +IPE +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBCRYPTSETUP_PLUGINS +LIBFDISK +PCRE2 +PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD +BPF_FRAMEWORK +BTF -XKBCOMMON -UTMP +SYSVINIT +LIBARCHIVE\n"
+    },
+    "ubuntu2404": {
+      "cases": [
+        {
+          "evidence": {
+            "namespace": "4:4026532411",
+            "reader_comm": "systemd\n",
+            "reader_pid": 1
+          },
+          "name": "actual-EnvironmentFile-reader-is-PID1-before-exec",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 198,
+            "role": "--fixture-main"
+          },
+          "name": "single-env-argv-config",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 234,
+            "role": "--fixture-main"
+          },
+          "name": "multiple-environment-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 3,
+              "mount_id": 1507,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 284,
+            "role": "--fixture-main"
+          },
+          "name": "RO-input-and-config-actual-read-mount-cleanup",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 323,
+            "role": "--fixture-main"
+          },
+          "name": "negative-original-replaced-production-CAS-refuses-despite-snapshot-bytes",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 373,
+            "role": "--fixture-main"
+          },
+          "name": "rename-original-during-start-pre-EBUSY",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 412,
+            "role": "--fixture-main"
+          },
+          "name": "preopened-original-writer-cannot-change-published-snapshot",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 448,
+            "role": "--fixture-main"
+          },
+          "name": "environment-copied-before-exec-not-late-path-read",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "later"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "later",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 495,
+            "role": "--fixture-main"
+          },
+          "name": "post-READY-write-affects-next-start-only",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 533,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 571,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-appears",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 618,
+            "role": "--fixture-main"
+          },
+          "name": "negative-absence-check-before-restart-is-insufficient",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "optional-file-vanishes-before-start",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "mandatory-file-vanishes-start-fails",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 740,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-protected-parent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 776,
+            "role": "--fixture-main"
+          },
+          "name": "optional-empty-file-environment-equivalence",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 812,
+            "role": "--fixture-main"
+          },
+          "name": "mandatory-empty-file-succeeds-unlike-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 848,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-directory",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 884,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-dangling-symlink",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 920,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-mode000",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "same_environment": true,
+            "same_existence": false
+          },
+          "name": "empty-placeholder-not-equivalent-filesystem-observation",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 1013,
+            "role": "--fixture-main"
+          },
+          "name": "systemd-follows-symlink-FIC-source-refuses",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-f",
+              "/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 160,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-f /run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532411",
+            "pid": 1049,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--f-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-o",
+              "FixtureConfig=/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 160,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-o FixtureConfig=/run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532411",
+            "pid": 1085,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--o-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "main"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "main",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 1124,
+            "role": "--fixture-main"
+          },
+          "name": "condition-pre-start-each-loads-environment",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "reloaded"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "reloaded",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 1182,
+            "role": "--fixture-main"
+          },
+          "name": "daemon-reload-changes-next-command-launch-inputs",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "startup-exit-failure",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "READY-timeout",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "cleanup-EBUSY-is-not-success",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "foreign"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "foreign",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 1350,
+            "role": "--fixture-main"
+          },
+          "name": "negative-mount-ABA-endpoint-hashes-and-ID-pass-observer-rejects",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 1386,
+            "role": "--fixture-main"
+          },
+          "name": "glob-sorted-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 1422,
+            "role": "--fixture-main"
+          },
+          "name": "unit-specifier-resolved-before-load",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "fixed"
+            ],
+            "config": {
+              "inode": 159,
+              "mount_id": 1619,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "fixed",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532411",
+            "pid": 1458,
+            "role": "--fixture-main"
+          },
+          "name": "C-fixture-static-environment-ignores-external-file",
+          "result": "PASS"
+        }
+      ],
+      "failed": 0,
+      "kernel": "6.6.87.2-microsoft-standard-WSL2\n",
+      "namespace": "4:4026532411",
+      "passed": 33,
+      "systemd": "systemd 255 (255.4-1ubuntu8.18)\n+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified\n"
+    },
+    "ubuntu2604": {
+      "cases": [
+        {
+          "evidence": {
+            "namespace": "4:4026532222",
+            "reader_comm": "systemd\n",
+            "reader_pid": 1
+          },
+          "name": "actual-EnvironmentFile-reader-is-PID1-before-exec",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 193,
+            "role": "--fixture-main"
+          },
+          "name": "single-env-argv-config",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 231,
+            "role": "--fixture-main"
+          },
+          "name": "multiple-environment-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 3,
+              "mount_id": 1507,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 286,
+            "role": "--fixture-main"
+          },
+          "name": "RO-input-and-config-actual-read-mount-cleanup",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 327,
+            "role": "--fixture-main"
+          },
+          "name": "negative-original-replaced-production-CAS-refuses-despite-snapshot-bytes",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 379,
+            "role": "--fixture-main"
+          },
+          "name": "rename-original-during-start-pre-EBUSY",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 420,
+            "role": "--fixture-main"
+          },
+          "name": "preopened-original-writer-cannot-change-published-snapshot",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 458,
+            "role": "--fixture-main"
+          },
+          "name": "environment-copied-before-exec-not-late-path-read",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "later"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "later",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 507,
+            "role": "--fixture-main"
+          },
+          "name": "post-READY-write-affects-next-start-only",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 547,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 587,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-appears",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 636,
+            "role": "--fixture-main"
+          },
+          "name": "negative-absence-check-before-restart-is-insufficient",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "optional-file-vanishes-before-start",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "mandatory-file-vanishes-start-fails",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 764,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-protected-parent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 802,
+            "role": "--fixture-main"
+          },
+          "name": "optional-empty-file-environment-equivalence",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 840,
+            "role": "--fixture-main"
+          },
+          "name": "mandatory-empty-file-succeeds-unlike-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 878,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-directory",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 916,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-dangling-symlink",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 954,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-mode000",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "same_environment": true,
+            "same_existence": false
+          },
+          "name": "empty-placeholder-not-equivalent-filesystem-observation",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 1051,
+            "role": "--fixture-main"
+          },
+          "name": "systemd-follows-symlink-FIC-source-refuses",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-f",
+              "/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 156,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-f /run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532222",
+            "pid": 1089,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--f-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-o",
+              "FixtureConfig=/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 156,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-o FixtureConfig=/run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532222",
+            "pid": 1127,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--o-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "main"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "main",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 1169,
+            "role": "--fixture-main"
+          },
+          "name": "condition-pre-start-each-loads-environment",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "reloaded"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "reloaded",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 1230,
+            "role": "--fixture-main"
+          },
+          "name": "daemon-reload-changes-next-command-launch-inputs",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "startup-exit-failure",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "READY-timeout",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "cleanup-EBUSY-is-not-success",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "foreign"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "foreign",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 1406,
+            "role": "--fixture-main"
+          },
+          "name": "negative-mount-ABA-endpoint-hashes-and-ID-pass-observer-rejects",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 1444,
+            "role": "--fixture-main"
+          },
+          "name": "glob-sorted-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 1482,
+            "role": "--fixture-main"
+          },
+          "name": "unit-specifier-resolved-before-load",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "fixed"
+            ],
+            "config": {
+              "inode": 155,
+              "mount_id": 1366,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "fixed",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532222",
+            "pid": 1520,
+            "role": "--fixture-main"
+          },
+          "name": "C-fixture-static-environment-ignores-external-file",
+          "result": "PASS"
+        }
+      ],
+      "failed": 0,
+      "kernel": "6.6.87.2-microsoft-standard-WSL2\n",
+      "namespace": "4:4026532222",
+      "passed": 33,
+      "systemd": "systemd 259 (259.5-0ubuntu3.4)\n+PAM +AUDIT +SELINUX +APPARMOR +IMA +IPE +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +KMOD +LIBCRYPTSETUP +LIBCRYPTSETUP_PLUGINS +LIBFDISK +PCRE2 +PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD +BPF_FRAMEWORK +BTF -XKBCOMMON -UTMP +SYSVINIT +LIBARCHIVE\n"
+    },
+    "alt-p11": {
+      "cases": [
+        {
+          "evidence": {
+            "namespace": "4:4026532554",
+            "reader_comm": "systemd\n",
+            "reader_pid": 1
+          },
+          "name": "actual-EnvironmentFile-reader-is-PID1-before-exec",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 285,
+            "role": "--fixture-main"
+          },
+          "name": "single-env-argv-config",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 357,
+            "role": "--fixture-main"
+          },
+          "name": "multiple-environment-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 3,
+              "mount_id": 1507,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 417,
+            "role": "--fixture-main"
+          },
+          "name": "RO-input-and-config-actual-read-mount-cleanup",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 466,
+            "role": "--fixture-main"
+          },
+          "name": "negative-original-replaced-production-CAS-refuses-despite-snapshot-bytes",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 527,
+            "role": "--fixture-main"
+          },
+          "name": "rename-original-during-start-pre-EBUSY",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 575,
+            "role": "--fixture-main"
+          },
+          "name": "preopened-original-writer-cannot-change-published-snapshot",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 621,
+            "role": "--fixture-main"
+          },
+          "name": "environment-copied-before-exec-not-late-path-read",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "later"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "later",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 678,
+            "role": "--fixture-main"
+          },
+          "name": "post-READY-write-affects-next-start-only",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 725,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 774,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-appears",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "appeared"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "appeared",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 831,
+            "role": "--fixture-main"
+          },
+          "name": "negative-absence-check-before-restart-is-insufficient",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "optional-file-vanishes-before-start",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "mandatory-file-vanishes-start-fails",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 983,
+            "role": "--fixture-main"
+          },
+          "name": "optional-absence-protected-parent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1029,
+            "role": "--fixture-main"
+          },
+          "name": "optional-empty-file-environment-equivalence",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1075,
+            "role": "--fixture-main"
+          },
+          "name": "mandatory-empty-file-succeeds-unlike-absent",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1121,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-directory",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1167,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-dangling-symlink",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              ""
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": null,
+              "FIC_ENV_WORD": null,
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1213,
+            "role": "--fixture-main"
+          },
+          "name": "optional-object-mode000",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "same_environment": true,
+            "same_existence": false
+          },
+          "name": "empty-placeholder-not-equivalent-filesystem-observation",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1326,
+            "role": "--fixture-main"
+          },
+          "name": "systemd-follows-symlink-FIC-source-refuses",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-f",
+              "/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 148,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-f /run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532554",
+            "pid": 1372,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--f-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted",
+              "-o",
+              "FixtureConfig=/run/fic-env-research/config/evil.conf"
+            ],
+            "config": {
+              "inode": 148,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/evil.conf",
+              "sha256": "c1d077f4d82d751f3c8af4b6881c1442c40e50d5d42a716aab29cd5cbe2e47d2"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": "-o FixtureConfig=/run/fic-env-research/config/evil.conf"
+            },
+            "namespace": "4:4026532554",
+            "pid": 1418,
+            "role": "--fixture-main"
+          },
+          "name": "synthetic-SSHD_OPTS--o-redirect",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "main"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "main",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1467,
+            "role": "--fixture-main"
+          },
+          "name": "condition-pre-start-each-loads-environment",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "reloaded"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "reloaded",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1545,
+            "role": "--fixture-main"
+          },
+          "name": "daemon-reload-changes-next-command-launch-inputs",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "startup-exit-failure",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "result": "timeout"
+          },
+          "name": "READY-timeout",
+          "result": "PASS"
+        },
+        {
+          "evidence": {},
+          "name": "cleanup-EBUSY-is-not-success",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "foreign"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "foreign",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1753,
+            "role": "--fixture-main"
+          },
+          "name": "negative-mount-ABA-endpoint-hashes-and-ID-pass-observer-rejects",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "last"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "last",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1799,
+            "role": "--fixture-main"
+          },
+          "name": "glob-sorted-files-last-wins",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "trusted"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "trusted",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1845,
+            "role": "--fixture-main"
+          },
+          "name": "unit-specifier-resolved-before-load",
+          "result": "PASS"
+        },
+        {
+          "evidence": {
+            "argv": [
+              "/usr/local/bin/fic-env-research",
+              "--fixture-main",
+              "fixed"
+            ],
+            "config": {
+              "inode": 147,
+              "mount_id": 1053,
+              "path": "/run/fic-env-research/config/good.conf",
+              "sha256": "b6815e2fcf2ba9722d1976c094a5b1b60dc174317f34ec58f2233f62e5ac998f"
+            },
+            "env": {
+              "FIC_ENV_CONFIG": "/run/fic-env-research/config/good.conf",
+              "FIC_ENV_WORD": "fixed",
+              "SSHD_OPTS": null
+            },
+            "namespace": "4:4026532554",
+            "pid": 1891,
+            "role": "--fixture-main"
+          },
+          "name": "C-fixture-static-environment-ignores-external-file",
+          "result": "PASS"
+        }
+      ],
+      "failed": 0,
+      "kernel": "6.6.87.2-microsoft-standard-WSL2\n",
+      "namespace": "4:4026532554",
+      "passed": 33,
+      "systemd": "systemd 258 (258.9-alt1)\n+PAM +AUDIT +SELINUX -APPARMOR +IMA +IPE +SMACK +SECCOMP +GCRYPT +GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBCRYPTSETUP_PLUGINS +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -BTF +XKBCOMMON +UTMP +SYSVINIT +LIBARCHIVE\n"
+    }
+  }
+}

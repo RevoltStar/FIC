@@ -1,29 +1,31 @@
 # Current working state
 
 ## Current base
-* `main`, audit base `7e91772c0790f958cea6fc4aab23c9b878b053c7`, initially clean. One audit commit requested; no push.
+* `main`, research base `d0c7e2d642a15c6f7a126f8ec06f83df024ff71a`, initially clean. One research commit requested, no push.
 
 ## Current task
-* Research-only stock OpenSSH compatibility audit of VerifiedConfigServiceActivator, completed. No production/policy/SSH/unit/config changes.
+* Architecture research + native EnvironmentFile PoC; no production integration or relaxed activator gates.
 
-## Accepted architecture / invariants
-* Activator remains standalone: active notify/main, same namespace/root, pinned launch contract, pre-existing non-shared publication parents/workspace, identity-safe cleanup. No integration or relaxed gates.
-* Separate runtime/source/inference/NOT_TESTED. Docker userspaces share WSL2 kernel; no claim of real VM compatibility or successful activation from a read-only probe.
+## Architecture / conclusions
+* Existing activator still rejects EnvironmentFiles. Policies, SSH, transactions/ownership/journal, units/packaging unchanged.
+* Exact systemd252/255/257/258/259 sources and native FIFO barrier show PID1 reads envfiles in manager namespace before fork/spawn; newer executor receives serialized parsed values. Each condition/pre/main spawn rereads.
+* Recommend B (internal loaded launch-input coverage contract) using existing A (RO tmpfs/bind engine). Keep ActivationRequest; v1 require existing literal regular file targets with reference SHA, refuse optional-absence/glob/symlink. This is research recommendation, not implemented production support.
+* Optional absent ≠ universally equivalent empty object. Parent RO directory can protect absence but broad /etc/default or /etc/sysconfig lifecycle needs a separate design; no persistent placeholder.
+* Claims manager bytes / child env+argv / actual config read / cleanup after trusted READY are distinct. Existing privileged-adversary/observer/contract ABA residuals remain.
 
 ## Completed / changed areas
-* `docs/verified-config-native-compatibility-audit.md`: matrix, exact preflight, stock units/envfiles/sockets, Includes/propagation, exact package-source READY analysis, alternatives/roadmap.
-* Adjacent sanitized evidence JSON: per-condition results and package/runtime metadata for all five platforms.
-* `tests/integration/verified_config_service/audit/`: autonomous read-only probe reusing FIC helpers, Docker metadata collector, reproduction instructions. No activation/mount/restart commands.
-* All stock configurations rejected: EnvironmentFile on all; Debian12 `/lib` symlink in FragmentPath; Ubuntu socket trigger/inactive service; ALT simple/none/inactive. ALT unused systemd userdb symlink is a candidate-tree rejection, not active main-config input.
+* `tests/integration/verified_config_service/environment_file_research/`: autonomous Docker runner, CMake, C++ fixture and README; reuses real FIC mount/hash/copy/observer/typed reader/AtomicFileWriter.
+* `docs/verified-config-environment-file-research.md` and sanitized evidence JSON: exact source map/hashes, A/B/C comparison, 33 native cases, next production specification/regression plan.
+* Native tests only own `/run/fic-env-research` and `fic-env-research.service`; no stock SSH lifecycle commands. Temporary mounts/daemon-reload only inside new disposable containers, removed by runner trap.
+* Negative source rename confirms production identity gate must reject, despite laboratory frozen bytes. Overmount ABA restores endpoint SHA+ID but child got foreign env; sticky observer rejects. Cleanup EBUSY is false, not Success.
 
 ## Validation
-* Native probe configure/build/run PASS on Debian12/13, Ubuntu24.04/26.04, ALT p11 in disposable Docker with systemd PID1; 82/88/88/88/82 individual checks, including expected UNSUPPORTED/NOT_TESTED.
-* Exact distro source packages studied, sources/hashes referenced in report. Stock SSH only observed after initial boot, no start/stop/restart/reload/daemon-reload/mount operations during audit.
-* Python syntax and JSON status/metadata consistency checks PASS; git diff --check PASS.
-* Full FIC build/CTest/privileged activator gate not rerun: production untouched; audit does not execute activation.
+* Native configure/build/runner on Debian12/13, Ubuntu24.04/26.04, ALT p11: 33 PASS / 0 FAIL each. Final exact source logs `build-environment-file-research/*-verified.log`; evidence is committed JSON.
+* Bash syntax, matching case-set/evidence checks, source metadata SHA, git diff --check PASS.
+* Full project build/CTest not rerun: production unchanged. Research publisher is NOT full activate/recovery/locking/CAS implementation.
 
 ## Remaining / limits
-* No unfinished audit implementation. Future work recommended: EnvironmentFile proof, private-boundary deployment on shared-root VM, bounded SSH adapter; socket coordinator/ALT readiness separate.
-* Kernel for all rows: 6.6.87.2-microsoft-standard-WSL2. VM/physical distro kernels, actual FIC trust/daemon, activator restart/cleanup, Ubuntu READY execution, network/PAM login, package upgrades/private-boundary lifecycle and Astra1.8 NOT_TESTED.
-* ALT VM 172.17.1.107 unavailable (No route to host). No inference about its current state.
-* Audit disposable containers/images and exact sources remain local research artifacts; they are not installed on a production host or committed. Do not run old native activation gate as a stock SSH read-only probe.
+* All five Docker userspaces share kernel 6.6.87.2-microsoft-standard-WSL2. No VM/physical distro-kernel/reboot/package-upgrade validation; /dev/kvm absent.
+* No production activate or SSH -f/-o parser test (fixture is explicitly synthetic), no optional-absence production lifecycle, C unit ownership/rollback, Ubuntu sockets or ALT notify implementation.
+* Source archives/build artifacts are ignored local research data. Stock SSH images remain cached; runner destroys only its disposable containers.
+* Next step needs a production task: narrow EnvironmentFile contract support + real activator regression matrix, preserving existing trust/namespace/private-parent/cleanup gates. No automatic integration with policies.
