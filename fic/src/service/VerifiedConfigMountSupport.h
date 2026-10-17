@@ -24,11 +24,16 @@ public:
 struct MountRecord {
     std::uint64_t id = 0, parent = 0;
     std::string device, root, target, options, type, source, superOptions;
+    bool shared = false, slave = false, unbindable = false, unknownOptional = false;
 };
 std::vector<MountRecord> parseMountInfo(const std::string& text);
 std::vector<MountRecord> readMountInfo();
 bool mountOption(const std::string& options, const std::string& flag);
 bool below(const std::string& path, const std::string& parent);
+// Check the effective mount of the destination's parent, not a textual prefix.
+// Missing workspace ancestors are allowed only during the initial preflight.
+void requireSafePublicationParent(const std::filesystem::path& target, bool missingParents,
+                                  ActivationStatus failure);
 void validateRequest(const ActivationRequest& request);
 struct Identity {
     std::uint64_t mount = 0, inode = 0;

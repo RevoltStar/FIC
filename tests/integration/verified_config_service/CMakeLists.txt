@@ -11,7 +11,8 @@ add_executable(verified_config_service_native_tests
     ${FIC_ROOT}/tests/fic/service/VerifiedConfigServiceNativeTests.cpp
     ${FIC_ROOT}/fic/src/service/VerifiedConfigServiceActivator.cpp
     ${FIC_ROOT}/fic/src/service/VerifiedConfigMountSupport.cpp
-    ${FIC_ROOT}/fic/src/service/VerifiedConfigSystemd.cpp)
+    ${FIC_ROOT}/fic/src/service/VerifiedConfigSystemd.cpp
+    ${FIC_ROOT}/fic/src/service/VerifiedConfigLaunchContract.cpp)
 target_compile_definitions(verified_config_service_native_tests PRIVATE FIC_ACTIVATOR_TESTING=1)
 target_include_directories(verified_config_service_native_tests PRIVATE ${FIC_ROOT}/fic/src)
 target_link_libraries(verified_config_service_native_tests PRIVATE fic-core fic-platform PkgConfig::NATIVE_SYSTEMD)

@@ -7,12 +7,17 @@
 #include <fic/core/integrity/ContentDigest.h>
 #include <fic/core/process/ProcessExecutor.h>
 #include <systemd/sd-daemon.h>
+#include <nlohmann/json.hpp>
+#include <linux/stat.h>
+#include <fic/core/fs/AtomicFileWriter.h>
+#include "service/VerifiedConfigLaunchContract.h"
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <functional>
 #include <fcntl.h>
 #include <linux/mount.h>
@@ -33,6 +38,8 @@ const std::string root = "/etc/fic-vcsa-tests";
 const std::string runRoot = "/run/fic-vcsa-tests";
 const std::string unit = "fic-vcsa-test.service";
 unsigned checks = 0, skips = 0;
+using Json = nlohmann::json;
+const std::vector<std::string> configNames{"one.conf", "dropins/a.conf", "dropins/sub/b.conf"};
 void require(bool yes, const std::string& text) { if (!yes) throw std::runtime_error(text); }
 void pass(const std::string& text) { ++checks; std::cout << "PASS " << text << std::endl; }
 std::string read(const std::string& path) { std::ifstream f(path); require(bool(f), "read " + path); return {std::istreambuf_iterator<char>(f), {}}; }
@@ -42,7 +49,49 @@ std::string configurationDigest() { return digest(read(root + "/one.conf") + "|"
 void waitFd(int fd, short events) { pollfd p{fd, events, 0}; require(::poll(&p, 1, 5000) > 0 && (p.revents & events), "native IPC barrier timeout"); }
 void sendPacket(int fd, const std::string& text) { require(::send(fd, text.data(), text.size(), MSG_NOSIGNAL) == ssize_t(text.size()), "send barrier"); }
 std::string receive(int fd) { waitFd(fd, POLLIN); char data[4096]; auto n = ::recv(fd, data, sizeof data, 0); require(n > 0, "receive barrier"); return {data, std::size_t(n)}; }
-int serviceMain() {
+Json readConfiguration(const std::string& mode, bool alternate) {
+    std::string base = alternate ? root + "/alternate-source" : root;
+    if (!alternate && std::getenv("FIC_VCSA_CONFIG_ROOT")) base = std::getenv("FIC_VCSA_CONFIG_ROOT");
+    std::vector<std::string> originals;
+    if (mode.rfind("original:", 0) == 0) {
+        std::istringstream values(mode.substr(9)); std::string path;
+        while (std::getline(values, path, ',')) originals.push_back(path);
+        require(originals.size() == 3, "original FD fixture request");
+    }
+    Json report; report["files"] = Json::object(); std::string combined;
+    std::vector<d::Fd> held;
+    for (std::size_t i = 0; i < configNames.size(); ++i) {
+        const auto path = originals.empty() ? base + "/" + configNames[i] : originals[i];
+        held.emplace_back(::open(path.c_str(), O_RDONLY|O_CLOEXEC)); require(bool(held.back()), "fixture open actual config");
+        struct statx st{};
+        require(::syscall(SYS_statx, held.back().get(), "", AT_EMPTY_PATH, STATX_MNT_ID|STATX_INO, &st) == 0 &&
+                (st.stx_mask & STATX_MNT_ID), "fixture statx actual FD");
+        std::string content; char buffer[4096];
+        while (true) { const auto n = ::read(held.back().get(), buffer, sizeof buffer); if (n < 0 && errno == EINTR) continue; require(n >= 0, "fixture read FD"); if (!n) break; content.append(buffer, n); }
+        if (i) combined += '|'; combined += content;
+        report["files"][configNames[i]] = {{"mount", st.stx_mnt_id}, {"inode", st.stx_ino}, {"sha256", digest(content)}};
+    }
+    report["digest"] = digest(combined);
+    return report; // Close actual read descriptors BEFORE READY/ordinary cleanup.
+}
+using PublishedFiles = std::map<std::string, std::pair<std::uint64_t, std::string>>;
+PublishedFiles publishedIds(const ActivationRequest& r, const std::string& base = root) {
+    PublishedFiles expected;
+    for (const auto& name : configNames) {
+        const auto path = base + "/" + name;
+        for (const auto& p : r.paths) if (p.path == path || (p.kind == ControlledPathKind::Directory && d::below(path, p.path.string()))) {
+            d::Fd fd(::open(path.c_str(), O_RDONLY|O_CLOEXEC)); require(bool(fd), "capture published mount"); const auto sha = p.kind == ControlledPathKind::File ? p.sha256 : p.manifest.at(fs::path(path).lexically_relative(p.path).string());
+            expected[name] = {d::identity(fd.get()).mount, sha};
+        }
+    }
+    return expected;
+}
+bool matchesPublished(const Json& report, const PublishedFiles& expected) {
+    if (expected.empty()) return false;
+    for (const auto& [name, id] : expected) if (!report.at("files").contains(name) || report.at("files").at(name).at("mount") != id.first || report.at("files").at(name).at("sha256") != id.second) return false;
+    return true;
+}
+int serviceMain(bool alternate = false) {
     const auto mode = read(runRoot + "/mode");
     if (mode == "exit") return 23;
     d::Fd connection(::socket(AF_UNIX, SOCK_SEQPACKET|SOCK_CLOEXEC, 0));
@@ -50,14 +99,16 @@ int serviceMain() {
     const auto path = runRoot + "/control"; std::copy(path.begin(), path.end(), address.sun_path);
     const bool controlled = ::connect(connection.get(), reinterpret_cast<sockaddr*>(&address), sizeof address) == 0;
     if (controlled) { sendPacket(connection.get(), "BEFORE_READ"); require(receive(connection.get()) == "READ", "read barrier command"); }
-    const auto seen = configurationDigest(); write(runRoot + "/seen", seen);
-    if (controlled) { sendPacket(connection.get(), "READ_DONE:" + seen); require(receive(connection.get()) == "NOTIFY", "notify barrier command"); }
+    const auto report = readConfiguration(mode, alternate); const auto seen = report.at("digest").get<std::string>();
+    write(runRoot + "/seen", seen); write(runRoot + "/report", report.dump());
+    if (controlled) { sendPacket(connection.get(), "READ_DONE:" + report.dump()); require(receive(connection.get()) == "NOTIFY", "notify barrier command"); }
     if (mode != "silent") require(sd_notify(0, "READY=1") > 0, "sd_notify");
     while (true) ::pause();
 }
 struct Gate {
     d::Fd server, connection;
     std::string seen;
+    Json report;
     Gate() : server(::socket(AF_UNIX, SOCK_SEQPACKET|SOCK_CLOEXEC, 0)) {
         sockaddr_un address{}; address.sun_family = AF_UNIX;
         const auto path = runRoot + "/control"; ::unlink(path.c_str()); std::copy(path.begin(), path.end(), address.sun_path);
@@ -68,7 +119,7 @@ struct Gate {
         waitFd(server.get(), POLLIN); connection = d::Fd(::accept4(server.get(), nullptr, nullptr, SOCK_CLOEXEC));
         require(receive(connection.get()) == "BEFORE_READ", "service entered read barrier");
     }
-    void readNow() { sendPacket(connection.get(), "READ"); auto message = receive(connection.get()); require(message.rfind("READ_DONE:", 0) == 0, "read completion"); seen = message.substr(10); }
+    void readNow() { sendPacket(connection.get(), "READ"); auto message = receive(connection.get()); require(message.rfind("READ_DONE:", 0) == 0, "read completion"); report = Json::parse(message.substr(10)); seen = report.at("digest").get<std::string>(); }
     void notify() { sendPacket(connection.get(), "NOTIFY"); }
 };
 ProcessResult ctl(const std::vector<std::string>& args) {
@@ -105,8 +156,14 @@ void clean(const std::string& expected) { require(leftovers().empty() && configu
 void basicCases() {
     const auto before = configurationDigest();
     for (const auto& paths : {std::vector<ControlledPath>{one()}, std::vector<ControlledPath>{directory()}, std::vector<ControlledPath>{one(), directory()}}) {
-        const auto result = activate(request(paths));
-        require(result.success() && result.readinessConfirmed && read(runRoot + "/seen") == before, "real notify activation/read failed");
+        const auto r = request(paths); Gate gate; PublishedFiles expected;
+        d::TestHooks hooks;
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+            if (phase == d::TestPhase::Watching) expected = publishedIds(r);
+            if (phase == d::TestPhase::RestartQueued) { gate.beforeRead(); gate.readNow(); require(matchesPublished(gate.report, expected), "fixture read original mount instead of published snapshot"); gate.notify(); }
+        };
+        const auto result = activate(r, hooks);
+        require(result.success() && result.readinessConfirmed && gate.seen == before, "real notify activation/read failed");
         clean(before); pass("real notify file/directory activation and exact service read; ordinary cleanup");
     }
     require(activate(request()).success(), "repeat after cleanup"); clean(before); pass("repeat after successful cleanup");
@@ -276,6 +333,210 @@ void crossNamespaceCases() {
     }
 }
 
+void originalReadNegativeCase() {
+    const auto before = configurationDigest();
+    std::vector<d::Fd> originals; std::string mode = "original:";
+    for (const auto& name : configNames) {
+        originals.emplace_back(::open((root + "/" + name).c_str(), O_RDONLY|O_CLOEXEC)); require(bool(originals.back()), "pin original fixture file");
+        if (originals.size() > 1) mode += ',';
+        mode += "/proc/" + std::to_string(::getpid()) + "/fd/" + std::to_string(originals.back().get());
+    }
+    write(runRoot + "/mode", mode);
+    {
+        Gate gate; PublishedFiles expected;
+        d::TestHooks hooks; const auto r = request({one(), directory()});
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+            if (phase == d::TestPhase::Watching) expected = publishedIds(r);
+            if (phase == d::TestPhase::RestartQueued) { gate.beforeRead(); gate.readNow(); gate.notify(); }
+        };
+        const auto result = activate(r, hooks);
+        require(result.success() && gate.seen == before && !matchesPublished(gate.report, expected),
+                "negative attestation did not distinguish identical original bytes from snapshot mounts");
+        for (const auto& [name, id] : expected) require(gate.report.at("files").at(name).at("mount") != id.first, "original fixture accidentally read published object");
+    }
+    write(runRoot + "/mode", "normal"); active(); clean(before);
+    pass("negative FD attestation rejects original mounts despite identical SHA and READY");
+}
+void launchCases() {
+    const auto before = configurationDigest(); const auto file = "/etc/systemd/system/" + unit;
+    const auto saved = read(file); const auto alternate = root + "/alternate-source";
+    fs::create_directories(alternate + "/dropins/sub");
+    for (const auto& name : configNames) write(alternate + "/" + name, "alternate\n");
+    auto restore = [&] {
+        fs::remove_all(file + ".d"); write(file, saved); mustCtl({"daemon-reload"}); active(); clean(before);
+    };
+    const auto loaded = d::readLaunchContract(unit, std::chrono::steady_clock::now() + std::chrono::seconds(10));
+    d::validateLaunchContract(loaded);
+    for (const auto& key : {"ExecStartEx", "ExecStartPreEx", "ExecConditionEx", "ExecStartPostEx", "Environment",
+                           "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment", "FragmentPath", "DropInPaths", "NeedDaemonReload", "ManagerEnvironment"}) {
+        auto missing = loaded; missing.erase("launch." + std::string(key)); bool rejected = false;
+        try { d::validateLaunchContract(missing); } catch (const d::Failure& e) { rejected = e.status == ActivationStatus::UnsupportedConfiguration; }
+        require(rejected, std::string("missing required property accepted: ") + key);
+    }
+    pass("required typed launch properties absent => fail closed");
+    const auto touch = fs::canonical("/bin/touch").string();
+    write(file, saved + "ExecCondition=/bin/true\nExecStartPre=" + touch + " " + runRoot + "/pre\nExecStartPost=" + touch + " " + runRoot + "/post\n");
+    mustCtl({"daemon-reload"}); active();
+    require(activate(request()).success() && fs::exists(runRoot + "/pre") && fs::exists(runRoot + "/post"), "unchanged command lists/runtime metadata caused false rejection");
+    pass("unchanged real ExecCondition/Pre/Post supported; runtime command status excluded"); restore();
+    auto changedExec = saved; changedExec.replace(changedExec.find(" --service\n"), 11, " --service-alternate\n");
+    for (const auto& kind : {std::string("ExecStart"), std::string("Environment"), std::string("drop-in"), std::string("before-READY")}) {
+        const auto mutation = [&] {
+            if (kind == "Environment") write(file, saved + "Environment=FIC_VCSA_CONFIG_ROOT=" + alternate + "\n");
+            else if (kind == "drop-in") {
+                fs::create_directory(file + ".d");
+                write(file + ".d/hardening.conf", "[Service]\nExecStart=\nExecStart=" + fs::canonical("/proc/self/exe").string() + " --service-alternate\n");
+            } else write(file, changedExec);
+            mustCtl({"daemon-reload"});
+        };
+        ActivationResult result;
+        if (kind == "before-READY") {
+            Gate gate; d::TestHooks hooks;
+            hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+                if (phase != d::TestPhase::RestartQueued) return;
+                gate.beforeRead(); mutation(); gate.readNow(); gate.notify();
+            };
+            result = activate(request(), hooks);
+        } else {
+            d::TestHooks hooks;
+            hooks.checkpoint = [&](d::TestPhase phase, const std::string&) { if (phase == d::TestPhase::Watching) mutation(); };
+            result = activate(request(), hooks);
+        }
+        require(result.primaryStatus == ActivationStatus::InterferenceDetected && !result.success() && result.cleanupErrors.empty(), "changed launch contract returned success or leaked mounts");
+        require(result.diagnostic.find("launch.") != std::string::npos, "launch regression was masked by another failure");
+        // Actually launch the modified unit outside activate(). This is an isolated
+        // fixture, proving systemd loaded and can execute the changed contract.
+        mustCtl({"restart", unit}); require(read(runRoot + "/seen") != before, "changed unit was never really executed");
+        pass(kind + " mutation with daemon-reload rejected; changed unit actually executes alternate config"); restore();
+    }
+    // NeedDaemonReload is a live disk-vs-loaded check, not a contract generation.
+    write(file, saved + "Environment=UNCHANGED_FOR_SERVICE=yes\n");
+    struct stat st{}; require(::stat(file.c_str(), &st) == 0, "unit stat");
+    timespec times[2] = {st.st_atim, st.st_mtim}; times[1].tv_sec += 2;
+    require(::utimensat(AT_FDCWD, file.c_str(), times, 0) == 0, "force distinct unit timestamp without sleep");
+    const auto pending = ctl({"show", "--value", "--property=NeedDaemonReload", unit});
+    require(pending.success() && pending.standardOutput == "yes\n", "fixture did not establish NeedDaemonReload=yes");
+    require(activate(request()).status == ActivationStatus::UnsupportedConfiguration, "pending daemon reload accepted");
+    clean(before); pass("NeedDaemonReload=yes rejected before mount"); restore();
+    write(runRoot + "/environment", "FIC_VCSA_CONFIG_ROOT=" + root + "\n");
+    write(file, saved + "EnvironmentFile=" + runRoot + "/environment\n"); mustCtl({"daemon-reload"}); active();
+    require(activate(request()).status == ActivationStatus::UnsupportedConfiguration, "EnvironmentFile claimed supported");
+    write(runRoot + "/environment", "FIC_VCSA_CONFIG_ROOT=" + alternate + "\n");
+    require(ctl({"show", "--value", "--property=NeedDaemonReload", unit}).standardOutput == "no\n", "environment contents unexpectedly changed reload state");
+    require(activate(request()).status == ActivationStatus::UnsupportedConfiguration, "changed environment file accepted");
+    mustCtl({"restart", unit}); require(read(runRoot + "/seen") != before, "systemd did not consume changed EnvironmentFile");
+    pass("EnvironmentFile/content rejected; unchanged loaded path/reload flag does not pin bytes"); restore();
+    // Manager-provided values are outside the unit's Environment property.
+    write(file, saved + "PassEnvironment=FIC_VCSA_CONFIG_ROOT\n"); mustCtl({"set-environment", "FIC_VCSA_CONFIG_ROOT=" + root}); mustCtl({"daemon-reload"}); active();
+    d::TestHooks manager;
+    manager.checkpoint = [&](d::TestPhase phase, const std::string&) {
+        if (phase == d::TestPhase::Watching) mustCtl({"set-environment", "FIC_VCSA_CONFIG_ROOT=" + alternate});
+    };
+    const auto result = activate(request(), manager);
+    require(result.primaryStatus == ActivationStatus::InterferenceDetected, "manager environment change accepted");
+    mustCtl({"restart", unit}); require(read(runRoot + "/seen") != before, "manager environment not actually consumed");
+    mustCtl({"unset-environment", "FIC_VCSA_CONFIG_ROOT"}); pass("manager Environment change detected with stable PassEnvironment"); restore();
+}
+
+struct PeerNamespace {
+    d::Fd connection;
+    pid_t pid = -1;
+    PeerNamespace() {
+        int pair[2]; require(::socketpair(AF_UNIX, SOCK_SEQPACKET|SOCK_CLOEXEC, 0, pair) == 0, "peer socket");
+        pid = ::fork(); require(pid >= 0, "peer fork");
+        if (!pid) {
+            ::close(pair[0]);
+            try {
+                require(::unshare(CLONE_NEWNS) == 0, "peer namespace clone"); sendPacket(pair[1], "READY");
+                while (receive(pair[1]) == "INSPECT") {
+                    Json state; state["table"] = digest(read("/proc/self/mountinfo")); state["fic_mounts"] = leftovers().size();
+                    sendPacket(pair[1], state.dump());
+                }
+                ::close(pair[1]); ::_exit(0);
+            } catch (const std::exception& e) { sendPacket(pair[1], std::string("ERROR ") + e.what()); ::_exit(1); }
+        }
+        ::close(pair[1]); connection = d::Fd(pair[0]); require(receive(connection.get()) == "READY", "peer ready barrier");
+    }
+    Json inspect() { sendPacket(connection.get(), "INSPECT"); return Json::parse(receive(connection.get())); }
+    void stop() {
+        if (pid < 0) return;
+        sendPacket(connection.get(), "EXIT"); int status = 0;
+        require(::waitpid(pid, &status, 0) == pid && WIFEXITED(status) && WEXITSTATUS(status) == 0, "peer exit"); pid = -1;
+    }
+    ~PeerNamespace() { if (pid > 0) { ::kill(pid, SIGKILL); ::waitpid(pid, nullptr, 0); } }
+};
+void topologyCases() {
+    const auto saved = read("/etc/systemd/system/" + unit); const auto before = configurationDigest();
+    const auto privateBase = root + "/private-area", master = root + "/master-area", slave = root + "/slave-area", sharedSlave = root + "/shared-slave-area";
+    fs::create_directory(privateBase); fs::create_directory(master); fs::create_directory(slave); fs::create_directory(sharedSlave);
+    // Only new, test-owned mounts are configured. /, /etc and /run propagation
+    // are never changed, even inside this container. Boundaries precede peers.
+    require(::mount(root.c_str(), root.c_str(), nullptr, MS_BIND, nullptr) == 0, "test parent boundary");
+    require(::mount(privateBase.c_str(), privateBase.c_str(), nullptr, MS_BIND, nullptr) == 0 &&
+            ::mount(nullptr, privateBase.c_str(), nullptr, MS_PRIVATE, nullptr) == 0, "test private boundary");
+    require(::mount("test-topology-master", master.c_str(), "tmpfs", 0, "size=1048576,mode=0755") == 0, "test master tmpfs");
+    for (const auto& base : {privateBase, master}) {
+        fs::create_directories(base + "/dropins/sub");
+        for (const auto& name : configNames) write(base + "/" + name, read(root + "/" + name));
+    }
+    require(::mount(nullptr, master.c_str(), nullptr, MS_SHARED, nullptr) == 0, "test shared master");
+    for (const auto& base : {slave, sharedSlave}) {
+        require(::mount(master.c_str(), base.c_str(), nullptr, MS_BIND, nullptr) == 0 &&
+                ::mount(nullptr, base.c_str(), nullptr, MS_SLAVE, nullptr) == 0, "test slave boundary");
+    }
+    require(::mount(nullptr, sharedSlave.c_str(), nullptr, MS_SHARED, nullptr) == 0, "test shared-slave boundary");
+    require(::mount(nullptr, root.c_str(), nullptr, MS_SHARED, nullptr) == 0, "test shared ancestor");
+    fs::create_directories("/run/fic");
+    require(::mount("/run/fic", "/run/fic", nullptr, MS_BIND, nullptr) == 0 &&
+            ::mount(nullptr, "/run/fic", nullptr, MS_SHARED, nullptr) == 0, "test shared workspace ancestor");
+    PeerNamespace peer; const auto baseline = peer.inspect();
+    auto unchangedPeer = [&] { const auto state = peer.inspect(); require(state == baseline && state.at("fic_mounts") == 0, "temporary mounts escaped into peer namespace"); };
+    auto pathsAt = [&](const std::string& base) {
+        auto a = one(); auto b = directory(); a.path = base + "/one.conf"; b.path = base + "/dropins";
+        return std::vector<ControlledPath>{a, b};
+    };
+    auto deniedWithoutMount = [&](const ActivationRequest& r) {
+        unsigned attempts = 0; d::TestHooks hooks;
+        hooks.fault = [&](const std::string& action, std::size_t) { if (action == "tmpfs" || action == "bind") ++attempts; return 0; };
+        const auto table = read("/proc/self/mountinfo"); const auto result = activate(r, hooks);
+        require(result.status == ActivationStatus::UnsupportedConfiguration && attempts == 0 &&
+                read("/proc/self/mountinfo") == table, "unsafe topology changed namespace before refusal"); unchangedPeer();
+    };
+    deniedWithoutMount(request(pathsAt(privateBase))); pass("shared workspace parent refused before first mount; peer unchanged");
+    // Preparing the boundary is test administration, not activator behavior.
+    require(::mount(nullptr, "/run/fic", nullptr, MS_PRIVATE, nullptr) == 0, "test prepare private workspace boundary");
+    deniedWithoutMount(request()); pass("shared target parent refused before first mount; peer unchanged");
+    deniedWithoutMount(request(pathsAt(sharedSlave))); pass("shared-slave target parent refused before first mount; peer unchanged");
+    for (const auto& base : {privateBase, slave}) {
+        const auto both = pathsAt(base);
+        for (const auto& paths : {std::vector<ControlledPath>{both[0]}, std::vector<ControlledPath>{both[1]}, both}) {
+            AtomicWriteOptions options; options.rejectSymlink = true; std::string error;
+            require(AtomicFileWriter::write(base + "/one.conf", "one\n", options, &error), "AtomicFileWriter before activation: " + error);
+            write("/etc/systemd/system/" + unit, saved + "Environment=FIC_VCSA_CONFIG_ROOT=" + base + "\n"); mustCtl({"daemon-reload"}); active();
+            Gate gate; const auto r = request(paths); PublishedFiles expected;
+            d::TestHooks hooks;
+            hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+                if (phase == d::TestPhase::SnapshotReadOnly || phase == d::TestPhase::Watching) unchangedPeer();
+                if (phase == d::TestPhase::Watching) {
+                    expected = publishedIds(r, base);
+                    auto sibling = options; sibling.createIfMissing = true;
+                    require(AtomicFileWriter::write(base + "/admin.conf", "admin\n", sibling, &error), "uncontrolled sibling atomic rename blocked: " + error);
+                }
+                if (phase == d::TestPhase::RestartQueued) { gate.beforeRead(); gate.readNow(); require(matchesPublished(gate.report, expected), "topology fixture read wrong mount"); unchangedPeer(); gate.notify(); }
+            };
+            const auto result = activate(r, hooks);
+            require(result.success() && gate.seen == before, "safe boundary activation failed"); unchangedPeer();
+            require(AtomicFileWriter::write(base + "/one.conf", "one\n", options, &error), "AtomicFileWriter after cleanup: " + error);
+            pass(std::string(base == privateBase ? "private" : "non-shared slave") + " boundary under shared ancestor: published FD IDs, no peer mounts, atomic rename works");
+        }
+    }
+    write("/etc/systemd/system/" + unit, saved); mustCtl({"daemon-reload"}); active();
+    unchangedPeer(); peer.stop();
+    for (const auto& path : {sharedSlave, slave, master, privateBase, root, std::string("/run/fic")})
+        require(::umount2(path.c_str(), 0) == 0, "test topology cleanup " + path);
+    clean(before);
+}
+
 void cleanupCases() {
     const auto before = configurationDigest();
     d::Fd busy; d::TestHooks hook;
@@ -312,7 +573,7 @@ void cleanupCases() {
 int main(int argc, char** argv) {
     try {
         const bool container = fs::exists("/.dockerenv") || fs::exists("/run/.containerenv");
-        if (argc == 2 && std::string(argv[1]) == "--service") { require(container, "test service only in container"); return serviceMain(); }
+        if (argc == 2 && (std::string(argv[1]) == "--service" || std::string(argv[1]) == "--service-alternate")) { require(container, "test service only in container"); return serviceMain(std::string(argv[1]) == "--service-alternate"); }
         if (!container || ::geteuid() != 0 || !std::getenv("FIC_ACTIVATOR_NATIVE")) { std::cout << "SKIP native: explicit disposable systemd container required\n"; return 77; }
         std::ifstream procStatus("/proc/self/status"); std::string statusLine; bool admin = false;
         while (std::getline(procStatus, statusLine)) if (statusLine.rfind("CapEff:\t", 0) == 0)
@@ -329,7 +590,7 @@ int main(int argc, char** argv) {
         require(resolver.resolve(fic::platform::ExecutableId::Systemctl, systemctl, error) && CommandHashStore::saveHash(systemctl, error), error);
         const auto binary = fs::canonical("/proc/self/exe").string();
         write("/etc/systemd/system/" + unit, "[Unit]\nDescription=Isolated verified-config fixture\nStartLimitIntervalSec=0\n[Service]\nType=notify\nNotifyAccess=main\nExecStart=" + binary + " --service\nTimeoutStartSec=10s\nTimeoutStopSec=2s\n");
-        mustCtl({"daemon-reload"}); active(); basicCases(); namespaceRaces(); crossNamespaceCases(); cleanupCases();
+        mustCtl({"daemon-reload"}); active(); basicCases(); originalReadNegativeCase(); launchCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
         mustCtl({"stop", unit});
         std::cout << "NATIVE verified-config: " << checks << " PASS, " << skips << " SKIP\n";
         return 0;

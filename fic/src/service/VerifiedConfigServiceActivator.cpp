@@ -161,6 +161,7 @@ struct Operation {
         name.clear(); throw Failure(ActivationStatus::SnapshotFailed, "operation name collisions");
     }
     void mountTmpfs(std::uint64_t size) {
+        requireSafePublicationParent(directory, false, ActivationStatus::InterferenceDetected);
         auto target = openAbsolute(directory, O_RDONLY|O_DIRECTORY);
         const std::string options = "mode=0700,size=" + std::to_string(size) + ",nr_inodes=8192";
         const int injected = hooks.fault("tmpfs", 0); if (injected) errno = injected;
@@ -173,6 +174,7 @@ struct Operation {
         if (!own) throw Failure(ActivationStatus::InterferenceDetected, "new tmpfs identity unproven");
     }
     void publish(const ControlledPath& path, const std::string& snapshot, const Identity& original, std::size_t i) {
+        requireSafePublicationParent(path.path, false, ActivationStatus::InterferenceDetected);
         auto target = openAbsolute(path.path, O_RDONLY);
         if (!sameObject(identity(target.get()), original) || identity(target.get()).mount != original.mount)
             throw Failure(ActivationStatus::InterferenceDetected, "controlled target changed before bind");
@@ -208,9 +210,11 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
             result.residualPaths.push_back(m.target);
         }
         if (!result.residualPaths.empty()) throw Failure(ActivationStatus::ResidualMounts, "previous activation mounts require manual inspection; not adopted or unmounted");
+        requireSafePublicationParent(workspace / "prospective-operation", true, ActivationStatus::UnsupportedConfiguration);
         std::vector<Fd> sources; std::vector<Identity> original; std::vector<Tree> trees;
         auto budget = request.maxSnapshotBytes;
         for (const auto& p : request.paths) {
+            requireSafePublicationParent(p.path, false, ActivationStatus::UnsupportedConfiguration);
             if (p.path == workspace || below(p.path, workspace) || below(workspace, p.path))
                 throw Failure(ActivationStatus::UnsupportedConfiguration, "controlled path overlaps workspace");
             for (const auto& m : mountInfo) if (m.target == p.path || (p.kind == ControlledPathKind::Directory && below(m.target, p.path)))

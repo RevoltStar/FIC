@@ -1,5 +1,6 @@
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/VerifiedConfigMountSupport.h"
+#include "service/VerifiedConfigLaunchContract.h"
 #include <fic/core/integrity/ContentDigest.h>
 #include <iostream>
 #include <stdexcept>
@@ -36,6 +37,15 @@ int main() {
     bool bad = false;
     try { detail::parseMountInfo("invalid\n"); } catch (const detail::Failure&) { bad = true; }
     require(bad, "malformed mountinfo accepted");
+    const auto shared = detail::parseMountInfo("12 1 0:2 / /safe rw shared:1 master:2 - tmpfs test rw\n");
+    require(shared[0].shared && shared[0].slave && !shared[0].unknownOptional, "shared-slave topology lost");
+    const auto slave = detail::parseMountInfo("13 1 0:2 / /safe rw master:2 propagate_from:3 - tmpfs test rw\n");
+    require(!slave[0].shared && slave[0].slave, "non-shared slave confused with shared");
+    const auto unknown = detail::parseMountInfo("14 1 0:2 / /safe rw future:3 - tmpfs test rw\n");
+    require(unknown[0].unknownOptional, "future propagation metadata silently ignored");
+    bool missing = false;
+    try { detail::validateLaunchContract({}); } catch (const detail::Failure& e) { missing = e.status == ActivationStatus::UnsupportedConfiguration; }
+    require(missing, "absent required launch properties accepted");
     ActivationResult result; result.primaryStatus = ActivationStatus::RestartFailed;
     result.status = ActivationStatus::CleanupFailed; result.cleanupErrors.push_back("umount busy");
     require(!result.success() && result.primaryStatus == ActivationStatus::RestartFailed, "cleanup hid primary failure");

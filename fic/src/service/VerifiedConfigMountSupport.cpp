@@ -150,7 +150,13 @@ std::vector<MountRecord> parseMountInfo(const std::string& text) {
         if (!(in >> r.id >> r.parent >> r.device >> r.root >> r.target >> r.options))
             throw Failure(ActivationStatus::UnsupportedConfiguration, "invalid mountinfo record");
         bool separator = false;
-        while (in >> field) { if (field == "-") { separator = true; break; } }
+        while (in >> field) {
+            if (field == "-") { separator = true; break; }
+            if (field.rfind("shared:", 0) == 0) r.shared = true;
+            else if (field.rfind("master:", 0) == 0) r.slave = true;
+            else if (field == "unbindable") r.unbindable = true;
+            else if (field.rfind("propagate_from:", 0) != 0) r.unknownOptional = true;
+        }
         if (!separator || !(in >> r.type >> r.source >> r.superOptions) || !r.id)
             throw Failure(ActivationStatus::UnsupportedConfiguration, "incomplete mountinfo record");
         r.root = decode(r.root); r.target = decode(r.target); r.source = decode(r.source);
@@ -163,6 +169,28 @@ std::vector<MountRecord> readMountInfo() {
     std::ifstream input("/proc/self/mountinfo");
     if (!input) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot read mountinfo");
     return parseMountInfo({std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()});
+}
+void requireSafePublicationParent(const std::filesystem::path& target, bool missingParents,
+                                  ActivationStatus failure) {
+    auto parent = target.parent_path();
+    if (missingParents) {
+        std::error_code error;
+        while (!parent.empty()) {
+            const auto state = std::filesystem::symlink_status(parent, error);
+            if (!error && state.type() != std::filesystem::file_type::not_found) break;
+            if (error && error != std::errc::no_such_file_or_directory)
+                throw Failure(failure, "cannot inspect publication parent");
+            parent = parent.parent_path();
+        }
+    }
+    auto fd = openAbsolute(parent, O_PATH|O_DIRECTORY);
+    const auto id = identity(fd.get()).mount;
+    for (const auto& mount : readMountInfo()) if (mount.id == id) {
+        if (mount.shared || mount.unknownOptional)
+            throw Failure(failure, "publication parent is shared or has unknown propagation: " + parent.string());
+        return; // Private/unbindable or non-shared slave: no outward propagation.
+    }
+    throw Failure(failure, "publication parent mount identity unavailable");
 }
 void validateRequest(const ActivationRequest& r) {
     const auto invalid = [](const std::string& s) { throw Failure(ActivationStatus::UnsupportedConfiguration, s); };
@@ -290,6 +318,7 @@ void requireReadOnly(const std::string& path, const Identity& expected,
     bool found = false;
     for (const auto& r : readMountInfo()) if (r.id == observed.mount) {
         found = r.target == path && r.type == type && r.source == source &&
+                !r.shared && !r.unknownOptional &&
                 mountOption(r.options, "ro") && mountOption(r.superOptions, "ro");
     }
     if (!found) throw Failure(ActivationStatus::InterferenceDetected, "mount/superblock read-only proof failed");

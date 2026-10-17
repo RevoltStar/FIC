@@ -1,4 +1,5 @@
 #include "service/VerifiedConfigSystemd.h"
+#include "service/VerifiedConfigLaunchContract.h"
 #include "platform/PlatformExecutableResolver.h"
 #include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/process/VerifiedProcessExecutor.h>
@@ -74,6 +75,7 @@ std::chrono::milliseconds SystemdActivation::remaining() const {
     return value;
 }
 ServiceState SystemdActivation::query(std::chrono::milliseconds timeout) const {
+    const auto queryDeadline = std::chrono::steady_clock::now() + timeout;
     std::string names;
     for (const auto& p : properties) { if (!names.empty()) names += ','; names += p; }
     const auto result = execute(executable_, {"--system", "--no-pager", "--no-ask-password", "show", "--property=" + names, "--", unit_}, timeout);
@@ -86,17 +88,28 @@ ServiceState SystemdActivation::query(std::chrono::milliseconds timeout) const {
             throw Failure(ActivationStatus::ReadinessUnconfirmed, "ambiguous systemctl properties");
     }
     for (const auto& p : properties) state.at(p);
+    try {
+        const auto launch = readLaunchContract(unit_, queryDeadline);
+        state.properties.insert(launch.begin(), launch.end());
+    } catch (const Failure& e) {
+        if (!configuration_.empty() && e.status != ActivationStatus::TimedOut)
+            throw Failure(ActivationStatus::InterferenceDetected, e.what());
+        throw;
+    }
     return state;
 }
 void SystemdActivation::verifyConfiguration(const ServiceState& s) const {
+    // Changed/removed supported launch fields are interference, even when the
+    // replacement is itself unsupported. Initial unsupported setups fail preflight.
+    if (!configuration_.empty()) for (const auto& [key, expected] : configuration_)
+        if (!s.properties.count(key) || s.at(key) != expected) throw Failure(ActivationStatus::InterferenceDetected, "service configuration changed: " + key);
+    validateLaunchContract(s.properties);
     if (s.at("Id") != unit_ || s.at("LoadState") != "loaded" || s.at("Type") != "notify" || s.at("NotifyAccess") != "main")
         throw Failure(ActivationStatus::UnsupportedConfiguration, "only loaded canonical notify/main service units are supported");
     for (const auto& p : noProperties) if (s.at(p) != "no")
         throw Failure(ActivationStatus::UnsupportedConfiguration, "unsupported service mount sandbox: " + p);
     for (const auto& p : emptyProperties) if (!s.at(p).empty())
         throw Failure(ActivationStatus::UnsupportedConfiguration, "unsupported service path sandbox: " + p);
-    if (!configuration_.empty()) for (const auto& [key, expected] : configuration_)
-        if (s.at(key) != expected) throw Failure(ActivationStatus::InterferenceDetected, "service configuration changed: " + key);
 }
 ServiceState SystemdActivation::preflight() {
     auto s = query(remaining()); verifyConfiguration(s);
@@ -120,6 +133,7 @@ void SystemdActivation::restart() {
         "systemctl restart failed: " + result.error + result.standardError);
     auto queued = query(remaining());
     if (digits(queued.at("Job"))) job_ = queued.at("Job");
+    verifyConfiguration(queued);
 }
 ServiceState SystemdActivation::current() const {
     auto s = query(remaining()); verifyConfiguration(s); return s;

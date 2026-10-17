@@ -1,31 +1,32 @@
 # Current working state
 
 ## Current base
-* Branch `main`, base `798c27a0ea1d310b5de530f925b4a9f7598f889d`; initially clean. One completion commit requested, no push.
+* `main`, base `1782cc636364b8bb5c0ec0c1463250282c773cfe`, initially clean. One follow-up commit requested; no push.
 
 ## Current task
-* Standalone VerifiedConfigServiceActivator, not connected to any existing policy/apply/rollback/startup path. New production files only; tests/CMake and component docs allowed.
+* Hardening standalone VerifiedConfigServiceActivator: loaded launch contract, propagation preflight, independent fixture mount-ID attestation. No policy/SSH/apply/rollback/MutationJournal or existing production activation paths touched.
 
 ## Accepted architecture / invariants
-* Already active canonical Type=notify / NotifyAccess=main only; same mount namespace/root as PID1 systemd. Unsupported sandbox/readiness cases fail before mount. READY is the service's initialization declaration, combined with snapshot/observer/final checks, not independent proof of config.
-* Bounded private tmpfs, superblock RO, descriptor-based publication, exact manifests and pinned metadata, sticky mountinfo poll, final checks, reverse ordinary unmount. Existing ContentDigest/FileStats/VerifiedProcessExecutor/PlatformExecutableResolver reused.
-* Cleanup checks mount ID/object/source before ordinary umount; non-atomic check/unmount race against CAP_SYS_ADMIN explicitly accepted and documented. Cleanup failure never Success; primaryStatus retained.
-* Poll is NOT universal: other-namespace remount/fspick pure RO flips produce no event on tested WSL kernel; actual write/read/restore detected by pinned ctime/mtime. No claim of protection against arbitrary CAP_SYS_ADMIN.
-* SIGKILL can leave mounts. Next call refuses source-marked residuals; no adoption or startup changes. Docker explicitly approved instead of Podman; no host security mutations.
+* User chose pre-established private parent boundaries. Component ONLY checks them; no automatic permanent boundaries, no global propagation or unit/launch-model changes. Real-host provisioning is future deployment work.
+* Same mount namespace/root as PID1, active Type=notify/main, RO tmpfs, sticky observer, identity-safe reverse ordinary umount; public API/ActivationResult unchanged.
+* Shared/shared-slave publication parents (including workspace) fail before mount. Private/non-shared slave accepted; incoming events fail activation. Check/attach race against CAP_SYS_ADMIN remains outside guarantee.
+* Initial unsupported launch contract fails closed; changed captured values after preflight yield InterferenceDetected. Exec*Ex typed path/argv/flags excludes mutable runtime status; PID1 peer checked. Loaded properties + unit/drop-in fingerprints and manager environment compared repeatedly. EnvironmentFile/credentials/FD-store/alternative namespaces unsupported.
+* Prior poll blind spots and accepted cleanup check/umount race remain explicit. No SIGKILL recovery/adoption; residuals refused.
 
 ## Completed / changed areas
-* `fic/src/service/VerifiedConfig*`: API, snapshot/mount checks, systemd activation, cleanup and residual detection. No production callers added.
-* Unit/API/parser tests, real notify fixture, barrier-driven native race tests and fault injection compiled only into test variant.
-* `tests/CMakeLists.txt`, focused native CMake, Docker recipes/runner; `docs/verified-config-service-activator.md`.
+* `fic/src/service/VerifiedConfigLaunchContract.*`, Systemd, MountSupport, activator preflight.
+* New component test sources, CMake lists and component documentation.
+* Native fixture direct statx on same read FDs, positive published-ID checks and negative identical original-FD reads.
+* Real unit/daemon-reload/env/drop-in/READY races; peer namespaces with private/slave boundaries under shared ancestor; AtomicFileWriter before/after and sibling rename during activation.
 
 ## Validation
-* Latest native Docker Debian12/13, Ubuntu24.04, ALT p11: 31 PASS / 0 SKIP each, including real mount_setattr, other namespace, fspick, malicious write/read/restore, EBUSY, foreign overlay and SIGKILL. Logs `/tmp/fic-activator-native-{debian12,debian13,ubuntu2404,alt-p11}.log`.
-* Debian12 full configure/build PASS; full CTest: 186 PASS, 1 expected native opt-in SKIP, 0 FAIL (187 total), `/tmp/fic-activator-full-validation.log`. Docker unprivileged, DAC override/read-search dropped. All 185 existing tests PASS.
-
-* Exact final source: fic + both new test targets build PASS; related CTest PASS (native opt-in SKIP), `/tmp/fic-activator-final-targets.log`; native matrix repeated after final traversal bound, 31/0 each.
-* git diff --check and bash -n native runner PASS; no existing production source changed, no policy callers.
+* Exact final source, native Docker Debian12/13, Ubuntu24.04, ALT p11: 50 PASS / 0 SKIP each; `/tmp/fic-hardening-{d12,d13,u24,alt}.log`. Individual per-file SHA + mount IDs checked against request/publication; negative original-FD attestation rejected.
+* Full Debian12 configure/build PASS; full CTest 186 PASS / 1 expected native opt-in SKIP / 0 FAIL (187 tests; all 185 pre-existing tests pass), `/tmp/fic-hardening-full-d12.log`.
+* Full build updated after final test-fixture SHA assertion; related CTest PASS, `/tmp/fic-hardening-final-targets.log`. No privileged host validation; Docker build drops DAC override/read-search.
+* git diff --check / cached diff check and bash -n native runner PASS. Scope reviewed: only service component, its tests/CMake and documentation; public API untouched.
 
 ## Remaining / limits
-* No unfinished implementation. One completion commit, no push.
-* All four userspaces share WSL kernel 6.6.87.2; not separate distro kernels/real boot validation.
-* Existing unrelated ALT platform_profile_tests SDDM-path baseline mismatch remains outside scope; full CTest is Debian12.
+* No unfinished implementation. One follow-up commit, no push.
+* Private parent-boundary provisioning on real systems is future deployment work, deliberately not implemented here.
+* All native userspaces share kernel 6.6.87.2-microsoft-standard-WSL2. No separate Linux VM/physical-host kernel validation. Native tests explicitly construct topology; default Docker mounts are not the only topology tested.
+* Known poll blind spots, sequential launch checks, parent-check/attach and cleanup-check/umount races against CAP_SYS_ADMIN remain explicit. No claim of arbitrary privileged-adversary protection or atomic conditional restart.
