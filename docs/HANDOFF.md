@@ -1,31 +1,34 @@
 # Current working state
 
 ## Current base
-* `main`, research base `d0c7e2d642a15c6f7a126f8ec06f83df024ff71a`, initially clean. One research commit requested, no push.
+* `main`, `0a87a928e41ca9d37084b9c81bc4371be8f99eb9`; initially clean. One implementation commit requested; no push.
 
 ## Current task
-* Architecture research + native EnvironmentFile PoC; no production integration or relaxed activator gates.
+* Completed Verified EnvironmentFile v1 in standalone activator. No integration with policies/SSH/transactions/ownership/journal, no unit/trust-store lifecycle changes.
 
-## Architecture / conclusions
-* Existing activator still rejects EnvironmentFiles. Policies, SSH, transactions/ownership/journal, units/packaging unchanged.
-* Exact systemd252/255/257/258/259 sources and native FIFO barrier show PID1 reads envfiles in manager namespace before fork/spawn; newer executor receives serialized parsed values. Each condition/pre/main spawn rereads.
-* Recommend B (internal loaded launch-input coverage contract) using existing A (RO tmpfs/bind engine). Keep ActivationRequest; v1 require existing literal regular file targets with reference SHA, refuse optional-absence/glob/symlink. This is research recommendation, not implemented production support.
-* Optional absent ≠ universally equivalent empty object. Parent RO directory can protect absence but broad /etc/default or /etc/sysconfig lifecycle needs a separate design; no persistent placeholder.
-* Claims manager bytes / child env+argv / actual config read / cleanup after trusted READY are distinct. Existing privileged-adversary/observer/contract ABA residuals remain.
+## Accepted architecture / invariants
+* B on existing A: internal typed `EnvironmentFiles a(sb)` coverage classifier + existing single bounded tmpfs/RO/bind/observer/cleanup lifecycle. Public API/statuses unchanged.
+* Every loaded entry needs exact explicit File target with reference SHA. Keep order/optional flags/duplicates in pinned contract; one target can cover repeated path. No directory-only implicit coverage.
+* Existing optional-present supported; absent/glob/symlink/non-normalized/unresolved-specifier/nonregular/unsafe metadata/mount topology refused before first own mount. No context still rejects nonempty EnvironmentFiles.
+* Same namespace/root, root PID1 D-Bus, trusted systemctl, private/non-shared parents/workspace, notify/new invocation, strict observer and identity-safe cleanup retained. Shared-root deployment boundaries remain external prerequisite.
+* Accepted privileged-adversary/alternate-namespace observer/contract ABA/check-bind/check-umount residuals retained; SHA bytes do not prove SSH options/Include semantic safety.
 
 ## Completed / changed areas
-* `tests/integration/verified_config_service/environment_file_research/`: autonomous Docker runner, CMake, C++ fixture and README; reuses real FIC mount/hash/copy/observer/typed reader/AtomicFileWriter.
-* `docs/verified-config-environment-file-research.md` and sanitized evidence JSON: exact source map/hashes, A/B/C comparison, 33 native cases, next production specification/regression plan.
-* Native tests only own `/run/fic-env-research` and `fic-env-research.service`; no stock SSH lifecycle commands. Temporary mounts/daemon-reload only inside new disposable containers, removed by runner trap.
-* Negative source rename confirms production identity gate must reject, despite laboratory frozen bytes. Overmount ABA restores endpoint SHA+ID but child got foreign env; sticky observer rejects. Cleanup EBUSY is false, not Success.
+* LaunchContract classifier; SystemdActivation keeps request targets internally and compares full canonical launch properties throughout activation. Activator verifies all targets before mounting and rechecks envfile SHA before bind alongside existing identity CAS.
+* D-Bus ETIMEDOUT now remains TimedOut (not falsely InterferenceDetected). Unit classifier negatives for missing/malformed schema/paths/coverage; actual production native suite extended with env/argv/config FD mount/SHA/PID/InvocationID, Condition/Pre/Post, races/failures/cleanup/residuals. Existing negative suites retained.
+* Native runner accepts Ubuntu26 and waits for PID1 initial boot jobs before tests (first un-settled Ubuntu26 run correctly failed strict observer). Fixture service readiness still actual notify, no sleep fallback.
+* `docs/verified-config-service-activator.md`: v1 contract, scope, matrix and security review.
 
 ## Validation
-* Native configure/build/runner on Debian12/13, Ubuntu24.04/26.04, ALT p11: 33 PASS / 0 FAIL each. Final exact source logs `build-environment-file-research/*-verified.log`; evidence is committed JSON.
-* Bash syntax, matching case-set/evidence checks, source metadata SHA, git diff --check PASS.
-* Full project build/CTest not rerun: production unchanged. Research publisher is NOT full activate/recovery/locking/CAS implementation.
+* Final native matrix `bash tests/integration/verified_config_service/run-native.sh fic-ssh-audit:<tag> <profile>`: Debian12/13, Ubuntu24.04/26.04, ALT p11 all 91 PASS / 0 SKIP; logs `build-verified-config/logs/*-env.log`.
+* All five userspaces share 6.6.87.2-microsoft-standard-WSL2; not separate distro kernels/VM. No stock SSH commands/config/units modified.
+* Existing cross-namespace no-write RO flip remains measured observer blind spot; writes detected by final metadata checks. All normal/fault env scenarios verify no residuals; foreign/crash cleanup only explicit fixture admin.
+* Bash syntax and git diff --check PASS so far.
+* Full Debian12 configure/build PASS on final sources; full CTest 186 PASS / 0 FAIL / 1 expected native opt-in SKIP (187 total, 218.05 s). Actual `verified_config_service_tests` PASS; privileged native matrix performed separately, not inferred from skip.
+* Final full command: Docker `fic-ssh-audit:debian12`, no network, source read-only, own writable `build-env-full-debian12` volume; `cmake -S /src -B /build -DFIC_TARGET_PLATFORM=debian-12; cmake --build /build -j6; QT_QPA_PLATFORM=offscreen ctest --test-dir /build --output-on-failure`. Log `build-verified-config/logs/full-debian12-nodac.log`.
+* Full CTest container drops DAC_OVERRIDE/DAC_READ_SEARCH (chmod fault tests need real denial), safe.directory=/src only inside disposable container. Earlier default-root permission failures were reproduced/pass without bypass using the SAME MutationJournal binary; no unrelated code/test changes. Own build-root ownership restored by EXIT trap.
 
 ## Remaining / limits
-* All five Docker userspaces share kernel 6.6.87.2-microsoft-standard-WSL2. No VM/physical distro-kernel/reboot/package-upgrade validation; /dev/kvm absent.
-* No production activate or SSH -f/-o parser test (fixture is explicitly synthetic), no optional-absence production lifecycle, C unit ownership/rollback, Ubuntu sockets or ALT notify implementation.
-* Source archives/build artifacts are ignored local research data. Stock SSH images remain cached; runner destroys only its disposable containers.
-* Next step needs a production task: narrow EnvironmentFile contract support + real activator regression matrix, preserving existing trust/namespace/private-parent/cleanup gates. No automatic integration with policies.
+* Requested implementation/validation complete; one implementation commit over base, no push. No policy integration in this task.
+* NOT_TESTED: VM/physical distro kernels, actual SSH, enforcing SELinux/ACL provider semantics. Optional-absence/glob/symlink support, private-boundary deployment, Ubuntu sockets/ALT notify and SSH adapter semantic closure are intentionally separate future tasks.
+* Generic activator still trusts service READY semantics and caller input closure; known CAP_SYS_ADMIN/namespace/contract ABA limitations remain. No second snapshot engine, placeholder, managed unit or automatic crash adoption added.

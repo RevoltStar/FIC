@@ -8,7 +8,7 @@ if [[ $# != 2 ]]; then
 fi
 image=$1
 platform=$2
-case "$platform" in debian-12|debian-13|ubuntu-24.04|alt-p11) ;; *) echo "unsupported test platform" >&2; exit 2;; esac
+case "$platform" in debian-12|debian-13|ubuntu-24.04|ubuntu-26.04|alt-p11) ;; *) echo "unsupported test platform" >&2; exit 2;; esac
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 build="$repo/build-verified-config/$platform"
 mkdir -p "$build"
@@ -21,6 +21,13 @@ trap 'docker rm -f "$name" >/dev/null 2>&1 || true' EXIT
 # the host cgroup namespace. All fixture state lives in this disposable container.
 docker run -d --name "$name" --privileged --cgroupns=private --network none \
     --tmpfs /run --tmpfs /tmp -e container=docker "$image" >/dev/null
-docker exec "$name" timeout 45 sh -c 'until systemctl show-environment >/dev/null 2>&1; do sleep 0.1; done'
+# PID1's socket may be ready while initial boot jobs still create mounts.
+# Settle infrastructure before testing the deliberately strict mount observer.
+# This is not service readiness: the fixture still requires actual notify READY.
+docker exec "$name" timeout 60 sh -c '
+    until systemctl show-environment >/dev/null 2>&1; do sleep 0.1; done
+    systemctl is-system-running --wait >/dev/null 2>&1 || true
+    case "$(systemctl is-system-running)" in running|degraded) ;; *) exit 1;; esac
+'
 docker cp "$build/verified_config_service_native_tests" "$name:/usr/local/bin/vcsa-native"
 docker exec -e FIC_ACTIVATOR_NATIVE=1 "$name" /usr/local/bin/vcsa-native

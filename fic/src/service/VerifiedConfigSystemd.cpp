@@ -55,8 +55,9 @@ std::string ServiceState::at(const std::string& key) const {
     if (it == properties.end()) throw Failure(ActivationStatus::UnsupportedConfiguration, "systemd property unavailable: " + key);
     return it->second;
 }
-SystemdActivation::SystemdActivation(const std::string& unit, std::chrono::steady_clock::time_point deadline)
-    : unit_(unit), deadline_(deadline) {
+SystemdActivation::SystemdActivation(const std::string& unit, std::chrono::steady_clock::time_point deadline,
+                                     const std::vector<ControlledPath>& targets)
+    : unit_(unit), targets_(targets), deadline_(deadline) {
     namespace_ = namespaceIdentity(::getpid());
     std::ifstream comm("/proc/1/comm"); std::string name; std::getline(comm, name);
     if (name != "systemd" || namespaceIdentity(1) != namespace_)
@@ -103,7 +104,7 @@ void SystemdActivation::verifyConfiguration(const ServiceState& s) const {
     // replacement is itself unsupported. Initial unsupported setups fail preflight.
     if (!configuration_.empty()) for (const auto& [key, expected] : configuration_)
         if (!s.properties.count(key) || s.at(key) != expected) throw Failure(ActivationStatus::InterferenceDetected, "service configuration changed: " + key);
-    validateLaunchContract(s.properties);
+    validateLaunchContract(s.properties, &targets_);
     if (s.at("Id") != unit_ || s.at("LoadState") != "loaded" || s.at("Type") != "notify" || s.at("NotifyAccess") != "main")
         throw Failure(ActivationStatus::UnsupportedConfiguration, "only loaded canonical notify/main service units are supported");
     for (const auto& p : noProperties) if (s.at(p) != "no")

@@ -29,7 +29,7 @@ const std::vector<std::string> serviceProperties{
     "ExtensionDirectories", "ExtensionImages",
     "LoadCredential", "LoadCredentialEncrypted", "SetCredential", "SetCredentialEncrypted"};
 void requireBus(int result, const std::string& operation) {
-    if (result <= 0) throw Failure(ActivationStatus::UnsupportedConfiguration,
+    if (result <= 0) throw Failure(result == -ETIMEDOUT ? ActivationStatus::TimedOut : ActivationStatus::UnsupportedConfiguration,
         "systemd launch contract unavailable: " + operation + (result < 0 ? ": " + std::string(std::strerror(-result)) : ""));
 }
 void timeout(sd_bus* bus, std::chrono::steady_clock::time_point deadline) {
@@ -168,7 +168,40 @@ LaunchContract readLaunchContract(const std::string& unit, std::chrono::steady_c
     for (const auto& path : dropins) contract["launch.file:" + path.get<std::string>()] = fingerprint(path.get<std::string>(), budget);
     return contract;
 }
-void validateLaunchContract(const LaunchContract& contract) {
+std::set<std::string> validateEnvironmentFiles(const LaunchContract& contract,
+                                                const std::vector<ControlledPath>* targets) {
+    const auto reject = [] { throw Failure(ActivationStatus::UnsupportedConfiguration,
+        "EnvironmentFiles requires typed literal existing explicit file target coverage"); };
+    const auto found = contract.find("launch.EnvironmentFiles");
+    if (found == contract.end()) reject();
+    Json property;
+    try { property = Json::parse(found->second); }
+    catch (const Json::exception&) { reject(); }
+    if (!property.is_object() || property.value("signature", Json()) != "a(sb)" ||
+        !property.contains("value") || !property["value"].is_array()) reject();
+    std::set<std::string> covered;
+    for (const auto& entry : property["value"]) {
+        if (!entry.is_array() || entry.size() != 2 || !entry[0].is_string() || !entry[1].is_boolean()) reject();
+        const auto name = entry[0].get<std::string>();
+        const std::filesystem::path path(name);
+        if (name.empty() || name.size() > 4096 || !path.is_absolute() || path == path.root_path() ||
+            path.lexically_normal().string() != name || name.find_first_of("*?[]%\\") != std::string::npos ||
+            std::any_of(name.begin(), name.end(), [](unsigned char c) { return c < 32 || c == 127; })) reject();
+        for (const auto& part : path) if (part.empty() || part == "." || part == "..") reject();
+        if (!targets) reject();
+        const auto target = std::find_if(targets->begin(), targets->end(), [&](const ControlledPath& p) {
+            return p.path.string() == name && p.kind == ControlledPathKind::File && p.manifest.empty() &&
+                p.sha256.size() == 64 && std::all_of(p.sha256.begin(), p.sha256.end(), [](char c) {
+                    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+        });
+        if (target == targets->end()) reject();
+        // Deduplicate only the coverage lookup. The pinned typed property retains
+        // original ordering, optional flags and every duplicate for comparison.
+        covered.insert(name);
+    }
+    return covered;
+}
+void validateLaunchContract(const LaunchContract& contract, const std::vector<ControlledPath>* targets) {
     // First require ALL core properties even when the provided map is malformed.
     for (const auto& key : unitProperties) value(contract, key);
     for (const auto& key : serviceProperties) value(contract, key);
@@ -183,7 +216,8 @@ void validateLaunchContract(const LaunchContract& contract) {
         throw Failure(ActivationStatus::UnsupportedConfiguration, "activation triggers, retained FDs or alternate main identity unsupported");
     if (value(contract, "ExecStartEx").size() != 1)
         throw Failure(ActivationStatus::UnsupportedConfiguration, "exactly one ExecStart is required");
-    for (const auto& key : {"EnvironmentFiles", "LoadCredential", "LoadCredentialEncrypted", "SetCredential", "SetCredentialEncrypted", "ExtensionDirectories", "ExtensionImages"})
+    validateEnvironmentFiles(contract, targets);
+    for (const auto& key : {"LoadCredential", "LoadCredentialEncrypted", "SetCredential", "SetCredentialEncrypted", "ExtensionDirectories", "ExtensionImages"})
         if (!value(contract, key).empty()) throw Failure(ActivationStatus::UnsupportedConfiguration, std::string("external launch input unsupported: ") + key);
     for (const auto& key : {"PAMName", "NetworkNamespacePath", "IPCNamespacePath", "LogNamespace"})
         if (value(contract, key) != "") throw Failure(ActivationStatus::UnsupportedConfiguration, std::string("external launch context unsupported: ") + key);

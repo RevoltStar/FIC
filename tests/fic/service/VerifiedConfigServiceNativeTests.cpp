@@ -28,6 +28,7 @@
 #include <sys/syscall.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <sched.h>
 #include <unistd.h>
 
@@ -38,6 +39,7 @@ const std::string root = "/etc/fic-vcsa-tests";
 const std::string runRoot = "/run/fic-vcsa-tests";
 const std::string unit = "fic-vcsa-test.service";
 unsigned checks = 0, skips = 0;
+std::vector<std::string> actualArgv;
 using Json = nlohmann::json;
 const std::vector<std::string> configNames{"one.conf", "dropins/a.conf", "dropins/sub/b.conf"};
 void require(bool yes, const std::string& text) { if (!yes) throw std::runtime_error(text); }
@@ -72,6 +74,11 @@ Json readConfiguration(const std::string& mode, bool alternate) {
         report["files"][configNames[i]] = {{"mount", st.stx_mnt_id}, {"inode", st.stx_ino}, {"sha256", digest(content)}};
     }
     report["digest"] = digest(combined);
+    report["argv"] = actualArgv;
+    report["pid"] = ::getpid();
+    report["env"] = Json::object();
+    for (const auto* key : {"FIC_VCSA_WORD", "FIC_VCSA_CONFIG_ROOT"})
+        report["env"][key] = std::getenv(key) ? Json(std::getenv(key)) : Json();
     return report; // Close actual read descriptors BEFORE READY/ordinary cleanup.
 }
 using PublishedFiles = std::map<std::string, std::pair<std::uint64_t, std::string>>;
@@ -438,6 +445,200 @@ void launchCases() {
     mustCtl({"unset-environment", "FIC_VCSA_CONFIG_ROOT"}); pass("manager Environment change detected with stable PassEnvironment"); restore();
 }
 
+void environmentFileCases() {
+    const auto before = configurationDigest();
+    const auto unitFile = "/etc/systemd/system/" + unit;
+    const auto saved = read(unitFile);
+    const auto env = root + "/launch.env", second = root + "/second.env";
+    const auto bytes = [&](const std::string& word) { return "FIC_VCSA_WORD=" + word + "\nFIC_VCSA_CONFIG_ROOT=" + root + "\n"; };
+    const auto target = [&](const std::string& path) { return ControlledPath{path, ControlledPathKind::File, digest(read(path)), {}}; };
+    const auto install = [&](const std::vector<std::string>& files, bool phases = false) {
+        auto text = saved;
+        const auto command = fs::canonical("/proc/self/exe").string();
+        const auto at = text.find(" --service\n"); require(at != std::string::npos, "fixture ExecStart template");
+        text.replace(at, 11, " --service ${FIC_VCSA_WORD}\n");
+        for (const auto& file : files) text += "EnvironmentFile=" + file + "\n";
+        if (phases) for (const auto& phase : {"condition", "pre", "post"})
+            text += std::string(phase == std::string("condition") ? "ExecCondition=" : phase == std::string("pre") ? "ExecStartPre=" : "ExecStartPost=") + command + " --env-phase " + phase + "\n";
+        write(unitFile, text); mustCtl({"daemon-reload"});
+    };
+    const auto restore = [&] {
+        write(unitFile, saved); mustCtl({"daemon-reload"}); active();
+        for (const auto& path : {env, second}) fs::remove(path);
+        clean(before);
+    };
+    write(env, bytes("first")); write(second, bytes("second"));
+    // Main IPC gate proves systemd provided the env and argv before config read;
+    // every read FD is compared with the actual published mount, not just SHA.
+    for (unsigned scenario = 0; scenario < 7; ++scenario) {
+        std::vector<std::string> files{env};
+        if (scenario == 1) files = {"-" + env};
+        if (scenario == 2 || scenario == 3 || scenario == 6) files = {env, second};
+        if (scenario == 4) files = {env, second, env};
+        const bool phases = scenario == 6;
+        install(files, phases); active();
+        auto paths = std::vector<ControlledPath>{one(), target(env)};
+        if (files.size() > 1) paths.push_back(target(second));
+        if (scenario == 5 || phases) paths.push_back(directory());
+        const auto r = request(paths); const auto old = ctl({"show", "--value", "--property=InvocationID", unit}).standardOutput;
+        const auto word = files.back() == second ? "second" : "first";
+        Gate gate; PublishedFiles expected;
+        d::TestHooks hooks;
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+            if (phase == d::TestPhase::Watching) {
+                expected = publishedIds(r);
+                d::Fd denied(::open(env.c_str(), O_WRONLY|O_CLOEXEC)); require(!denied && errno == EROFS, "published env is not RO");
+            }
+            if (phase == d::TestPhase::RestartQueued) {
+                gate.beforeRead(); gate.readNow();
+                require(matchesPublished(gate.report, expected), "env-directed actual config did not use published mount");
+                require(gate.report["env"]["FIC_VCSA_WORD"] == word && gate.report["argv"].back() == word, "systemd env/argv ordering wrong");
+                gate.notify();
+            }
+        };
+        const auto result = activate(r, hooks);
+        require(result.success() && result.readinessConfirmed && result.cleanupErrors.empty(), "covered EnvironmentFile activation failed");
+        require(old != ctl({"show", "--value", "--property=InvocationID", unit}).standardOutput, "InvocationID unchanged");
+        require(std::to_string(gate.report["pid"].get<pid_t>()) + "\n" == ctl({"show", "--value", "--property=MainPID", unit}).standardOutput, "reported process not new MainPID");
+        if (phases) for (const auto& phase : {"condition", "pre", "post"}) {
+            const auto report = Json::parse(read(runRoot + "/phase-" + phase));
+            require(report["env"]["FIC_VCSA_WORD"] == word && matchesPublished(report, expected), "condition/pre/post escaped protected inputs");
+        }
+        require(read(env) == bytes("first") && read(second) == bytes("second"), "persistent env changed during activation");
+        clean(before); pass("EnvironmentFiles positive scenario " + std::to_string(scenario) + ": systemd env/argv/config mounts/new identity/READY/cleanup");
+    }
+    install({env}); active();
+    auto r = request({one(), target(env)});
+    require(activate(r).success(), "EnvironmentFile repeat failed"); clean(before); pass("EnvironmentFile repeat after cleanup");
+    // Absence of coverage remains fail-closed even with otherwise trusted unit.
+    auto loaded = d::readLaunchContract(unit, std::chrono::steady_clock::now() + std::chrono::seconds(10));
+    bool strict = false; try { d::validateLaunchContract(loaded); } catch (const d::Failure& e) { strict = e.status == ActivationStatus::UnsupportedConfiguration; }
+    require(strict, "legacy validator without coverage became permissive"); pass("nonempty EnvironmentFiles without trusted coverage remains rejected");
+    const auto denied = [&](const ActivationRequest& req, const std::string& reason) {
+        bool mounted = false; d::TestHooks hooks;
+        hooks.fault = [&](const std::string& operation, std::size_t) { if (operation == "tmpfs" || operation == "bind") mounted = true; return 0; };
+        const auto result = activate(req, hooks);
+        require(result.status == ActivationStatus::UnsupportedConfiguration && !mounted && leftovers().empty(), "input accepted/mounted before refusal: " + reason);
+        pass("EnvironmentFile pre-mount refusal: " + reason);
+    };
+    denied(request(), "uncovered file");
+    auto parent = ControlledPath{root, ControlledPathKind::Directory, "", {}};
+    denied(request({parent}), "directory-only implicit coverage");
+    auto wrong = r; wrong.paths.back().sha256 = digest("wrong"); denied(wrong, "wrong reference SHA");
+    fs::remove(env);
+    for (bool optional : {false, true}) { install({(optional ? "-" : "") + env}); denied(r, optional ? "optional absent" : "mandatory absent"); }
+    fs::create_symlink(second, env); install({env}); denied(r, "symlink"); fs::remove(env);
+    fs::create_symlink(root + "/does-not-exist", env); denied(r, "dangling symlink"); fs::remove(env);
+    fs::create_directory(env); denied(r, "directory object"); fs::remove(env);
+    require(::mkfifo(env.c_str(), 0600) == 0, "make FIFO"); denied(r, "FIFO object (no blocking read)"); fs::remove(env);
+    write(env, bytes("first"));
+    const auto parentLink = root + "/env-parent-link"; fs::create_directory_symlink(root, parentLink);
+    const auto linkedEnv = parentLink + "/launch.env"; install({linkedEnv});
+    denied(request({one(), target(linkedEnv)}), "symlink in parent components"); fs::remove(parentLink);
+    install({root + "/*.env"}); denied(r, "glob");
+    install({env}); require(::chmod(env.c_str(), 04600) == 0, "set special mode"); denied(r, "special permission bits"); ::chmod(env.c_str(), 0644);
+    require(::setxattr(env.c_str(), "user.fic_native", "x", 1, 0) == 0, "fixture xattr"); denied(r, "unsupported xattr"); require(::removexattr(env.c_str(), "user.fic_native") == 0, "remove fixture xattr");
+    require(::mount(second.c_str(), env.c_str(), nullptr, MS_BIND, nullptr) == 0, "foreign env mount"); denied(r, "foreign existing mount"); require(::umount(env.c_str()) == 0, "remove foreign env mount");
+    const auto launchDir = root + "/launch-parent"; fs::create_directory(launchDir);
+    require(::mount(launchDir.c_str(), launchDir.c_str(), nullptr, MS_BIND, nullptr) == 0 && ::mount(nullptr, launchDir.c_str(), nullptr, MS_SHARED, nullptr) == 0, "shared env parent setup");
+    write(launchDir + "/input", bytes("first")); install({launchDir + "/input"}); denied(request({one(), target(launchDir + "/input")}), "shared publication parent");
+    require(::umount(launchDir.c_str()) == 0, "remove shared env parent"); fs::remove_all(launchDir);
+    install({env}); active();
+    for (const auto& action : {"write", "rename"}) {
+        d::TestHooks hooks;
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+            if (phase != d::TestPhase::SnapshotReadOnly) return;
+            if (std::string(action) == "write") write(env, bytes("foreign"));
+            else { write(second, bytes("first")); require(::rename(second.c_str(), env.c_str()) == 0, "atomic same-bytes original rename"); }
+        };
+        const auto result = activate(r, hooks);
+        require(!result.success() && result.primaryStatus == (std::string(action) == "write" ? ActivationStatus::ChecksumMismatch : ActivationStatus::InterferenceDetected), "changed original before publication accepted");
+        require(leftovers().empty(), "CAS refusal leaked mounts"); write(env, bytes("first")); write(second, bytes("second"));
+        pass(std::string("EnvironmentFile pre-bind ") + action + " rejected");
+    }
+    {
+        d::Fd writer(::open(env.c_str(), O_WRONLY|O_CLOEXEC)); require(bool(writer), "pin original env writer");
+        Gate gate; d::TestHooks hooks;
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+            if (phase == d::TestPhase::Watching) { const auto foreign = bytes("foreign"); require(::ftruncate(writer.get(), 0) == 0 && ::pwrite(writer.get(), foreign.data(), foreign.size(), 0) == ssize_t(foreign.size()), "original FD mutation"); }
+            if (phase == d::TestPhase::RestartQueued) { gate.beforeRead(); gate.readNow(); require(gate.report["env"]["FIC_VCSA_WORD"] == "first", "original writer affected protected environment"); gate.notify(); }
+        };
+        require(activate(r, hooks).success(), "preopened original writer snapshot isolation failed");
+        require(read(env) == bytes("foreign"), "foreign original bytes lost on cleanup"); write(env, bytes("first")); clean(before);
+        pass("EnvironmentFile original FD write after publication cannot change systemd env; original survives cleanup");
+    }
+    {
+        d::Fd writer(::open(env.c_str(), O_WRONLY|O_CLOEXEC)); require(bool(writer), "original writer before READY");
+        Gate gate; d::TestHooks hooks;
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+            if (phase != d::TestPhase::RestartQueued) return;
+            gate.beforeRead(); gate.readNow();
+            const auto later = bytes("later");
+            require(::ftruncate(writer.get(), 0) == 0 && ::pwrite(writer.get(), later.data(), later.size(), 0) == ssize_t(later.size()), "write original after manager read before READY");
+            require(gate.report["env"]["FIC_VCSA_WORD"] == "first", "prepared environment changed"); gate.notify();
+        };
+        require(activate(r, hooks).success() && read(env) == bytes("later"), "before-READY original mutation broke verified snapshot");
+        clean(before);
+    }
+    // The next unprotected fixture restart is intentionally outside activate().
+    mustCtl({"restart", unit});
+    require(Json::parse(read(runRoot + "/report"))["env"]["FIC_VCSA_WORD"] == "later", "post-cleanup restart unexpectedly retained protection");
+    write(env, bytes("first")); active();
+    pass("EnvironmentFile after manager read/before READY remains frozen; post-cleanup restart uses later original");
+    for (const auto& mutation : {"path", "order", "optional", "duplicate", "uncovered", "before-READY"}) {
+        install({env, second}); active(); auto both = request({one(), target(env), target(second)});
+        Gate gate; d::TestHooks hooks;
+        const auto change = [&] {
+            if (std::string(mutation) == "order") install({second, env});
+            else if (std::string(mutation) == "optional") install({"-" + env, second});
+            else if (std::string(mutation) == "duplicate") install({env, second, env});
+            else if (std::string(mutation) == "uncovered") { write(runRoot + "/uncovered.env", bytes("foreign")); install({env, runRoot + "/uncovered.env"}); }
+            else install({second});
+        };
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+            if (std::string(mutation) == "before-READY") {
+                if (phase == d::TestPhase::RestartQueued) { gate.beforeRead(); change(); gate.readNow(); gate.notify(); }
+            } else if (phase == d::TestPhase::Watching) change();
+        };
+        const auto result = activate(both, hooks);
+        require(result.primaryStatus == ActivationStatus::InterferenceDetected && !result.success() && leftovers().empty(), "changed env launch contract accepted");
+        pass(std::string("EnvironmentFiles daemon-reload ") + mutation + " => InterferenceDetected");
+    }
+    install({env}); active(); r = request({one(), target(env)});
+    {
+        Gate gate; d::TestHooks hooks;
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) {
+            if (phase != d::TestPhase::RestartQueued) return;
+            gate.beforeRead(); require(::mount(second.c_str(), env.c_str(), nullptr, MS_BIND, nullptr) == 0, "env ABA foreign bind");
+            require(::umount(env.c_str()) == 0, "env ABA restore"); gate.readNow(); gate.notify();
+        };
+        require(activate(r, hooks).primaryStatus == ActivationStatus::InterferenceDetected && leftovers().empty(), "env ABA not detected"); pass("EnvironmentFile mount ABA rejected by sticky observer");
+    }
+    d::TestHooks partial; partial.fault = [](const std::string& action, std::size_t i) { return action == "bind" && i == 1 ? EIO : 0; };
+    require(activate(r, partial).status == ActivationStatus::MountFailed && leftovers().empty(), "partial env publication falsely successful"); pass("EnvironmentFile partial bind failure reverse cleanup");
+    write(runRoot + "/mode", "exit"); require(activate(r).status == ActivationStatus::RestartFailed && leftovers().empty(), "env startup failure accepted"); active(); pass("EnvironmentFile startup failure cleanup");
+    write(runRoot + "/mode", "silent"); auto shortRequest = r; shortRequest.timeout = std::chrono::milliseconds(1000);
+    require(activate(shortRequest).status == ActivationStatus::TimedOut && leftovers().empty(), "env READY timeout accepted"); active(); pass("EnvironmentFile READY timeout cleanup");
+    {
+        d::Fd busy; d::TestHooks hooks;
+        hooks.checkpoint = [&](d::TestPhase phase, const std::string&) { if (phase == d::TestPhase::BeforeCleanup) busy = d::openAbsolute(env, O_RDONLY); };
+        const auto result = activate(r, hooks);
+        require(result.status == ActivationStatus::CleanupFailed && result.primaryStatus == ActivationStatus::Success && !result.residualPaths.empty(), "env EBUSY became Success");
+        busy = d::Fd(); manualCleanup(); clean(before); pass("EnvironmentFile EBUSY preserves primary success and reports CleanupFailed");
+    }
+    {
+        d::TestHooks hooks; hooks.checkpoint = [&](d::TestPhase phase, const std::string&) { if (phase == d::TestPhase::BeforeCleanup) require(::mount(second.c_str(), env.c_str(), nullptr, MS_BIND, nullptr) == 0, "foreign env cleanup mount"); };
+        const auto result = activate(r, hooks);
+        require(result.status == ActivationStatus::CleanupFailed && read(env) == bytes("second"), "foreign env mount removed by cleanup");
+        require(::umount(env.c_str()) == 0, "remove foreign env overlay"); manualCleanup(); pass("EnvironmentFile cleanup never unmounts foreign replacement");
+    }
+    const pid_t child = ::fork(); require(child >= 0, "fork env crash actor");
+    if (!child) { d::TestHooks hooks; hooks.checkpoint = [](d::TestPhase phase, const std::string&) { if (phase == d::TestPhase::Watching) ::kill(::getpid(), SIGKILL); }; d::activateForTests(r, hooks); ::_exit(92); }
+    int status = 0; require(::waitpid(child, &status, 0) == child && WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL, "env crash actor survived");
+    require(!leftovers().empty() && activate(r).status == ActivationStatus::ResidualMounts, "env SIGKILL residuals adopted"); manualCleanup(); pass("EnvironmentFile SIGKILL residuals detected, never adopted");
+    restore();
+}
+
 struct PeerNamespace {
     d::Fd connection;
     pid_t pid = -1;
@@ -573,7 +774,13 @@ void cleanupCases() {
 int main(int argc, char** argv) {
     try {
         const bool container = fs::exists("/.dockerenv") || fs::exists("/run/.containerenv");
-        if (argc == 2 && (std::string(argv[1]) == "--service" || std::string(argv[1]) == "--service-alternate")) { require(container, "test service only in container"); return serviceMain(std::string(argv[1]) == "--service-alternate"); }
+        actualArgv.assign(argv, argv + argc);
+        if (argc == 3 && std::string(argv[1]) == "--env-phase") {
+            require(container, "phase fixture only in disposable container");
+            write(runRoot + "/phase-" + argv[2], readConfiguration("normal", false).dump());
+            return 0;
+        }
+        if (argc >= 2 && (std::string(argv[1]) == "--service" || std::string(argv[1]) == "--service-alternate")) { require(container, "test service only in container"); return serviceMain(std::string(argv[1]) == "--service-alternate"); }
         if (!container || ::geteuid() != 0 || !std::getenv("FIC_ACTIVATOR_NATIVE")) { std::cout << "SKIP native: explicit disposable systemd container required\n"; return 77; }
         std::ifstream procStatus("/proc/self/status"); std::string statusLine; bool admin = false;
         while (std::getline(procStatus, statusLine)) if (statusLine.rfind("CapEff:\t", 0) == 0)
@@ -590,7 +797,7 @@ int main(int argc, char** argv) {
         require(resolver.resolve(fic::platform::ExecutableId::Systemctl, systemctl, error) && CommandHashStore::saveHash(systemctl, error), error);
         const auto binary = fs::canonical("/proc/self/exe").string();
         write("/etc/systemd/system/" + unit, "[Unit]\nDescription=Isolated verified-config fixture\nStartLimitIntervalSec=0\n[Service]\nType=notify\nNotifyAccess=main\nExecStart=" + binary + " --service\nTimeoutStartSec=10s\nTimeoutStopSec=2s\n");
-        mustCtl({"daemon-reload"}); active(); basicCases(); originalReadNegativeCase(); launchCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
+        mustCtl({"daemon-reload"}); active(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
         mustCtl({"stop", unit});
         std::cout << "NATIVE verified-config: " << checks << " PASS, " << skips << " SKIP\n";
         return 0;

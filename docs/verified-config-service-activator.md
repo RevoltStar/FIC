@@ -125,7 +125,7 @@ syscall (например, remount RO), завершаются ошибкой с
 Первоначально неподдерживаемы: отсутствующие обязательные properties/неизвестная
 схема Exec*Ex, transient/generated units, `NeedDaemonReload=yes`, не root-controlled
 fragment/drop-in, symlink в путях файлов unit, более 64 drop-in/1 MiB суммарного
-текста, отличный от одного ExecStart, внешние environment files и credentials,
+текста, отличный от одного ExecStart, непокрытые environment files и credentials,
 PAM environment, dynamic user, альтернативные user/network/IPC/mount namespace,
 namespace extensions и log namespace, activation triggers, retained FD store,
 PIDFile, ExitType не main, RemainAfterExit. Stdin поддерживается только null;
@@ -135,12 +135,51 @@ stdout/stderr — null, journal, inherit, kmsg. Сохраняются преж�
 сравнением. Runtime-показатели команд не должны вызывать ложный отказ.
 
 Начальная ошибка даёт `UnsupportedConfiguration`; изменение закреплённого
-контракта после preflight — `InterferenceDetected`. EnvironmentFile намеренно
-не поддерживается: отдельно проверить его hash до и после запуска недостаточно,
-чтобы доказать, какие байты прочитал manager перед exec. Тест реально меняет
-содержимое файла при прежних EnvironmentFiles/NeedDaemonReload и затем запускает
-службу с другим config root. Поддержка таких источников требует отдельного
-доказанного протокола закрепления входных данных.
+контракта после preflight — `InterferenceDetected`, в том числе изменение пути,
+порядка, optional flag или числа повторений EnvironmentFiles. Новый непокрытый
+input не расширяет snapshot. Автоматических daemon-reload/retry/fallback нет.
+
+### EnvironmentFile v1: exact request coverage
+
+Загруженное D-Bus свойство `EnvironmentFiles` обязано иметь сигнатуру `a(sb)`:
+упорядоченный массив пар absolute path / optional boolean. Classifier требует
+**отдельный явный `ControlledPathKind::File` target с эталонным SHA-256** для
+каждого элемента. Вхождение только в directory manifest не считается покрытием.
+Один target может обслуживать несколько одинаковых записей; исходный launch
+contract сохраняет все дубликаты, порядок и flags без сортировки/дедупликации.
+Без контекста request validator по-прежнему запрещает непустой EnvironmentFiles.
+
+Поддерживается optional-present (`EnvironmentFile=-/absolute/file`), но не
+optional-absent. Требуются существующий regular file, нормализованный literal
+absolute path без symlink на любом уровне, wildcard/glob, неразрешённых `%`
+specifiers и неоднозначных компонентов. Запрещены special permission bits,
+xattrs/ACL/security labels, foreign/nested mounts и shared publication parents
+по прежним правилам snapshots. Отсутствующий, непокрытый или неподтверждённый
+EnvironmentFile даёт `UnsupportedConfiguration` до первого собственного mount.
+Эталон и доверенность всех targets проверяются до создания tmpfs; envfile
+повторно проверяется по SHA перед bind, identity CAS остаётся прежним.
+Обычные config target checksum failures сохраняют прежние статусы.
+
+Envfiles используют тот же ограниченный tmpfs, metadata/RO/bind/observer/deadline
+и reverse cleanup lifecycle; второго publisher и преобразований содержимого нет.
+Placeholder и private boundaries автоматически не создаются. Дополнительный
+parent envfile (`/etc/default` или `/etc/sysconfig`) должен проходить тот же
+propagation preflight, что и config parents/workspace.
+
+В исследованных systemd252/255/257/258/259 PID1 читает bytes в своём namespace
+перед каждым spawn Condition/Pre/Main/Post, передавая parsed values executor.
+Поэтому все inputs публикуются **до restart** и остаются защищены до завершения
+restart job (включая применимый StartPost), нового InvocationID/MainPID,
+подтверждённого READY и финальных проверок. Cleanup выполняется и при ошибке;
+его неудача никогда не Success. Содержимое envfiles и их values не логируются.
+См. [исследование и exact source map](verified-config-environment-file-research.md).
+
+Гарантия байтов EnvironmentFile не означает семантическую безопасность env/argv.
+Выбор реального config path, Include closure и прочтение конфигурации **до READY**
+остаются доверенной семантикой службы/caller. Generic activator не получает
+аттестацию actual config read от произвольной службы. Native fixture отдельно
+сообщает synthetic env/argv и mount ID/SHA реального read FD, но это не расширяет
+публичный API и не является доказательством для неизвестного SSH binary.
 
 Проверки последовательны, без атомарного «restart только при данном поколении».
 Незаметный ABA свойств/источников со стороны привилегированного процесса не
@@ -318,27 +357,68 @@ mount, tmpfs/RO/bind errors, EROFS, реальный notify restart/failure/time
 байты постоянных fixture-файлов. Foreign/crash остатки освобождает только
 отдельная тестовая административная процедура внутри контейнера.
 
-Окончательный native-прогон (2026-10-17):
+Окончательный EnvironmentFile native-прогон (2026-10-18), actual production
+activator с test-only fault/barrier hooks:
 
-| Userspace / systemd | Сборка actual компонента | Native |
+| Userspace / systemd | Focused build | Native |
 | --- | --- | --- |
-| Debian 12 / 252.39 | PASS | 50 PASS, 0 SKIP |
-| Debian 13 / 257.13 | PASS | 50 PASS, 0 SKIP |
-| Ubuntu 24.04 / 255.4 | PASS | 50 PASS, 0 SKIP |
-| ALT p11 / 258.9-alt1 | PASS | 50 PASS, 0 SKIP |
+| Debian 12 / 252.39 | PASS | 91 PASS, 0 SKIP |
+| Debian 13 / 257.13 | PASS | 91 PASS, 0 SKIP |
+| Ubuntu 24.04 / 255.4 | PASS | 91 PASS, 0 SKIP |
+| Ubuntu 26.04 / 259.5 | PASS | 91 PASS, 0 SKIP |
+| ALT p11 / 258.9-alt1 | PASS | 91 PASS, 0 SKIP |
 
-Дистрибутивы проверены platform profiles `debian-12`, `debian-13`,
-`ubuntu-24.04`, `alt-p11`. Полная сборка Debian 12 PASS; полный CTest: 186 PASS, 1 ожидаемый native
-opt-in SKIP, 0 FAIL. После окончательной per-file SHA/ID проверки fixture
-полная сборка обновлена, связанные CTest повторно PASS (native opt-in SKIP).
-Privileged native выполнен отдельно,
-как показано в таблице. Матрица остальных строк относится к focused native build/runtime, а не полной
-сборке GUI/пакетов. Build/runner logs этой сессии:
-`/tmp/fic-hardening-{d12,d13,u24,alt}.log`,
-`/tmp/fic-hardening-full-d12.log`, `/tmp/fic-hardening-final-targets.log`
-(временные внешние артефакты, не часть Git).
-Все контейнеры используют один host kernel: четыре userspace не являются
-проверкой четырёх разных kernels или загрузки настоящей ОС.
+Profiles: `debian-12`, `debian-13`, `ubuntu-24.04`, `ubuntu-26.04`, `alt-p11`.
+
+Полные configure/build Debian12 на окончательных исходниках PASS; полный CTest:
+**186 PASS, 0 FAIL, 1 ожидаемый native opt-in SKIP** (187 tests, 218.05 s).
+`verified_config_service_tests` PASS; privileged native выполняется отдельно по
+таблице, а не пропускается в общей validation. Full build/CTest запускались с
+`QT_QPA_PLATFORM=offscreen`, `FIC_TARGET_PLATFORM=debian-12`, `-j6`, без сети и
+host security mounts; log `build-verified-config/logs/full-debian12-nodac.log`.
+Для Git static checks внутри disposable контейнера задан только
+`safe.directory=/src`. В полном CTest сняты `DAC_OVERRIDE`/`DAC_READ_SEARCH`:
+иначе контейнерный root обходит chmod-based permission faults MutationJournal.
+Тот же неизменённый test binary без bypass проходит. Build volume должен быть
+записываемым контейнерному UID без DAC bypass; это настройка тестовой среды,
+не изменение необходимых privileges production activator/native mount suite.
+Локальные runner logs: `build-verified-config/logs/*-env.log` (ignored artifacts).
+Перед suite runner ждёт завершения boot jobs PID1: доступность socket сама по
+себе ещё не исключает штатные boot mount events. Это readiness инфраструктуры,
+не fallback вместо notify fixture. В промежуточных параллельных Ubuntu26 прогонах были безопасные отказы
+observer на положительных сценариях. Источник конкретного постороннего mount
+event не атрибутирован; ожидание boot jobs исключает один известный источник
+фоновых изменений, но не делает namespace изолированным от любой активности
+PID1. Финальный отдельный прогон прошёл; production observer не ослаблялся.
+Под нагрузкой также выявлен D-Bus ETIMEDOUT, ранее ошибочно переводившийся в
+InterferenceDetected: теперь он сохраняет существующий статус TimedOut. Все пять строк используют одно ядро
+`6.6.87.2-microsoft-standard-WSL2`, не пять независимых distro kernels.
+
+EnvironmentFile regressions дополнительно проверяют:
+
+* actual env/argv и SHA/mount ID config FD, новый MainPID/InvocationID/READY;
+  optional-present, несколько files с override, повторы одного target,
+  config directory + отдельный envfile, ExecCondition/StartPre/StartPost;
+* отсутствие покрытия, directory-only, mandatory/optional absence, symlink/
+  dangling symlink, glob, directory/FIFO, wrong SHA, special bits/xattr,
+  shared parent и чужой mount — UnsupportedConfiguration **без mount syscall**;
+* missing/wrong `a(sb)` schema, malformed entries, relative/non-normalized и
+  unresolved specifier paths — unit classifier negatives. Systemd может сам
+  нормализовать/отбросить такие unit entries; raw-invalid schema не выдумывается
+  в настоящем PID1. Проверяется именно полученный typed loaded contract;
+* in-place/rename до bind — отказ; preopened original writer после публикации
+  не меняет systemd env, foreign bytes сохраняются после cleanup; запись между
+  main read и READY не меняет verified invocation, следующий restart видит её;
+* daemon-reload меняет path/order/optional/duplicates или добавляет непокрытый
+  input — InterferenceDetected; изменение до READY также отказ;
+* sticky observer на env mount ABA, partial bind cleanup, startup failure,
+  READY timeout, env EBUSY (CleanupFailed/primary Success), foreign cleanup mount,
+  SIGKILL residual refusal без adoption; все прежние topology/cross-namespace
+  negatives сохранены и повторены.
+
+ACL/security label не испытывались как отдельные OS providers: xattr test
+проверяет общий flistxattr rejection, он не является тестом enforcing SELinux.
+Содержимое envfiles не выводится; fixture сообщает только synthetic whitelist.
 
 Hardening native-набор дополнительно проверяет shared parent и shared-slave
 refusal без mount syscall, private/non-shared slave границы под shared ancestor,
@@ -359,8 +439,31 @@ EnvironmentFile/content и manager Environment при постоянном PassE
 
 Нативная загрузка отдельной Linux ВМ/физического хоста пока не проверялась.
 Shared topology воспроизведена настоящими mounts внутри контейнера, а не принята
-на веру из стандартной Docker topology. Все четыре строки используют один WSL
+на веру из стандартной Docker topology. Все пять строк используют один WSL
 kernel, поэтому не доказывают одинаковую семантику всех distro kernels.
+
+## Security review EnvironmentFile support
+
+* Uncovered input не допускается: typed `a(sb)` + точное совпадение явного File
+  target и lowercase reference SHA; без request context непустой список запрещён.
+* Порядок/flags/дубликаты сохранены в исходной canonical typed property и
+  сравниваются перед/после restart, при READY и final confirmation.
+* Snapshot полностью опубликован до единственного restart; при partial failure
+  restart не вызывается. Законченный restart job включает StartPost; защита
+  снимается после final proof либо по failure path с отдельным cleanup status.
+* Новый classifier не подменяет проверки metadata/trust/CAS/propagation. Для
+  envfile есть дополнительный pre-bind SHA recheck. Окно check→bind и
+  check→umount остаётся в прежней документированной модели; атомарного kernel
+  условного bind/umount не появилось. Original FD write после публикации не
+  меняет отдельный immutable snapshot.
+* Ни политика, ни ownership/journal/rollback, trust enrollment, unit lifecycle
+  или systemd socket activation не изменены; публичные API/статусы прежние.
+* Это не обещание защиты от произвольного CAP_SYS_ADMIN, launch-contract ABA,
+  модификации памяти, неизвестных inputs/бинарного кода или позднего reread.
+  Сохранены measured alternate-namespace observer blind spots из таблицы выше.
+* Гарантия bytes не проверяет смысл `SSHD_OPTS=-f/-o` и Include closure. Реальный
+  SSH adapter не добавлен. Debian12 `/lib` symlink provenance, Ubuntu socket
+  activation и ALT отсутствие notify остаются отдельными препятствиями.
 
 ## Первичные источники
 

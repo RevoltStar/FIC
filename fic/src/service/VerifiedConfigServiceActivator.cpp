@@ -1,6 +1,7 @@
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/VerifiedConfigMountSupport.h"
 #include "service/VerifiedConfigSystemd.h"
+#include "service/VerifiedConfigLaunchContract.h"
 #include "service/VerifiedConfigServiceActivatorTestAccess.h"
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <algorithm>
@@ -211,6 +212,9 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
         }
         if (!result.residualPaths.empty()) throw Failure(ActivationStatus::ResidualMounts, "previous activation mounts require manual inspection; not adopted or unmounted");
         requireSafePublicationParent(workspace / "prospective-operation", true, ActivationStatus::UnsupportedConfiguration);
+        service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths);
+        const auto launch = service->preflight();
+        const auto environmentFiles = validateEnvironmentFiles(launch.properties, &request.paths);
         std::vector<Fd> sources; std::vector<Identity> original; std::vector<Tree> trees;
         auto budget = request.maxSnapshotBytes;
         for (const auto& p : request.paths) {
@@ -219,11 +223,18 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
                 throw Failure(ActivationStatus::UnsupportedConfiguration, "controlled path overlaps workspace");
             for (const auto& m : mountInfo) if (m.target == p.path || (p.kind == ControlledPathKind::Directory && below(m.target, p.path)))
                 throw Failure(ActivationStatus::UnsupportedConfiguration, "controlled target has an existing/nested mount");
-            auto source = openAbsolute(p.path, O_RDONLY);
-            verifyTree(source.get(), p, request.maxSnapshotBytes);
-            trees.push_back(readTree(source.get(), p.kind, budget)); original.push_back(identity(source.get())); sources.push_back(std::move(source));
+            try {
+                auto source = openAbsolute(p.path, O_RDONLY);
+                verifyTree(source.get(), p, request.maxSnapshotBytes);
+                trees.push_back(readTree(source.get(), p.kind, budget)); original.push_back(identity(source.get())); sources.push_back(std::move(source));
+            } catch (const Failure&) {
+                // Initial unsupported launch inputs must fail before any mount.
+                // Do not expose their bytes or digest in diagnostics.
+                if (environmentFiles.count(p.path.string()))
+                    throw Failure(ActivationStatus::UnsupportedConfiguration, "EnvironmentFile source verification failed");
+                throw;
+            }
         }
-        service = std::make_unique<SystemdActivation>(request.unit, deadline); service->preflight();
         operation.create(workspace); operation.mountTmpfs(request.maxSnapshotBytes);
         {
             auto root = openAbsolute(operation.directory, O_RDONLY|O_DIRECTORY);
@@ -260,8 +271,13 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
 #ifdef FIC_ACTIVATOR_TESTING
         hooks.checkpoint(detail::TestPhase::SnapshotReadOnly, operation.directory);
 #endif
-        for (std::size_t i = 0; i < request.paths.size(); ++i)
+        for (std::size_t i = 0; i < request.paths.size(); ++i) {
+            if (environmentFiles.count(request.paths[i].path.string())) {
+                auto current = openAbsolute(request.paths[i].path, O_RDONLY);
+                verifyTree(current.get(), request.paths[i], request.maxSnapshotBytes);
+            }
             operation.publish(request.paths[i], operation.directory + "/" + std::to_string(i), original[i], i);
+        }
         // Observer opens AFTER our mounts; no baseline-acknowledging poll.
         MountObserver observer;
         const auto verifyPublished = [&] {
