@@ -47,6 +47,14 @@ int main() {
     bool missing = false;
     try { detail::validateLaunchContract({}); } catch (const detail::Failure& e) { missing = e.status == ActivationStatus::UnsupportedConfiguration; }
     require(missing, "absent required launch properties accepted");
+    // Unit-source path grammar rejects before dereferencing even an unavailable root.
+    for (const auto& path : {"", "relative", "/", "/lib/../usr/lib/x", "/lib//systemd/system/x"}) {
+        std::uint64_t budget = 1024;
+        bool denied = false;
+        try { detail::fingerprintUnitSource(-1, path, budget); }
+        catch (const detail::Failure& e) { denied = e.status == ActivationStatus::UnsupportedConfiguration; }
+        require(denied && budget == 1024, "unit source grammar/identity refusal consumed budget or escaped");
+    }
     // Pure typed classifier: it cannot grant coverage without explicit targets.
     using Json = nlohmann::json;
     const auto envContract = [](const Json& value, const std::string& signature = "a(sb)") {

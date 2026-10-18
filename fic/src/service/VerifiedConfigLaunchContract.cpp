@@ -106,13 +106,85 @@ Json value(const LaunchContract& contract, const std::string& key) {
     if (it == contract.end()) throw Failure(ActivationStatus::UnsupportedConfiguration, "required launch property missing: " + key);
     return Json::parse(it->second).at("value");
 }
-std::string fingerprint(const std::string& name, std::uint64_t& budget) {
+}
+std::string fingerprintUnitSource(int root, const std::string& name, std::uint64_t& budget
+#ifdef FIC_ACTIVATOR_TESTING
+                                 , const std::function<void()>& captured
+#endif
+                                 ) {
     const std::filesystem::path path(name);
-    if (!path.is_absolute() || path != path.lexically_normal()) throw Failure(ActivationStatus::UnsupportedConfiguration, "invalid unit path");
-    auto fd = openAbsolute(path, O_RDONLY);
+    if (name.empty() || name.size() > 4096 || !path.is_absolute() || path.lexically_normal().string() != name ||
+        path == path.root_path())
+        throw Failure(ActivationStatus::UnsupportedConfiguration, "invalid unit path");
+    unsigned depth = 0;
+    for (const auto& part : path) if (part.empty() || part == "." || part == ".." || ++depth > 128)
+        throw Failure(ActivationStatus::UnsupportedConfiguration, "invalid unit path component/depth");
+    const bool vendor = name.rfind("/lib/systemd/system/", 0) == 0;
+    // Every traversal starts at a pinned root and opens only no-follow descriptors.
+    // The sole accepted alias is inspected via its own O_PATH descriptor, never followed.
+    struct Capture { Json chain; std::string canonical; Fd file; std::vector<Fd> held; };
+    const auto capture = [&]() {
+        Json chain = Json::array();
+        std::vector<Fd> held;
+        const auto record = [&](int fd, const std::string& component, bool link) {
+            const auto id = identity(fd); struct stat st{};
+            if (::fstat(fd, &st) || id.uid != 0 ||
+                (link ? !S_ISLNK(id.mode) : (!S_ISDIR(id.mode) || (id.mode & 0022))))
+                throw Failure(ActivationStatus::UnsupportedConfiguration, "untrusted unit source component");
+            Json entry{{"path", component}, {"mount", id.mount}, {"device", id.device},
+                       {"inode", id.inode}, {"uid", id.uid}, {"gid", id.gid}, {"mode", id.mode}};
+            if (link) {
+                char target[4097]; const auto n = ::readlinkat(fd, "", target, sizeof target);
+                if (n <= 0 || n == sizeof target)
+                    throw Failure(ActivationStatus::UnsupportedConfiguration, "unit alias target unavailable");
+                const std::string text(target, n);
+                if (text != "usr/lib" && text != "/usr/lib")
+                    throw Failure(ActivationStatus::UnsupportedConfiguration, "unsupported unit alias target");
+                entry["target"] = text;
+                entry["mtime"] = Json::array({st.st_mtim.tv_sec, st.st_mtim.tv_nsec});
+                entry["ctime"] = Json::array({st.st_ctim.tv_sec, st.st_ctim.tv_nsec});
+            }
+            Fd pinned(::fcntl(fd, F_DUPFD_CLOEXEC, 3));
+            if (!pinned) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot pin unit component");
+            held.push_back(std::move(pinned));
+            chain.push_back(entry);
+        };
+        Fd current(::fcntl(root, F_DUPFD_CLOEXEC, 3));
+        record(current.get(), "/", false);
+        std::string resolved = name;
+        if (vendor) {
+            Fd lib(::openat(current.get(), "lib", O_PATH|O_NOFOLLOW|O_CLOEXEC));
+            if (!lib) throw Failure(ActivationStatus::UnsupportedConfiguration, "unit alias unavailable");
+            if (S_ISLNK(identity(lib.get()).mode)) {
+                record(lib.get(), "/lib", true);
+                resolved = "/usr/lib" + name.substr(4);
+            }
+        }
+        std::string component;
+        const auto relative = std::filesystem::path(resolved).relative_path();
+        for (auto it = relative.begin(); it != relative.end(); ++it) {
+            component += "/" + it->string();
+            auto next = it; ++next;
+            Fd child(::openat(current.get(), it->c_str(), O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK|
+                             (next == relative.end() ? O_RDONLY : O_PATH|O_DIRECTORY)));
+            if (!child) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot open trusted unit source");
+            if (next != relative.end()) record(child.get(), component, false);
+            else {
+                const auto id = identity(child.get());
+                chain.push_back(Json{{"path", component}, {"mount", id.mount}, {"device", id.device},
+                    {"inode", id.inode}, {"mode", id.mode}, {"uid", id.uid}, {"gid", id.gid}});
+            }
+            current = std::move(child);
+        }
+        return Capture{std::move(chain), resolved, std::move(current), std::move(held)};
+    };
+    auto initial = capture(); const auto& chain = initial.chain; auto& fd = initial.file;
     struct stat before{}, after{};
     if (::fstat(fd.get(), &before) || !S_ISREG(before.st_mode) || before.st_uid != 0 || (before.st_mode & 0022))
         throw Failure(ActivationStatus::UnsupportedConfiguration, "unit file is not root-controlled");
+#ifdef FIC_ACTIVATOR_TESTING
+    if (captured) captured();
+#endif
     std::string bytes; char buffer[8192];
     while (true) {
         auto n = ::read(fd.get(), buffer, sizeof buffer);
@@ -126,10 +198,22 @@ std::string fingerprint(const std::string& name, std::uint64_t& budget) {
         before.st_mtim.tv_sec != after.st_mtim.tv_sec || before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
         before.st_ctim.tv_sec != after.st_ctim.tv_sec || before.st_ctim.tv_nsec != after.st_ctim.tv_nsec)
         throw Failure(ActivationStatus::InterferenceDetected, "unit file changed during capture");
-    return Json::array({before.st_dev, before.st_ino, before.st_uid, before.st_gid, before.st_mode,
-        before.st_mtim.tv_sec, before.st_mtim.tv_nsec, before.st_ctim.tv_sec, before.st_ctim.tv_nsec,
-        fic::core::ContentDigest::sha256Hex(bytes)}).dump();
-}
+    auto repeated = [&]() {
+        try { return capture(); }
+        catch (const Failure& e) { throw Failure(ActivationStatus::InterferenceDetected, e.what()); }
+    }();
+    if (chain != repeated.chain || identity(fd.get()).mount != identity(repeated.file.get()).mount ||
+        !sameObject(identity(fd.get()), identity(repeated.file.get())))
+        throw Failure(ActivationStatus::InterferenceDetected, "unit resolution changed during capture");
+    if (::fstat(fd.get(), &after) || before.st_dev != after.st_dev || before.st_ino != after.st_ino || before.st_size != after.st_size ||
+        before.st_mode != after.st_mode || before.st_uid != after.st_uid || before.st_gid != after.st_gid ||
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec || before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec || before.st_ctim.tv_nsec != after.st_ctim.tv_nsec)
+        throw Failure(ActivationStatus::InterferenceDetected, "unit file changed during capture");
+    return Json{{"original", name}, {"canonical", initial.canonical}, {"chain", chain},
+        {"file", Json::array({before.st_dev, before.st_ino, before.st_uid, before.st_gid, before.st_mode,
+        before.st_size, before.st_mtim.tv_sec, before.st_mtim.tv_nsec, before.st_ctim.tv_sec, before.st_ctim.tv_nsec,
+        fic::core::ContentDigest::sha256Hex(bytes)})}}.dump();
 }
 LaunchContract readLaunchContract(const std::string& unit, std::chrono::steady_clock::time_point deadline) {
     sd_bus* rawBus = nullptr;
@@ -163,9 +247,10 @@ LaunchContract readLaunchContract(const std::string& unit, std::chrono::steady_c
     const auto dropins = value(contract, "DropInPaths");
     if (fragment.empty() || !dropins.is_array() || dropins.size() > 64)
         throw Failure(ActivationStatus::UnsupportedConfiguration, "persistent unit fragment required");
+    auto root = openAbsolute("/", O_PATH|O_DIRECTORY);
     std::uint64_t budget = 1024*1024;
-    contract["launch.file:" + fragment] = fingerprint(fragment, budget);
-    for (const auto& path : dropins) contract["launch.file:" + path.get<std::string>()] = fingerprint(path.get<std::string>(), budget);
+    contract["launch.file:" + fragment] = fingerprintUnitSource(root.get(), fragment, budget);
+    for (const auto& path : dropins) contract["launch.file:" + path.get<std::string>()] = fingerprintUnitSource(root.get(), path.get<std::string>(), budget);
     return contract;
 }
 std::set<std::string> validateEnvironmentFiles(const LaunchContract& contract,

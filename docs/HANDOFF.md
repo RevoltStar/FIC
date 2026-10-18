@@ -1,34 +1,33 @@
 # Current working state
 
 ## Current base
-* `main`, `0a87a928e41ca9d37084b9c81bc4371be8f99eb9`; initially clean. One implementation commit requested; no push.
+* `main`, `1e638d2938f1aebf53df5ca604fe71028340af8e`; initially clean. One usr-merge implementation commit requested, no push.
 
 ## Current task
-* Completed Verified EnvironmentFile v1 in standalone activator. No integration with policies/SSH/transactions/ownership/journal, no unit/trust-store lifecycle changes.
+* Completed safe usr-merge support for unit fragment/drop-in provenance only; one completion commit over the base, no push.
 
 ## Accepted architecture / invariants
-* B on existing A: internal typed `EnvironmentFiles a(sb)` coverage classifier + existing single bounded tmpfs/RO/bind/observer/cleanup lifecycle. Public API/statuses unchanged.
-* Every loaded entry needs exact explicit File target with reference SHA. Keep order/optional flags/duplicates in pinned contract; one target can cover repeated path. No directory-only implicit coverage.
-* Existing optional-present supported; absent/glob/symlink/non-normalized/unresolved-specifier/nonregular/unsafe metadata/mount topology refused before first own mount. No context still rejects nonempty EnvironmentFiles.
-* Same namespace/root, root PID1 D-Bus, trusted systemctl, private/non-shared parents/workspace, notify/new invocation, strict observer and identity-safe cleanup retained. Shared-root deployment boundaries remain external prerequisite.
-* Accepted privileged-adversary/alternate-namespace observer/contract ABA/check-bind/check-umount residuals retained; SHA bytes do not prove SSH options/Include semantic safety.
+* Only root-owned `/lib -> usr/lib` or `/lib -> /usr/lib` for paths under `/lib/systemd/system/`; no other symlink exceptions. Ordinary no-symlink paths retained.
+* Descriptor-rooted O_NOFOLLOW traversal, alias target from readlinkat on pinned O_PATH FD; trusted root/directories, regular root-controlled final file; statx mount identity required. Keep all chain FDs through capture and repeat traversal after hashing.
+* Fingerprint pins original/canonical paths, chain mount/dev/inode/UID/GID/mode, alias target/mtime/ctime, final metadata/SHA. Directory timestamps intentionally excluded; hidden privileged ABA between checks remains outside guarantee.
+* Generic openAbsolute, EnvironmentFile, namespaces, propagation, readiness, cleanup, public API, SSH policies, ownership, apply/rollback/MutationJournal unchanged. No policy integration or host/stock SSH mutation.
 
 ## Completed / changed areas
-* LaunchContract classifier; SystemdActivation keeps request targets internally and compares full canonical launch properties throughout activation. Activator verifies all targets before mounting and rechecks envfile SHA before bind alongside existing identity CAS.
-* D-Bus ETIMEDOUT now remains TimedOut (not falsely InterferenceDetected). Unit classifier negatives for missing/malformed schema/paths/coverage; actual production native suite extended with env/argv/config FD mount/SHA/PID/InvocationID, Condition/Pre/Post, races/failures/cleanup/residuals. Existing negative suites retained.
-* Native runner accepts Ubuntu26 and waits for PID1 initial boot jobs before tests (first un-settled Ubuntu26 run correctly failed strict observer). Fixture service readiness still actual notify, no sleep fallback.
-* `docs/verified-config-service-activator.md`: v1 contract, scope, matrix and security review.
+* VerifiedConfigLaunchContract.{cpp,h}: narrow unit-source reader, bounded cumulative budget, repeat identity/metadata capture; initial UnsupportedConfiguration / observed changes InterferenceDetected through existing SystemdActivation checks.
+* VerifiedConfigServiceTests.cpp: grammar/identity fail-closed. NativeTests.cpp: isolated descriptor-root filesystem positive/negative/race suite, read-only stock SSH reader, vendor notify full activation and post-preflight same-SHA replacement.
+* Debian12 actual stock and fixture FragmentPath are /lib/systemd/system/{ssh,fic-vcsa-test}.service; other platforms use /usr/lib. Stock validate still refuses uncovered EnvironmentFiles (Ubuntu triggers).
+* Native stock probe RefUnit uses system bus to retain inactive unit without starting it; production reader still direct root PID1.
+* Component contract/security review updated; historical native audit preserved with follow-up note.
 
 ## Validation
-* Final native matrix `bash tests/integration/verified_config_service/run-native.sh fic-ssh-audit:<tag> <profile>`: Debian12/13, Ubuntu24.04/26.04, ALT p11 all 91 PASS / 0 SKIP; logs `build-verified-config/logs/*-env.log`.
-* All five userspaces share 6.6.87.2-microsoft-standard-WSL2; not separate distro kernels/VM. No stock SSH commands/config/units modified.
-* Existing cross-namespace no-write RO flip remains measured observer blind spot; writes detected by final metadata checks. All normal/fault env scenarios verify no residuals; foreign/crash cleanup only explicit fixture admin.
-* Bash syntax and git diff --check PASS so far.
-* Full Debian12 configure/build PASS on final sources; full CTest 186 PASS / 0 FAIL / 1 expected native opt-in SKIP (187 total, 218.05 s). Actual `verified_config_service_tests` PASS; privileged native matrix performed separately, not inferred from skip.
-* Final full command: Docker `fic-ssh-audit:debian12`, no network, source read-only, own writable `build-env-full-debian12` volume; `cmake -S /src -B /build -DFIC_TARGET_PLATFORM=debian-12; cmake --build /build -j6; QT_QPA_PLATFORM=offscreen ctest --test-dir /build --output-on-failure`. Log `build-verified-config/logs/full-debian12-nodac.log`.
-* Full CTest container drops DAC_OVERRIDE/DAC_READ_SEARCH (chmod fault tests need real denial), safe.directory=/src only inside disposable container. Earlier default-root permission failures were reproduced/pass without bypass using the SAME MutationJournal binary; no unrelated code/test changes. Own build-root ownership restored by EXIT trap.
+* Final native matrix logs `build-verified-config/logs/*-usrmerge-public.log`: Debian12/13, Ubuntu24.04/26.04, ALT all 132 PASS / 0 FAIL / 0 SKIP. All earlier 91 regressions retained.
+* Vendor fixture directly calls public activate(), asserting new InvocationID/READY/no cleanup errors/no residuals. All five runs exit 0; existing 91 regressions plus 41 new checks per platform.
+* Full Debian12 configure/build + CTest: 186 PASS / 0 FAIL / 1 expected native opt-in SKIP, 187 total (161.79s); log `full-debian12-usrmerge-final.log`. Unit contract PASS; privileged native evidence comes from the separate five-platform runs.
+* Full build uses Docker fic-ssh-audit:debian12, source RO, build-env-full-debian12 volume, no network, -j6, QT_QPA_PLATFORM=offscreen; drops DAC_OVERRIDE/DAC_READ_SEARCH for real chmod negative tests, safe.directory=/src only inside container. Build-root ownership restored via trap.
+* Interim Ubuntu26 refused a mount event; final fresh containers pass without weakened observer/assertions. No production retry added.
+* Final native test target rebuilt after last harness-only assertion edit; related CTest: unit PASS, native expected opt-in SKIP (`debian12-usrmerge-final-target.log`). git diff --check PASS; diff limited to seven allowed source/test/doc files.
+* All userspaces share 6.6.87.2-microsoft-standard-WSL2; no independent kernel/VM or enforcing SELinux coverage.
 
-## Remaining / limits
-* Requested implementation/validation complete; one implementation commit over base, no push. No policy integration in this task.
-* NOT_TESTED: VM/physical distro kernels, actual SSH, enforcing SELinux/ACL provider semantics. Optional-absence/glob/symlink support, private-boundary deployment, Ubuntu sockets/ALT notify and SSH adapter semantic closure are intentionally separate future tasks.
-* Generic activator still trusts service READY semantics and caller input closure; known CAP_SYS_ADMIN/namespace/contract ABA limitations remain. No second snapshot engine, placeholder, managed unit or automatic crash adoption added.
+## Remaining
+* Requested implementation and validation complete. No pending implementation work.
+* No stock SSH restart, host mounts, real VM/kernel matrix or production policy integration tested/attempted. Existing privileged ABA/observer limitations retained and documented.

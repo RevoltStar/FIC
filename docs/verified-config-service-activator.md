@@ -124,7 +124,7 @@ syscall (например, remount RO), завершаются ошибкой с
 
 Первоначально неподдерживаемы: отсутствующие обязательные properties/неизвестная
 схема Exec*Ex, transient/generated units, `NeedDaemonReload=yes`, не root-controlled
-fragment/drop-in, symlink в путях файлов unit, более 64 drop-in/1 MiB суммарного
+fragment/drop-in, symlink в путях файлов unit (кроме точного usr-merge ниже), более 64 drop-in/1 MiB суммарного
 текста, отличный от одного ExecStart, непокрытые environment files и credentials,
 PAM environment, dynamic user, альтернативные user/network/IPC/mount namespace,
 namespace extensions и log namespace, activation triggers, retained FD store,
@@ -357,39 +357,39 @@ mount, tmpfs/RO/bind errors, EROFS, реальный notify restart/failure/time
 байты постоянных fixture-файлов. Foreign/crash остатки освобождает только
 отдельная тестовая административная процедура внутри контейнера.
 
-Окончательный EnvironmentFile native-прогон (2026-10-18), actual production
+Окончательный usr-merge + EnvironmentFile native-прогон (2026-10-18), actual production
 activator с test-only fault/barrier hooks:
 
 | Userspace / systemd | Focused build | Native |
 | --- | --- | --- |
-| Debian 12 / 252.39 | PASS | 91 PASS, 0 SKIP |
-| Debian 13 / 257.13 | PASS | 91 PASS, 0 SKIP |
-| Ubuntu 24.04 / 255.4 | PASS | 91 PASS, 0 SKIP |
-| Ubuntu 26.04 / 259.5 | PASS | 91 PASS, 0 SKIP |
-| ALT p11 / 258.9-alt1 | PASS | 91 PASS, 0 SKIP |
+| Debian 12 / 252.39 | PASS | 132 PASS, 0 FAIL, 0 SKIP |
+| Debian 13 / 257.13 | PASS | 132 PASS, 0 FAIL, 0 SKIP |
+| Ubuntu 24.04 / 255.4 | PASS | 132 PASS, 0 FAIL, 0 SKIP |
+| Ubuntu 26.04 / 259.5 | PASS | 132 PASS, 0 FAIL, 0 SKIP |
+| ALT p11 / 258.9-alt1 | PASS | 132 PASS, 0 FAIL, 0 SKIP |
 
 Profiles: `debian-12`, `debian-13`, `ubuntu-24.04`, `ubuntu-26.04`, `alt-p11`.
 
 Полные configure/build Debian12 на окончательных исходниках PASS; полный CTest:
-**186 PASS, 0 FAIL, 1 ожидаемый native opt-in SKIP** (187 tests, 218.05 s).
+**186 PASS, 0 FAIL, 1 ожидаемый native opt-in SKIP** (187 tests, 161.79 s).
 `verified_config_service_tests` PASS; privileged native выполняется отдельно по
 таблице, а не пропускается в общей validation. Full build/CTest запускались с
 `QT_QPA_PLATFORM=offscreen`, `FIC_TARGET_PLATFORM=debian-12`, `-j6`, без сети и
-host security mounts; log `build-verified-config/logs/full-debian12-nodac.log`.
+host security mounts; log `build-verified-config/logs/full-debian12-usrmerge-final.log`.
 Для Git static checks внутри disposable контейнера задан только
 `safe.directory=/src`. В полном CTest сняты `DAC_OVERRIDE`/`DAC_READ_SEARCH`:
 иначе контейнерный root обходит chmod-based permission faults MutationJournal.
 Тот же неизменённый test binary без bypass проходит. Build volume должен быть
 записываемым контейнерному UID без DAC bypass; это настройка тестовой среды,
 не изменение необходимых privileges production activator/native mount suite.
-Локальные runner logs: `build-verified-config/logs/*-env.log` (ignored artifacts).
+Локальные runner logs: `build-verified-config/logs/*-usrmerge-public.log` (ignored artifacts).
 Перед suite runner ждёт завершения boot jobs PID1: доступность socket сама по
 себе ещё не исключает штатные boot mount events. Это readiness инфраструктуры,
 не fallback вместо notify fixture. В промежуточных параллельных Ubuntu26 прогонах были безопасные отказы
 observer на положительных сценариях. Источник конкретного постороннего mount
 event не атрибутирован; ожидание boot jobs исключает один известный источник
 фоновых изменений, но не делает namespace изолированным от любой активности
-PID1. Финальный отдельный прогон прошёл; production observer не ослаблялся.
+PID1. Финальная матрица прошла; production observer не ослаблялся.
 Под нагрузкой также выявлен D-Bus ETIMEDOUT, ранее ошибочно переводившийся в
 InterferenceDetected: теперь он сохраняет существующий статус TimedOut. Все пять строк используют одно ядро
 `6.6.87.2-microsoft-standard-WSL2`, не пять независимых distro kernels.
@@ -462,8 +462,96 @@ kernel, поэтому не доказывают одинаковую семан
   модификации памяти, неизвестных inputs/бинарного кода или позднего reread.
   Сохранены measured alternate-namespace observer blind spots из таблицы выше.
 * Гарантия bytes не проверяет смысл `SSHD_OPTS=-f/-o` и Include closure. Реальный
-  SSH adapter не добавлен. Debian12 `/lib` symlink provenance, Ubuntu socket
-  activation и ALT отсутствие notify остаются отдельными препятствиями.
+  SSH adapter не добавлен. Debian12 usr-merge unit provenance поддерживается
+  по узкому контракту ниже; Ubuntu socket activation и ALT отсутствие notify
+  остаются отдельными препятствиями.
+
+## Trusted usr-merge для unit source
+
+Исключение действует только при чтении `FragmentPath`/`DropInPaths`, начинающихся
+с `/lib/systemd/system/`. Единственный разрешённый symlink — root-owned `/lib`
+с **точным** target `usr/lib` или `/usr/lib`. Наличие usr-merge доказывается по
+файловой системе, без доверия к os-release. Настоящий каталог `/lib` также допустим.
+Обычные `/usr/lib/systemd/system` и `/etc/systemd/system` не требуют исключения.
+Другие symlink, включая `/usr`, вложенные каталоги, каталог drop-ins и конечный
+файл, запрещены. `/lib/other` не получает это разрешение. Права symlink 0777
+не трактуются как writable regular file: проверяются тип, UID, родитель и target.
+
+Внутренний reader начинает обход с закреплённого descriptor `/`; каждый компонент
+открывается `openat(O_NOFOLLOW)`, каталоги — `O_PATH|O_DIRECTORY`, alias —
+`O_PATH|O_NOFOLLOW`. Target читается `readlinkat(aliasFd, "", ...)`, без повторного
+разрешения имени ссылки. После точного whitelist target конечный путь строится
+как `/usr/lib/systemd/system/...` и открывается тем же no-follow обходом от того
+же root descriptor. Ни canonical()/realpath(), ни обычного follow-symlink нет.
+Root и все каталоги требуют UID0 и отсутствия group/world write; конечный объект —
+root-controlled regular file. `statx(STATX_MNT_ID)` обязателен, иначе отказ.
+
+Fingerprint содержит исходный путь PID1, подтверждённый канонический путь,
+последовательность identity root/каталогов/alias/файла (mount ID, dev, inode,
+UID/GID/mode), target и mtime/ctime alias, прежние metadata конечного файла
+(включая размер, mtime/ctime) и SHA-256 содержимого. Directory timestamps
+намеренно не закрепляются: создание соседнего файла не меняет данный путь.
+Descriptors компонентов удерживаются до конца capture; после bounded read
+повторный обход от root должен дать ту же цепочку и тот же конечный объект.
+Metadata конечного FD проверяются до чтения, после чтения и после повторного
+обхода. Суммарный прежний budget 1 MiB и ≤64 drop-in сохранены; путь ограничен
+4096 bytes и 128 компонентами. Public API не изменён.
+
+Неподдерживаемая начальная топология даёт `UnsupportedConfiguration`.
+Обнаруженная смена цепочки во время capture — `InterferenceDetected`;
+существующий SystemdActivation повторяет весь launch contract до restart,
+после постановки restart, на READY и перед commit. Поэтому новая inode ссылки
+с прежним target или файла с прежним SHA также меняет контракт. Это не обещание
+непрерывного наблюдения unit tree: скрытый privileged ABA между проверками и
+изменения после последней проверки остаются за границей гарантии. Удержание FD
+не запрещает CAP_SYS_ADMIN менять namespace/дерево и не превращает check в CAS.
+
+### Security review usr-merge
+
+* Произвольный root-owned symlink с корректным SHA не принимается; target alias
+  не может вывести обход в `/tmp`, `/etc`, `/run` или вне vendor tree.
+* Подмена alias между инспекцией и открытием не перенаправляет reader: он открывает
+  только точный canonical path от root FD, а повторный обход проверяет alias.
+* Замены alias/каталогов/конечного файла обнаруживаются по identity и metadata,
+  даже если SHA прежний; изменение bytes дополнительно обнаруживается SHA.
+* SHA не заменяет provenance и не доказывает семантику конфигурации. READY,
+  mount namespace, propagation, source coverage и cleanup условия Success прежние.
+* `openAbsolute()`, EnvironmentFile/контролируемые файлы/snapshots остаются строго
+  no-symlink; SSH-политики, ownership, apply/rollback и MutationJournal не затронуты.
+* Ограничения budget, fail-closed и timeout контракта сохранены; hook подмен
+  существует только при `FIC_ACTIVATOR_TESTING`, production не вызывает hooks.
+
+### Native acceptance usr-merge
+
+Debian12 stock `readLaunchContract("ssh.service")` принял настоящий
+`FragmentPath=/lib/systemd/system/ssh.service`; повторное чтение идентично.
+Fingerprint содержит `/lib` identity/target и canonical
+`/usr/lib/systemd/system/ssh.service`. `validateLaunchContract` без request context
+по-прежнему отказывает из-за EnvironmentFile coverage — provenance blocker снят,
+полная совместимость SSH этим не утверждается. Debian13/Ubuntu/ALT stock reader
+проверен по реальным `/usr/lib/systemd/system` paths; Ubuntu отдельно отказывает
+по triggers, Debian13/ALT — по EnvironmentFiles без coverage.
+
+Собственная vendor notify fixture Debian12 действительно получила FragmentPath
+`/lib/systemd/system/fic-vcsa-test.service`; остальные четыре — `/usr/lib/...`.
+Прямой публичный `VerifiedConfigServiceActivator::activate()` проверен до Success,
+с assertions нового InvocationID, READY, отсутствия cleanup errors/residual mounts
+и сохранения исходной конфигурации. Same-SHA rename unit после preflight даёт
+InterferenceDetected. Существующие обычные `/etc` units/drop-ins и весь прежний
+91-case набор проверяются далее в том же gate без ослабления assertions.
+
+Новые filesystem cases проверяют оба target представления alias, stable digest,
+обычные paths и vendor drop-ins; final/intermediate/drop-in/extra-usr symlinks,
+loop/escape/unexpected targets, owner/mode/type/depth/size/identity отказ;
+управляемые подмены alias/каталога/файла и in-place write; same-SHA replacement,
+повторный content fingerprint и общий 1 MiB budget. Никаких случайных sleep для
+подмен нет: callback стоит между закреплением FD/metadata и чтением.
+
+Filesystem unit-source тесты выполняются внутри native gate над отдельным
+root descriptor в `/etc/fic-vcsa-tests/unit-root`, с теми же trust checks.
+Они не меняют `/lib` systemd-контейнера. Stock SSH probe только удерживает unit
+загруженной через system-bus RefUnit и читает её production reader через прямое
+root-PID1 соединение; он не запускает и не перезапускает SSH.
 
 ## Первичные источники
 

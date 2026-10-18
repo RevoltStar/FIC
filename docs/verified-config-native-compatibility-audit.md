@@ -9,6 +9,13 @@
 используют запрещённый EnvironmentFile; Ubuntu дополнительно использует socket
 activation, ALT — службу без notify, Debian 12 — symlink в FragmentPath.
 
+Последующее исправление поверх `1e638d2`: узкий descriptor-based usr-merge
+reader снимает именно Debian12 `/lib` provenance blocker. Исходные таблицы ниже
+описывают снимок `7e91772` и намеренно сохранены. Актуальный контракт и native
+результаты: [verified-config-service-activator.md](verified-config-service-activator.md#trusted-usr-merge-для-unit-source).
+Это не объявляет штатный SSH поддерживаемым: coverage/external inputs, socket
+activation и notify по-прежнему проверяются отдельно.
+
 ## 1. Среды и уровень доказательств
 
 Все пять сред — disposable Docker-контейнеры x86_64 с настоящим systemd PID 1,

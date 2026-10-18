@@ -7,6 +7,7 @@
 #include <fic/core/integrity/ContentDigest.h>
 #include <fic/core/process/ProcessExecutor.h>
 #include <systemd/sd-daemon.h>
+#include <systemd/sd-bus.h>
 #include <nlohmann/json.hpp>
 #include <linux/stat.h>
 #include <fic/core/fs/AtomicFileWriter.h>
@@ -363,6 +364,135 @@ void originalReadNegativeCase() {
     }
     write(runRoot + "/mode", "normal"); active(); clean(before);
     pass("negative FD attestation rejects original mounts despite identical SHA and READY");
+}
+// Descriptor-rooted fixture never changes /lib of PID1 or the host.
+void unitSourceCases() {
+    const auto base = root + "/unit-root";
+    const std::string name = "/lib/systemd/system/test.service";
+    const auto canonical = "/usr/lib/systemd/system/test.service";
+    auto reset = [&] {
+        fs::remove_all(base); fs::create_directories(base + "/usr/lib/systemd/system/test.service.d");
+        fs::create_directories(base + "/etc/systemd/system");
+        fs::create_symlink("usr/lib", base + "/lib");
+        write(base + canonical, "unit bytes\n"); write(base + "/usr/lib/systemd/system/test.service.d/10-test.conf", "dropin\n");
+        write(base + "/etc/systemd/system/test.service", "unit bytes\n");
+    };
+    reset();
+    auto fingerprint = [&](const std::string& path, std::uint64_t limit = 1024*1024,
+                           const std::function<void()>& hook = std::function<void()>{}) {
+        auto fd = d::openAbsolute(base, O_PATH|O_DIRECTORY);
+        return d::fingerprintUnitSource(fd.get(), path, limit, hook);
+    };
+    auto refuse = [&](const std::string& path, const std::string& label) {
+        bool denied = false; try { fingerprint(path); } catch (const d::Failure& e) { denied = e.status == ActivationStatus::UnsupportedConfiguration; }
+        require(denied, "unit source accepted " + label); pass("unit source refuses " + label); reset();
+    };
+    const auto first = fingerprint(name); const auto parsed = Json::parse(first);
+    require(first == fingerprint(name) && parsed.at("original") == name && parsed.at("canonical") == canonical,
+            "stable usr-merge fingerprint");
+    require(parsed.at("file") == Json::parse(fingerprint(canonical)).at("file") &&
+            parsed.at("file") != Json::parse(fingerprint("/etc/systemd/system/test.service")).at("file"),
+            "canonical same object/ordinary separate inode");
+    require(Json::parse(fingerprint("/etc/systemd/system/test.service")).at("file").back() == parsed.at("file").back(), "ordinary path SHA differs");
+    pass("stable relative usr-merge and ordinary paths pin source/canonical/chain/SHA");
+    bool genericStrict = false;
+    try { d::openAbsolute(base + name, O_RDONLY); } catch (const d::Failure&) { genericStrict = true; }
+    require(genericStrict, "generic controlled-path opener accepted usr-merge alias"); pass("generic openAbsolute retains no-symlink contract");
+    fingerprint("/lib/systemd/system/test.service.d/10-test.conf"); pass("vendor usr-merge drop-in");
+    fs::remove(base + "/lib"); fs::create_symlink("/usr/lib", base + "/lib"); fingerprint(name); pass("absolute usr-merge target"); reset();
+    for (const auto& target : {"/tmp", "../usr/lib", "lib", "usr/../usr/lib", "usr/lib/", "/etc", "/run"}) {
+        fs::remove(base + "/lib"); fs::create_symlink(target, base + "/lib"); refuse(name, std::string("alias target ") + target);
+    }
+    write(base + "/usr/lib/other", "bytes"); refuse("/lib/other", "alias outside vendor unit tree");
+    fs::rename(base + canonical, base + canonical + ".real"); fs::create_symlink("test.service.real", base + canonical); refuse(name, "final unit symlink");
+    fs::rename(base + "/usr/lib/systemd", base + "/usr/lib/real"); fs::create_symlink("real", base + "/usr/lib/systemd"); refuse(name, "intermediate symlink");
+    fs::remove(base + "/usr/lib/systemd/system/test.service.d/10-test.conf"); fs::create_symlink("../test.service", base + "/usr/lib/systemd/system/test.service.d/10-test.conf");
+    refuse("/lib/systemd/system/test.service.d/10-test.conf", "drop-in symlink");
+    fs::rename(base + "/usr/lib/systemd/system/test.service.d", base + "/usr/lib/systemd/system/real.d");
+    fs::create_symlink("real.d", base + "/usr/lib/systemd/system/test.service.d");
+    refuse("/lib/systemd/system/test.service.d/10-test.conf", "drop-in directory symlink");
+    fs::rename(base + "/usr", base + "/real-usr"); fs::create_symlink("real-usr", base + "/usr"); refuse(name, "additional usr symlink");
+    fs::remove(base + canonical); fs::create_directory(base + canonical); refuse(name, "nonregular final unit");
+    ::chmod((base + "/usr").c_str(), 0777); refuse(name, "writable parent");
+    ::chown((base + "/usr").c_str(), 1234, 1234); refuse(name, "foreign parent owner");
+    ::lchown((base + "/lib").c_str(), 1234, 1234); refuse(name, "foreign alias owner");
+    ::chown((base + canonical).c_str(), 1234, 1234); refuse(name, "foreign file owner");
+    for (const auto mode : {0664, 0666}) { ::chmod((base + canonical).c_str(), mode); refuse(name, "writable unit"); }
+    refuse(std::string("/") + std::string(4097, 'a'), "path limit");
+    std::string deep; for (int i = 0; i < 130; ++i) deep += "/x"; refuse(deep, "depth limit");
+    for (const auto path : {"/lib//systemd/system/test.service", "/lib/../usr/lib/systemd/system/test.service"}) refuse(path, "non-normalized path");
+    auto race = [&](const std::function<void()>& mutation, const char* label) {
+        bool detected = false; try { fingerprint(name, 1024*1024, mutation); }
+        catch (const d::Failure& e) { detected = e.status == ActivationStatus::InterferenceDetected; }
+        require(detected, std::string("unit race missed: ") + label); pass(std::string("unit capture detects ") + label); reset();
+    };
+    race([&] { fs::rename(base + "/lib", base + "/old-lib"); fs::create_symlink("usr/lib", base + "/lib"); }, "same-target new symlink inode");
+    race([&] { fs::remove(base + "/lib"); fs::create_symlink("/tmp", base + "/lib"); }, "alias target replacement");
+    race([&] { fs::rename(base + canonical, base + canonical + ".old"); write(base + canonical, "unit bytes\n"); }, "same-SHA file replacement");
+    race([&] { write(base + canonical, "modified\n"); }, "in-place unit write");
+    race([&] { fs::rename(base + "/usr/lib/systemd/system", base + "/usr/lib/systemd/old-system");
+        fs::create_directories(base + "/usr/lib/systemd/system"); write(base + canonical, "unit bytes\n"); }, "parent directory replacement");
+    const auto pinned = fingerprint(name); fs::rename(base + "/lib", base + "/old-lib"); fs::create_symlink("usr/lib", base + "/lib");
+    require(pinned != fingerprint(name), "same SHA new alias fingerprint unchanged"); pass("repeat fingerprint detects same-SHA chain change"); reset();
+    const auto contentPinned = fingerprint(name); write(base + canonical, "different bytes\n");
+    require(contentPinned != fingerprint(name), "same-path changed bytes not fingerprinted"); pass("repeat fingerprint detects content change"); reset();
+    write(base + canonical, std::string(1024*1024 + 1, 'x'));
+    bool oversized = false; try { fingerprint(name); } catch (const d::Failure& e) { oversized = e.status == ActivationStatus::UnsupportedConfiguration; }
+    require(oversized, "one MiB source limit escaped"); pass("one MiB source limit"); reset();
+    bool bounded = false; try { fingerprint(name, 2); } catch (const d::Failure& e) { bounded = e.status == ActivationStatus::UnsupportedConfiguration; }
+    require(bounded, "unit read budget escaped");
+    auto fd = d::openAbsolute(base, O_PATH|O_DIRECTORY); std::uint64_t budget = 11;
+    d::fingerprintUnitSource(fd.get(), name, budget); require(budget == 0, "unit budget not consumed");
+    bool accumulated = false; try { d::fingerprintUnitSource(fd.get(), name, budget); } catch (const d::Failure&) { accumulated = true; }
+    require(accumulated, "aggregate unit budget reset"); pass("exact and cumulative unit read budget");
+    bool identityRefused = false; try { d::fingerprintUnitSource(-1, name, budget); } catch (const d::Failure& e) { identityRefused = e.status == ActivationStatus::UnsupportedConfiguration; }
+    require(identityRefused, "invalid root identity accepted"); pass("unavailable descriptor identity refused");
+    fs::remove_all(base);
+}
+void vendorFixtureCase() {
+    const auto local = "/etc/systemd/system/" + unit;
+    const auto vendor = "/usr/lib/systemd/system/" + unit;
+    const auto saved = read(local); fs::remove(local); write(vendor, saved);
+    mustCtl({"daemon-reload"}); active();
+    auto contract = d::readLaunchContract(unit, std::chrono::steady_clock::now() + std::chrono::seconds(10));
+    const auto fragment = Json::parse(contract.at("launch.FragmentPath")).at("value").get<std::string>();
+    require(fragment == "/lib/systemd/system/" + unit || fragment == vendor, "unexpected vendor fixture source");
+    const auto before = configurationDigest();
+    const auto invocation = ctl({"show", "--value", "--property=InvocationID", unit}).standardOutput;
+    const auto result = VerifiedConfigServiceActivator::activate(request());
+    require(result.success() && result.readinessConfirmed && result.cleanupErrors.empty() && result.residualPaths.empty() &&
+            invocation != ctl({"show", "--value", "--property=InvocationID", unit}).standardOutput,
+            "vendor fixture public activation/new invocation/READY/cleanup failed"); clean(before);
+    pass("vendor notify full activation source=" + fragment + " new invocation/READY/cleanup");
+    d::TestHooks hook; hook.checkpoint = [&](d::TestPhase phase, const std::string&) {
+        if (phase == d::TestPhase::Watching) { fs::rename(vendor, vendor + ".old"); write(vendor, saved); }
+    };
+    require(activate(request(), hook).status == ActivationStatus::InterferenceDetected, "vendor same-SHA replacement accepted after preflight"); clean(before);
+    pass("vendor same-SHA replacement after preflight is InterferenceDetected");
+    fs::remove(vendor); fs::remove(vendor + ".old"); write(local, saved); mustCtl({"daemon-reload"}); active();
+}
+void stockUnitSourceCase() {
+    // Read-only stock-unit probe. No stock SSH restart/configuration writes.
+    const std::string candidate = fs::exists("/etc/altlinux-release") ? "sshd.service" : "ssh.service";
+    // Keep an inactive stock unit loaded for GetUnit without starting it.
+    sd_bus* raw = nullptr; require(sd_bus_open_system(&raw) >= 0, "stock probe connect system bus");
+    std::unique_ptr<sd_bus, decltype(&sd_bus_unref)> bus(raw, sd_bus_unref);
+    // RefUnit itself loads the named unit and ties its lifetime to this bus peer.
+    require(sd_bus_call_method(bus.get(), "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager", "RefUnit", nullptr, nullptr, "s", candidate.c_str()) >= 0, "stock probe RefUnit");
+    const auto deadline = [] { return std::chrono::steady_clock::now() + std::chrono::seconds(10); };
+    const auto contract = d::readLaunchContract(candidate, deadline());
+    const auto fragment = Json::parse(contract.at("launch.FragmentPath")).at("value").get<std::string>();
+    const auto fp = Json::parse(contract.at("launch.file:" + fragment));
+    require(fp.at("original") == fragment && fp.contains("chain") && fp.at("file").back().get<std::string>().size() == 64, "stock provenance incomplete");
+    require(contract == d::readLaunchContract(candidate, deadline()), "stock launch reader unstable");
+    if (read("/etc/os-release").find("VERSION_ID=\"12\"") != std::string::npos || read("/etc/os-release").find("VERSION_ID=12\n") != std::string::npos) {
+        require(fragment == "/lib/systemd/system/ssh.service" && fs::is_symlink("/lib") && fp.at("canonical") == "/usr/lib/systemd/system/ssh.service", "Debian12 actual alias gate not exercised");
+        require(std::any_of(fp.at("chain").begin(), fp.at("chain").end(), [](const Json& e) { return e.value("path", "") == "/lib" && e.contains("target"); }), "Debian12 missing alias pin");
+    }
+    std::string validation = "SUPPORTED";
+    try { d::validateLaunchContract(contract); } catch (const d::Failure& e) { require(e.status == ActivationStatus::UnsupportedConfiguration, "stock validation unexpected status"); validation = e.what(); }
+    pass("stock reader " + candidate + " FragmentPath=" + fragment + "; validate=" + validation);
 }
 void launchCases() {
     const auto before = configurationDigest(); const auto file = "/etc/systemd/system/" + unit;
@@ -797,7 +927,7 @@ int main(int argc, char** argv) {
         require(resolver.resolve(fic::platform::ExecutableId::Systemctl, systemctl, error) && CommandHashStore::saveHash(systemctl, error), error);
         const auto binary = fs::canonical("/proc/self/exe").string();
         write("/etc/systemd/system/" + unit, "[Unit]\nDescription=Isolated verified-config fixture\nStartLimitIntervalSec=0\n[Service]\nType=notify\nNotifyAccess=main\nExecStart=" + binary + " --service\nTimeoutStartSec=10s\nTimeoutStopSec=2s\n");
-        mustCtl({"daemon-reload"}); active(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
+        mustCtl({"daemon-reload"}); unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
         mustCtl({"stop", unit});
         std::cout << "NATIVE verified-config: " << checks << " PASS, " << skips << " SKIP\n";
         return 0;
