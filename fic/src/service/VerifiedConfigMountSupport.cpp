@@ -2,12 +2,20 @@
 #include <fic/core/integrity/ContentDigest.h>
 #include <fic/core/fs/FileStats.h>
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
 #include <linux/stat.h>
+#include <linux/limits.h>
+#include <linux/capability.h>
+#include <linux/magic.h>
+#include <linux/nsfs.h>
+#include <sched.h>
+#include <sys/ioctl.h>
+#include <sys/vfs.h>
 #include <poll.h>
 #include <sstream>
 #include <sys/syscall.h>
@@ -16,6 +24,9 @@
 
 namespace fic::service::detail {
 namespace {
+#ifdef FIC_ACTIVATOR_TESTING
+thread_local XattrTestHooks xattrTests;
+#endif
 [[noreturn]] void fail(ActivationStatus s, const std::string& text) {
     throw Failure(s, text + ": " + std::strerror(errno));
 }
@@ -56,11 +67,41 @@ Fd openRelative(int parent, const std::string& path, int flags) {
     }
     return current;
 }
-void noXattrs(int fd) {
-    const auto count = ::flistxattr(fd, nullptr, 0);
-    if (count > 0) throw Failure(ActivationStatus::UnsupportedConfiguration,
+void requireXattrVisibility() {
+    // trusted.* handlers use capable(CAP_SYS_ADMIN), i.e. the initial user ns,
+    // not merely effective capabilities inside a remapped/rootless container.
+    __user_cap_header_struct header{_LINUX_CAPABILITY_VERSION_3, 0};
+    __user_cap_data_struct caps[2]{};
+    Fd ns(::open("/proc/thread-self/ns/user", O_RDONLY|O_CLOEXEC));
+    struct stat st{}; struct statfs fs{};
+    // Reserved initial user namespace inode: Linux include/linux/proc_ns.h
+    // (new headers also expose USER_NS_INIT_INO in uapi/linux/nsfs.h).
+    constexpr ino_t initialUserNamespace = 0xEFFFFFFD;
+    if (::geteuid() != 0 || ::syscall(SYS_capget, &header, caps) ||
+        !(caps[CAP_SYS_ADMIN / 32].effective & (1U << (CAP_SYS_ADMIN % 32))) ||
+        !ns || ::fstat(ns.get(), &st) || ::fstatfs(ns.get(), &fs) || fs.f_type != NSFS_MAGIC ||
+        ::ioctl(ns.get(), NS_GET_NSTYPE) != CLONE_NEWUSER || st.st_ino != initialUserNamespace)
+        throw Failure(ActivationStatus::UnsupportedConfiguration, "xattr visibility requires root/CAP_SYS_ADMIN in the initial user namespace");
+}
+void emptyXattrList(int fd, ActivationStatus present) {
+    // Actual names, never the size-only estimate (OverlayFS can filter its
+    // private metadata only when a real buffer is supplied). One syscall, no
+    // allocation from filesystem-controlled sizes and no retries/fallback.
+    std::array<char, XATTR_LIST_MAX> names;
+    const auto count =
+#ifdef FIC_ACTIVATOR_TESTING
+        xattrTests.list ? xattrTests.list(fd, names.data(), names.size()) :
+#endif
+        ::flistxattr(fd, names.data(), names.size());
+    if (count < 0) fail(ActivationStatus::UnsupportedConfiguration, "cannot enumerate bounded extended attributes");
+    if (std::uint64_t(count) > names.size())
+        throw Failure(ActivationStatus::UnsupportedConfiguration, "invalid extended attribute list length");
+    if (count > 0) throw Failure(present,
         "extended attributes/ACL/labels require an unsupported snapshot attribute contract");
-    if (count < 0 && errno != ENOTSUP) fail(ActivationStatus::UnsupportedConfiguration, "list extended attributes");
+}
+void noXattrs(int fd, ActivationStatus present = ActivationStatus::UnsupportedConfiguration) {
+    requireXattrVisibility();
+    emptyXattrList(fd, present);
 }
 void walk(int fd, const std::string& path, std::uint64_t mountId,
           std::uint64_t& budget, Tree& tree, unsigned depth) {
@@ -73,6 +114,9 @@ void walk(int fd, const std::string& path, std::uint64_t mountId,
     if (identity(fd).mount != mountId)
         throw Failure(ActivationStatus::UnsupportedConfiguration, "nested mount in controlled tree");
     noXattrs(fd);
+#ifdef FIC_ACTIVATOR_TESTING
+    if (xattrTests.afterInitialList) xattrTests.afterInitialList(fd, path);
+#endif
     tree.attributes[path] = before;
     if (S_ISREG(before.st_mode)) {
         if (before.st_size < 0 || std::uint64_t(before.st_size) > budget)
@@ -114,6 +158,10 @@ void walk(int fd, const std::string& path, std::uint64_t mountId,
             walk(child.get(), path.empty() ? name : path + "/" + name, mountId, budget, tree, depth + 1);
         }
     } else throw Failure(ActivationStatus::UnsupportedConfiguration, "non-regular object in controlled tree");
+#ifdef FIC_ACTIVATOR_TESTING
+    if (xattrTests.afterRead) xattrTests.afterRead(fd, path);
+#endif
+    noXattrs(fd, ActivationStatus::InterferenceDetected);
     struct stat after{};
     if (::fstat(fd, &after) != 0) fail(ActivationStatus::ChecksumMismatch, "recheck tree");
     if (before.st_dev != after.st_dev || before.st_ino != after.st_ino || before.st_size != after.st_size ||
@@ -131,6 +179,10 @@ void applyAttributes(int fd, const struct stat& value) {
         throw Failure(ActivationStatus::SnapshotFailed, "preserve snapshot attributes: " + owner.message + permissions.message);
 }
 }
+#ifdef FIC_ACTIVATOR_TESTING
+void setXattrTestHooks(XattrTestHooks hooks) { xattrTests = std::move(hooks); }
+void checkXattrListForTests(int fd) { emptyXattrList(fd, ActivationStatus::UnsupportedConfiguration); }
+#endif
 Fd::~Fd() { if (fd_ >= 0) ::close(fd_); }
 Fd::Fd(Fd&& other) noexcept : fd_(other.fd_) { other.fd_ = -1; }
 Fd& Fd::operator=(Fd&& other) noexcept {

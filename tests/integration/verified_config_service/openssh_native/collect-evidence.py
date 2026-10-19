@@ -8,7 +8,7 @@ import sys
 
 def main():
     root, dest = map(Path, sys.argv[1:])
-    result = {'base': 'd3bcba86614173d6b7143326df407794cdca8699',
+    result = {'base': '692d34a6f6b3595e088b30b35ced4193b6be77fd',
               'date': '2026-10-19', 'environment_type': 'disposable Docker/systemd PID1',
               'VM_matrix': 'NOT_TESTED',
               'proof_definitions': {'A': 'caller-declared snapshot protection during activation',
@@ -21,7 +21,18 @@ def main():
         folder = root / distro
         data = json.loads((folder / 'evidence/results.json').read_text())
         assert data['unit_bytes_unchanged'] and data['restored_sshd_t']
-        assert len(data['cases']) == 29
+        assert len(data['cases']) == 30
+        copied = next(c for c in data['cases'] if c['name'] == 'copyup-stock-main-and-nonempty-stock-Include')
+        assert copied['mode'] == 'activate' and copied['activation']['status'] == 'Success'
+        assert copied['activation']['readinessConfirmed'] and not copied['activation']['cleanupErrors']
+        assert not copied['activation']['residualPaths']
+        for phase in ('copyup_preflight', 'directory_copyup_preflight'):
+            assert data[phase]['status'] == 'SUPPORTED'
+            metadata = {p['path']: p for p in data[phase]['input_metadata']}
+            for path in ('/etc/ssh/sshd_config', '/etc/ssh/sshd_config.d'):
+                assert metadata[path]['xattr_list_count'] == 0
+        assert '/etc/ssh/sshd_config.d' in data['input_paths']
+        assert all('/fic-native-inputs' not in p for p in data['input_paths'])
         inspect = json.loads((folder / 'container-inspect.json').read_text())[0]
         assert inspect['HostConfig']['NetworkMode'] == 'none'
         token, = [e.split('=', 1)[1] for e in inspect['Config']['Env'] if e.startswith('FIC_OPENSSH_DISPOSABLE=')]

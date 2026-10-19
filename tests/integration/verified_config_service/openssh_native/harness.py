@@ -216,14 +216,13 @@ def main():
         KEY.unlink(missing_ok=True)
         Path(str(KEY) + '.pub').unlink(missing_ok=True)
         run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-f', str(KEY)])
-        def reset(fresh=True):
+        def reset():
             run(['systemctl', 'stop', 'ssh.service'], check=False)
             run(['systemctl', 'unset-environment', 'FIC_OPENSSH_TEST_CHANGE'])
             drive('cleanup', {'paths': []})
-            # Explicit fresh synthetic inputs, not an xattr filter/bypass in FIC.
-            # Keep the lower-layer copy-up experiment separately below.
-            if MAIN.is_symlink() or (fresh and MAIN.exists()): MAIN.unlink()
-            if fresh: ENV.unlink(missing_ok=True)
+            # Preserve the copied-up stock inode; only undo the explicit
+            # negative symlink fixture. No fresh-file workaround.
+            if MAIN.is_symlink(): MAIN.unlink()
             MAIN.write_text(config())
             MAIN.chmod(0o644)
             ENV.write_text('SSHD_OPTS=\n'); ENV.chmod(0o644)
@@ -236,7 +235,7 @@ def main():
             Path('/run/sshd').mkdir(exist_ok=True)
             run(['/usr/sbin/sshd', '-t'])
             run(['systemctl', 'start', 'ssh.service'])
-        reset(fresh=False)
+        reset()
         Path('/run/fic').mkdir(exist_ok=True)
         result['environment'] = diagnostics()
         result['copyup_preflight'] = drive('preflight', request())
@@ -290,11 +289,9 @@ def main():
         experiment('baseline-public-stock-ssh')
         (STOCK_DROP / '10-copyup.conf').write_text('LogLevel VERBOSE\n')
         result['directory_copyup_preflight'] = drive('preflight', request())
-        # Subsequent Include/concurrency experiments use an explicitly fresh tree,
-        # not filtered xattrs or changed production checks. Record this limitation.
-        DROP = Path('/etc/ssh/fic-native-inputs')
-        assert not DROP.exists()
-        DROP.mkdir(mode=0o755)
+        assert result['copyup_preflight']['status'] == 'SUPPORTED'
+        assert result['directory_copyup_preflight']['status'] == 'SUPPORTED'
+        experiment('copyup-stock-main-and-nonempty-stock-Include')
         # Complex Includes remain explicit and protected, including negative glob set.
         reset()
         (DROP / '10-nested.conf').write_text(f'Include {DROP}/nested.inc\n')

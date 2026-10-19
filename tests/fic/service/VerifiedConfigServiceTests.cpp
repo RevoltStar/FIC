@@ -3,11 +3,52 @@
 #include "service/VerifiedConfigLaunchContract.h"
 #include <fic/core/integrity/ContentDigest.h>
 #include <iostream>
+#include <cerrno>
+#include <cstring>
+#include <linux/limits.h>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 using namespace fic::service;
 void require(bool yes, const char* text) { if (!yes) throw std::runtime_error(text); }
+void xattrEnumerationCases() {
+    // A size-only query could report 23 while actual names are empty: the
+    // callback refuses all size queries, proving decisions use actual names.
+    for (const ssize_t count : {ssize_t(0), ssize_t(1), ssize_t(23), ssize_t(XATTR_LIST_MAX), ssize_t(XATTR_LIST_MAX + 1)}) {
+        unsigned calls = 0;
+        detail::XattrTestHooks hooks;
+        hooks.list = [&](int fd, char* buffer, std::size_t size) {
+            require(fd == 42 && buffer && size == XATTR_LIST_MAX, "xattr descriptor/buffer bound changed");
+            // Even an explicitly returned OverlayFS-looking name is forbidden:
+            // only kernel filtering may produce an empty list, never FIC.
+            std::memcpy(buffer, "trusted.overlay.origin", 23);
+            ++calls; return count;
+        };
+        detail::setXattrTestHooks(hooks);
+        bool refused = false;
+        try { detail::checkXattrListForTests(42); }
+        catch (const detail::Failure& e) {
+            require(std::string(e.what()).find("trusted.overlay.origin") == std::string::npos, "sensitive xattr name leaked");
+            refused = e.status == ActivationStatus::UnsupportedConfiguration;
+        }
+        require(refused == (count != 0) && calls == 1, "nonempty/oversized list accepted or unbounded retry");
+    }
+    for (const int error : {ERANGE, E2BIG, EINTR, ENOMEM, ENOTSUP, EOPNOTSUPP, EPERM, EACCES, EIO, EBADF, 12345}) {
+        unsigned calls = 0;
+        detail::XattrTestHooks hooks;
+        hooks.list = [&](int, char* buffer, std::size_t size) -> ssize_t {
+            require(buffer && size == XATTR_LIST_MAX, "error fallback used size query");
+            ++calls; errno = error; return -1;
+        };
+        detail::setXattrTestHooks(hooks);
+        bool refused = false;
+        try { detail::checkXattrListForTests(42); }
+        catch (const detail::Failure& e) { refused = e.status == ActivationStatus::UnsupportedConfiguration; }
+        require(refused && calls == 1, "enumeration error accepted or retried");
+    }
+    detail::setXattrTestHooks({});
+}
 int main() {
+    xattrEnumerationCases();
     ActivationRequest valid;
     valid.unit = "example.service";
     valid.paths = {{"/etc/example.conf", ControlledPathKind::File, fic::core::ContentDigest::sha256Hex("config"), {}}};

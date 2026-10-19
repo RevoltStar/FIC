@@ -83,13 +83,13 @@ counterexamples. C_selected PROVEN is bounded to the fixture's selected behavior
 and tested Include language. No authenticated session or full KEX is performed.
 `sshd -T` is a separate-process diagnostic, never evidence of running sshd bytes.
 
-The baseline keeps the original empty `/etc/ssh/sshd_config.d` and creates fresh
-synthetic main/env files. The report separately reproduces an OverlayFS xattr
-size-query refusal on copied-up files/directories. Subsequent nonempty Include
-experiments use the explicitly fresh `/etc/ssh/fic-native-inputs` tree, because
-adding a file to the lower-layer stock directory triggers that blocker. This
-fixture restriction is not an automatic production workaround. No xattrs are
-filtered/deleted and no production checks are changed.
+The original report/evidence preserves the pre-fix OverlayFS refusal and its
+fresh-file/new-directory fixture restriction. The current xattr follow-up runs
+30 scenarios and removes that restriction: main and EnvironmentFile are written
+in place, all Includes use the stock `/etc/ssh/sshd_config.d`, including an exact
+nonempty manifest. Both copied-up file/directory preflights must be SUPPORTED,
+followed by public activation of the real stock ssh.service. No production
+xattr names are filtered/deleted. See the report's bounded-xattr follow-up.
 
 After `CleanupFailed`/SIGKILL the activator must refuse residuals; a separate
 guarded **fixture administrator** cleanup removes only known test mounts.

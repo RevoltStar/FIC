@@ -10,6 +10,9 @@
 #include <systemd/sd-bus.h>
 #include <nlohmann/json.hpp>
 #include <linux/stat.h>
+#include <linux/capability.h>
+#include <endian.h>
+#include <sys/timerfd.h>
 #include <fic/core/fs/AtomicFileWriter.h>
 #include "service/VerifiedConfigLaunchContract.h"
 #include <algorithm>
@@ -161,6 +164,188 @@ ActivationResult activate(const ActivationRequest& r, const d::TestHooks& hooks 
     return result;
 }
 void clean(const std::string& expected) { require(leftovers().empty() && configurationDigest() == expected, "mount leak or permanent configuration mutation"); }
+// Xattr mutations are confined to this explicitly opted-in disposable container.
+void xattrCases() {
+    const auto original = configurationDigest();
+    auto denied = [&](const ControlledPath& p, ActivationStatus expected) {
+        unsigned mounts = 0; d::TestHooks hooks;
+        hooks.fault = [&](const std::string& action, std::size_t) { if (action == "tmpfs" || action == "bind") ++mounts; return 0; };
+        const auto result = activate(request({p}), hooks);
+        require(result.status == expected && mounts == 0 && leftovers().empty(), "xattr preflight allowed mount or wrong status");
+        clean(original);
+    };
+    auto verify = [](const ControlledPath& p) {
+        auto fd = d::openAbsolute(p.path, O_RDONLY);
+        d::verifyTree(fd.get(), p, 1024 * 1024);
+    };
+    auto refusal = [&](const ControlledPath& p, ActivationStatus expected) {
+        bool refused = false;
+        try { verify(p); } catch (const d::Failure& e) {
+            refused = e.status == expected;
+            if (!refused) std::cerr << "CAPTURE expected=" << activationStatusName(expected) << " actual=" << activationStatusName(e.status) << ": " << e.what() << std::endl;
+        }
+        require(refused, "xattr capture did not refuse with expected status");
+    };
+    auto skip = [](const std::string& text) { ++skips; std::cout << "SKIP " << text << std::endl; };
+    auto nextCtimeSecond = [](int fd) {
+        struct stat before{}; require(::fstat(fd, &before) == 0, "stat ctime barrier");
+        d::Fd timer(::timerfd_create(CLOCK_REALTIME, TFD_CLOEXEC));
+        // Filesystem ctime may use a coarse clock lagging realtime by a tick.
+        itimerspec deadline{}; deadline.it_value.tv_sec = before.st_ctim.tv_sec + 2;
+        require(timer && ::timerfd_settime(timer.get(), TFD_TIMER_ABSTIME, &deadline, nullptr) == 0, "ctime boundary timer");
+        waitFd(timer.get(), POLLIN); std::uint64_t ticks;
+        require(::read(timer.get(), &ticks, sizeof ticks) == sizeof ticks, "ctime boundary");
+    };
+    // Named-user ACL: not reducible to mode bits; no libacl or external utility.
+    struct AclEntry { std::uint16_t tag, perm; std::uint32_t id; };
+    struct Acl { std::uint32_t version; AclEntry entries[5]; };
+    const Acl acl{htole32(2), {{htole16(1), htole16(6), htole32(0xffffffff)},
+        {htole16(2), htole16(4), htole32(12345)}, {htole16(4), htole16(4), htole32(0xffffffff)},
+        {htole16(16), htole16(4), htole32(0xffffffff)}, {htole16(32), htole16(0), htole32(0xffffffff)}}};
+    for (const auto& base : {root + "/xattrs", runRoot + "/xattrs"}) {
+        fs::create_directories(base + "/dir"); write(base + "/file", "xattr\n");
+        for (bool dir : {false, true}) {
+            const auto path = base + (dir ? "/dir" : "/file");
+            ControlledPath p{path, dir ? ControlledPathKind::Directory : ControlledPathKind::File,
+                             dir ? "" : digest("xattr\n"), {}};
+            verify(p); require(activate(request({p})).success(), "empty xattr snapshot failed");
+            pass(base + (dir ? " directory" : " file") + " empty list verifyTree/RO snapshot");
+            for (const auto& value : {std::string(), std::string("value")}) {
+                require(::setxattr(path.c_str(), "user.fic_test", value.data(), value.size(), 0) == 0, "set user xattr");
+                denied(p, ActivationStatus::UnsupportedConfiguration);
+                require(::removexattr(path.c_str(), "user.fic_test") == 0, "clear fixture user xattr");
+                pass(base + (dir ? " dir" : " file") + (value.empty() ? " zero-value attribute rejected" : " real attribute rejected"));
+            }
+            unsigned made = 0;
+            for (; made < 128; ++made) {
+                auto name = "user.fic_test_" + std::to_string(made) + std::string(80, 'a');
+                if (::setxattr(path.c_str(), name.c_str(), "", 0, 0)) { require(errno == ENOSPC || errno == E2BIG, "unexpected large-list setup error"); break; }
+            }
+            require(made > 1, "large list fixture has fewer than two names");
+            denied(p, ActivationStatus::UnsupportedConfiguration);
+            for (unsigned i = 0; i < made; ++i) {
+                auto name = "user.fic_test_" + std::to_string(i) + std::string(80, 'a');
+                require(::removexattr(path.c_str(), name.c_str()) == 0, "clear large list");
+            }
+            pass(base + (dir ? " dir" : " file") + " multiple/large actual name list rejected (" + std::to_string(made) + " names)");
+            for (const char* name : {"trusted.fic_test", "system.posix_acl_access", "system.posix_acl_default", "security.capability"}) {
+                if (!dir && std::string(name) == "system.posix_acl_default") continue;
+                // v2 file capabilities: permitted CAP_NET_BIND_SERVICE, empty inheritable.
+                const std::uint32_t capability[5] = {htole32(0x02000000), htole32(1U << 10), 0, 0, 0};
+                bool isAcl = std::string(name).rfind("system.", 0) == 0;
+                bool isCap = std::string(name) == "security.capability";
+                const void* data = isAcl ? static_cast<const void*>(&acl) : isCap ? static_cast<const void*>(capability) : "";
+                const auto size = isAcl ? sizeof acl : isCap ? sizeof capability : 0;
+                if (::setxattr(path.c_str(), name, data, size, 0)) { skip(base + (dir ? " dir " : " file ") + name + " creation unavailable: " + std::strerror(errno)); continue; }
+                denied(p, ActivationStatus::UnsupportedConfiguration);
+                require(::removexattr(path.c_str(), name) == 0, "clear ACL/trusted/security fixture");
+                pass(base + (dir ? " dir " : " file ") + name + " rejected");
+            }
+            // Deterministic capture checkpoints, no race-by-sleep assumptions.
+            for (int phase : {0, 1, 2, 3, 4}) {
+                d::XattrTestHooks hooks;
+                auto put = [&](int fd) { require(::fsetxattr(fd, "user.fic_test", "", 0, 0) == 0, "race setxattr"); };
+                hooks.list = [&](int fd, char* names, std::size_t size) -> ssize_t {
+                    if (phase == 0) put(fd); // Appears immediately before actual list, no size-query gap.
+                    return ::flistxattr(fd, names, size);
+                };
+                hooks.afterInitialList = [&](int fd, const std::string& relative) {
+                    if (!relative.empty()) return;
+                    if (phase == 1 || phase == 3) put(fd);
+                    if (phase == 4) require(::fsetxattr(fd, "system.posix_acl_access", &acl, sizeof acl, 0) == 0, "race ACL setup");
+                };
+                hooks.afterRead = [&](int fd, const std::string& relative) {
+                    if (!relative.empty()) return;
+                    if (phase == 2) put(fd);
+                    if (phase == 3) require(::fsetxattr(fd, "user.fic_test", "replacement", 11, 0) == 0, "replace xattr");
+                };
+                d::setXattrTestHooks(hooks);
+                refusal(p, phase == 0 ? ActivationStatus::UnsupportedConfiguration : ActivationStatus::InterferenceDetected);
+                d::setXattrTestHooks({});
+                require(::removexattr(path.c_str(), phase == 4 ? "system.posix_acl_access" : "user.fic_test") == 0, "race clear attr");
+                pass(base + (dir ? " dir" : " file") + " deterministic capture attr/ACL race " + std::to_string(phase));
+            }
+            // Deleted transient attr must still be caught by the original ctime check.
+            for (const bool removeAcl : {false, true}) {
+                d::XattrTestHooks transient;
+                transient.afterRead = [&](int fd, const std::string& relative) {
+                    if (!relative.empty()) return;
+                    nextCtimeSecond(fd);
+                    const char* name = removeAcl ? "system.posix_acl_access" : "user.fic_test";
+                    require(::fsetxattr(fd, name, removeAcl ? static_cast<const void*>(&acl) : "", removeAcl ? sizeof acl : 0, 0) == 0 &&
+                            ::fremovexattr(fd, name) == 0, "transient attr/ACL");
+                };
+                d::setXattrTestHooks(transient); refusal(p, ActivationStatus::ChecksumMismatch); d::setXattrTestHooks({});
+                pass(base + (dir ? " dir" : " file") + (removeAcl ? " deleted transient ACL detected through ctime" : " deleted transient xattr detected through ctime"));
+            }
+            if (!dir) {
+                d::XattrTestHooks content;
+                content.afterRead = [&](int, const std::string&) { write(path, "changed-content\n"); };
+                d::setXattrTestHooks(content); refusal(p, ActivationStatus::ChecksumMismatch); d::setXattrTestHooks({});
+                write(path, "xattr\n");
+                pass(base + " content changes independently of empty attribute list detected");
+                d::XattrTestHooks replace;
+                replace.afterRead = [&](int fd, const std::string&) { nextCtimeSecond(fd); fs::rename(path, path + ".held"); write(path, "replacement\n"); };
+                d::setXattrTestHooks(replace); refusal(p, ActivationStatus::ChecksumMismatch); d::setXattrTestHooks({});
+                fs::remove(path); fs::rename(path + ".held", path);
+                pass(base + " descriptor remains pinned during pathname replacement; inode ctime mismatch refused");
+            }
+            d::XattrTestHooks error;
+            error.list = [](int, char*, std::size_t) -> ssize_t { errno = ERANGE; return -1; };
+            d::setXattrTestHooks(error); denied(p, ActivationStatus::UnsupportedConfiguration); d::setXattrTestHooks({});
+            pass(base + (dir ? " dir" : " file") + " actual-list error refused before mounts");
+        }
+    }
+    // Actual lower-layer stock SSH inputs (no unlink/recreate) where available.
+    const fs::path main = "/etc/ssh/sshd_config", drop = "/etc/ssh/sshd_config.d";
+    if (fs::is_regular_file(main) && fs::is_directory(drop) && fs::is_empty(drop)) {
+        auto show = [&](const fs::path& path, const char* stage) {
+            auto fd = d::openAbsolute(path, O_RDONLY); char names[65536];
+            const auto estimate = ::flistxattr(fd.get(), nullptr, 0), actual = ::flistxattr(fd.get(), names, sizeof names);
+            require(estimate >= 0 && actual == 0, "copyup fixture real attrs or list error");
+            std::cout << "COPYUP " << stage << " " << path << " size_query=" << estimate << " actual=" << actual << std::endl;
+            if (std::string(stage) == "after" && estimate == 0) std::cout << "NOT_REPRODUCED_ON_KERNEL size-query divergence " << path << std::endl;
+        };
+        show(main, "before"); show(drop, "before");
+        auto saved = read(main); write(main, saved + "\n# disposable xattr copyup regression\n");
+        write(drop / "10-fic-xattr-test.conf", "# disposable include\n");
+        show(main, "after"); show(drop, "after");
+        ControlledPath file{main, ControlledPathKind::File, digest(read(main)), {}};
+        ControlledPath dir{drop, ControlledPathKind::Directory, "", {{"10-fic-xattr-test.conf", digest("# disposable include\n")}}};
+        verify(file); verify(dir);
+        require(activate(request({file, dir})).success(), "stock copied-up file/nonempty directory snapshot");
+        pass("stock lower OverlayFS file/directory copy-up verifyTree and full RO snapshot exact manifest");
+        write(main, saved); fs::remove(drop / "10-fic-xattr-test.conf");
+    } else skip("stock lower-layer empty SSH Include copy-up fixture unavailable");
+    const pid_t child = ::fork(); require(child >= 0, "fork capability visibility");
+    if (!child) {
+        __user_cap_header_struct header{_LINUX_CAPABILITY_VERSION_3, 0}; __user_cap_data_struct caps[2]{};
+        if (::syscall(SYS_capget, &header, caps)) ::_exit(90);
+        caps[CAP_SYS_ADMIN / 32].effective &= ~(1U << (CAP_SYS_ADMIN % 32));
+        if (::syscall(SYS_capset, &header, caps)) ::_exit(91);
+        try { verify(one()); } catch (const d::Failure& e) { ::_exit(e.status == ActivationStatus::UnsupportedConfiguration ? 0 : 92); }
+        ::_exit(93);
+    }
+    int status; require(::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0, "insufficient xattr visibility accepted");
+    pass("root without effective CAP_SYS_ADMIN cannot claim an empty trusted namespace");
+    const pid_t remapped = ::fork(); require(remapped >= 0, "fork user namespace visibility");
+    if (!remapped) {
+        if (::unshare(CLONE_NEWUSER)) ::_exit(77);
+        try {
+            write("/proc/self/uid_map", "0 0 1\n");
+            write("/proc/self/setgroups", "deny\n"); write("/proc/self/gid_map", "0 0 1\n");
+            if (::geteuid() != 0) ::_exit(94);
+            verify(one());
+        } catch (const d::Failure& e) { ::_exit(e.status == ActivationStatus::UnsupportedConfiguration ? 0 : 95); }
+        catch (...) { ::_exit(96); }
+        ::_exit(97);
+    }
+    require(::waitpid(remapped, &status, 0) == remapped && WIFEXITED(status), "wait user namespace visibility");
+    if (WEXITSTATUS(status) == 77) skip("user namespace creation unavailable");
+    else { require(WEXITSTATUS(status) == 0, "remapped root with namespace capabilities accepted"); pass("root with CAP_SYS_ADMIN only inside noninitial user namespace refused"); }
+    clean(original);
+}
+
 void basicCases() {
     const auto before = configurationDigest();
     for (const auto& paths : {std::vector<ControlledPath>{one()}, std::vector<ControlledPath>{directory()}, std::vector<ControlledPath>{one(), directory()}}) {
@@ -927,7 +1112,7 @@ int main(int argc, char** argv) {
         require(resolver.resolve(fic::platform::ExecutableId::Systemctl, systemctl, error) && CommandHashStore::saveHash(systemctl, error), error);
         const auto binary = fs::canonical("/proc/self/exe").string();
         write("/etc/systemd/system/" + unit, "[Unit]\nDescription=Isolated verified-config fixture\nStartLimitIntervalSec=0\n[Service]\nType=notify\nNotifyAccess=main\nExecStart=" + binary + " --service\nTimeoutStartSec=10s\nTimeoutStopSec=2s\n");
-        mustCtl({"daemon-reload"}); unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
+        mustCtl({"daemon-reload"}); unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); xattrCases(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
         mustCtl({"stop", unit});
         std::cout << "NATIVE verified-config: " << checks << " PASS, " << skips << " SKIP\n";
         return 0;

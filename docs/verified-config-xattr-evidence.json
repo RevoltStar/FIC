@@ -1,0 +1,722 @@
+{
+  "base": "692d34a6f6b3595e088b30b35ced4193b6be77fd",
+  "kernel": "6.6.87.2-microsoft-standard-WSL2",
+  "standalone": {
+    "debian12": {
+      "PASS": 201,
+      "FAIL": 0,
+      "SKIP": 0,
+      "skips": [],
+      "copyup": [
+        "COPYUP before \"/etc/ssh/sshd_config\" size_query=0 actual=0",
+        "COPYUP before \"/etc/ssh/sshd_config.d\" size_query=0 actual=0",
+        "COPYUP after \"/etc/ssh/sshd_config\" size_query=23 actual=0",
+        "COPYUP after \"/etc/ssh/sshd_config.d\" size_query=23 actual=0"
+      ],
+      "log_sha256": "9ae79f0648a3bf7dafea4970a28461d2f49a3b487f71824c138e7821c426e9b7"
+    },
+    "debian13": {
+      "PASS": 201,
+      "FAIL": 0,
+      "SKIP": 0,
+      "skips": [],
+      "copyup": [
+        "COPYUP before \"/etc/ssh/sshd_config\" size_query=0 actual=0",
+        "COPYUP before \"/etc/ssh/sshd_config.d\" size_query=0 actual=0",
+        "COPYUP after \"/etc/ssh/sshd_config\" size_query=23 actual=0",
+        "COPYUP after \"/etc/ssh/sshd_config.d\" size_query=23 actual=0"
+      ],
+      "log_sha256": "bba1f7f94a3707dc87382ca1c491b2a4b468c744370cf968ce766fe78756a7ca"
+    },
+    "ubuntu2404": {
+      "PASS": 201,
+      "FAIL": 0,
+      "SKIP": 0,
+      "skips": [],
+      "copyup": [
+        "COPYUP before \"/etc/ssh/sshd_config\" size_query=0 actual=0",
+        "COPYUP before \"/etc/ssh/sshd_config.d\" size_query=0 actual=0",
+        "COPYUP after \"/etc/ssh/sshd_config\" size_query=23 actual=0",
+        "COPYUP after \"/etc/ssh/sshd_config.d\" size_query=23 actual=0"
+      ],
+      "log_sha256": "e68ab3ef11a26cc5a5048724c8f655837d790ddaf3731dfee7313fc422feb413"
+    },
+    "ubuntu2604": {
+      "PASS": 201,
+      "FAIL": 0,
+      "SKIP": 0,
+      "skips": [],
+      "copyup": [
+        "COPYUP before \"/etc/ssh/sshd_config\" size_query=0 actual=0",
+        "COPYUP before \"/etc/ssh/sshd_config.d\" size_query=0 actual=0",
+        "COPYUP after \"/etc/ssh/sshd_config\" size_query=23 actual=0",
+        "COPYUP after \"/etc/ssh/sshd_config.d\" size_query=23 actual=0"
+      ],
+      "log_sha256": "aa3361972582c41076c0c5f13f594c4c52eb1e984cc1a2c382d6a5553a663383"
+    },
+    "alt-p11": {
+      "PASS": 200,
+      "FAIL": 0,
+      "SKIP": 1,
+      "skips": [
+        "SKIP stock lower-layer empty SSH Include copy-up fixture unavailable"
+      ],
+      "copyup": [],
+      "log_sha256": "478e90e8b5e03b66da3a5985468c8c05cda277fdd09353b1b1704b3eb1fc3f6b"
+    }
+  },
+  "openssh": {
+    "debian-12": {
+      "run_id": "c6d10a06c82a13d4ffb9c43da832c0e6065ea037e530eac8952f4439db368e8f",
+      "container_image_id": "sha256:8bfd868d192ac076aa62bd985829ab6289b6c5b88079cb569cb1d903013cb72c",
+      "PASS": 30,
+      "FAIL": 0,
+      "SKIP": 0,
+      "initial_xattrs": {
+        "/etc/ssh/sshd_config": {
+          "size_query": 0,
+          "names": []
+        },
+        "/etc/default/ssh": {
+          "size_query": 0,
+          "names": []
+        },
+        "/etc/ssh/sshd_config.d": {
+          "size_query": 0,
+          "names": []
+        }
+      },
+      "after_file_copyup": [
+        {
+          "path": "/etc/ssh/sshd_config",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/ssh/sshd_config.d",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        },
+        {
+          "path": "/etc/default/ssh",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/ssh/ssh_host_ed25519_key",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        },
+        {
+          "path": "/etc/ssh/ssh_host_ed25519_key.pub",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        }
+      ],
+      "after_directory_copyup": [
+        {
+          "path": "/etc/ssh/sshd_config",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/ssh/sshd_config.d",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/default/ssh",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/ssh/ssh_host_ed25519_key",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        },
+        {
+          "path": "/etc/ssh/ssh_host_ed25519_key.pub",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        }
+      ],
+      "copyup_public_activation": {
+        "name": "copyup-stock-main-and-nonempty-stock-Include",
+        "before": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "MainPID": "124",
+          "RootDirectory": "",
+          "RootImage": "",
+          "MountFlags": "",
+          "PrivateTmp": "no",
+          "PrivateMounts": "no",
+          "ProtectSystem": "no",
+          "Id": "ssh.service",
+          "TriggeredBy": "",
+          "ActiveState": "active",
+          "SubState": "running",
+          "FragmentPath": "/lib/systemd/system/ssh.service",
+          "DropInPaths": "",
+          "Job": "",
+          "InvocationID": "08fd7715c7ff493a8241a35b875cf8b2",
+          "process_mnt_ns": "mnt:[4026532549]",
+          "process_starttime": "542684"
+        },
+        "closure_issues": [],
+        "mode": "activate",
+        "argv_issues": [],
+        "activation": {
+          "activation_invoked": true,
+          "checkpoints": [],
+          "cleanupErrors": [],
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "launch_contract_sha256": "94382f9637060c5cf3ff72e9b3c1be37a0ed650281162ee77f973fc72c4bab8b",
+          "launch_contract_stable": true,
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residualPaths": [],
+          "residual_count_before_admin_cleanup": 0,
+          "status": "Success"
+        },
+        "after": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "MainPID": "161",
+          "RootDirectory": "",
+          "RootImage": "",
+          "MountFlags": "",
+          "PrivateTmp": "no",
+          "PrivateMounts": "no",
+          "ProtectSystem": "no",
+          "Id": "ssh.service",
+          "TriggeredBy": "",
+          "ActiveState": "active",
+          "SubState": "running",
+          "FragmentPath": "/lib/systemd/system/ssh.service",
+          "DropInPaths": "",
+          "Job": "",
+          "InvocationID": "bdbc316d8e844967ab8038ab5f481a7d",
+          "process_mnt_ns": "mnt:[4026532549]",
+          "process_starttime": "542721"
+        },
+        "A": "PROVEN",
+        "B": "PROVEN",
+        "C_selected": "PROVEN",
+        "C": "NOT_PROVEN",
+        "persistent": "PROVEN",
+        "server_identification": "SSH-2.0-OpenSSH_9.2p1 Debian-2+deb12u10 FIC_VERIFIED",
+        "network_stage": "identification + server SSH_MSG_KEXINIT; no completed KEX/authentication",
+        "effective_separate_process": [
+          "port 2222",
+          "listenaddress 127.0.0.1:2222",
+          "usepam no",
+          "pubkeyauthentication no",
+          "passwordauthentication no",
+          "permittty yes",
+          "versionaddendum FIC_VERIFIED"
+        ],
+        "listeners": "State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess\nLISTEN 0      128        127.0.0.1:2222      0.0.0.0:*    users:((\"sshd\",pid=161,fd=3))\n"
+      },
+      "unit_bytes_unchanged": true,
+      "caller_ssh_unchanged": true,
+      "restored_sshd_t": true,
+      "cases": [
+        {
+          "name": "baseline-public-stock-ssh",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "copyup-stock-main-and-nonempty-stock-Include",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "nested-and-Match-Include",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "duplicate-directive-first-wins",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "missing-Include-with-protected-negative-set",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "symlink-Include-input",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "wrong-reference-sha",
+          "status": "ChecksumMismatch",
+          "primaryStatus": "ChecksumMismatch"
+        },
+        {
+          "name": "missing-required-file",
+          "status": "ChecksumMismatch",
+          "primaryStatus": "ChecksumMismatch"
+        },
+        {
+          "name": "optional-env-absent",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "uncovered-env",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "symlink-main",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "SSHD_OPTS-changed-since-reference",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "uncovered-external-Include",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "unguarded-new-glob",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "guarded-new-glob",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "CLI-f-external",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "CLI-o-first-wins",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "systemd-real-quoted-expansion",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "sshd-t-and-real-restart-failure",
+          "status": "RestartFailed",
+          "primaryStatus": "RestartFailed"
+        },
+        {
+          "name": "real-sshd-argv-restart-failure",
+          "status": "RestartFailed",
+          "primaryStatus": "RestartFailed"
+        },
+        {
+          "name": "contract-before",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected"
+        },
+        {
+          "name": "contract-after",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected"
+        },
+        {
+          "name": "inode",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected"
+        },
+        {
+          "name": "aba",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected"
+        },
+        {
+          "name": "ro-write",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "original-write",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "busy",
+          "status": "CleanupFailed",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "foreign",
+          "status": "CleanupFailed",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "crash",
+          "status": "SIGKILL",
+          "primaryStatus": null
+        },
+        {
+          "name": "new-real-sshd-blocked-before-READY",
+          "status": "TimedOut",
+          "primaryStatus": "TimedOut"
+        }
+      ]
+    },
+    "debian-13": {
+      "run_id": "352ae0ba61c36b011fdfd9f4ee1ca3702e1d6e25dcdabd309634e4018468410c",
+      "container_image_id": "sha256:6e20048bc0a8cf200d08abb088ae8a05d7a658661b37d6e2c729a89dcb12aa28",
+      "PASS": 30,
+      "FAIL": 0,
+      "SKIP": 0,
+      "initial_xattrs": {
+        "/etc/ssh/sshd_config": {
+          "size_query": 0,
+          "names": []
+        },
+        "/etc/default/ssh": {
+          "size_query": 0,
+          "names": []
+        },
+        "/etc/ssh/sshd_config.d": {
+          "size_query": 0,
+          "names": []
+        }
+      },
+      "after_file_copyup": [
+        {
+          "path": "/etc/ssh/sshd_config",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/ssh/sshd_config.d",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        },
+        {
+          "path": "/etc/default/ssh",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/ssh/ssh_host_ed25519_key",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        },
+        {
+          "path": "/etc/ssh/ssh_host_ed25519_key.pub",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        }
+      ],
+      "after_directory_copyup": [
+        {
+          "path": "/etc/ssh/sshd_config",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/ssh/sshd_config.d",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/default/ssh",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 23
+        },
+        {
+          "path": "/etc/ssh/ssh_host_ed25519_key",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        },
+        {
+          "path": "/etc/ssh/ssh_host_ed25519_key.pub",
+          "xattr_list_count": 0,
+          "xattr_names": [],
+          "xattr_size_query": 0
+        }
+      ],
+      "copyup_public_activation": {
+        "name": "copyup-stock-main-and-nonempty-stock-Include",
+        "before": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "MainPID": "171",
+          "RootDirectory": "",
+          "RootImage": "",
+          "MountFlags": "",
+          "PrivateTmp": "no",
+          "PrivateMounts": "no",
+          "ProtectSystem": "no",
+          "Id": "ssh.service",
+          "TriggeredBy": "",
+          "ActiveState": "active",
+          "SubState": "running",
+          "FragmentPath": "/usr/lib/systemd/system/ssh.service",
+          "DropInPaths": "",
+          "Job": "",
+          "InvocationID": "50abb552376a4a2ba614736ffe16dcb0",
+          "process_mnt_ns": "mnt:[4026532475]",
+          "process_starttime": "549632"
+        },
+        "closure_issues": [],
+        "mode": "activate",
+        "argv_issues": [],
+        "activation": {
+          "activation_invoked": true,
+          "checkpoints": [],
+          "cleanupErrors": [],
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "launch_contract_sha256": "bfa8799b305e5f9a1294f7187a406bd29b33133b95833d1e3c5e6333842740d8",
+          "launch_contract_stable": true,
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residualPaths": [],
+          "residual_count_before_admin_cleanup": 0,
+          "status": "Success"
+        },
+        "after": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "MainPID": "209",
+          "RootDirectory": "",
+          "RootImage": "",
+          "MountFlags": "",
+          "PrivateTmp": "no",
+          "PrivateMounts": "no",
+          "ProtectSystem": "no",
+          "Id": "ssh.service",
+          "TriggeredBy": "",
+          "ActiveState": "active",
+          "SubState": "running",
+          "FragmentPath": "/usr/lib/systemd/system/ssh.service",
+          "DropInPaths": "",
+          "Job": "",
+          "InvocationID": "0260f3b1096247f4b0264fa430a58342",
+          "process_mnt_ns": "mnt:[4026532475]",
+          "process_starttime": "549669"
+        },
+        "A": "PROVEN",
+        "B": "PROVEN",
+        "C_selected": "PROVEN",
+        "C": "NOT_PROVEN",
+        "persistent": "PROVEN",
+        "server_identification": "SSH-2.0-OpenSSH_10.0p2 Debian-7+deb13u4 FIC_VERIFIED",
+        "network_stage": "identification + server SSH_MSG_KEXINIT; no completed KEX/authentication",
+        "effective_separate_process": [
+          "port 2222",
+          "listenaddress 127.0.0.1:2222",
+          "usepam no",
+          "pubkeyauthentication no",
+          "passwordauthentication no",
+          "permittty yes",
+          "versionaddendum FIC_VERIFIED"
+        ],
+        "listeners": "State  Recv-Q Send-Q Local Address:Port Peer Address:PortProcess                       \nLISTEN 0      128        127.0.0.1:2222      0.0.0.0:*    users:((\"sshd\",pid=209,fd=6))\n"
+      },
+      "unit_bytes_unchanged": true,
+      "caller_ssh_unchanged": true,
+      "restored_sshd_t": true,
+      "cases": [
+        {
+          "name": "baseline-public-stock-ssh",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "copyup-stock-main-and-nonempty-stock-Include",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "nested-and-Match-Include",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "duplicate-directive-first-wins",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "missing-Include-with-protected-negative-set",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "symlink-Include-input",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "wrong-reference-sha",
+          "status": "ChecksumMismatch",
+          "primaryStatus": "ChecksumMismatch"
+        },
+        {
+          "name": "missing-required-file",
+          "status": "ChecksumMismatch",
+          "primaryStatus": "ChecksumMismatch"
+        },
+        {
+          "name": "optional-env-absent",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "uncovered-env",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "symlink-main",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "SSHD_OPTS-changed-since-reference",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration"
+        },
+        {
+          "name": "uncovered-external-Include",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "unguarded-new-glob",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "guarded-new-glob",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "CLI-f-external",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "CLI-o-first-wins",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "systemd-real-quoted-expansion",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "sshd-t-and-real-restart-failure",
+          "status": "RestartFailed",
+          "primaryStatus": "RestartFailed"
+        },
+        {
+          "name": "real-sshd-argv-restart-failure",
+          "status": "RestartFailed",
+          "primaryStatus": "RestartFailed"
+        },
+        {
+          "name": "contract-before",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected"
+        },
+        {
+          "name": "contract-after",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected"
+        },
+        {
+          "name": "inode",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected"
+        },
+        {
+          "name": "aba",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected"
+        },
+        {
+          "name": "ro-write",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "original-write",
+          "status": "Success",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "busy",
+          "status": "CleanupFailed",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "foreign",
+          "status": "CleanupFailed",
+          "primaryStatus": "Success"
+        },
+        {
+          "name": "crash",
+          "status": "SIGKILL",
+          "primaryStatus": null
+        },
+        {
+          "name": "new-real-sshd-blocked-before-READY",
+          "status": "TimedOut",
+          "primaryStatus": "TimedOut"
+        }
+      ]
+    }
+  },
+  "not_tested": [
+    "native distro kernels/VMs",
+    "ext4",
+    "XFS",
+    "enforcing SELinux"
+  ],
+  "historical_evidence_unchanged": "docs/verified-config-openssh-native-evidence.json",
+  "full_debian12": {
+    "build": "PASS",
+    "ctest_total": 188,
+    "PASS": 187,
+    "FAIL": 0,
+    "SKIP": 1,
+    "seconds": 125.69,
+    "skip": "verified_config_service_native_tests requires explicit disposable native opt-in"
+  }
+}

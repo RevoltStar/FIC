@@ -3180,6 +3180,7 @@ set(FIC_VERIFIED_CONFIG_SOURCES
 add_executable(verified_config_service_tests
     fic/service/VerifiedConfigServiceTests.cpp ${FIC_VERIFIED_CONFIG_SOURCES})
 target_include_directories(verified_config_service_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_compile_definitions(verified_config_service_tests PRIVATE FIC_ACTIVATOR_TESTING=1)
 target_link_libraries(verified_config_service_tests PRIVATE fic-core fic-platform)
 add_test(NAME verified_config_service_tests COMMAND verified_config_service_tests)
 set_tests_properties(verified_config_service_tests PROPERTIES LABELS unit)

@@ -57,7 +57,7 @@ SHA-256 — 64 lowercase hex-символа. `FileManifest` — упорядоч
 Первая версия намеренно ограничена следующими условиями:
 
 * Linux с procfs, tmpfs, `statx(STATX_MNT_ID)` (Linux 5.8+), mount namespaces;
-  root с эффективным `CAP_SYS_ADMIN` и правами чтения/копирования атрибутов.
+  root с эффективным `CAP_SYS_ADMIN` в initial user namespace и правами чтения/копирования атрибутов.
 * systemd — PID 1; активатор, manager и MainPID службы имеют один mount
   namespace и совместимый корень файловой системы.
 * Канонический загруженный `.service`, уже `active/running`, без pending Job,
@@ -416,8 +416,9 @@ EnvironmentFile regressions дополнительно проверяют:
   SIGKILL residual refusal без adoption; все прежние topology/cross-namespace
   negatives сохранены и повторены.
 
-ACL/security label не испытывались как отдельные OS providers: xattr test
-проверяет общий flistxattr rejection, он не является тестом enforcing SELinux.
+В исходном наборе ACL/security label не испытывались как отдельные providers.
+Новый bounded-xattr follow-up ниже добавляет настоящие POSIX ACL и file
+capabilities; enforcing SELinux по-прежнему не проверен.
 Содержимое envfiles не выводится; fixture сообщает только synthetic whitelist.
 
 Hardening native-набор дополнительно проверяет shared parent и shared-slave
@@ -576,3 +577,93 @@ root-PID1 соединение; он не запускает и не перез�
   [Exec*Ex implementation](https://github.com/systemd/systemd/blob/v252/src/core/dbus-service.c),
   [execution properties](https://github.com/systemd/systemd/blob/v252/src/core/dbus-execute.c),
   [environment semantics](https://github.com/systemd/systemd/blob/v252/man/systemd.exec.xml).
+
+## Bounded xattr validation (follow-up к `692d34a`)
+
+### API и OverlayFS
+
+Проверка работает с закреплённым FD и делает один `flistxattr` с настоящим
+буфером `XATTR_LIST_MAX` (65536 байт) до чтения объекта и ещё один после чтения.
+Размер не берётся из файловой системы; повторов, чтения значений, фильтра имён
+и удаления атрибутов нет. Буфер локален одному перечислению и освобождается
+до рекурсивного обхода дочерних объектов; глубина обхода по-прежнему ограничена.
+Нулевая длина результата принимается только вместе с проверками контекста и
+метаданных. Любой положительный размер отклоняется, даже если value пуст.
+Невозможный размер больше буфера и **все** ошибки означают отказ, включая
+`ERANGE`, `E2BIG`, `EINTR`, `ENOMEM`, `ENOTSUP`/`EOPNOTSUPP`, `EPERM`, `EACCES`.
+Прежнее исключение для `ENOTSUP` удалено. Имена и значения не попадают в
+production-диагностику.
+
+Причина прежнего false positive — не изменение файла между двумя вызовами.
+В `ovl_listxattr` ветка `size == 0` возвращает размер underlying list до
+фильтрации внутренних OverlayFS metadata; с буфером kernel выполняет фильтрацию
+и может вернуть 0. Такой порядок есть и в
+[WSL 6.6.87.2](https://github.com/microsoft/WSL2-Linux-Kernel/blob/linux-msft-wsl-6.6.87.2/fs/overlayfs/inode.c#L401),
+и в [upstream Linux 6.6](https://github.com/torvalds/linux/blob/v6.6/fs/overlayfs/inode.c#L390).
+FIC не распознаёт и не пропускает `trusted.overlay.*`: решение принимает
+фактический результат kernel API. Size-query в production больше не вызывается.
+
+Семантика [listxattr(2)](https://man7.org/linux/man-pages/man2/listxattr.2.html):
+возвращаются доступные вызывающему имена, а не доказательство отсутствия любой
+скрытой metadata. В Linux список ограничен 64 KiB; переполнение может давать
+`E2BIG`. [getxattr(2)](https://man7.org/linux/man-pages/man2/getxattr.2.html)
+читает значение конкретного имени: нулевая длина value не означает отсутствия
+имени, а перебор известных имён не доказывает отсутствия остальных. Поэтому
+такой fallback здесь не используется.
+
+### Полномочия, filesystem и LSM
+
+Перед каждым перечислением требуются euid 0 и эффективный `CAP_SYS_ADMIN`
+текущего **thread в initial user namespace**. Проверяются capget, namespace FD
+`/proc/thread-self/ns/user`, nsfs magic, `NS_GET_NSTYPE` и зарезервированный
+initial inode `0xEFFFFFFD`. Число определено в
+[Linux 6.6 proc_ns.h](https://github.com/torvalds/linux/blob/v6.6/include/linux/proc_ns.h#L37),
+в новых UAPI headers — `USER_NS_INIT_INO`. Неизвестный kernel contract даёт
+отказ. UID 0, UID map и capabilities внутри дочернего user namespace сами по
+себе недостаточны. Проверки не кэшируются между объектами/перечислениями.
+
+По [xattr(7)](https://man7.org/linux/man-pages/man7/xattr.7.html), `user.*`
+подчинены обычным правам, `trusted.*` требуют `CAP_SYS_ADMIN`, `system.*`
+определены filesystem, `security.*` — security module. В частности,
+`ovl_can_list` скрывает trusted names без capabilities в initial namespace.
+[VFS Linux](https://github.com/torvalds/linux/blob/v6.6/fs/xattr.c#L452)
+проверяет LSM list permission; ошибка не принимается за отсутствие.
+Универсального syscall «докажи отсутствие metadata, которую provider скрывает»
+нет. Успешный пустой список — свидетельство только в рамках доверенного
+kernel/filesystem/LSM и указанного контекста; произвольный FUSE/provider,
+намеренно скрывающий metadata, не входит в поддерживаемую модель. Недостаточные
+полномочия и обнаруженные ошибки проверки контекста/listing дают
+`UnsupportedConfiguration`, а не permissive fallback. Это не аттестация
+произвольного стороннего filesystem или отсутствия всех LSM effects.
+
+POSIX access/default ACL на проверенных OverlayFS/tmpfs перечисляются как
+`system.posix_acl_*`; nontrivial ACL отвергаются. ext4 хранит xattrs/ACL в своих
+inode/block structures, tmpfs — в памяти, OverlayFS делегирует и фильтрует
+underlying list: их storage и ограничения различаются. Совпадение API не
+заменяет native gate конкретного provider. Поддержка ACL/security labels в
+snapshot **не добавлена**; существующий запрет enforcing SELinux сохранён.
+
+### TOCTOU и security review
+
+* Уже присутствующая metadata выявляется в preflight до первого собственного
+  mount: `UnsupportedConfiguration`. Новое непустое перечисление после чтения
+  даёт `InterferenceDetected`; ошибка перечисления всё равно fail-closed.
+* Обе проверки используют тот же FD, без повторного разрешения pathname.
+  Сравнения inode/device/size/mode/UID/GID/mtime/ctime и mount ID сохранены;
+  изменения с пустым итоговым списком выявляет прежний `ChecksumMismatch`.
+  Последующая source CAS и проверки publication не менялись.
+* Перечисления и stat не атомарны. Добавление/удаление между проверками без
+  наблюдаемого изменения метаданных, coarse-clock ABA и privileged восстановление
+  состояния не гарантированно обнаруживаются. Две проверки не означают полной
+  защиты от произвольного привилегированного writer. Детерминированные transient
+  тесты ждут отдельной ctime-секунды с учётом coarse clock, а не обещают такую
+  гарантию для любых реальных гонок.
+* Непустой доступный список не может стать разрешённым из-за размера/value/имени;
+  малый буфер, отказ доступа и неизвестная ошибка не превращаются в Success.
+  Недоступный namespace не принимается за пустой trusted namespace.
+* RO snapshot lifecycle, mount publication, observer, READY, cleanup и правила
+  `CleanupFailed`/residual mounts не изменены. Отказ при неудачной очистке остаётся
+  обязательным; xattr validation не создаёт нового пути успешного завершения.
+
+Результаты native regression, реальные copy-up inputs OpenSSH и непроверенные
+окружения: [follow-up отчёт](verified-config-openssh-native-validation.md#bounded-xattr-follow-up).

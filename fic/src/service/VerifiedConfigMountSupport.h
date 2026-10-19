@@ -3,6 +3,9 @@
 #include <set>
 #include <stdexcept>
 #include <sys/stat.h>
+#ifdef FIC_ACTIVATOR_TESTING
+#include <functional>
+#endif
 
 namespace fic::service::detail {
 struct Failure : std::runtime_error {
@@ -53,6 +56,15 @@ struct Tree {
 };
 Tree readTree(int root, ControlledPathKind kind, std::uint64_t& budget);
 void verifyTree(int root, const ControlledPath& expected, std::uint64_t budget);
+#ifdef FIC_ACTIVATOR_TESTING
+struct XattrTestHooks {
+    std::function<ssize_t(int, char*, std::size_t)> list;
+    std::function<void(int, const std::string&)> afterInitialList, afterRead;
+};
+void setXattrTestHooks(XattrTestHooks hooks);
+// Pure enumeration algorithm only; production walk also requires visibility.
+void checkXattrListForTests(int fd);
+#endif
 void copyTree(int source, int destination, const Tree& tree, ControlledPathKind kind);
 class MountObserver {
     Fd fd_;

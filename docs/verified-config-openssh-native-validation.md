@@ -443,3 +443,108 @@ build directory, не требуют ключей для воспроизвед�
 Критерий этапа выполнен: установлено, **какие свойства настоящего OpenSSH**
 подтверждаются Success на испытанной конфигурации, приведены действующие
 контрпримеры более сильному утверждению и выделены отдельные следующие задачи.
+
+## Bounded xattr follow-up
+
+Этот раздел — новый замер поверх `692d34a6f6b3595e088b30b35ced4193b6be77fd`.
+Разделы 1–18 и исходный JSON evidence выше оставлены как исторический результат:
+их fresh-file/new-Include-directory ограничения описывают прежний код.
+Новое [сокращённое evidence](verified-config-xattr-evidence.json) содержит
+copy-up metadata, public ActivationResult, process identities, hashes образов,
+названия/результаты сценариев и standalone totals. Полные текущие безопасные
+результаты собирает прежний `collect-evidence.py`, теперь с проверкой 30 случаев,
+штатного Include path и обязательной успешной copy-up activation.
+
+### Исправление и security review
+
+Production diff ограничен `VerifiedConfigMountSupport.cpp/.h`: вместо
+`flistxattr(fd, nullptr, 0)` используется фактический список в фиксированном
+буфере 65536 байт. Проверяется достоверность контекста: root и эффективный
+CAP_SYS_ADMIN в initial user namespace. Положительный результат любого имени,
+ошибка, переполнение или недостаточная видимость не принимаются за отсутствие.
+Исключение ENOTSUP удалено. Второе перечисление выполняется после чтения;
+ctime/mtime/inode/mount ID, source CAS и остальные metadata checks сохранены.
+
+Это не поддержка сохранения xattrs/ACL/security labels. Новые реальные
+`user.*`, `trusted.*`, access/default POSIX ACL и `security.capability`
+на файлах/каталогах OverlayFS и tmpfs отклонены до собственного mount.
+Пустое значение и длинный список имён также отклонены. Unit injection проверяет
+все перечисленные в ТЗ ошибки, неизвестную errno, границы 65536/65537,
+отсутствие size-query/retry и отказ даже для явно возвращённого имени
+`trusted.overlay.origin`; production не фильтрует имена и не выводит их.
+
+Повторная проверка обнаруживает появление/замену атрибутов и изменение ACL
+после первого перечисления. Детерминированные transient add/remove проверки
+подтверждают отказ по ctime при пустом итоговом списке; отдельные случаи
+проверяют independent content change и pinned FD при замене pathname.
+Для ctime-тестов используется timerfd-барьер с учётом coarse clock. Обнаруженная
+при разработке ошибка слишком раннего тестового барьера исправлена в harness,
+не ослаблением production-проверок. Ни эти тесты, ни два перечисления не
+доказывают атомарность против скрытого privileged/coarse-clock ABA.
+
+Полный разбор API, namespaces, LSM, доверия к filesystem provider, bounds и
+остаточной гонки приведён в [контракте компонента](verified-config-service-activator.md#bounded-xattr-validation-follow-up-к-692d34a).
+Mount publication/readiness/cleanup не менялись; ложный Success при cleanup
+error по-прежнему запрещён. SSH policies, apply/rollback, ownership и
+MutationJournal не изменены.
+
+### Основной acceptance gate
+
+Во всех четырёх Debian/Ubuntu userspaces штатные lower-layer file и directory
+показали один результат на общем WSL kernel:
+
+| Объект | До copy-up: size/actual | После обычной записи: size/actual | Итог |
+|---|---:|---:|---|
+| `/etc/ssh/sshd_config` | 0 / 0 | 23 / 0 | verifyTree + RO snapshot PASS |
+| `/etc/ssh/sshd_config.d` | 0 / 0 | 23 / 0 | exact nonempty manifest + RO snapshot PASS |
+
+Это kernel-фильтрация при actual listing, а не разрешение FIC пропускать
+реально возвращённые overlay names. Сравнение исходников WSL/upstream и
+причина расхождения описаны в контракте компонента.
+
+**Реальный OpenSSH Debian 12 и 13:** каждый **30 PASS / 0 FAIL / 0 SKIP**.
+Штатный copied-up `sshd_config` сохраняется при reset, EnvironmentFile пишется
+на месте. Все Includes используют штатный `/etc/ssh/sshd_config.d`; свежего
+`fic-native-inputs` больше нет. Новый отдельный positive со штатным непустым
+Include-каталогом и точным manifest использует публичный activate(), настоящий
+ssh.service без override, новый MainPID/InvocationID, READY, успешный cleanup
+без residual mounts. Unit bytes неизменны, восстановленный `sshd -t` PASS,
+caller SSH paths не изменены. Все прежние негативные и concurrency assertions
+сохранены, включая ожидаемые CleanupFailed/ResidualMounts в fault cases.
+
+A/B доказываются в принятой модели; full SSH C по-прежнему NOT_PROVEN на
+обычных positives и FAILED для сохранённых semantic counterexamples.
+Полный KEX, authenticated Match/PAM/login и Include/argv authority closure
+не стали доказанными вследствие исправления xattr.
+
+### Regression matrix
+
+Запущены существующие runners с `fic-ssh-audit:<tag>`:
+
+| Native standalone | PASS | FAIL | SKIP |
+|---|---:|---:|---:|
+| Debian 12 | 201 | 0 | 0 |
+| Debian 13 | 201 | 0 | 0 |
+| Ubuntu 24.04 | 201 | 0 | 0 |
+| Ubuntu 26.04 | 201 | 0 | 0 |
+| ALT p11 | 200 | 0 | 1 |
+
+ALT skip — отсутствует подходящий штатный пустой SSH Include fixture для
+lower-layer copy-up пары; остальные xattr/ACL/security/capability/user-namespace
+проверки ALT выполнены. Обязательный copy-up gate Debian 12/13 полностью PASS.
+Metadata/manifests, EnvironmentFile, tmpfs RO, source CAS, mount ABA,
+launch contract, READY/timeout, EBUSY/foreign/crash cleanup regression сохранены.
+
+Логи: `build-verified-config/xattr-<tag>-final.log`,
+`build-openssh-native/logs/xattr-debian{12,13}.log`; sanitized runtime evidence —
+`build-openssh-native/<profile>/evidence/`. Это Docker userspace matrix на одном
+`6.6.87.2-microsoft-standard-WSL2`, не пять native distro kernels.
+
+ext4, XFS, enforcing SELinux и отдельные VM kernels — **NOT_TESTED**: подходящей
+одноразовой VM нет, host block devices не создавались и не форматировались.
+Успешные OverlayFS/tmpfs tests не считаются доказательством всех filesystems.
+
+Полная Debian 12 configure/build: PASS. Полный CTest: **187 PASS / 0 FAIL /
+1 ожидаемый native opt-in SKIP**, 188 total, 125.69 s
+(`build-verified-config/xattr-full-debian12.log`). Native suite отдельно запущена
+явно на всех пяти userspaces, поэтому opt-in skip не заменяет native evidence.
