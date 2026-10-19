@@ -3193,3 +3193,9 @@ target_include_directories(verified_config_service_native_tests PRIVATE ${CMAKE_
 target_link_libraries(verified_config_service_native_tests PRIVATE fic-core fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
 add_test(NAME verified_config_service_native_tests COMMAND verified_config_service_native_tests)
 set_tests_properties(verified_config_service_native_tests PROPERTIES SKIP_RETURN_CODE 77 LABELS "native;root")
+if(Python3_Interpreter_FOUND)
+    add_test(NAME openssh_native_harness_contract
+        COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/integration/verified_config_service/openssh_native/harness.py --self-test)
+    set_tests_properties(openssh_native_harness_contract PROPERTIES LABELS "unit;integration")
+endif()
