@@ -1,6 +1,7 @@
 # Real OpenSSH native validation
 
-Research only. No production integration, host SSH operations, policy apply,
+Disposable native validation, including the independent production SSH adapter.
+No SSH policy integration, host SSH operations, policy apply,
 rollback or unit edits. Run from the repository root, using **trusted disposable
 systemd images**. Docker must support privileged containers and private cgroups.
 The test stops/restarts **container** `ssh.service`; management is `docker exec`.
@@ -75,7 +76,7 @@ runner remains mandatory on all five distributions; no assertions are weakened.
 
 ## Interpretation
 
-Each scenario reports A (caller-declared snapshot inputs), B (new verified sshd
+Each generic scenario reports A (caller-declared snapshot inputs), B (new verified sshd
 readiness), C (full SSH configuration semantics), C_selected (selected fixture
 expectations), plus persistent reference bytes/manifests after cleanup. Full C
 remains NOT_PROVEN on normal positives and FAILED for demonstrated semantic
@@ -96,3 +97,15 @@ guarded **fixture administrator** cleanup removes only known test mounts.
 It never turns the original result into Success. Original FD/glob writes may
 leave persistent reference bytes wrong even while A+B and C_selected
 were established. See the report for the full matrix and limits.
+
+## SSH adapter v1 gate
+
+The runner additionally executes 30 independent adapter cases on each Debian.
+Existing 30 generic cases remain unchanged. Adapter references are built only
+from known synthetic fixtures, with all five existing FIC policy expectations
+(UsePAM/PubkeyAuthentication yes, root login no, MaxAuthTries 3, port 2222).
+Adapter C proves only the explicitly selected policies, not generic full SSH C.
+The result JSON stores adapter_cases separately, with A/B/C/P, actual old/new
+process identity and socket-to-new-MainPID attestation. Five positives, two
+runtime-success/persistent-drift cases and strict preflight/runtime/cleanup
+negatives are required by the collector. See docs/ssh-verified-activation-adapter.md.

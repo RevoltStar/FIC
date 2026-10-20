@@ -548,3 +548,91 @@ ext4, XFS, enforcing SELinux и отдельные VM kernels — **NOT_TESTED**
 1 ожидаемый native opt-in SKIP**, 188 total, 125.69 s
 (`build-verified-config/xattr-full-debian12.log`). Native suite отдельно запущена
 явно на всех пяти userspaces, поэтому opt-in skip не заменяет native evidence.
+
+## SSH adapter v1 follow-up
+
+Поверх `3a6029586f96e3896093901d6f62ed923a543b65` реализован отдельный production
+[SSH-specific adapter](ssh-verified-activation-adapter.md). Исходные generic
+контрпримеры и xattr результаты выше сохранены: generic Success по-прежнему
+не является SSH policy proof. Новая проверка использует доверенный caller
+reference, strict Debian launch profile, bounded Include closure/negative sets,
+selected policy semantics на опубликованном RO snapshot и независимый P.
+
+Согласованное расширение — внутренний proof entrypoint того же generic engine;
+публичный generic API не менялся. SSH policies, transaction/rollback, ownership
+и MutationJournal не интегрированы и не изменены. Native fixture provisioning
+осталось test-only, без host security mounts, published ports или host SSH.
+
+### Измеренные результаты adapter v1
+
+Дата: 2026-10-20. Те же disposable images и kernel WSL 6.6.87.2; это userspace
+matrix, не проверка отдельных distro kernels. Exact source trees Debian 9.2p1
+и Debian 10.0p1 с Debian patches до 10.0p2 изучены в прежнем source cache:
+`servconf.c` Include/cache/glob/depth, scalar first-obtained-value и additive Port.
+Поддерживаемая грамматика дополнительно проверена настоящими бинарями этих images.
+
+| Gate | Debian 12 | Debian 13 |
+|---|---:|---:|
+| Сохранённые generic SSH cases | 30 PASS | 30 PASS |
+| Новые adapter cases | 30 PASS | 30 PASS |
+| В том числе настоящий общий adapter Success | 5 | 5 |
+| Runtime activated + persistent drift, без общего Success | 2 | 2 |
+| FAIL / SKIP | 0 / 0 | 0 / 0 |
+
+Пять positives: все пять политик с пустым glob, повторный вызов с тем же
+reference, nested literal Include, scalar first-wins, empty options с
+пробелами/comments. Каждый подтверждает A/B/C/P, новый MainPID/InvocationID,
+READY, loopback banner/KEXINIT и конкретный listening socket нового MainPID,
+cleanup/no residuals. UsePAM/PubkeyAuthentication reference = yes, root login=no,
+MaxAuthTries=3, Port=2222 — допустимые значения существующих FIC policies.
+
+Повторены CLI-f-external, CLI-o-first-wins, quoted expansion,
+uncovered-external-Include, unguarded-new-glob: adapter отказывает до restart.
+Для guarded-new-glob/original-write A/C Proven и B Success сохранены, P
+NonCompliant; общий статус RuntimeActivatedButPersistentDrift, не rollback.
+contract-before/after/preflight, source bytes/inode/mode, новый glob match и
+замена directory inode дают отказ, с отдельной проверкой отсутствия restart там,
+где обнаружение предшествует запуску. В directory race применяется реальная
+remove/mkdir замена пустого каталога: OverlayFS rename lower directory может
+дать EXDEV; ошибка actor не считается проверкой защиты engine.
+
+Дополнительно подтверждены отказ при нескольких effective Port и другом
+ListenAddress port, Match, неизвестном syntax/policy, wrong reference SHA,
+missing optional env, symlink Include и недоверенном sshd hash. При EBUSY B
+сохраняет CleanupFailed / primaryStatus=Success, A/C остаются Proven, P=NotProven,
+общий Success запрещён. Никакой автоматической compensation не выполняется.
+
+| Полный standalone generic gate + adapter profile negative | PASS | FAIL | SKIP |
+|---|---:|---:|---:|
+| Debian 12 | 201 | 0 | 0 |
+| Debian 13 | 201 | 0 | 0 |
+| Ubuntu 24.04 | 202 | 0 | 0 |
+| Ubuntu 26.04 | 202 | 0 | 0 |
+| ALT p11 | 201 | 0 | 1 |
+
+Ubuntu/ALT negatives проверяют именно diagnostic о неподдерживаемом distro
+profile, canonical ssh.service и отсутствие activation/mount; units не менялись.
+ALT skip сохранён: нет подходящего stock empty Include directory fixture для
+copy-up пары; остальные прежние generic assertions выполнены.
+
+Полная Debian 12 configure/build PASS; полный CTest **188 PASS / 0 FAIL /
+1 ожидаемый native opt-in SKIP**, 189 total, 129.55 s. После уточнения native
+assertions выполнены финальная полная пересборка и связанные CTest: 3 PASS /
+1 ожидаемый native SKIP. Native opt-in gate отдельно реально пройден выше.
+Первоначальный root build выявил отсутствующий adapter source у native target;
+список CMake исправлен, повторный полный build/CTest успешен.
+
+[Сокращённое evidence](ssh-verified-activation-adapter-evidence.json) содержит
+раздельные A/B/C/P, runtime identities, image/run identities и hashes логов.
+Полные sanitized results: `build-openssh-native/<profile>/evidence/results.json`;
+collector проверяет 30+30 cases, пять общих Success, два drift outcomes и
+идентичность runner, не принимая старый runtime за новый.
+Логи: `build-openssh-native/logs/ssh-adapter-debian{12,13}-final.log`,
+`build-verified-config/ssh-adapter-<tag>-final.log`,
+`ssh-adapter-completion.log`, `ssh-adapter-targeted-final.log`.
+
+Unit files не изменились, restored sshd -t PASS, caller SSH unchanged.
+Прежние historical JSON evidence не переписаны. Full SSH semantics,
+произвольные Match/argv/includes, authentication/PAM login, distro VM kernels,
+автоматическая shared-root deployment preparation и постоянная post-return
+защита **не доказаны и не заявляются**.

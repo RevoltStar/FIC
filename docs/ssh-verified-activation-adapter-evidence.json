@@ -1,0 +1,1286 @@
+{
+  "base": "3a6029586f96e3896093901d6f62ed923a543b65",
+  "date": "2026-10-20",
+  "kernel": "6.6.87.2-microsoft-standard-WSL2",
+  "userspace_not_VM": true,
+  "expected_policies": {
+    "ssh_root_login": "no",
+    "ssh_pubkey_auth": "yes",
+    "ssh_use_pam": "yes",
+    "ssh_max_auth_tries": "3",
+    "ssh_port": "2222"
+  },
+  "distros": {
+    "debian-12": {
+      "image_id": "sha256:8bfd868d192ac076aa62bd985829ab6289b6c5b88079cb569cb1d903013cb72c",
+      "run_id": "e332a5a2feae9c81988b54c2a43268005bd33d11fe036cd6491c1897c976bd1a",
+      "generic_cases_PASS": 30,
+      "adapter_cases_PASS": 30,
+      "FAIL": 0,
+      "SKIP": 0,
+      "unit_bytes_unchanged": true,
+      "restored_sshd_t": true,
+      "caller_ssh_unchanged": true,
+      "adapter_cases": [
+        {
+          "name": "all-five-empty-glob-public",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1333",
+            "InvocationID": "a8f1eaee0a574bd9ad38647bb7712480",
+            "process_starttime": "236337"
+          },
+          "after": {
+            "MainPID": "1388",
+            "InvocationID": "a5c9482dfcaa4e818ce4b7790bfd171b",
+            "process_starttime": "236386"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "repeat-same-reference",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1388",
+            "InvocationID": "a5c9482dfcaa4e818ce4b7790bfd171b",
+            "process_starttime": "236386"
+          },
+          "after": {
+            "MainPID": "1459",
+            "InvocationID": "317a703a0ea2440e85151a6c4c689698",
+            "process_starttime": "236451"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "nested-literal-Include",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1483",
+            "InvocationID": "678c6569d8244e11830a4f7c74c91605",
+            "process_starttime": "236479"
+          },
+          "after": {
+            "MainPID": "1538",
+            "InvocationID": "26d7ec653d0648d2b85c6fa3bcdc9035",
+            "process_starttime": "236530"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "scalar-first-wins",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1562",
+            "InvocationID": "a39999d090474ea6a400d7e3d09571ee",
+            "process_starttime": "236556"
+          },
+          "after": {
+            "MainPID": "1617",
+            "InvocationID": "42278dcf8b8a48fba4f3f14825c72a3c",
+            "process_starttime": "236605"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "CLI-f-external",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "only one literal empty SSHD_OPTS assignment is supported"
+        },
+        {
+          "name": "CLI-o-first-wins",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "only one literal empty SSHD_OPTS assignment is supported"
+        },
+        {
+          "name": "systemd-real-quoted-expansion",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "only one literal empty SSHD_OPTS assignment is supported"
+        },
+        {
+          "name": "uncovered-external-Include",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "absent literal Include requires protected exact parent"
+        },
+        {
+          "name": "unsupported-Match",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "unsupported SSH directive or Match context"
+        },
+        {
+          "name": "multiple-Port",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NonCompliant",
+          "P": "NotProven",
+          "diagnostic": "selected SSH semantics not confirmed"
+        },
+        {
+          "name": "ListenAddress-other-port",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NonCompliant",
+          "P": "NotProven",
+          "diagnostic": "selected SSH semantics not confirmed"
+        },
+        {
+          "name": "unsupported-syntax",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "unsupported SSH directive or Match context"
+        },
+        {
+          "name": "unguarded-new-glob",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "Include glob requires exact protected directory root"
+        },
+        {
+          "name": "guarded-new-glob",
+          "success": false,
+          "overall_status": 3,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "NonCompliant",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1764",
+            "InvocationID": "1f26e73e70d74d2780cf2d60a75b26b3",
+            "process_starttime": "236778"
+          },
+          "after": {
+            "MainPID": "1819",
+            "InvocationID": "4221aa5717ab4285a9e4ca0b2c1f4f84",
+            "process_starttime": "236827"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "original-write",
+          "success": false,
+          "overall_status": 3,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "NonCompliant",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1843",
+            "InvocationID": "7f54dabc1fba46078ac14121deb1026a",
+            "process_starttime": "236855"
+          },
+          "after": {
+            "MainPID": "1898",
+            "InvocationID": "a13be063408f40d18997387cbc8a665b",
+            "process_starttime": "236904"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "contract-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "service configuration changed: launch.ManagerEnvironment"
+        },
+        {
+          "name": "contract-after",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "service configuration changed: launch.ManagerEnvironment"
+        },
+        {
+          "name": "contract-preflight",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "preflight proof launch contract changed"
+        },
+        {
+          "name": "source-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "ChecksumMismatch",
+            "primaryStatus": "ChecksumMismatch",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "NonCompliant",
+          "diagnostic": "snapshot does not match exact manifest"
+        },
+        {
+          "name": "source-inode-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "proof source identity changed"
+        },
+        {
+          "name": "source-mode-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "proof source identity changed"
+        },
+        {
+          "name": "glob-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "ChecksumMismatch",
+            "primaryStatus": "ChecksumMismatch",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "NonCompliant",
+          "diagnostic": "snapshot does not match exact manifest"
+        },
+        {
+          "name": "directory-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "proof source identity changed"
+        },
+        {
+          "name": "cleanup-EBUSY",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "CleanupFailed",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [
+              "/etc/ssh/sshd_config: ordinary umount: Device or resource busy"
+            ],
+            "residualPaths": [
+              "/etc/ssh/sshd_config"
+            ]
+          },
+          "C": "Proven",
+          "P": "NotProven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "2267",
+            "InvocationID": "7931708ca45843748698889858511613",
+            "process_starttime": "237277"
+          },
+          "after": {
+            "MainPID": "2319",
+            "InvocationID": "0c0a54a580a6443a87f24e935c09cfe0",
+            "process_starttime": "237326"
+          },
+          "listener_pid_confirmed": false
+        },
+        {
+          "name": "wrong-trusted-reference",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "NotProven",
+          "diagnostic": "snapshot does not match exact manifest"
+        },
+        {
+          "name": "unknown-policy",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "unknown selected SSH policy"
+        },
+        {
+          "name": "missing-optional-env",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "untrusted SSH reference input"
+        },
+        {
+          "name": "untrusted-sshd",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "SSH executable trust not proven"
+        },
+        {
+          "name": "empty-options-whitespace-comments",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "2391",
+            "InvocationID": "394f48330be64e4c9a3dc48bc2f366c3",
+            "process_starttime": "237411"
+          },
+          "after": {
+            "MainPID": "2446",
+            "InvocationID": "4627d80c513a4e65b15e6089cca83cf8",
+            "process_starttime": "237462"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "symlink-Include",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "unsafe tree entry 10-link.conf: Too many levels of symbolic links"
+        }
+      ]
+    },
+    "debian-13": {
+      "image_id": "sha256:6e20048bc0a8cf200d08abb088ae8a05d7a658661b37d6e2c729a89dcb12aa28",
+      "run_id": "83def4eae009b471cf0604116da18634ee08e957b4b5e35f20bdea02948b72e0",
+      "generic_cases_PASS": 30,
+      "adapter_cases_PASS": 30,
+      "FAIL": 0,
+      "SKIP": 0,
+      "unit_bytes_unchanged": true,
+      "restored_sshd_t": true,
+      "caller_ssh_unchanged": true,
+      "adapter_cases": [
+        {
+          "name": "all-five-empty-glob-public",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1601",
+            "InvocationID": "b4a12d729cf445f5be0695e70c0baf36",
+            "process_starttime": "236872"
+          },
+          "after": {
+            "MainPID": "1659",
+            "InvocationID": "6cd88224d53740078ef58e4052e67364",
+            "process_starttime": "236921"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "repeat-same-reference",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1659",
+            "InvocationID": "6cd88224d53740078ef58e4052e67364",
+            "process_starttime": "236921"
+          },
+          "after": {
+            "MainPID": "1735",
+            "InvocationID": "d17555207cd344ba8bf5efadd2781027",
+            "process_starttime": "236991"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "nested-literal-Include",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1762",
+            "InvocationID": "5946096ca0d24bb4bb986bed2f877401",
+            "process_starttime": "237021"
+          },
+          "after": {
+            "MainPID": "1821",
+            "InvocationID": "8898589836d649f9b83c06f69fc86758",
+            "process_starttime": "237066"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "scalar-first-wins",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "1850",
+            "InvocationID": "5e583c3b953e4c07b9ef37e16271ab25",
+            "process_starttime": "237097"
+          },
+          "after": {
+            "MainPID": "1908",
+            "InvocationID": "b865ad1bda95465cbd698f3927dd3c1d",
+            "process_starttime": "237144"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "CLI-f-external",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "only one literal empty SSHD_OPTS assignment is supported"
+        },
+        {
+          "name": "CLI-o-first-wins",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "only one literal empty SSHD_OPTS assignment is supported"
+        },
+        {
+          "name": "systemd-real-quoted-expansion",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "only one literal empty SSHD_OPTS assignment is supported"
+        },
+        {
+          "name": "uncovered-external-Include",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "absent literal Include requires protected exact parent"
+        },
+        {
+          "name": "unsupported-Match",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "unsupported SSH directive or Match context"
+        },
+        {
+          "name": "multiple-Port",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NonCompliant",
+          "P": "NotProven",
+          "diagnostic": "selected SSH semantics not confirmed"
+        },
+        {
+          "name": "ListenAddress-other-port",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NonCompliant",
+          "P": "NotProven",
+          "diagnostic": "selected SSH semantics not confirmed"
+        },
+        {
+          "name": "unsupported-syntax",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "unsupported SSH directive or Match context"
+        },
+        {
+          "name": "unguarded-new-glob",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "Include glob requires exact protected directory root"
+        },
+        {
+          "name": "guarded-new-glob",
+          "success": false,
+          "overall_status": 3,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "NonCompliant",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "2095",
+            "InvocationID": "c5eaa2b893f346278717849730c81dca",
+            "process_starttime": "237339"
+          },
+          "after": {
+            "MainPID": "2154",
+            "InvocationID": "be56d5dba63445bfaf144311e5647cc5",
+            "process_starttime": "237385"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "original-write",
+          "success": false,
+          "overall_status": 3,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "NonCompliant",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "2183",
+            "InvocationID": "ee00f9ed8c91487da99a7141e0ad657d",
+            "process_starttime": "237419"
+          },
+          "after": {
+            "MainPID": "2241",
+            "InvocationID": "f1eeef78363742dc89a1c6cfc8b24f75",
+            "process_starttime": "237466"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "contract-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "service configuration changed: launch.ManagerEnvironment"
+        },
+        {
+          "name": "contract-after",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "service configuration changed: launch.ManagerEnvironment"
+        },
+        {
+          "name": "contract-preflight",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "preflight proof launch contract changed"
+        },
+        {
+          "name": "source-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "ChecksumMismatch",
+            "primaryStatus": "ChecksumMismatch",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "NonCompliant",
+          "diagnostic": "snapshot does not match exact manifest"
+        },
+        {
+          "name": "source-inode-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "proof source identity changed"
+        },
+        {
+          "name": "source-mode-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "proof source identity changed"
+        },
+        {
+          "name": "glob-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "ChecksumMismatch",
+            "primaryStatus": "ChecksumMismatch",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "NonCompliant",
+          "diagnostic": "snapshot does not match exact manifest"
+        },
+        {
+          "name": "directory-before",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "NotProven",
+          "B": {
+            "status": "InterferenceDetected",
+            "primaryStatus": "InterferenceDetected",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "Proven",
+          "diagnostic": "proof source identity changed"
+        },
+        {
+          "name": "cleanup-EBUSY",
+          "success": false,
+          "overall_status": 2,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "CleanupFailed",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [
+              "/etc/ssh/sshd_config: ordinary umount: Device or resource busy"
+            ],
+            "residualPaths": [
+              "/etc/ssh/sshd_config"
+            ]
+          },
+          "C": "Proven",
+          "P": "NotProven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "2650",
+            "InvocationID": "0d09730dc115436d8bf39ee3fff7724d",
+            "process_starttime": "237840"
+          },
+          "after": {
+            "MainPID": "2709",
+            "InvocationID": "eba6a083c0574abe8d4f706ab9ae7546",
+            "process_starttime": "237889"
+          },
+          "listener_pid_confirmed": false
+        },
+        {
+          "name": "wrong-trusted-reference",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "NotProven",
+          "P": "NotProven",
+          "diagnostic": "snapshot does not match exact manifest"
+        },
+        {
+          "name": "unknown-policy",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "unknown selected SSH policy"
+        },
+        {
+          "name": "missing-optional-env",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "untrusted SSH reference input"
+        },
+        {
+          "name": "untrusted-sshd",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "SSH executable trust not proven"
+        },
+        {
+          "name": "empty-options-whitespace-comments",
+          "success": true,
+          "overall_status": 0,
+          "activation_attempted": true,
+          "A": "Proven",
+          "B": {
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Proven",
+          "P": "Proven",
+          "diagnostic": "notify readiness and pinned configuration confirmed within documented observation model",
+          "before": {
+            "MainPID": "2798",
+            "InvocationID": "0cbfa10d7570488b851971d96a458e1e",
+            "process_starttime": "237984"
+          },
+          "after": {
+            "MainPID": "2858",
+            "InvocationID": "d9ee03ba0586468f9a9244d656082049",
+            "process_starttime": "238032"
+          },
+          "listener_pid_confirmed": true
+        },
+        {
+          "name": "symlink-Include",
+          "success": false,
+          "overall_status": 1,
+          "activation_attempted": false,
+          "A": "NotProven",
+          "B": {
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "C": "Unsupported",
+          "P": "NotProven",
+          "diagnostic": "unsafe tree entry 10-link.conf: Too many levels of symbolic links"
+        }
+      ]
+    }
+  },
+  "generic_matrix": {
+    "debian12": {
+      "PASS": 201,
+      "FAIL": 0,
+      "SKIP": 0,
+      "log_sha256": "399a6963fe1e8427e3f041cc180650a26e13292830754c62b4f8eb41e4f4c8b1"
+    },
+    "debian13": {
+      "PASS": 201,
+      "FAIL": 0,
+      "SKIP": 0,
+      "log_sha256": "b082c8e872826593437cf99db0c209a4488c32e9f811a93698a0c208f4e92719"
+    },
+    "ubuntu2404": {
+      "PASS": 202,
+      "FAIL": 0,
+      "SKIP": 0,
+      "log_sha256": "6c2267b3666dd8fc8a777366ee95b4c5956461d43ff7aab04fb230f66b642a76"
+    },
+    "ubuntu2604": {
+      "PASS": 202,
+      "FAIL": 0,
+      "SKIP": 0,
+      "log_sha256": "5e0fa3f81118f54b09dc374a377fdbb73462c28caa2d0dfddc61e85bc0d7b068"
+    },
+    "alt-p11": {
+      "PASS": 201,
+      "FAIL": 0,
+      "SKIP": 1,
+      "log_sha256": "ff0e3c086dd02ec1ab76c4dfc3e77562816380a6755698635cfb7628c123d763"
+    }
+  },
+  "full_debian12": {
+    "build": "PASS",
+    "ctest_total": 189,
+    "PASS": 188,
+    "FAIL": 0,
+    "SKIP": 1,
+    "seconds": 129.55
+  },
+  "C_scope": "adapter C proves only expected_policies in the supported profile; not full OpenSSH semantics"
+}

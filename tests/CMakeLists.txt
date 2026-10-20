@@ -3200,3 +3200,18 @@ if(Python3_Interpreter_FOUND)
         ${CMAKE_SOURCE_DIR}/tests/integration/verified_config_service/openssh_native/harness.py --self-test)
     set_tests_properties(openssh_native_harness_contract PROPERTIES LABELS "unit;integration")
 endif()
+
+set(FIC_SSH_VERIFIED_SOURCES
+    ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp)
+add_executable(ssh_verified_activation_tests fic/service/SshVerifiedActivationTests.cpp
+    ${FIC_SSH_VERIFIED_SOURCES} ${FIC_VERIFIED_CONFIG_SOURCES})
+target_include_directories(ssh_verified_activation_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(ssh_verified_activation_tests PRIVATE fic-core fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+add_test(NAME ssh_verified_activation_tests COMMAND ssh_verified_activation_tests)
+set_tests_properties(ssh_verified_activation_tests PROPERTIES LABELS unit)
+target_sources(verified_config_service_native_tests PRIVATE ${FIC_SSH_VERIFIED_SOURCES})

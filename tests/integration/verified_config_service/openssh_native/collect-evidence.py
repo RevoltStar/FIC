@@ -8,13 +8,14 @@ import sys
 
 def main():
     root, dest = map(Path, sys.argv[1:])
-    result = {'base': '692d34a6f6b3595e088b30b35ced4193b6be77fd',
-              'date': '2026-10-19', 'environment_type': 'disposable Docker/systemd PID1',
+    result = {'base': '3a6029586f96e3896093901d6f62ed923a543b65',
+              'date': '2026-10-20', 'environment_type': 'disposable Docker/systemd PID1',
               'VM_matrix': 'NOT_TESTED',
               'proof_definitions': {'A': 'caller-declared snapshot protection during activation',
                                     'B': 'new verified real sshd readiness',
                                     'C': 'full expected SSH effective configuration semantics',
                                     'C_selected': 'bounded tested fixture expectations, not full C',
+                                    'adapter_C': 'only request.policies in the supported grammar/launch profile; NOT full OpenSSH semantics',
                                     'persistent': 'reference bytes/manifests after cleanup; not full policy compliance'},
               'distros': {}}
     for distro in ('debian-12', 'debian-13'):
@@ -33,6 +34,20 @@ def main():
                 assert metadata[path]['xattr_list_count'] == 0
         assert '/etc/ssh/sshd_config.d' in data['input_paths']
         assert all('/fic-native-inputs' not in p for p in data['input_paths'])
+        adapter = data['adapter_cases']
+        assert len(adapter) == 30 and len({c['name'] for c in adapter}) == 30
+        for case in adapter:
+            verified = case['result']
+            if verified['adapter_success']:
+                assert verified['A'] == verified['C'] == verified['P'] == 'Proven'
+                assert verified['status'] == 'Success' and verified['readinessConfirmed']
+                assert not verified['cleanupErrors'] and not verified['residualPaths']
+                assert verified['listener_pid_confirmed']
+            if verified['adapter_status'] == 3:
+                assert not verified['adapter_success'] and verified['status'] == 'Success'
+                assert verified['A'] == verified['C'] == 'Proven' and verified['P'] == 'NonCompliant'
+        assert sum(c['result']['adapter_success'] for c in adapter) == 5
+        assert sum(c['result']['adapter_status'] == 3 for c in adapter) == 2
         inspect = json.loads((folder / 'container-inspect.json').read_text())[0]
         assert inspect['HostConfig']['NetworkMode'] == 'none'
         token, = [e.split('=', 1)[1] for e in inspect['Config']['Env'] if e.startswith('FIC_OPENSSH_DISPOSABLE=')]

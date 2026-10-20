@@ -1,3 +1,4 @@
+#include "service/ssh/SshVerifiedActivationTestAccess.h"
 // Test-only real OpenSSH adapter. Never installed or linked into FIC.
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/VerifiedConfigServiceActivatorTestAccess.h"
@@ -68,7 +69,11 @@ int main(int argc, char** argv) {
         check(resolver.resolve(fic::platform::ExecutableId::Systemctl, systemctl, error), error);
         // Explicit fixture provisioning, only after guard. Never production enrollment.
         check(CommandHashStore::saveHash(systemctl, error), error);
-        const auto input = J::parse(text(argv[2])); ActivationRequest r; r.unit = "ssh.service";
+        fs::path sshd; check(resolver.resolve(fic::platform::ExecutableId::Sshd, sshd, error), error);
+        check(CommandHashStore::saveHash(sshd, error), error);
+        const auto input = J::parse(text(argv[2]));
+        if (input.value("untrusted_sshd", false)) check(CommandHashStore::updateHashes({}, {sshd.string()}, error), error);
+        ActivationRequest r; r.unit = "ssh.service";
         r.timeout = std::chrono::milliseconds(input.value("timeout_ms", 10000));
         for (const auto& p : input.at("paths")) {
             ControlledPath c; c.path = p.at("path").get<std::string>();
@@ -113,7 +118,8 @@ int main(int argc, char** argv) {
             check(audit.sourceIdentity(identity, error), error); output["include_identity"] = identity;
         } else {
             const auto launchBefore = d::readLaunchContract(r.unit, std::chrono::steady_clock::now() + std::chrono::seconds(10));
-            const std::string fault = action == "activate" ? "" : action;
+            const bool adapter = action.rfind("adapter", 0) == 0;
+            const std::string fault = action == "activate" || action == "adapter" ? "" : adapter ? action.substr(8) : action;
             d::TestHooks hooks; d::Fd busy, original(::open("/etc/ssh/sshd_config", O_RDWR|O_CLOEXEC));
             const auto globDirectory = input.value("glob_dir", "/etc/ssh/sshd_config.d");
             d::Fd directory(::open(globDirectory.c_str(), O_RDONLY|O_DIRECTORY|O_CLOEXEC));
@@ -180,7 +186,42 @@ int main(int argc, char** argv) {
                 }
             };
             output["activation_invoked"] = true;
-            const auto result = action == "activate" ? VerifiedConfigServiceActivator::activate(r) : d::activateForTests(r, hooks);
+            ActivationResult result;
+            if (adapter) {
+                namespace ssh = fic::service::ssh;
+                ssh::SshVerifiedActivationRequest request;
+                request.reference = r;
+                request.policies = input.value("policies", std::map<std::string,std::string>{{"ssh_root_login","no"},{"ssh_pubkey_auth","yes"},{"ssh_use_pam","yes"},{"ssh_max_auth_tries","3"},{"ssh_port","2222"}});
+                ssh::SshVerifiedActivationResult verified;
+                if (action == "adapter") verified = ssh::SshVerifiedActivationAdapter::activate(request);
+                else {
+                    ssh::detail::AdapterTestHooks seam; seam.activation = hooks;
+                    seam.beforeActivation = [&] {
+                        if (fault == "source-before") write("/etc/ssh/sshd_config", text(work + "/mutation.conf"));
+                        if (fault == "source-inode-before") {
+                            fs::rename("/etc/ssh/sshd_config", "/etc/ssh/.fic-native-old");
+                            write("/etc/ssh/sshd_config", text("/etc/ssh/.fic-native-old"));
+                        }
+                        if (fault == "source-mode-before") check(::chmod("/etc/ssh/sshd_config", 0600) == 0, "source mode race");
+                        if (fault == "glob-before") write(globDirectory + "/00-new.conf", "MaxAuthTries 1\n");
+                        if (fault == "directory-before") {
+                            check(fs::is_empty(globDirectory) && fs::remove(globDirectory), "replace empty original directory");
+                            check(fs::create_directory(globDirectory), "create replacement directory");
+                        }
+                        if (fault == "contract-preflight") ctl({"set-environment", "FIC_OPENSSH_TEST_CHANGE=preflight"});
+                    };
+                    verified = ssh::detail::activateAdapterForTests(request, seam);
+                }
+                const auto proof = [](ssh::ProofState p) {
+                    switch (p) { case ssh::ProofState::Proven: return "Proven"; case ssh::ProofState::NonCompliant: return "NonCompliant";
+                        case ssh::ProofState::Unsupported: return "Unsupported"; default: return "NotProven"; }
+                };
+                output["adapter_success"] = verified.success(); output["adapter_status"] = int(verified.status);
+                output["activation_invoked"] = verified.activationAttempted;
+                output["A"] = proof(verified.inputs); output["C"] = proof(verified.semantics); output["P"] = proof(verified.persistent);
+                output["adapter_diagnostic"] = verified.diagnostic;
+                result = verified.activation;
+            } else result = action == "activate" ? VerifiedConfigServiceActivator::activate(r) : d::activateForTests(r, hooks);
             output["status"] = activationStatusName(result.status); output["primaryStatus"] = activationStatusName(result.primaryStatus);
             output["readinessConfirmed"] = result.readinessConfirmed; output["diagnostic"] = result.diagnostic;
             output["cleanupErrors"] = result.cleanupErrors; output["residualPaths"] = result.residualPaths;
@@ -192,7 +233,7 @@ int main(int argc, char** argv) {
             output["residual_count_before_admin_cleanup"] = leftovers().size();
             if (blocked > 0) { ::kill(blocked, SIGKILL); ::waitpid(blocked, nullptr, 0); }
             if (foreign) { output["foreign_preserved"] = text("/etc/ssh/sshd_config") == text(work + "/mutation.conf"); check(::umount("/etc/ssh/sshd_config") == 0, "fixture foreign cleanup"); }
-            if (fault == "inode") fs::remove("/etc/ssh/.fic-native-old");
+            if (fault == "inode" || fault == "source-inode-before") fs::remove("/etc/ssh/.fic-native-old");
             // busy closes after result capture; explicit cleanup is a separate command.
         }
     } catch (const d::Failure& e) { output["status"] = activationStatusName(e.status); output["diagnostic"] = e.what(); }

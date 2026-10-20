@@ -366,6 +366,67 @@ def main():
         assert blocked['activation']['fifo_reader_connected']
         fifo.unlink()
         reset()
+        # Independent production adapter gate. References come from this known
+        # synthetic fixture only; production never adopts observed files.
+        result['adapter_cases'] = []
+        def adapter_reset(extra=''):
+            reset()
+            MAIN.write_text(config(extra='MaxAuthTries 3\n' + extra).replace('PubkeyAuthentication no', 'PubkeyAuthentication yes').replace('UsePAM no', 'UsePAM yes'))
+        def adapter_case(name, action='adapter', req=None, success=False, drift=False, restarted=None):
+            req = req or request()
+            before = state(); data = drive(action, req); after = state()
+            assert data['adapter_success'] == success, (name, data)
+            if restarted is not None:
+                assert (before['InvocationID'] != after['InvocationID']) == restarted, (name, data)
+            if success or drift:
+                assert data['A'] == data['C'] == 'Proven' and data['readinessConfirmed'], (name, data)
+                assert data['status'] == 'Success' and not data['cleanupErrors'] and not data['residualPaths']
+                assert before['MainPID'] != after['MainPID'] and before['InvocationID'] != after['InvocationID']
+                assert 'FIC_VERIFIED' in handshake(2222)
+                # Link the observed listening socket to the newly promoted PID.
+                listeners = run(['ss', '-lntp']).stdout
+                assert any('127.0.0.1:2222' in line.split() and f'pid={after["MainPID"]},' in line for line in listeners.splitlines()), (name, listeners)
+                data['listener_pid_confirmed'] = True
+            if success: assert data['P'] == 'Proven'
+            if drift: assert data['P'] == 'NonCompliant' and data['adapter_status'] == 3
+            result['adapter_cases'].append({'name': name, 'before': before, 'after': after, 'result': data})
+            (OUT / 'results.json').write_text(json.dumps(result, indent=2))
+            return data
+        adapter_reset(); adapter_case('all-five-empty-glob-public', success=True, restarted=True)
+        adapter_case('repeat-same-reference', success=True, restarted=True)
+        adapter_reset(); (DROP / '10-nested.conf').write_text(f'Include {DROP}/nested.inc\n')
+        (DROP / 'nested.inc').write_text('MaxAuthTries 3\nPermitRootLogin no\n')
+        adapter_case('nested-literal-Include', success=True, restarted=True)
+        adapter_reset('PermitRootLogin yes\n'); adapter_case('scalar-first-wins', success=True, restarted=True)
+        for name, opts in [('CLI-f-external', f'-f {WORK}/external.conf'), ('CLI-o-first-wins','-oUsePAM=yes'), ('systemd-real-quoted-expansion','-o "VersionAddendum=CLI SPACE" -p 2225')]:
+            adapter_reset(); ENV.write_text("SSHD_OPTS='" + opts + "'\n")
+            adapter_case(name, restarted=False)
+        for name, extra in [('uncovered-external-Include',f'Include {WORK}/external.conf\n'),
+                            ('unsupported-Match','Match all\n PermitRootLogin yes\n'),
+                            ('multiple-Port','Port 2223\n'), ('ListenAddress-other-port','ListenAddress 127.0.0.1:2223\n'),
+                            ('unsupported-syntax','UnknownFicDirective yes\n')]:
+            adapter_reset(extra); adapter_case(name, restarted=False)
+        adapter_reset(); adapter_case('unguarded-new-glob', req=request(False), restarted=False)
+        adapter_reset(); adapter_case('guarded-new-glob', action='adapter-new-glob', drift=True, restarted=True)
+        adapter_reset(); adapter_case('original-write', action='adapter-original-write', drift=True, restarted=True)
+        for fault, restart in [('contract-before',False), ('contract-after',True), ('contract-preflight',False), ('source-before',False), ('source-inode-before',False), ('source-mode-before',False), ('glob-before',False), ('directory-before',False)]:
+            adapter_reset(); raced = adapter_case(fault, action='adapter-'+fault, restarted=restart)
+            assert raced['activation_invoked'] and raced['status'] in ('InterferenceDetected', 'ChecksumMismatch'), (fault, raced)
+        adapter_reset(); data = adapter_case('cleanup-EBUSY', action='adapter-busy', restarted=True)
+        assert data['status'] == 'CleanupFailed' and data['primaryStatus'] == 'Success'
+        drive('cleanup', request())
+        adapter_reset(); bad = request(); bad['paths'][0]['sha256'] = '0'*64
+        adapter_case('wrong-trusted-reference', req=bad, restarted=False)
+        adapter_reset(); bad = request(); bad['policies'] = {'unknown': 'yes'}
+        adapter_case('unknown-policy', req=bad, restarted=False)
+        adapter_reset(); missing_env = request(); ENV.unlink(); adapter_case('missing-optional-env', req=missing_env, restarted=False)
+        adapter_reset(); untrusted = request(); untrusted['untrusted_sshd'] = True
+        adapter_case('untrusted-sshd', req=untrusted, restarted=False)
+        adapter_reset(); ENV.write_text(' # verified empty options\n\tSSHD_OPTS=  \n')
+        adapter_case('empty-options-whitespace-comments', success=True, restarted=True)
+        adapter_reset(); (DROP / '10-link.conf').symlink_to(WORK / 'external.conf')
+        adapter_case('symlink-Include', restarted=False)
+        adapter_reset()
         result['final_mounts'] = drive('cleanup', request())
         result['unit_bytes_unchanged'] = all(sha(p) == h for p, h in original_units.items())
         assert result['unit_bytes_unchanged']

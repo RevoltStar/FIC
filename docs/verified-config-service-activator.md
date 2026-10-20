@@ -667,3 +667,14 @@ snapshot **не добавлена**; существующий запрет enfo
 
 Результаты native regression, реальные copy-up inputs OpenSSH и непроверенные
 окружения: [follow-up отчёт](verified-config-openssh-native-validation.md#bounded-xattr-follow-up).
+
+## Внутренний proof entrypoint
+
+Для [SSH adapter v1](ssh-verified-activation-adapter.md) добавлен внутренний
+`VerifiedConfigActivationProof.h`. `activateWithProof()` использует тот же
+perform engine с expected launch/source identities/attributes, read-only
+validator после публикации до restart и validator готового процесса. После
+callbacks повторяются штатные snapshot/observer/readiness проверки; ошибки
+проходят через тот же cleanup. Generic engine не получает SSH-specific знаний.
+Публичный `activate()` и его API не изменены. Default path без proof сохраняет
+предыдущие проверки; snapshot/restart/cleanup implementation не дублируется.

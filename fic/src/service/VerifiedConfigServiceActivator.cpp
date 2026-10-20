@@ -1,3 +1,4 @@
+#include "service/VerifiedConfigActivationProof.h"
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/VerifiedConfigMountSupport.h"
 #include "service/VerifiedConfigSystemd.h"
@@ -191,7 +192,7 @@ struct Operation {
         mounts.back().expected = now;
     }
 };
-ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
+ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, const detail::ActivationProof* proof = nullptr) {
     ActivationResult result;
     try { validateRequest(request); } catch (const Failure& e) {
         result.status = result.primaryStatus = e.status; result.diagnostic = e.what(); return result;
@@ -214,6 +215,13 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
         requireSafePublicationParent(workspace / "prospective-operation", true, ActivationStatus::UnsupportedConfiguration);
         service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths);
         const auto launch = service->preflight();
+        if (proof) {
+            if (proof->expectedConfiguration.empty() || !proof->published || !proof->ready ||
+                proof->sourceRoots.size() != request.paths.size() || proof->sourceAttributes.size() != request.paths.size())
+                throw Failure(ActivationStatus::UnsupportedConfiguration, "incomplete activation proof");
+            for (const auto& [key, expected] : proof->expectedConfiguration)
+                if (launch.at(key) != expected) throw Failure(ActivationStatus::InterferenceDetected, "preflight proof launch contract changed");
+        }
         const auto environmentFiles = validateEnvironmentFiles(launch.properties, &request.paths);
         std::vector<Fd> sources; std::vector<Identity> original; std::vector<Tree> trees;
         auto budget = request.maxSnapshotBytes;
@@ -226,7 +234,16 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
             try {
                 auto source = openAbsolute(p.path, O_RDONLY);
                 verifyTree(source.get(), p, request.maxSnapshotBytes);
-                trees.push_back(readTree(source.get(), p.kind, budget)); original.push_back(identity(source.get())); sources.push_back(std::move(source));
+                trees.push_back(readTree(source.get(), p.kind, budget)); original.push_back(identity(source.get()));
+                if (proof) {
+                    const auto root = proof->sourceRoots.find(p.path.string());
+                    const auto attrs = proof->sourceAttributes.find(p.path.string());
+                    if (root == proof->sourceRoots.end() || attrs == proof->sourceAttributes.end() ||
+                        !sameObject(root->second, original.back()) || root->second.mount != original.back().mount)
+                        throw Failure(ActivationStatus::InterferenceDetected, "proof source identity changed");
+                    requireSameSnapshot(attrs->second, trees.back().attributes);
+                }
+                sources.push_back(std::move(source));
             } catch (const Failure&) {
                 // Initial unsupported launch inputs must fail before any mount.
                 // Do not expose their bytes or digest in diagnostics.
@@ -298,6 +315,7 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
 #ifdef FIC_ACTIVATOR_TESTING
         hooks.checkpoint(detail::TestPhase::Watching, operation.directory);
 #endif
+        if (proof) { proof->published(deadline); verifyPublished(); }
         if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace changed after publication");
         service->restart();
 #ifdef FIC_ACTIVATOR_TESTING
@@ -311,6 +329,7 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
             observer.changed(std::min<std::int64_t>(20, service->remaining().count()));
         }
         verifyPublished(); service->confirm(ready);
+        if (proof) { proof->ready(ready, deadline); verifyPublished(); service->confirm(ready); }
         if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace event before commit");
         result.readinessConfirmed = true;
         result.status = result.primaryStatus = ActivationStatus::Success;
@@ -333,9 +352,15 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks) {
 }
 }
 ActivationResult VerifiedConfigServiceActivator::activate(const ActivationRequest& request) { return perform(request, {}); }
+ActivationResult detail::activateWithProof(const ActivationRequest& request, const detail::ActivationProof& proof) {
+    return perform(request, {}, &proof);
+}
 #ifdef FIC_ACTIVATOR_TESTING
 namespace detail {
 ActivationResult activateForTests(const ActivationRequest& r, const TestHooks& hooks) { return perform(r, Hooks{&hooks}); }
+ActivationResult activateWithProofForTests(const ActivationRequest& r, const ActivationProof& proof, const TestHooks& hooks) {
+    return perform(r, Hooks{&hooks}, &proof);
+}
 }
 #endif
 const char* activationStatusName(ActivationStatus s) {

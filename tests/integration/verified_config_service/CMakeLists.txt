@@ -11,6 +11,12 @@ add_executable(verified_config_service_native_tests
     ${FIC_ROOT}/tests/fic/service/VerifiedConfigServiceNativeTests.cpp
     ${FIC_ROOT}/fic/src/service/VerifiedConfigServiceActivator.cpp
     ${FIC_ROOT}/fic/src/service/VerifiedConfigMountSupport.cpp
+    ${FIC_ROOT}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
+    ${FIC_ROOT}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
+    ${FIC_ROOT}/fic/src/modules/net/ssh/SshRuntime.cpp
+    ${FIC_ROOT}/fic/src/modules/net/ssh/SshConfigAudit.cpp
+    ${FIC_ROOT}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
+    ${FIC_ROOT}/fic/src/modules/net/ssh/SshManagedBlock.cpp
     ${FIC_ROOT}/fic/src/service/VerifiedConfigSystemd.cpp
     ${FIC_ROOT}/fic/src/service/VerifiedConfigLaunchContract.cpp)
 target_compile_definitions(verified_config_service_native_tests PRIVATE FIC_ACTIVATOR_TESTING=1)

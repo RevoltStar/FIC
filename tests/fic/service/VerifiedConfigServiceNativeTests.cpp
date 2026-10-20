@@ -1,3 +1,4 @@
+#include "service/ssh/SshVerifiedActivationAdapter.h"
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/VerifiedConfigMountSupport.h"
 #include "service/VerifiedConfigServiceActivatorTestAccess.h"
@@ -1112,7 +1113,19 @@ int main(int argc, char** argv) {
         require(resolver.resolve(fic::platform::ExecutableId::Systemctl, systemctl, error) && CommandHashStore::saveHash(systemctl, error), error);
         const auto binary = fs::canonical("/proc/self/exe").string();
         write("/etc/systemd/system/" + unit, "[Unit]\nDescription=Isolated verified-config fixture\nStartLimitIntervalSec=0\n[Service]\nType=notify\nNotifyAccess=main\nExecStart=" + binary + " --service\nTimeoutStartSec=10s\nTimeoutStopSec=2s\n");
-        mustCtl({"daemon-reload"}); unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); xattrCases(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
+        mustCtl({"daemon-reload"});
+        if (profile.id != "debian-12" && profile.id != "debian-13") {
+            const auto before = read("/proc/self/mountinfo");
+            fic::service::ssh::SshVerifiedActivationRequest unsupported;
+            unsupported.reference = request(); unsupported.reference.unit = "ssh.service"; unsupported.policies = {{"ssh_port", "2222"}};
+            const auto denied = fic::service::ssh::SshVerifiedActivationAdapter::activate(unsupported);
+            require(!denied.success() && !denied.activationAttempted &&
+                    denied.semantics == fic::service::ssh::ProofState::Unsupported &&
+                    denied.diagnostic == "SSH verified activation v1 supports Debian 12/13 only" && before == read("/proc/self/mountinfo"),
+                    "unsupported distro SSH adapter attempted activation");
+            pass("SSH adapter unsupported-profile negative before capture/mount/restart");
+        }
+        unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); xattrCases(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
         mustCtl({"stop", unit});
         std::cout << "NATIVE verified-config: " << checks << " PASS, " << skips << " SKIP\n";
         return 0;
