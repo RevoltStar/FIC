@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import socket
 import stat
+import struct
 import subprocess
 import sys
 
@@ -370,23 +371,39 @@ def main():
         # synthetic fixture only; production never adopts observed files.
         result['adapter_cases'] = []
         def adapter_reset(extra=''):
+            for attr in os.listxattr(KEY): os.removexattr(KEY, attr)
+            KEY.chmod(0o600)
+            os.chown(MAIN, 0, 0)
+            DROP.chmod(0o755)
             reset()
             MAIN.write_text(config(extra='MaxAuthTries 3\n' + extra).replace('PubkeyAuthentication no', 'PubkeyAuthentication yes').replace('UsePAM no', 'UsePAM yes'))
-        def adapter_case(name, action='adapter', req=None, success=False, drift=False, restarted=None):
+        def adapter_case(name, action='adapter', req=None, success=False, drift=False, restarted=None, unknown=False):
             req = req or request()
             before = state(); data = drive(action, req); after = state()
             assert data['adapter_success'] == success, (name, data)
             if restarted is not None:
                 assert (before['InvocationID'] != after['InvocationID']) == restarted, (name, data)
-            if success or drift:
+            if success or drift or unknown:
                 assert data['A'] == data['C'] == 'Proven' and data['readinessConfirmed'], (name, data)
-                assert data['status'] == 'Success' and not data['cleanupErrors'] and not data['residualPaths']
+                assert data['status'] == 'Success' and not data['cleanupErrors'] and not data['residualPaths'], (name, data)
                 assert before['MainPID'] != after['MainPID'] and before['InvocationID'] != after['InvocationID']
-                assert 'FIC_VERIFIED' in handshake(2222)
+                if name.startswith('metadata-') and (drift or unknown):
+                    assert data['protected_handshake_confirmed']
+                else:
+                    assert 'FIC_VERIFIED' in handshake(2222)
                 # Link the observed listening socket to the newly promoted PID.
                 listeners = run(['ss', '-lntp']).stdout
                 assert any('127.0.0.1:2222' in line.split() and f'pid={after["MainPID"]},' in line for line in listeners.splitlines()), (name, listeners)
                 data['listener_pid_confirmed'] = True
+            if unknown: assert data['P'] == 'NotProven' and data['adapter_status'] == 2
+            if name.startswith('metadata-') and drift:
+                for target in req['paths']:
+                    if target.get('directory'):
+                        actual = {str(p.relative_to(target['path'])): sha(p) for p in Path(target['path']).rglob('*') if p.is_file()}
+                        assert actual == target['manifest'], (name, 'manifest changed')
+                    else:
+                        assert sha(target['path']) == target['sha256'], (name, 'bytes changed')
+                data['metadata_only_bytes_unchanged'] = True
             if success: assert data['P'] == 'Proven'
             if drift: assert data['P'] == 'NonCompliant' and data['adapter_status'] == 3
             result['adapter_cases'].append({'name': name, 'before': before, 'after': after, 'result': data})
@@ -426,6 +443,26 @@ def main():
         adapter_case('empty-options-whitespace-comments', success=True, restarted=True)
         adapter_reset(); (DROP / '10-link.conf').symlink_to(WORK / 'external.conf')
         adapter_case('symlink-Include', restarted=False)
+        for fault in ('key-mode', 'config-mode', 'config-uid', 'config-gid', 'directory-mode', 'included-inode'):
+            adapter_reset()
+            if fault == 'included-inode': (DROP / '10-inode.conf').write_text('# identical inode fixture\n')
+            adapter_case('metadata-' + fault, action='adapter-' + fault, drift=True, restarted=True)
+        adapter_reset(); KEY.chmod(0o644)
+        denied = adapter_case('metadata-initial-key-0644', restarted=False)
+        assert not denied['activation_invoked']
+        adapter_reset(); os.setxattr(KEY, 'user.fic-test', b'x')
+        denied = adapter_case('metadata-initial-key-xattr', restarted=False)
+        assert not denied['activation_invoked']
+        adapter_reset()
+        acl = struct.pack('<I', 2) + b''.join(struct.pack('<HHI', *e) for e in
+            [(1,6,0xffffffff), (2,4,123), (4,0,0xffffffff), (16,0,0xffffffff), (32,0,0xffffffff)])
+        os.setxattr(KEY, 'system.posix_acl_access', acl)
+        assert stat.S_IMODE(KEY.stat().st_mode) == 0o600
+        denied = adapter_case('metadata-initial-key-ACL', restarted=False)
+        assert not denied['activation_invoked']
+        adapter_reset(); adapter_case('metadata-unreadable-key-xattr', action='adapter-key-xattr', unknown=True, restarted=True)
+        adapter_reset(); KEY.chmod(0o400)
+        adapter_case('metadata-key-0400-public-0644', success=True, restarted=True)
         adapter_reset()
         result['final_mounts'] = drive('cleanup', request())
         result['unit_bytes_unchanged'] = all(sha(p) == h for p, h in original_units.items())

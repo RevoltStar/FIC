@@ -636,3 +636,80 @@ Unit files не изменились, restored sshd -t PASS, caller SSH unchange
 произвольные Match/argv/includes, authentication/PAM login, distro VM kernels,
 автоматическая shared-root deployment preparation и постоянная post-return
 защита **не доказаны и не заявляются**.
+
+## Follow-up: persistent metadata proof hardening (2026-10-20)
+
+Base: `01694bc47d1ced9d393aa61181b02a49653ed352`. Предыдущие результаты выше и
+historical JSON сохранены: они не подтверждали стабильность persistent metadata.
+Теперь P дополнительно сопоставляет начальный immutable operation-local Capture
+с оригиналами после cleanup; это не новый authorized reference или ownership.
+Контракт и TOCTOU-границы: [описание adapter](ssh-verified-activation-adapter.md#persistent-metadata-proof).
+
+Real SSH gates: **Debian 12 и Debian 13 — каждый 30 прежних generic + 41 adapter
+PASS, 0 FAIL, 0 SKIP**. Из 41 adapter-сценария 11 новых; шесть общих Success,
+восемь подтверждённых runtime-success/persistent-drift (два прежних + шесть новых).
+[Metadata evidence](ssh-verified-activation-metadata-evidence.json) содержит
+отдельные A/B/C/P, immutable image/run identities и hashes финальных логов.
+
+| Новые сценарии, каждый на Debian 12/13 | A | B | C | P / общий результат |
+|---|---|---|---|---|
+| Private HostKey 0600→0644 через preopened FD | Proven | Success | Proven | NonCompliant / RuntimeActivatedButPersistentDrift |
+| Config 0644→0600 через FD | Proven | Success | Proven | NonCompliant / RuntimeActivatedButPersistentDrift |
+| Config UID через FD | Proven | Success | Proven | NonCompliant / RuntimeActivatedButPersistentDrift |
+| Config GID через FD | Proven | Success | Proven | NonCompliant / RuntimeActivatedButPersistentDrift |
+| Original Include child: новый inode, прежние bytes/SHA/mode/UID/GID | Proven | Success | Proven | NonCompliant / RuntimeActivatedButPersistentDrift |
+| Include directory mode через FD | Proven | Success | Proven | NonCompliant / RuntimeActivatedButPersistentDrift |
+| Private key с исходным 0644 / xattr / ACL (3 cases) | — | restart не запрошен | — | Refused |
+| Неподдерживаемый xattr оригинала после публикации | Proven | Success | Proven | NotProven / ActivationFailed |
+| Private key 0400, companion .pub 0644, все пять policies | Proven | Success | Proven | Proven / Success |
+
+Во всех metadata-only drift cases дополнительно проверены неизменные bytes/SHA
+и manifests. Реальные new MainPID/InvocationID, READY, ordinary cleanup без
+residuals и listener-to-new-PID подтверждены. Новый handshake-probe выполняется
+**перед cleanup** на защищённых inputs: Debian 12 может перечитать уже небезопасный
+persistent private key при новом connection после снятия snapshot. Это не
+опровергает READY и не превращает runtime B в RestartFailed. `ssh-keyscan` Debian
+12 пишет banner в stderr, Debian 13 — в stdout; native assertion учитывает оба
+реальных формата, без экспорта key bytes. Прежние post-cleanup handshake assertions
+не ослаблены. Первоначальные неуспешные probes были дефектами новой test fixture,
+а не доказательством metadata-proof успеха; исправленные финальные gates пройдены.
+
+Generic standalone regression повторён без изменений engine/assertions:
+Debian12/13 — каждый **201 PASS / 0 SKIP**, Ubuntu24.04/26.04 — каждый
+**202 PASS / 0 SKIP**, ALT p11 — **201 PASS / 1 прежний SKIP** (stock empty Include
+copy-up fixture). 0 FAIL в завершённых финальных gates. Первый Ubuntu26.04 gate
+остановился на `InterferenceDetected: mount namespace event before commit` в
+прежнем real-notify тесте; полный повтор того же gate прошёл без изменений.
+
+Полная финальная configure/build Debian12 PASS. Direct unit executable — **145
+contract checks PASS**; полный CTest — **188 PASS / 0 FAIL / 1 ожидаемый native
+opt-in SKIP**, 189 total, **184.97 s**. Privileged native gates отдельно выполнены
+выше. Первый полный CTest обнаружил некорректную новую manifest-fixture (добавление
+bytes entry без соответствующей metadata map); fixture исправлена, финальный
+полный build/CTest повторён успешно. Harness self-test, collector, sanitized JSON
+и `git diff --check` PASS. Финальные логи: `build-openssh-native/logs/metadata-*final.log`,
+`build-verified-config/metadata-*.log` (Ubuntu26.04 — `metadata-ubuntu2604-repeat.log`).
+
+### Проверка security invariants
+
+1. Совпадающий SHA не скрывает mode drift: сравнение stat, unit и шесть native cases.
+2. Initial private HostKey 0644 отклоняется до engine/restart, даже с верным SHA.
+3. Inode/dev/mount ID сравниваются; same-bytes replacement проверен native.
+4. Post-capture отклоняет существующий mount target/nested mount, включая residual snapshot.
+5. Bytes/stat читаются через тот же FD; readTree проверяет до/после, root identity
+   сопоставляется с tree stat и повторно открытым visible root.
+6. Atime исключён и отдельно проверен unit-тестом; mtime/ctime остаются обязательны.
+7. Скрытый privileged ABA при неразличимом ctime не доказуем, явно вне гарантий.
+8. P mismatch/uncertainty не меняет B; новые runtime-success cases это подтверждают.
+9. Чужие изменения не исправляются: compensation/ownership/rollback не добавлены.
+10. Ошибка capture даёт NotProven; общий Success требует P Proven и успешный B.
+11. Меняются только ephemeral container keys, права восстанавливаются перед reset;
+    контейнер уничтожается, host SSH hashes/absence сохранены.
+12. Private key bytes не попадают в diagnostics/evidence; probe outputs не экспортируются.
+13. Baseline используется только для стабильности операции; SHA/manifests остаются caller-authorized.
+14. CleanupFailed, primaryStatus/READY/errors/residualPaths сохраняются; прежний EBUSY case пройден.
+
+Ограничения: один WSL2 kernel, не VM/kernel matrix; selected-policy C, не полная
+SSH/PAM/authentication semantics; нет непрерывной post-return защиты или автоматической
+подготовки private mount boundaries. Policy apply/rollback, ownership и MutationJournal
+не изменены. Новые native изменения ограничены существующим disposable harness.

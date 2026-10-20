@@ -126,7 +126,10 @@ PermitEmptyPasswords, StrictModes, LoginGraceTime. Native sshd дополнит�
 Нужен explicit HostKey; каждый такой private key и companion `.pub` должен
 иметь reference coverage. Неявные defaults, HostKeyAgent, HostCertificate и
 прочие неописанные launch/config dependencies v1 не принимает. Secret bytes
-не включаются в diagnostics/evidence.
+не включаются в diagnostics/evidence. Private HostKey должен быть regular, UID 0,
+с mode ровно 0600 или 0400; group/other, special bits, symlink, xattr/ACL
+не допускаются. Это отдельное preflight-ограничение, даже при совпадении SHA.
+Companion `.pub` не считается private key; 0644 разрешён.
 
 ## Selected policy proof
 
@@ -206,7 +209,7 @@ Original-FD writes после публикации не меняют прочи�
 | inputs (A) | Proven только после подтверждённой защищённой активации |
 | activation (B) | Исходный ActivationResult целиком, без изменения status/primaryStatus/READY/cleanup/residuals |
 | semantics (C) | Proven / NonCompliant / NotProven / Unsupported для selection caller |
-| persistent (P) | Проверенные после cleanup reference bytes/manifests и trusted metadata, отдельно от runtime |
+| persistent (P) | Проверенные после cleanup reference bytes/manifests и стабильные identity/metadata относительно operation baseline, отдельно от runtime |
 | activationAttempted | Вызван generic engine; **не** утверждение, что restart уже запрошен |
 | status | Success / Refused / ActivationFailed / RuntimeActivatedButPersistentDrift |
 
@@ -222,6 +225,34 @@ B Success и P NonCompliant возвращается RuntimeActivatedButPersiste
 
 P — моментная проверка после cleanup, не постоянная compliance/ownership.
 После её завершения администратор может снова изменить файлы или службу.
+
+## Persistent metadata proof
+
+Authorized caller reference (SHA/exact manifests) и operation baseline имеют разные
+роли. Первый задаёт разрешённые bytes; immutable начальный `Capture` фиксирует
+identity/metadata только на время операции и не становится эталоном или ownership.
+После возврата generic engine и cleanup выполняется один bounded capture оригиналов:
+FD-based `readTree` связывает bytes со stat до/после чтения и повторной проверкой
+xattr; SHA/manifests проверяются именно для этих bytes. Root descriptor identity
+сопоставляется с tree stat и повторно открытым видимым root. Наличие mount на
+controlled target/внутри Directory запрещает принимать snapshot за original.
+
+Сравниваются точные root/relative-path keys и состав maps; root mount ID, device,
+inode, mode/type, UID/GID; для всех tree entries — device/inode, type и все mode bits,
+UID/GID, nlink, size, mtime/ctime (секунды и наносекунды). Atime исключён, поскольку
+само чтение меняет его. Existing no-xattr/ACL и trusted-parent проверки сохраняются.
+Даже ужесточение mode, смена GID при root UID или новый inode с прежним SHA — drift.
+При успешно наблюдаемом несовпадении P=NonCompliant. Ошибка чтения, unsupported
+metadata/mount или deadline дают P=NotProven. В обоих случаях общий Success запрещён,
+а B сохраняется полностью; при подтверждённом drift и успешном B результат —
+RuntimeActivatedButPersistentDrift. Дополнительных restart/cleanup/rollback нет.
+
+Это последовательное моментное доказательство, не атомарная транзакция с чужими
+writers и не постоянный мониторинг. Остаётся гонка после последней проверки;
+скрытый privileged ABA, включая изменение/восстановление внутри неразличимого
+разрешения ctime, не исключается. Совпадение SHA не компенсирует наблюдаемое
+изменение identity или metadata. READY не обещает успешные последующие connections:
+OpenSSH может перечитывать persistent inputs после снятия snapshot.
 
 ## Security review: границы доказательства
 

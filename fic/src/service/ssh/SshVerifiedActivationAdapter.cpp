@@ -1,5 +1,6 @@
 #include "service/ssh/SshVerifiedActivationAdapter.h"
 #include "service/ssh/SshVerifiedInputClosure.h"
+#include "service/ssh/SshPersistentMetadata.h"
 #include "service/VerifiedConfigActivationProof.h"
 #include "modules/net/ssh/SshInputAuthority.h"
 #include "modules/net/ssh/SshRuntime.h"
@@ -52,31 +53,43 @@ void validateLaunch(const d::LaunchContract& launch) {
             env != "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin") unsupported("SSH v1 manager environment outside supported profile");
     }
 }
-struct Capture {
+struct Capture : detail::PersistentMetadata {
     detail::InputBytes bytes;
-    std::map<std::string, d::Identity> roots;
-    std::map<std::string, std::map<std::string, struct stat>> attributes;
 };
-Capture capture(const ActivationRequest& request, bool published = false) {
+Capture capture(const ActivationRequest& request, bool published = false, bool persistent = false) {
     Capture out; auto budget = request.maxSnapshotBytes; const auto mounts = d::readMountInfo();
     for (const auto& p : request.paths) {
         std::string error;
-        if (!fic::ssh::trustedSshInput(p.path, p.kind == ControlledPathKind::Directory, false, error)) unsupported("untrusted SSH reference input");
+        if (!persistent && !fic::ssh::trustedSshInput(p.path, p.kind == ControlledPathKind::Directory, false, error)) unsupported("untrusted SSH reference input");
         if (!published) for (const auto& mount : mounts)
             if (mount.target == p.path || (p.kind == ControlledPathKind::Directory && d::below(mount.target, p.path))) unsupported("SSH input has existing/nested mount");
         auto fd = d::openAbsolute(p.path, O_RDONLY);
-        d::verifyTree(fd.get(), p, request.maxSnapshotBytes);
+        if (!persistent) d::verifyTree(fd.get(), p, request.maxSnapshotBytes);
         const auto tree = d::readTree(fd.get(), p.kind, budget);
-        for (const auto& [name, stat] : tree.attributes)
-            if (stat.st_uid != 0 || (stat.st_mode & 0022)) unsupported("SSH tree requires root-controlled metadata");
         for (const auto& [name, content] : tree.files)
             out.bytes.emplace(p.kind == ControlledPathKind::File ? p.path.string() : (p.path / name).string(), content);
-        out.roots.emplace(p.path.string(), d::identity(fd.get())); out.attributes.emplace(p.path.string(), tree.attributes);
+        const auto root = d::identity(fd.get());
+        const auto& st = tree.attributes.at("");
+        if (root.device != st.st_dev || root.inode != st.st_ino || root.mode != st.st_mode ||
+            root.uid != st.st_uid || root.gid != st.st_gid)
+            throw d::Failure(ActivationStatus::InterferenceDetected, "SSH source changed during capture");
+        auto visible = d::openAbsolute(p.path, O_PATH);
+        const auto visibleIdentity = d::identity(visible.get());
+        if (visibleIdentity.mount != root.mount || !d::sameObject(visibleIdentity, root))
+            throw d::Failure(ActivationStatus::InterferenceDetected, "SSH source replaced during capture");
+        out.roots.emplace(p.path.string(), root); out.attributes.emplace(p.path.string(), tree.attributes);
     }
     return out;
 }
 void validateCaptured(const SshVerifiedActivationRequest& request, const Capture& observed) {
-    detail::validateClosure(request.reference, observed.bytes);
+    const auto closure = detail::validateClosure(request.reference, observed.bytes);
+    for (const auto& [root, entries] : observed.attributes) {
+        for (const auto& [name, st] : entries) {
+            if (st.st_uid != 0 || (st.st_mode & 0022)) unsupported("SSH tree requires root-controlled metadata");
+            const auto path = name.empty() ? root : (std::filesystem::path(root) / name).string();
+            if (closure.hostKeys.count(path)) detail::requireSafePrivateHostKey(st);
+        }
+    }
     const auto env = observed.bytes.find("/etc/default/ssh");
     if (env == observed.bytes.end()) unsupported("explicit EnvironmentFile reference required");
     detail::validateEmptyOptions(env->second);
@@ -160,13 +173,9 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
         if (result.activation.primaryStatus == ActivationStatus::Success && publishedProof && runtimeProof) {
             result.inputs = result.semantics = ProofState::Proven;
         }
-        try {
-            validateCaptured(request, capture(request.reference));
-            result.persistent = ProofState::Proven;
-        } catch (const d::Failure& e) {
-            result.persistent = e.status == ActivationStatus::ChecksumMismatch || e.status == ActivationStatus::InterferenceDetected
-                ? ProofState::NonCompliant : ProofState::NotProven;
-        } catch (...) { result.persistent = ProofState::NotProven; }
+        result.persistent = detail::persistentProof(observed,
+            [&] { return capture(request.reference, false, true); },
+            [&](const Capture& current) { validateCaptured(request, current); });
         if (result.activation.success() && result.inputs == ProofState::Proven && result.semantics == ProofState::Proven) {
             result.status = result.persistent == ProofState::Proven ? SshActivationStatus::Success :
                 result.persistent == ProofState::NonCompliant ? SshActivationStatus::RuntimeActivatedButPersistentDrift : SshActivationStatus::ActivationFailed;

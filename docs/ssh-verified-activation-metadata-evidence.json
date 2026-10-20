@@ -1,0 +1,588 @@
+{
+  "base": "01694bc47d1ced9d393aa61181b02a49653ed352",
+  "date": "2026-10-20",
+  "environment_type": "disposable Docker/systemd PID1",
+  "VM_matrix": "NOT_TESTED",
+  "proof_definitions": {
+    "A": "caller-declared snapshot protection during activation",
+    "B": "new verified real sshd readiness",
+    "C": "full expected SSH effective configuration semantics",
+    "C_selected": "bounded tested fixture expectations, not full C",
+    "adapter_C": "only request.policies in the supported grammar/launch profile; NOT full OpenSSH semantics",
+    "persistent": "authorized bytes/manifests and stable operation-local identity/metadata after cleanup; not full policy compliance"
+  },
+  "distros": {
+    "debian-12": {
+      "run_id": "f066c210671435292afdc1c572d9f4d42fd0a37671e530b0290fdc2e517678ac",
+      "image_id": "sha256:8bfd868d192ac076aa62bd985829ab6289b6c5b88079cb569cb1d903013cb72c",
+      "generic_cases_passed": 30,
+      "adapter_cases_passed": 41,
+      "metadata_cases": [
+        {
+          "name": "metadata-key-mode",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-config-mode",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-config-uid",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-config-gid",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-directory-mode",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-included-inode",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-initial-key-0644",
+          "result": {
+            "A": "NotProven",
+            "C": "Unsupported",
+            "P": "NotProven",
+            "adapter_status": 1,
+            "adapter_success": false,
+            "activation_invoked": false,
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "runtime_identity_changed": false
+        },
+        {
+          "name": "metadata-initial-key-xattr",
+          "result": {
+            "A": "NotProven",
+            "C": "Unsupported",
+            "P": "NotProven",
+            "adapter_status": 1,
+            "adapter_success": false,
+            "activation_invoked": false,
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "runtime_identity_changed": false
+        },
+        {
+          "name": "metadata-initial-key-ACL",
+          "result": {
+            "A": "NotProven",
+            "C": "Unsupported",
+            "P": "NotProven",
+            "adapter_status": 1,
+            "adapter_success": false,
+            "activation_invoked": false,
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "runtime_identity_changed": false
+        },
+        {
+          "name": "metadata-unreadable-key-xattr",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NotProven",
+            "adapter_status": 2,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-key-0400-public-0644",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "Proven",
+            "adapter_status": 0,
+            "adapter_success": true,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        }
+      ],
+      "unit_bytes_unchanged": true,
+      "caller_ssh_unchanged": true,
+      "restored_sshd_t": true,
+      "log_sha256": "98c5b27127eb9ba6685a0cd98a4a47e5cb6b067bf47c7a66d9ce66a8d5fbb09f",
+      "environment": {
+        "kernel": "6.6.87.2-microsoft-standard-WSL2",
+        "os_release": "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+        "packages": "openssh-server 1:9.2p1-2+deb12u10\nsystemd 252.39-1~deb12u2\n",
+        "sshd_version": "OpenSSH_9.2, OpenSSL 3.0.22 25 Aug 2026",
+        "self_mnt_ns": "mnt:[4026532704]",
+        "pid1_mnt_ns": "mnt:[4026532704]",
+        "topology": {
+          "/etc/ssh/sshd_config": "/      private     overlay",
+          "/etc/ssh/sshd_config.d": "/      private     overlay",
+          "/etc/default/ssh": "/      private     overlay",
+          "/run/fic": "/run   private     tmpfs"
+        },
+        "metadata": {
+          "/etc/ssh/sshd_config": {
+            "uid": 0,
+            "gid": 0,
+            "mode": "0o644",
+            "symlink": false,
+            "xattr_names": []
+          },
+          "/etc/ssh/sshd_config.d": {
+            "uid": 0,
+            "gid": 0,
+            "mode": "0o755",
+            "symlink": false,
+            "xattr_names": []
+          },
+          "/etc/default/ssh": {
+            "uid": 0,
+            "gid": 0,
+            "mode": "0o644",
+            "symlink": false,
+            "xattr_names": []
+          },
+          "/run/fic": {
+            "uid": 0,
+            "gid": 0,
+            "mode": "0o755",
+            "symlink": false,
+            "xattr_names": []
+          }
+        },
+        "socket_state": "inactive",
+        "unit": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "MainPID": "91",
+          "RootDirectory": "",
+          "RootImage": "",
+          "MountFlags": "",
+          "PrivateTmp": "no",
+          "PrivateMounts": "no",
+          "ProtectSystem": "no",
+          "Id": "ssh.service",
+          "TriggeredBy": "",
+          "ActiveState": "active",
+          "SubState": "running",
+          "FragmentPath": "/lib/systemd/system/ssh.service",
+          "DropInPaths": "",
+          "Job": "",
+          "InvocationID": "a2741864b12642588876b7a172f67df6",
+          "process_mnt_ns": "mnt:[4026532704]",
+          "process_starttime": "437722"
+        }
+      }
+    },
+    "debian-13": {
+      "run_id": "fbd9367d028884dfb6a7e1d1b2ba96e7e06f4f5607398dcfa0fbd02e005ecf0b",
+      "image_id": "sha256:6e20048bc0a8cf200d08abb088ae8a05d7a658661b37d6e2c729a89dcb12aa28",
+      "generic_cases_passed": 30,
+      "adapter_cases_passed": 41,
+      "metadata_cases": [
+        {
+          "name": "metadata-key-mode",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-config-mode",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-config-uid",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-config-gid",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-directory-mode",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-included-inode",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NonCompliant",
+            "adapter_status": 3,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "metadata_only_bytes_unchanged": true,
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-initial-key-0644",
+          "result": {
+            "A": "NotProven",
+            "C": "Unsupported",
+            "P": "NotProven",
+            "adapter_status": 1,
+            "adapter_success": false,
+            "activation_invoked": false,
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "runtime_identity_changed": false
+        },
+        {
+          "name": "metadata-initial-key-xattr",
+          "result": {
+            "A": "NotProven",
+            "C": "Unsupported",
+            "P": "NotProven",
+            "adapter_status": 1,
+            "adapter_success": false,
+            "activation_invoked": false,
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "runtime_identity_changed": false
+        },
+        {
+          "name": "metadata-initial-key-ACL",
+          "result": {
+            "A": "NotProven",
+            "C": "Unsupported",
+            "P": "NotProven",
+            "adapter_status": 1,
+            "adapter_success": false,
+            "activation_invoked": false,
+            "status": "UnsupportedConfiguration",
+            "primaryStatus": "UnsupportedConfiguration",
+            "readinessConfirmed": false,
+            "cleanupErrors": [],
+            "residualPaths": []
+          },
+          "runtime_identity_changed": false
+        },
+        {
+          "name": "metadata-unreadable-key-xattr",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "NotProven",
+            "adapter_status": 2,
+            "adapter_success": false,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "protected_handshake_confirmed": true,
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        },
+        {
+          "name": "metadata-key-0400-public-0644",
+          "result": {
+            "A": "Proven",
+            "C": "Proven",
+            "P": "Proven",
+            "adapter_status": 0,
+            "adapter_success": true,
+            "activation_invoked": true,
+            "status": "Success",
+            "primaryStatus": "Success",
+            "readinessConfirmed": true,
+            "cleanupErrors": [],
+            "residualPaths": [],
+            "listener_pid_confirmed": true
+          },
+          "runtime_identity_changed": true
+        }
+      ],
+      "unit_bytes_unchanged": true,
+      "caller_ssh_unchanged": true,
+      "restored_sshd_t": true,
+      "log_sha256": "2fb6c2cac30f73b044ad76266068ef424172bd425435542fca319a7cd1f70cdb",
+      "environment": {
+        "kernel": "6.6.87.2-microsoft-standard-WSL2",
+        "os_release": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+        "packages": "openssh-server 1:10.0p1-7+deb13u4\nsystemd 257.13-1~deb13u1\n",
+        "sshd_version": "OpenSSH_10.0p2 Debian-7+deb13u4, OpenSSL 3.5.7 9 Jun 2026",
+        "self_mnt_ns": "mnt:[4026532593]",
+        "pid1_mnt_ns": "mnt:[4026532593]",
+        "topology": {
+          "/etc/ssh/sshd_config": "/ private overlay",
+          "/etc/ssh/sshd_config.d": "/ private overlay",
+          "/etc/default/ssh": "/ private overlay",
+          "/run/fic": "/run private tmpfs"
+        },
+        "metadata": {
+          "/etc/ssh/sshd_config": {
+            "uid": 0,
+            "gid": 0,
+            "mode": "0o644",
+            "symlink": false,
+            "xattr_names": []
+          },
+          "/etc/ssh/sshd_config.d": {
+            "uid": 0,
+            "gid": 0,
+            "mode": "0o755",
+            "symlink": false,
+            "xattr_names": []
+          },
+          "/etc/default/ssh": {
+            "uid": 0,
+            "gid": 0,
+            "mode": "0o644",
+            "symlink": false,
+            "xattr_names": []
+          },
+          "/run/fic": {
+            "uid": 0,
+            "gid": 0,
+            "mode": "0o755",
+            "symlink": false,
+            "xattr_names": []
+          }
+        },
+        "socket_state": "inactive",
+        "unit": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "MainPID": "124",
+          "RootDirectory": "",
+          "RootImage": "",
+          "MountFlags": "",
+          "PrivateTmp": "no",
+          "PrivateMounts": "no",
+          "ProtectSystem": "no",
+          "Id": "ssh.service",
+          "TriggeredBy": "",
+          "ActiveState": "active",
+          "SubState": "running",
+          "FragmentPath": "/usr/lib/systemd/system/ssh.service",
+          "DropInPaths": "",
+          "Job": "",
+          "InvocationID": "00e904c2c58446d293f332b994486521",
+          "process_mnt_ns": "mnt:[4026532593]",
+          "process_starttime": "437168"
+        }
+      }
+    }
+  }
+}

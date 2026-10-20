@@ -6,6 +6,7 @@
 #include "service/VerifiedConfigLaunchContract.h"
 #include "modules/net/ssh/SshConfigAudit.h"
 #include "platform/PlatformExecutableResolver.h"
+
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/integrity/ContentDigest.h>
@@ -120,6 +121,7 @@ int main(int argc, char** argv) {
             const auto launchBefore = d::readLaunchContract(r.unit, std::chrono::steady_clock::now() + std::chrono::seconds(10));
             const bool adapter = action.rfind("adapter", 0) == 0;
             const std::string fault = action == "activate" || action == "adapter" ? "" : adapter ? action.substr(8) : action;
+            d::Fd key(::open("/etc/ssh/ssh_host_ed25519_key", O_RDONLY|O_CLOEXEC));
             d::TestHooks hooks; d::Fd busy, original(::open("/etc/ssh/sshd_config", O_RDWR|O_CLOEXEC));
             const auto globDirectory = input.value("glob_dir", "/etc/ssh/sshd_config.d");
             d::Fd directory(::open(globDirectory.c_str(), O_RDONLY|O_DIRECTORY|O_CLOEXEC));
@@ -138,6 +140,23 @@ int main(int argc, char** argv) {
                         evidence.push_back({{"path", p.path.string()}, {"mount", id.mount}, {"inode", id.inode}});
                     }
                     output["published"] = evidence;
+                    if (fault == "key-xattr") check(::fsetxattr(key.get(), "user.fic-test", "x", 1, 0)==0, "original key xattr");
+                    if (fault == "key-mode") check(::fchmod(key.get(), 0644) == 0, "original private key mode");
+                    if (fault == "config-mode") check(::fchmod(original.get(), 0600) == 0, "original config mode");
+                    if (fault == "config-uid") check(::fchown(original.get(), 123, -1) == 0, "original config UID");
+                    if (fault == "config-gid") check(::fchown(original.get(), -1, 123) == 0, "original config GID");
+                    if (fault == "directory-mode") check(::fchmod(directory.get(), 0700) == 0, "original Include directory mode");
+                    if (fault == "included-inode") {
+                        check(::renameat(directory.get(), "10-inode.conf", directory.get(), "old.inc") == 0, "rename original Include child");
+                        d::Fd old(::openat(directory.get(), "old.inc", O_RDONLY|O_CLOEXEC));
+                        struct stat st{}; check(old && ::fstat(old.get(), &st) == 0, "old Include identity");
+                        d::Fd replacement(::openat(directory.get(), "10-inode.conf", O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC, st.st_mode & 0777));
+                        const std::string bytes = "# identical inode fixture\n";
+                        check(replacement && ::write(replacement.get(), bytes.data(), bytes.size()) == ssize_t(bytes.size()) &&
+                              ::fchown(replacement.get(), st.st_uid, st.st_gid) == 0, "replace Include inode");
+                        struct stat now{}; check(::fstat(replacement.get(), &now)==0 && now.st_ino != st.st_ino, "new inode required");
+                        check(::unlinkat(directory.get(), "old.inc", 0)==0, "remove displaced fixture");
+                    }
                     if (fault == "original-write") {
                         const auto bytes = text(work + "/mutation.conf");
                         check(::ftruncate(original.get(), 0) == 0 && ::write(original.get(), bytes.data(), bytes.size()) == ssize_t(bytes.size()), "original FD write");
@@ -179,6 +198,14 @@ int main(int argc, char** argv) {
                 }
                 if (phase == d::TestPhase::RestartQueued && fault == "contract-after") ctl({"set-environment", "FIC_OPENSSH_TEST_CHANGE=after"});
                 if (phase == d::TestPhase::BeforeCleanup) {
+                    if (fault == "key-mode" || fault == "config-mode" || fault == "config-uid" || fault == "config-gid" ||
+                        fault == "directory-mode" || fault == "included-inode" || fault == "key-xattr") {
+                        ProcessOptions opts; opts.timeout = std::chrono::seconds(5); opts.clearEnvironment = true;
+                        const auto probe = ProcessExecutor::execute("/usr/bin/ssh-keyscan", {"-T", "2", "-t", "ed25519", "-p", "2222", "127.0.0.1"}, opts);
+                        check(probe.success() && (probe.standardError + probe.standardOutput).find("FIC_VERIFIED") != std::string::npos &&
+                              !probe.standardOutput.empty(), "protected real SSH handshake");
+                        output["protected_handshake_confirmed"] = true;
+                    }
                     if (fault == "busy") busy = d::openAbsolute("/etc/ssh/sshd_config", O_RDONLY);
                     if (fault == "foreign") {
                         check(::mount((work + "/mutation.conf").c_str(), "/etc/ssh/sshd_config", nullptr, MS_BIND, nullptr) == 0, "foreign overlay"); foreign = true;
