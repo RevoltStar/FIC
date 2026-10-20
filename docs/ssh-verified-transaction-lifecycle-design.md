@@ -2,7 +2,7 @@
 
 ## 1. Executive summary
 
-**Статус: проект, не реализация.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
+**Статус: проект целевого lifecycle; реализован только Stage 1 из §22.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
 Production, API, journal schema и поведение политик этим документом не изменяются.
 
 Рекомендация: отдельный **SSH transaction coordinator** (вариант B), переиспользующий
@@ -1066,3 +1066,164 @@ REPRO4 CONFIRMED: unchanged owned scalar block returns apply=true despite known 
 наблюдение, не динамический race test. Логи/временный harness текущей среды:
 `/tmp/fic-ssh-lifecycle-audit/{results.log,ctest.log,repro.cpp,build.py}`;
 это вспомогательные локальные файлы, не часть коммита и не durable production state.
+
+## 22. Stage 1 implementation: retain unresolved mutation provenance
+
+Implementation base `4d1bafb17f9c391bdfec693143632cf3928341fa`. Только R1/R1b admission/
+abort safety реализуются этим этапом; coordinator/checkpoints/grants/schema upgrade,
+verified integration и public statuses остаются проектом. Разделы 2–4 описывают
+**исследованную базу**: их старые unsafe transitions не являются текущим контрактом.
+
+### Typed facts и fresh Prepared discard
+
+`SshConfigTransactionResult` сохраняет старые `ok/conflict/nothingToDo/message` для
+callers, включая `SshRollback`, и добавляет independent internal facts:
+
+* `persistentEffect`: Unknown / NotInstalled / Installed / DurableInstalled — про
+  **исходную write-попытку**, а не про содержимое pathname после компенсации.
+* `compensation`: NotAttempted / RestoredDurably / RefusedByCAS / FailedOrUnknown.
+  RestoredDurably означает только disk restore + durability + state-bound recheck.
+* `activation`, `restoredRuntime`: NotAttempted / LegacyAccepted / FailedOrUnknown.
+  LegacyAccepted не равно verified runtime reconciliation; lost reply/exception не
+  интерпретируется как no effect. Runtime call помечается uncertain до его начала.
+* `installedTargetState`, `restoredTargetState`: issued writer receipts, без fresh
+  capture для легитимизации external changes. Restore receipt — другой inode;
+  именно он используется для barrier/state checks после compensation.
+
+Единый `mayDiscardPrepared(freshRecord)` разрешает abort **только** для fresh identity,
+failed transaction, доказанного NotInstalled, отсутствующих installed/restore receipts,
+compensation/activation/restoredRuntime NotAttempted. Перед writer call устанавливается
+Unknown; исключение не превращается в no-install. В valid writer outcome installed=true
+не теряется при fsync failure. Нет receipt после известного install — fail-closed,
+компенсация не угадывается по current file.
+
+Stage 1 намеренно **не** реализует альтернативу «полностью resolved compensation» для
+discard: legacy `sshd -T`/reload/is-active недостаточно для такого runtime proof.
+Поэтому после любого installed/unknown write Prepared сохраняется, даже если original
+bytes durably restored и legacy reconciliation accepted. `ok` остаётся прежней legacy
+success projection нормальной transaction, **не** обещанием целевого verified lifecycle.
+Все ошибочные пути возвращают false; типизированные facts не теряются в message.
+
+Conditional restore по exact AtomicTargetState, symlink refusal, metadata preservation,
+state-bound fsync и bounded one compensation attempt сохранены. Никакого нового reload
+для recovery не добавлено. Дополнительно отрицательный state-bound recheck после restore
+не допускает legacy reload уже изменившегося original; after-runtime recheck не даёт
+пометить disk compensation подтверждённой при наблюдаемом drift. Lost writer/restore/
+runtime exceptions сохраняют partial facts и provenance. Shared journal/AtomicFileWriter
+contracts не менялись. Rollback по-прежнему использует legacy bool projection того же
+helper; его ownership-release semantics/schema не заменены.
+
+### R1b, REFRESH и граница recovery
+
+Fresh определяется до `recordPreparedMutation`, а не по его success: попытка, дошедшая
+до prepare, не имеет existing active ownership. Если plan требует повторного prepare
+существующей active identity, apply диагностирует REFRESH refusal **до prepare/write**.
+Предыдущие ID/status/full payload и journal bytes сохраняются; callback для before-write
+или post-install fault вообще не достигается. Compliant no-op и fresh apply работают.
+Existing value-change legacy release→fresh apply path не заменён новой transition model.
+R2 не объявлен исправленным полноценным REFRESH: опасная ветка временно недоступна.
+
+Любой Prepared SSH record для того же config resource блокирует apply **всех** SSH
+policies этого файла до effective commands/prepare/write. Удалён `finishPrepared` и
+its commit→discard path: schema 2 не позволяет отличить safe crash state от failed
+compensation/unknown runtime. Gate действует при intact/изменённых/исчезнувших artifacts,
+при изменившемся desired value и после durable journal reload; не создаёт новую record.
+Автоматического восстановления/продвижения устаревшего значения нет. Явные existing
+administrative rollback/disable routes не заменяются новым recovery engine; при
+неразрешимом provenance требуется отдельное административное разрешение.
+
+Усилены прежние tests: Prepared с markers и без markers теперь обязан сохраняться
+без blind runtime calls и journal mutation; restored bytes после failed validation/
+reload больше не требуют пустого journal. Это намеренное усиление fail-closed, а не
+SKIP или ослабление checks. R3 (wrapper body digest), R4 (shared locking) и R5 (unchanged
+scalar compliance) остаются открытыми; guard REFRESH не перенесён перед R5 fast-path.
+
+### Regression / fault outcomes
+
+На исходном production HEAD постоянные R1/R1b tests дали RED:
+
+```text
+R1: unresolved durable Prepared was discarded
+R1b: failed REFRESH discarded original record  [before install]
+R1b: failed REFRESH discarded original record  [after install]
+```
+
+В GREEN REFRESH tests проверяют, что старые before-/after-install failures теперь
+недостижимы: предыдущий journal и файл остаются byte-identical, no write/new wrapper/
+reload, original Applied ID/full payload сохранён. R1 проверяет remaining owned markers,
+external comment, durable Prepared/payload и отказ следующих same-policy/changed-value/
+other-policy attempts без runtime commands. Проверки загружают journal с диска отдельно.
+
+| Fault | Подтверждённые facts / исход | Journal / foreign state |
+|---|---|---|
+| Fresh CAS до install | NotInstalled, no runtime/compensation | Healthy fresh discard разрешён; external version сохранена |
+| Install + postcondition failure + restore CAS refusal | DurableInstalled, RefusedByCAS | Prepared, markers + external edit сохранены |
+| Install, receipt потерян | Installed/DurableInstalled, no guessed restore | Prepared остаётся |
+| Writer result unknown/exception после rename | Unknown, no false no-effect | Prepared, фактически installed markers сохранены |
+| Rename + failed parent fsync | Installed, не DurableInstalled | Нет false abort; compensation отдельно классифицирована |
+| Restore rename + failed fsync/barrier | FailedOrUnknown, original bytes видимы, не proven durable | Prepared, no reconciliation/retry mutation |
+| Durability сначала failed, restore durable | Original attempt Installed; compensation RestoredDurably | Prepared даже при LegacyAccepted |
+| Durable restore, validation/reconciliation failed | RestoredDurably + restoredRuntime FailedOrUnknown | Prepared; no fabricated runtime resolution |
+| Reload reply lost | Activation FailedOrUnknown, original file может оставаться target | Prepared, не no-effect |
+| First reload failed, restore+second legacy accepted | First uncertainty сохранена независимо от второго результата | Prepared, не считать attempt resolved |
+| Before-restore exception | FailedOrUnknown, receipt исходного install сохранён | Prepared; no unconditional restore |
+| Journal prepare fsync indeterminate | Config не изменён; usable journal gate закрыт | После durable reload виден Prepared document; apply до reload отказал |
+| Journal discard fsync indeterminate | Only proven no-effect discard начал Healthy, затем journal poisoned | Нет success/повторного discard; installed empty document возможен, external config сохранён |
+| Journal commit fsync indeterminate | Config/FIC effects сохранились, apply=false | Нет discard; после durable reload возможен Applied из уже установленного document |
+| Corrupt/unreadable journal | Fail-closed до mutation | No file/runtime write; existing MutationJournal suites cover unreadability |
+
+Нельзя обещать Prepared после **любой** journal persist error: post-rename commit
+может физически установить Applied, а no-effect discard — empty document. Важны
+usable/durability gate и отсутствие потерянных permissions при реальном OS эффекте,
+а не подмена installed journal outcome желаемым in-memory status.
+
+Собственный observation-fault seam `FIC_SSH_TRANSACTION_TESTING` включён только для
+SSH test targets; production fic не содержит setter. Native runner:
+[`tests/integration/ssh-provenance`](../tests/integration/ssh-provenance/README.md).
+Список 96 исходников SSH regression target вынесен без изменений в общий CMake include,
+чтобы запускать **тот же полный suite**, а не дублировать implementation или тянуть
+Qt в focused native image. Existing CTest использует этот же список.
+
+### Final validation Stage 1
+
+| Focused native profile | Unique SSH scenarios PASS | FAIL | SKIP |
+|---|---:|---:|---:|
+| Debian 12 | 43 | 0 | 0 |
+| Debian 13 | 43 | 0 | 0 |
+| Ubuntu 24.04 | 43 | 0 | 0 |
+| Ubuntu 26.04 | 43 | 0 | 0 |
+| ALT p11 | 43 | 0 | 0 |
+
+Каждый profile запускает CTest (1 complete SSH executable PASS) и direct reporting
+с новыми fixtures: это не 86 уникальных сценариев. В 43 случаях уже включены 17
+вложенных transaction/journal fault outcomes; не складывать их как независимый suite.
+Логи: `build-ssh-provenance/<profile>/native.log`.
+
+Финальные configure/full build Debian12 PASS, полный CTest **188 PASS / 0 FAIL /
+1 ожидаемый generic native opt-in SKIP**, 189 total, **171.22 s**; журнал
+`/tmp/fic-ssh-stage1-full-debian12-final.log`. Пройденные suites включают SSH
+apply/rollback/runtime, MutationJournal/health/recovery, RollbackExecutor и
+AtomicFileWriter conditional remove/restore-related checks. Generic privileged
+activation отдельно не повторялся: engine/adapter не изменены, этот этап допускает
+реальный transaction code с fake command runner. Проверка production fic symbols
+подтвердила отсутствие `setSshSaveOutcomeHookForTests`; `bash -n` runner и
+`git diff --check` PASS.
+
+Первоначальный root-native configure Debian13 был невозможен без Qt. Focused setup
+выявил исправленные ошибки test harness CMake (newline/Threads и root late dispatcher
+source dependency), Ubuntu26 — ненужную зависимость runner от git. Это setup/build
+failures, не distro SKIPs и не оставшиеся отказы: финальные frozen-code gates прошли
+на всех пяти образах. Автоматическая permission review дважды истекала до запуска;
+разрешённые повторы состоялись. Production constraints ради tests не ослаблялись.
+
+R1/R1b закрыты сохранением provenance и admission refusal, не реализацией нового
+coordinator. Schema-2-compatible «простого» REFRESH abort без durable previous/target
+не найдено: сохранение старого payload лишь в памяти не переживает crash, а конкатенация
+IDs не определяет корректные commit/abort/recovery transitions. Поэтому выбран явный
+временный отказ, а не частичная реализация stage 3.
+
+Новые tests не доказывают live SSH/READY, PAM/login semantics или завершение будущего
+verified transaction lifecycle. Пять userspaces проверены на одном WSL2 kernel;
+не заявляется VM/kernel matrix. Нормальный legacy apply success не переименован в
+verified success; public API, generic activator/SSH adapter, journal schema 2,
+incident subsystem и platform profiles не менялись.

@@ -2583,105 +2583,8 @@ target_include_directories(ssh_runtime_tests PRIVATE
 target_link_libraries(ssh_runtime_tests PRIVATE fic-core fic-policy fic-platform)
 add_test(NAME ssh_runtime_tests COMMAND ssh_runtime_tests)
 
-add_executable(ssh_apply_rollback_tests
-    fic/modules/net/ssh/SshApplyRollbackTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/NET.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/Ssh.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_max_auth_tries.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_port.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_pubkey_auth.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_use_pam.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/policies/NET_ssh_root_login.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoProviderCapabilities.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/login_defs/IdentityLoginDefsManagedConfig.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/login_defs/IdentityLoginDefsManagedTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyTransitionExecutor.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyPlanner.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyModel.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotWriter.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamTopologyManager.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedBlock.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersLogicalEntries.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersIncludeDirective.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaultsTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallRule.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallNft.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallBackend.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallPolicies.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/platform/PamProviderMetadata.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/platform/PamFaillockStrategy.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/platform/PlatformExecutableResolver.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlock.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedBlockFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedEntryExecutor.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedFlagExecutor.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedLock.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderRollback.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderConfigFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwhistoryConfigFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamAuthUpdateTopologyManager.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamFaillockTopologyManager.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamSlotAttachValidator.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
-
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
-)
+include("${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/net/ssh/SshApplyRollbackSources.cmake")
+add_executable(ssh_apply_rollback_tests ${FIC_SSH_APPLY_ROLLBACK_SOURCES})
 target_include_directories(ssh_apply_rollback_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
@@ -2691,6 +2594,7 @@ target_link_libraries(ssh_apply_rollback_tests PRIVATE
     fic-platform
     Threads::Threads
 )
+target_compile_definitions(ssh_apply_rollback_tests PRIVATE FIC_SSH_TRANSACTION_TESTING=1)
 add_test(NAME ssh_apply_rollback_tests COMMAND ssh_apply_rollback_tests)
 
 add_executable(platform_profile_tests

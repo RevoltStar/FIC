@@ -4,6 +4,7 @@
 // compensation) and crash-consistent journaling.
 #include "modules/net/ssh/Ssh.h"
 #include "modules/net/ssh/SshConfigFile.h"
+#include "modules/net/ssh/SshConfigTransaction.h"
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/net/ssh/SshRuntime.h"
@@ -445,12 +446,12 @@ void testApplyFailsWhenEffectiveStateUnknown() {
             "an undeterminable effective state must fail the apply closed");
 
     require(readFile(tree.configPath()) == "Port 22\n",
-            "no file mutation must happen when the effective state is unknown");
+            "failed post-write validation must conditionally restore original bytes");
     MutationJournal journal(tree.journalPath());
     std::string error;
     require(journal.load(error), error);
-    require(journal.records().empty(),
-            "no mutation record must exist without a real mutation");
+    require(journal.records().size()==1 && journal.records()[0].status==MutationStatus::Prepared,
+            "a restored file is not proof that no install/runtime effect happened");
 }
 
 void testUnsupportedPolicySemanticsIsRefused() {
@@ -930,7 +931,7 @@ void testOrphanManagedBlockWithCompliantValueFailsClosed() {
             "orphan FIC markers must not trigger a reload");
 }
 
-void testPreparedAfterCrashIsFinishedAndCommitted() {
+void testPreparedAfterCrashRequiresResolution() {
     SshApplyTree tree;
     tree.writeConfig("Port 22\nPort 2022\n");
     tree.writePolicyValue("ssh_port", "2222");
@@ -963,8 +964,11 @@ void testPreparedAfterCrashIsFinishedAndCommitted() {
     recordPreparedSsh(kSshPortPolicy,
                       "ssh:" + tree.configPath().string() + ":Port", stale);
 
-    require(policy->apply(),
-            "the apply must finish the interrupted transaction");
+    const int calls=tree.runtime()->tCalls, reloads=tree.runtime()->reloadCalls;
+    const auto journalBefore=readFile(tree.journalPath());
+    require(!policy->apply(), "schema 2 Prepared requires explicit resolution, not blind recovery");
+    require(tree.runtime()->tCalls==calls && tree.runtime()->reloadCalls==reloads &&
+            readFile(tree.journalPath())==journalBefore,"Prepared recovery changed runtime/provenance");
     require(readFile(tree.configPath()) == owned,
             "recovery must not change the already-owned state");
 
@@ -972,12 +976,12 @@ void testPreparedAfterCrashIsFinishedAndCommitted() {
     std::string error;
     require(journal.load(error), error);
     for (const MutationRecord& record : journal.records()) {
-        require(record.status == MutationStatus::Applied,
-                "every record must be committed after recovery");
+        require(record.status == MutationStatus::Prepared,
+                "unresolved crash record must stay Prepared");
     }
 }
 
-void testStalePreparedRecordOnForeignConfigIsDiscarded() {
+void testStalePreparedRecordOnForeignConfigRequiresResolution() {
     SshApplyTree tree;
     tree.writeConfig("Port 22\n");
     tree.writePolicyValue("ssh_port", "2222");
@@ -993,16 +997,15 @@ void testStalePreparedRecordOnForeignConfigIsDiscarded() {
                       "ssh:" + tree.configPath().string() + ":Port", stale);
 
     auto policy = tree.makePolicy<NET_ssh_port>();
-    require(policy->apply(), "the stale prepared record must be discarded");
-
-    require(fileContains(tree.configPath(), kSshBlockBeginPrefix),
-            "the fresh apply must own the configuration");
-    MutationJournal journal(tree.journalPath());
-    std::string error;
-    require(journal.load(error), error);
-    require(journal.records().size() == 1 &&
-                journal.records().front().status == MutationStatus::Applied,
-            "only the fresh mutation must be active");
+    const auto journalBefore=readFile(tree.journalPath());
+    require(!policy->apply(), "absent artifacts do not prove runtime/compensation resolution");
+    require(readFile(tree.configPath())=="Port 22\n" && tree.runtime()->reloadCalls==0 &&
+            tree.runtime()->tCalls==0 && readFile(tree.journalPath())==journalBefore,
+            "ambiguous absent-artifact Prepared was discarded or reactivated");
+    MutationJournal journal(tree.journalPath()); std::string error;
+    require(journal.load(error),error);
+    require(journal.records().size()==1 && journal.records()[0].status==MutationStatus::Prepared,
+            "stale Prepared provenance not preserved on disk");
 }
 
 void testPreparedWithDriftedBlockFailsClosed() {
@@ -1057,6 +1060,264 @@ void testApplyConcurrentModificationIsRefused() {
     }
 }
 
+// Always reload a separate journal object: provenance must survive on disk.
+std::vector<MutationRecord> diskRecords(const SshApplyTree& tree) {
+    MutationJournal journal(tree.journalPath()); std::string error;
+    require(journal.load(error), error); return journal.records();
+}
+void requireSameSshRecord(const MutationRecord& a, const MutationRecord& b) {
+    const auto* x=std::get_if<UndoRemoveSshManagedPolicy>(&a.undo.payload);
+    const auto* y=std::get_if<UndoRemoveSshManagedPolicy>(&b.undo.payload);
+    require(a.id==b.id && a.policy==b.policy && a.resource==b.resource && a.status==b.status &&
+            a.undo.backend==b.undo.backend && x && y && x->policyName==y->policyName &&
+            x->directive==y->directive && x->appliedValue==y->appliedValue &&
+            x->disabledMutationIds==y->disabledMutationIds, "SSH record identity/status/full payload changed");
+}
+void testFailedCompensationRetainsFreshPrepared() {
+    SshApplyTree tree; tree.writeConfig("Port 22\n"); tree.writePolicyValue("ssh_port","2222");
+    JournalOverride guard(tree.journalPath()); auto policy=tree.makePolicy<NET_ssh_port>();
+    tree.runtime()->failTAfterCall=2;
+    const auto delegate=tree.runner();
+    policy->setRunner([&](const auto& path,const auto& args,const auto& options) {
+        auto r=delegate(path,args,options);
+        if (tree.runtime()->tCalls==2 && std::find(args.begin(),args.end(),"-T")!=args.end())
+            writeFile(tree.configPath(),readFile(tree.configPath())+"# external edit preserved\n");
+        return r;
+    });
+    require(!policy->apply(),"failed compensation must fail apply");
+    require(fileContains(tree.configPath(),kSshBlockBeginPrefix) &&
+            fileContains(tree.configPath(),"external edit preserved"),"owned markers/external edit lost");
+    const auto records=diskRecords(tree);
+    require(records.size()==1 && records[0].status==MutationStatus::Prepared,"R1: unresolved durable Prepared was discarded");
+    const auto& undo=std::get<UndoRemoveSshManagedPolicy>(records[0].undo.payload);
+    require(undo.policyName=="ssh_port" && undo.directive=="Port" && undo.appliedValue=="2222" &&
+            undo.disabledMutationIds.size()==1,"full fresh ownership payload missing");
+    const auto content=readFile(tree.configPath()); const auto journal=readFile(tree.journalPath());
+    tree.runtime()->failTAfterCall=0; tree.runtime()->serviceActive=true;
+    const int calls=tree.runtime()->tCalls, reloads=tree.runtime()->reloadCalls;
+    require(!policy->apply(),"unresolved Prepared must not auto-commit");
+    tree.writePolicyValue("ssh_port","2223");
+    require(!tree.makePolicy<NET_ssh_port>()->apply(),"changed desired value bypassed Prepared recovery gate");
+    tree.writePolicyValue("ssh_root_login","no");
+    require(!tree.makePolicy<NET_ssh_root_login>()->apply(),"another SSH policy bypassed unresolved file gate");
+    require(readFile(tree.configPath())==content && readFile(tree.journalPath())==journal &&
+            tree.runtime()->tCalls==calls && tree.runtime()->reloadCalls==reloads,"recovery performed blind runtime/file mutation");
+    requireSameSshRecord(records[0],diskRecords(tree).at(0));
+}
+void testAppliedRefreshRefusesBeforeMutation(bool postInstallFault) {
+    SshApplyTree tree; tree.writeConfig("Port 22\n"); tree.writePolicyValue("ssh_port","2222");
+    JournalOverride guard(tree.journalPath()); auto policy=tree.makePolicy<NET_ssh_port>();
+    require(policy->apply(),"initial apply"); const auto original=diskRecords(tree).at(0);
+    require(original.status==MutationStatus::Applied,"initial ownership not Applied");
+    writeFile(tree.configPath(),readFile(tree.configPath())+"Port 3333\n# foreign refresh input\n");
+    const auto content=readFile(tree.configPath()), journal=readFile(tree.journalPath());
+    bool faultReached=false;
+    if (postInstallFault) {
+        const int failingCall=tree.runtime()->tCalls+2;
+        const auto delegate=tree.runner();
+        policy->setRunner([&,failingCall,delegate](const auto& path,const auto& args,const auto& options) {
+            auto r=delegate(path,args,options);
+            if (tree.runtime()->tCalls==failingCall && std::find(args.begin(),args.end(),"-T")!=args.end()) {
+                faultReached=true;
+                writeFile(tree.configPath(),readFile(tree.configPath())+"# external post-install edit\n");
+                return sshFailing("deterministic post-install failure");
+            }
+            return r;
+        });
+    } else policy->setBeforeWriteHook([&]{faultReached=true; writeFile(tree.configPath(),content+"# CAS conflict\n");});
+    const int reloads=tree.runtime()->reloadCalls;
+    require(!policy->apply(),"unproven REFRESH must fail closed");
+    const auto records=diskRecords(tree);
+    require(records.size()==1,"R1b: failed REFRESH discarded original record");
+    requireSameSshRecord(original,records[0]);
+    require(!faultReached && readFile(tree.configPath())==content && readFile(tree.journalPath())==journal &&
+            tree.runtime()->reloadCalls==reloads,"REFRESH must refuse before re-prepare/write/activation");
+}
+void testAppliedRefreshPreinstallFailure() {testAppliedRefreshRefusesBeforeMutation(false);}
+void testAppliedRefreshPostinstallFailure() {testAppliedRefreshRefusesBeforeMutation(true);}
+
+struct Stage1FaultReset {
+    ~Stage1FaultReset() {
+        setSshSaveOutcomeHookForTests({});
+        AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    }
+};
+void testTypedTransactionFaultMatrix() {
+    using P=SshPersistentEffect; using C=SshCompensationEffect; using R=SshRuntimeReconciliation;
+    for (const std::string fault : {"success","CAS","restore-CAS","rename-fsync","restore-fsync",
+             "fsync-once","missing-receipt","unknown-write","writer-exception","runtime-invalid",
+             "reload-unknown","reload-fails-once","before-restore-exception","legacy-restore"}) {
+        Stage1FaultReset reset;
+        SshApplyTree tree; tree.writeConfig("Port 22\n");
+        JournalOverride guard(tree.journalPath());
+        UndoRemoveSshManagedPolicy undo;undo.policyName="ssh_port";undo.directive="Port";undo.appliedValue="2222";
+        const auto id=recordPreparedSsh(kSshPortPolicy,"ssh:"+tree.configPath().string()+":Port",undo);
+        const auto originalRecord=diskRecords(tree).at(0);
+        SshConfigFileHandler handler(tree.configPath().string());require(handler.loadConfig(),"transaction snapshot");
+        SshRuntimeOptions opts;opts.configPath=tree.configPath();opts.includeBasePath=tree.tree.root;opts.serviceUnits={"ssh.service"};
+        auto runner=tree.runner(); SshConfigTransactionHooks hooks;
+        int barriers=0;
+        if (fault=="CAS") hooks.beforeWrite=[&]{writeFile(tree.configPath(),"Port 22\n# external CAS\n");};
+        if (fault=="restore-CAS") hooks.beforeRestore=[&]{writeFile(tree.configPath(),readFile(tree.configPath())+"# external restore\n");};
+        if (fault=="before-restore-exception") hooks.beforeRestore=[] {throw std::runtime_error("restore outcome unknown");};
+        if (fault=="rename-fsync" || fault=="restore-fsync" || fault=="fsync-once")
+            AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){
+                if (path!=tree.configPath().string()) return true;
+                ++barriers;
+                return fault=="restore-fsync" ? barriers==1 : fault=="fsync-once" ? barriers!=1 : false;
+            });
+        if (fault=="missing-receipt") setSshSaveOutcomeHookForTests([](auto& saved){saved.installedTargetState.reset();});
+        if (fault=="unknown-write") setSshSaveOutcomeHookForTests([](auto& saved){
+            saved.installed=false;saved.durabilityConfirmed=false;saved.installedTargetState.reset();
+        });
+        if (fault=="writer-exception") AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){
+            if (path==tree.configPath().string()) throw std::runtime_error("writer result lost after rename");return true;
+        });
+        if (fault=="runtime-invalid") tree.runtime()->failTAfterCall=2;
+        if (fault=="reload-unknown" || fault=="reload-fails-once") {
+            tree.runtime()->serviceActive=true;
+            const auto delegate=runner;
+            runner=[&,delegate](const auto& path,const auto& args,const auto& options){
+                auto r=delegate(path,args,options);
+                if (std::find(args.begin(),args.end(),"reload")!=args.end() && tree.runtime()->reloadCalls==1) {
+                    if (fault=="reload-unknown") throw std::runtime_error("reload reply lost");
+                    return sshFailing("first reload failed");
+                }
+                return r;
+            };
+        }
+        SshRuntime runtime(opts,tree.executables(),runner);
+        const auto result=runSshConfigTransaction(handler,runtime,hooks,[&](std::string& error){
+            bool changed=false;return upsertSshManagedPolicyBlock(handler.lines(),"ssh_port","Port 2222",changed,error);
+        },[&](std::string&){return fault=="success" || fault=="reload-unknown" || fault=="reload-fails-once";},"test write");
+        require(result.ok==(fault=="success"),fault+": wrong legacy bool projection");
+        require(result.mayDiscardPrepared(true)==(fault=="CAS") && !result.mayDiscardPrepared(false),fault+": unsafe abort predicate");
+        requireSameSshRecord(originalRecord,diskRecords(tree).at(0));
+        require(diskRecords(tree).size()==1 && diskRecords(tree)[0].id==id,"transaction erased journal ownership");
+        if (fault=="CAS") {
+            require(result.persistentEffect==P::NotInstalled && result.conflict && !result.installedTargetState &&
+                    result.compensation==C::NotAttempted && tree.runtime()->tCalls==0 && tree.runtime()->reloadCalls==0 &&
+                    readFile(tree.configPath())=="Port 22\n# external CAS\n","CAS no-effect facts wrong");
+        } else if (fault=="missing-receipt" || fault=="unknown-write" || fault=="writer-exception") {
+            require(!result.installedTargetState && result.compensation==C::NotAttempted &&
+                    result.persistentEffect==(fault=="missing-receipt" ? P::DurableInstalled : P::Unknown) &&
+                    fileContains(tree.configPath(),kSshBlockBeginPrefix) && tree.runtime()->reloadCalls==0,
+                    fault+": missing/unknown installed evidence accepted");
+        } else {
+            require(result.installedTargetState && result.installedTargetState->content.find("Port 2222")!=std::string::npos,
+                    fault+": writer-issued target state missing");
+            require(result.persistentEffect==((fault=="rename-fsync" || fault=="fsync-once") ? P::Installed : P::DurableInstalled),
+                    fault+": rename/durability conflated");
+            if (fault=="restore-CAS") require(result.compensation==C::RefusedByCAS &&
+                fileContains(tree.configPath(),"external restore") && fileContains(tree.configPath(),kSshBlockBeginPrefix) &&
+                result.installedTargetState->content.find("external restore")==std::string::npos,"CAS restore adopted external state");
+            else if (fault=="before-restore-exception") require(result.compensation==C::FailedOrUnknown &&
+                fileContains(tree.configPath(),kSshBlockBeginPrefix),"unknown compensation effect lost");
+            else if (fault=="rename-fsync" || fault=="restore-fsync") require(result.compensation==C::FailedOrUnknown &&
+                result.restoredTargetState && readFile(tree.configPath())=="Port 22\n" &&
+                result.restoredRuntime==R::NotAttempted,"restore rename was treated as durable");
+            else if (fault=="reload-unknown") require(result.activation==R::FailedOrUnknown && result.compensation==C::NotAttempted &&
+                fileContains(tree.configPath(),kSshBlockBeginPrefix),"lost reload reply treated as no effect");
+            else if (fault!="success") {
+                require(result.compensation==C::RestoredDurably && result.restoredTargetState &&
+                        readFile(tree.configPath())=="Port 22\n" &&
+                        result.restoredTargetState->identity.inode!=result.installedTargetState->identity.inode,
+                        fault+": original/restore receipts conflated");
+                require(result.restoredRuntime==(fault=="runtime-invalid" ? R::FailedOrUnknown : R::LegacyAccepted),
+                        fault+": runtime outcome lost");
+                if (fault=="reload-fails-once") require(result.activation==R::FailedOrUnknown && tree.runtime()->reloadCalls==2,
+                        "legacy accepted reconciliation erased first reload uncertainty");
+            }
+        }
+        std::cout<<"FAULT "<<fault<<" PASS\n";
+    }
+}
+void testPolicyInstalledReceiptUnknownRetainsPrepared() {
+    for (bool receiptMissing : {true,false}) {
+        Stage1FaultReset reset; SshApplyTree tree;
+        tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port","2222");JournalOverride guard(tree.journalPath());
+        setSshSaveOutcomeHookForTests([&](auto& saved){saved.installedTargetState.reset();
+            if (!receiptMissing) {saved.installed=false;saved.durabilityConfirmed=false;}
+        });
+        require(!tree.makePolicy<NET_ssh_port>()->apply(),"unknown writer result succeeded");
+        const auto records=diskRecords(tree);
+        require(records.size()==1 && records[0].status==MutationStatus::Prepared &&
+                std::get<UndoRemoveSshManagedPolicy>(records[0].undo.payload).disabledMutationIds.size()==1 &&
+                fileContains(tree.configPath(),kSshBlockBeginPrefix),"unknown installed state discarded provenance");
+    }
+}
+void testJournalPersistFaultsPreserveEffects() {
+    for (const std::string phase : {"prepare","discard","commit"}) {
+        Stage1FaultReset reset; SshApplyTree tree;
+        tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port","2222");JournalOverride guard(tree.journalPath());
+        std::string error;require(DaemonMutationJournal::instance().tryGet(error)!=nullptr,error);
+        auto failJournal=[&] {AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){return path!=tree.journalPath().string();});};
+        auto policy=tree.makePolicy<NET_ssh_port>();
+        if (phase=="prepare") failJournal();
+        if (phase=="discard") policy->setBeforeWriteHook([&]{
+            writeFile(tree.configPath(),"Port 22\n# external journal abort\n");failJournal();
+        });
+        if (phase=="commit") {
+            const auto delegate=tree.runner();policy->setRunner([&,delegate](const auto& path,const auto& args,const auto& options){
+                auto r=delegate(path,args,options);
+                if (tree.runtime()->tCalls==3 && std::find(args.begin(),args.end(),"-T")!=args.end()) failJournal();
+                return r;
+            });
+        }
+        require(!policy->apply(),phase+": indeterminate journal returned success");
+        require(DaemonMutationJournal::instance().tryGet(error)==nullptr && !error.empty(),"indeterminate journal became usable");
+        const auto bytes=readFile(tree.configPath()), journal=readFile(tree.journalPath());
+        const int reloads=tree.runtime()->reloadCalls;
+        require(!policy->apply() && readFile(tree.configPath())==bytes && readFile(tree.journalPath())==journal &&
+                tree.runtime()->reloadCalls==reloads,"unusable journal allowed mutation/discard");
+        AtomicFileWriter::setDirectoryFsyncHookForTests({});
+        const auto records=diskRecords(tree);
+        if (phase=="discard") require(records.empty() && bytes=="Port 22\n# external journal abort\n",
+            "no-effect discard persist did not retain external bytes");
+        else {
+            require(records.size()==1 && records[0].status==(phase=="prepare" ? MutationStatus::Prepared : MutationStatus::Applied),
+                    "post-rename journal document lost actual provenance/status");
+            const auto& payload=std::get<UndoRemoveSshManagedPolicy>(records[0].undo.payload);
+            require(payload.policyName=="ssh_port" && payload.directive=="Port" && payload.appliedValue=="2222" &&
+                    payload.disabledMutationIds.size()==1,"journal persist lost complete undo payload");
+            require((bytes.find(kSshBlockBeginPrefix)!=std::string::npos)==(phase=="commit"),"prepare failure wrote config / commit lost config");
+        }
+        std::cout<<"FAULT journal-"<<phase<<" PASS\n";
+    }
+}
+void testPolicyDurabilityFailureRetainsPrepared() {
+    for (bool initialBarrierFails : {true,false}) {
+        Stage1FaultReset reset; SshApplyTree tree;
+        tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port","2222");JournalOverride guard(tree.journalPath());
+        auto policy=tree.makePolicy<NET_ssh_port>(); std::optional<MutationRecord> prepared;
+        policy->setBeforeWriteHook([&]{prepared=diskRecords(tree).at(0);});
+        if (!initialBarrierFails) tree.runtime()->failTAfterCall=2;
+        int calls=0;
+        AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){
+            if (path!=tree.configPath().string()) return true;
+            ++calls; return !initialBarrierFails && calls==1;
+        });
+        require(!policy->apply() && prepared.has_value(),"durability fault did not fail installed attempt");
+        require(readFile(tree.configPath())=="Port 22\n" && tree.runtime()->reloadCalls==0 && calls>=3,
+                "restore fsync was not attempted/refused, or unsafe reload happened");
+        const auto records=diskRecords(tree);
+        require(records.size()==1 && records[0].status==MutationStatus::Prepared,"undurable compensation discarded ownership");
+        requireSameSshRecord(*prepared,records[0]);
+        AtomicFileWriter::setDirectoryFsyncHookForTests({});
+        const auto journal=readFile(tree.journalPath());const int runtimeCalls=tree.runtime()->tCalls;
+        require(!policy->apply() && readFile(tree.journalPath())==journal && tree.runtime()->tCalls==runtimeCalls &&
+                tree.runtime()->reloadCalls==0,"undurable restore auto-resolved on retry");
+    }
+}
+
+void testMalformedJournalRefusesBeforeWrite() {
+    SshApplyTree tree;tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port","2222");
+    writeFile(tree.journalPath(),"not a journal\n");JournalOverride guard(tree.journalPath());
+    require(!tree.makePolicy<NET_ssh_port>()->apply() && readFile(tree.configPath())=="Port 22\n" &&
+            readFile(tree.journalPath())=="not a journal\n" && tree.runtime()->tCalls==0 && tree.runtime()->reloadCalls==0,
+            "damaged journal permitted system mutation");
+}
+
 void testApplyReloadFailureRestoresPreAttemptState() {
     SshApplyTree tree;
     const std::string original = "Port 22\n";
@@ -1074,10 +1335,11 @@ void testApplyReloadFailureRestoresPreAttemptState() {
     MutationJournal journal(tree.journalPath());
     std::string error;
     require(journal.load(error), error);
-    for (const MutationRecord& record : journal.records()) {
-        require(!record.isActive(),
-                "a compensated apply must not keep an active record");
-    }
+    require(journal.records().size()==1 && journal.records()[0].status==MutationStatus::Prepared,
+            "file restore alone cannot resolve legacy runtime effects; retain provenance");
+    const auto& payload=std::get<UndoRemoveSshManagedPolicy>(journal.records()[0].undo.payload);
+    require(payload.policyName=="ssh_port" && payload.directive=="Port" && payload.appliedValue=="2222" &&
+            payload.disabledMutationIds.size()==1,"compensated attempt lost ownership permissions");
 }
 
 void testApplyValidationFailureAfterWriteCompensates() {
@@ -1098,10 +1360,11 @@ void testApplyValidationFailureAfterWriteCompensates() {
     MutationJournal journal(tree.journalPath());
     std::string error;
     require(journal.load(error), error);
-    for (const MutationRecord& record : journal.records()) {
-        require(!record.isActive(),
-                "a compensated apply must not keep an active record");
-    }
+    require(journal.records().size()==1 && journal.records()[0].status==MutationStatus::Prepared,
+            "file restore alone cannot resolve legacy runtime effects; retain provenance");
+    const auto& payload=std::get<UndoRemoveSshManagedPolicy>(journal.records()[0].undo.payload);
+    require(payload.policyName=="ssh_port" && payload.directive=="Port" && payload.appliedValue=="2222" &&
+            payload.disabledMutationIds.size()==1,"compensated attempt lost ownership permissions");
 }
 
 void testMultiPolicyIsolationUnderRollback() {
@@ -1531,14 +1794,22 @@ int main() {
          testApplyRollbackRestoresExactOriginalBytes},
         {"other policy block untouched when one policy rolled back",
          testOtherPolicyBlockUntouchedWhenOnePolicyRolledBack},
-        {"prepared after crash is finished and committed",
-         testPreparedAfterCrashIsFinishedAndCommitted},
-        {"stale prepared record on foreign config is discarded",
-         testStalePreparedRecordOnForeignConfigIsDiscarded},
+        {"prepared after crash requires explicit resolution",
+         testPreparedAfterCrashRequiresResolution},
+        {"stale prepared on foreign config requires resolution",
+         testStalePreparedRecordOnForeignConfigRequiresResolution},
         {"prepared with drifted block fails closed",
          testPreparedWithDriftedBlockFailsClosed},
         {"apply concurrent modification is refused",
          testApplyConcurrentModificationIsRefused},
+        {"R1 fresh failed compensation retains provenance", testFailedCompensationRetainsFreshPrepared},
+        {"R1b refresh preinstall failure retains Applied", testAppliedRefreshPreinstallFailure},
+        {"R1b refresh postinstall failure retains Applied", testAppliedRefreshPostinstallFailure},
+        {"typed SSH transaction fault matrix", testTypedTransactionFaultMatrix},
+        {"unknown installed receipt keeps Prepared", testPolicyInstalledReceiptUnknownRetainsPrepared},
+        {"journal prepare/discard/commit faults preserve effects", testJournalPersistFaultsPreserveEffects},
+        {"install/restore durability fault retains Prepared", testPolicyDurabilityFailureRetainsPrepared},
+        {"malformed journal refuses before SSH write", testMalformedJournalRefusesBeforeWrite},
         {"apply reload failure restores pre-attempt state",
          testApplyReloadFailureRestoresPreAttemptState},
         {"apply validation failure after write compensates",

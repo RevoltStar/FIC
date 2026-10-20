@@ -223,18 +223,18 @@ bool Ssh::apply() {
     }
     activeRecords = journal->activeRecords(this->policyRef());
 
-    const auto dropNewPrepared = [this, &newRecord, &mutationId](
-                                     const std::string& context) {
-        if (!newRecord) {
-            return;
+    // Schema 2 cannot distinguish a safe interrupted apply from a failed
+    // compensation or an uncertain service effect. Gate the shared file,
+    // including attempts by another SSH policy, before runtime commands.
+    for (const auto& record : journal->records()) {
+        if (record.undo.backend == fic::rollback::MutationBackend::Ssh &&
+            record.status == fic::rollback::MutationStatus::Prepared &&
+            record.resource.rfind("ssh:" + sshPath + ":", 0) == 0) {
+            this->log("SSH recovery required: unresolved Prepared mutation " +
+                      std::to_string(record.id) + "; автоматическое применение запрещено", logLevel::ERROR);
+            return false;
         }
-        std::string discardError;
-        if (!fic::rollback::discardMutation(mutationId, discardError)) {
-            this->log(context + ": ошибка удаления подготовленной записи "
-                              "mutation journal: " + discardError,
-                      logLevel::WARN);
-        }
-    };
+    }
 
     fic::rollback::UndoRemoveSshManagedPolicy payload;
     payload.policyName = this->policyName;
@@ -299,78 +299,6 @@ bool Ssh::apply() {
                           ownership.error + "; применение отклонено",
                   logLevel::ERROR);
             return false;
-        }
-    }
-    // Finish an interrupted transaction: validate, durability, reload and
-    // commit the journal record. Returns nullopt on hard failure.
-    const auto finishPrepared = [this, &runtime, &sshPath](
-                                    const fic::rollback::MutationRecord& record,
-                                    bool owned) -> std::optional<bool> {
-        std::string validationError;
-        if (!runtime.validateConfiguration(validationError)) {
-            this->log("Prepared SSH-мутация не восстановлена: sshd не "
-                      "принимает текущую конфигурацию: " + validationError,
-                  logLevel::ERROR);
-            return false;
-        }
-        if (owned && this->sshConfig_->loadSnapshot().has_value()) {
-            std::string barrierError;
-            if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
-                    sshPath, *this->sshConfig_->loadSnapshot(),
-                    &barrierError)) {
-                this->log("Prepared SSH-мутация не восстановлена: durability "
-                          "не подтверждена: " + barrierError,
-                      logLevel::ERROR);
-                return false;
-            }
-        }
-        const SshActivationResult activation = runtime.activateIfRunning();
-        if (!activation.ok) {
-            this->log("Prepared SSH-мутация не восстановлена: перезагрузка "
-                      "не удалась: " + activation.message,
-                  logLevel::ERROR);
-            return false;
-        }
-        std::string commitError;
-        if (!fic::rollback::commitMutation(record.id, commitError)) {
-            this->log("Ошибка фиксации восстановленной Prepared записи: " +
-                          commitError,
-                  logLevel::ERROR);
-            return false;
-        }
-        return true;
-    };
-
-    if (hasExistingRecord) {
-        const fic::rollback::MutationRecord& newest = activeRecords.back();
-        if (newest.status == fic::rollback::MutationStatus::Prepared) {
-            if (ownership.blockOwned || ownership.wrappersPresent) {
-                const std::optional<bool> recovery =
-                    finishPrepared(newest, true);
-                if (!recovery.has_value() || !*recovery) {
-                    return false;
-                }
-                this->log("Prepared SSH-мутация восстановлена и зафиксирована",
-                          logLevel::INFO);
-            } else {
-                const std::optional<bool> recovery =
-                    finishPrepared(newest, false);
-                if (!recovery.has_value() || !*recovery) {
-                    return false;
-                }
-                std::string discardError;
-                if (!fic::rollback::discardMutation(newest.id, discardError)) {
-                    this->log("Ошибка удаления устаревшей Prepared записи: " +
-                                  discardError,
-                          logLevel::ERROR);
-                    return false;
-                }
-                this->log("Устаревшая Prepared SSH-мутация согласована и "
-                          "удалена из journal; выполняется обычное применение",
-                      logLevel::INFO);
-                activeRecords.pop_back();
-                hasExistingRecord = !activeRecords.empty();
-            }
         }
     }
     // A value change requires the previous owned state to be rolled back
@@ -546,6 +474,12 @@ bool Ssh::apply() {
                   logLevel::INFO);
         return true;
     }
+    // Do not re-prepare an existing active identity: schema 2 cannot retain
+    // previous/target ownership for REFRESH or safely abort it after a crash.
+    if (hasExistingRecord) {
+        this->log("SSH REFRESH requires ownership transition recovery support; existing mutation preserved", logLevel::ERROR);
+        return false;
+    }
     // ---- Journal: prepare BEFORE touching the system (crash consistency) ----
 
     payload.disabledMutationIds = newWrapperIds;
@@ -608,7 +542,13 @@ bool Ssh::apply() {
         "Политика '" + this->policyName + "' применена к sshd_config");
 
     if (!transaction.ok) {
-        dropNewPrepared(transaction.message);
+        if (transaction.mayDiscardPrepared(newRecord)) {
+            std::string discardError;
+            if (!fic::rollback::discardMutation(mutationId, discardError))
+                this->log("Ошибка удаления no-effect Prepared: " + discardError, logLevel::WARN);
+        } else {
+            this->log("SSH recovery required: unresolved Prepared provenance retained", logLevel::ERROR);
+        }
         this->log("Применение политики '" + this->policyName +
                       "' не выполнено: " + transaction.message,
                   logLevel::ERROR);

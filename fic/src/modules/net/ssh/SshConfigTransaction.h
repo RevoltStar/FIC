@@ -16,11 +16,38 @@ struct SshConfigTransactionHooks {
     std::function<void()> beforeRestore;
 };
 
+enum class SshPersistentEffect { Unknown, NotInstalled, Installed, DurableInstalled };
+enum class SshCompensationEffect { NotAttempted, RestoredDurably, RefusedByCAS, FailedOrUnknown };
+// Legacy command acceptance is diagnostic evidence, NOT verified runtime resolution.
+enum class SshRuntimeReconciliation { NotAttempted, LegacyAccepted, FailedOrUnknown };
+
+#ifdef FIC_SSH_TRANSACTION_TESTING
+// Test-only observation fault: never compiled into production fic.
+void setSshSaveOutcomeHookForTests(std::function<void(FileHandler::FileSaveOutcome&)> hook);
+#endif
+
 struct SshConfigTransactionResult {
     bool ok = false;
     bool conflict = false;    // concurrent external change; nothing was written
     bool nothingToDo = false; // caller-specific; set by the caller, not here
     std::string message;
+    // Facts about THIS write attempt, not a claim about the current pathname.
+    SshPersistentEffect persistentEffect = SshPersistentEffect::Unknown;
+    SshCompensationEffect compensation = SshCompensationEffect::NotAttempted;
+    SshRuntimeReconciliation activation = SshRuntimeReconciliation::NotAttempted;
+    SshRuntimeReconciliation restoredRuntime = SshRuntimeReconciliation::NotAttempted;
+    std::optional<AtomicTargetState> installedTargetState;
+    std::optional<AtomicTargetState> restoredTargetState;
+
+    bool mayDiscardPrepared(bool freshRecord) const {
+        // Stage 1 cannot prove runtime resolution through legacy reload. Even
+        // a durable restore retains provenance after any installed/unknown write.
+        return freshRecord && !ok && persistentEffect == SshPersistentEffect::NotInstalled &&
+               !installedTargetState && !restoredTargetState &&
+               compensation == SshCompensationEffect::NotAttempted &&
+               activation == SshRuntimeReconciliation::NotAttempted &&
+               restoredRuntime == SshRuntimeReconciliation::NotAttempted;
+    }
 };
 
 // Shared conditional transaction over the main sshd_config used by both the
@@ -29,10 +56,12 @@ struct SshConfigTransactionResult {
 //   plan (in-memory edit of the loaded snapshot) ->
 //   conditional atomic write (optimistic precondition, reject symlink,
 //   metadata preservation) -> durability confirmation ->
-//   postcondition verification (persistent content + sshd -t/-T) ->
+//   postcondition verification (persistent content + sshd -T) ->
 //   reload when the SSH service is active ->
 //   on any post-install failure: conditional compensation restore of the
-//   exact pre-attempt snapshot, its durability, validation and reload.
+//   exact pre-attempt snapshot, its durability, validation and legacy reload.
+// Typed facts are separate from ok: even restored bytes + accepted reload do
+// not authorize discarding ownership after an installed/unknown write.
 //
 // The planEdits callback mutates handler.lines(); the write is refused when
 // the file changed after the snapshot was captured. verifyPostcondition must
