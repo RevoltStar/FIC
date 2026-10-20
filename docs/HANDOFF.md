@@ -1,32 +1,34 @@
 # Current working state
 
 ## Current base
-* `main`; task base `01694bc47d1ced9d393aa61181b02a49653ed352`, initially clean. One completion commit requested, no push.
+* `main`; task base `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`, initially clean. Requested one documentation-only commit; no push.
 
 ## Current task
-* SSH Verified Activation Adapter persistent metadata proof hardening; completed; one completion commit, no push.
+* SSH Verified Transaction Lifecycle architecture completed in `docs/ssh-verified-transaction-lifecycle-design.md`. No production/test/CMake/API/journal changes.
 
-## Accepted architecture / invariants
-* Authorized SHA/exact manifests remain caller input. Immutable initial Capture is operation-local identity/metadata evidence, never a desired reference or ownership record.
-* P requires both authorized bytes/manifests and stable roots/entries: exact keys, mount/dev/inode/type/mode, UID/GID, nlink/size/mtime/ctime; ignore atime. Unsupported/unreadable capture => NotProven; observed mismatch => NonCompliant.
-* Private HostKey: root regular 0600/0400 only, no special bits/symlinks/xattrs/ACL, trusted parents. Reuse validateClosure().hostKeys; companion .pub may be 0644.
-* A/B/C/P separate; retain original B including CleanupFailed/primaryStatus/READY/errors/residuals. Runtime success + observed persistent drift => RuntimeActivatedButPersistentDrift; no compensation/restart/extra cleanup.
-* Generic engine/public API, SSH policy apply/rollback, ownership and MutationJournal unchanged. Existing accepted launch/Include/env/executable/readiness boundaries remain.
+## Architecture / proposed decisions
+* Recommend separate SSH coordinator using existing conditional writer/managed ownership and same verified engine; per-policy first, explicit batching later. This is a proposal, not implemented or approved production behavior.
+* Full Success requires persistent/durability/ownership/runtime/cleanup/journal proofs. No automatic compensation after possible restart, runtime promotion, drift or residual mounts. In-memory exact-state compensation only under explicit guards; no historical whole-file restore after crash.
+* Existing Prepared alone cannot encode runtime/action uncertainty. Proposed future typed SSH service operations/checkpoints inside existing MutationJournal, preserving outer statuses; atomic previous/target owner transitions and wrapper body fingerprints. Schema upgrade needs explicit approval; no migration code written.
+* Separate external authority grants from FIC ownership and operation metadata baseline. No read-current→hash→authorize fallback.
+* Release needs future ConfigurationOnly mode with remaining-enabled-policy proof, no proof of disabled value. ConfiguredInactive needs explicit public Deferred/availability contract before rollout. Existing Ubuntu/ALT LegacyReload stays distinct; no strict-to-legacy fallback.
+* Durable intents represent may-have-happened at crash gaps, not invented exact syscall histories. Private mount boundaries/LSM/profile constraints remain; no automatic mount recovery.
 
-## Completed / changed areas
-* service/ssh/SshVerifiedActivationAdapter.cpp and internal SshPersistentMetadata.h: compare initial/final evidence; FD-based bounded readTree plus visible-root identity recheck; final digest uses bytes from that same capture. Errors acquiring metadata cannot establish a mismatch.
-* Unit tests: 145 contract checks, including metadata/map keys, SHA/manifest, atime, P error classification, private key modes and existing exact policy values/bounds/IDs.
-* Existing real OpenSSH harness: 11 new deterministic metadata cases per Debian; preopened FD mutation after Watching, original Include child replacement with unchanged bytes. Protected-window ssh-keyscan before cleanup; old handshake assertions unchanged.
-* Adapter docs and historical native report follow-up; new sanitized ssh-verified-activation-metadata-evidence.json preserves historical evidence.
+## Confirmed current issues (not fixed)
+* R1: post-install transaction failure + compensation CAS refusal → unconditional dropNewPrepared deletes provenance while installed FIC markers remain.
+* R2: same-value Port refresh replaces old wrapper IDs with only new IDs; apply returns success, next rollback conflicts on old wrappers.
+* R3: known wrapper ID with edited disabled-line body passes existing ID-only provenance and gets unwrapped.
+* R4: apply and RollbackExecutor use different process mutexes; shared-lock comment is inaccurate. Cross-process serialization also absent.
+* R5: unchanged owned scalar block can return apply=true after known NonCompliant weakening Match.
+* Further static risks: Prepared recovery reload/commit before selected-value proof; current AtomicTargetState has no full metadata/mount witness; reload/active is not verified runtime.
 
 ## Validation
-* Real OpenSSH Docker Debian12/13 final gates: each 30 old generic + 41 adapter PASS, 0 FAIL/SKIP; six metadata-only drift cases each preserve A/C Proven, B Success, P NonCompliant. Added post-publication xattr => P NotProven/B Success; initial unsafe key mode/xattr/ACL refuse before engine; 0400 key/.pub0644 stable success.
-* Final logs: build-openssh-native/logs/metadata-debian{12,13}-final.log. Evidence collector checks 41 unique adapter cases, 6 overall Success/8 drift, actual metadata-only unchanged bytes, protected handshakes/listeners, runner IDs, unchanged unit/caller SSH and restored sshd -t.
-* Generic standalone Docker: Debian12/13 201 PASS/0 SKIP each; Ubuntu24.04/26.04 202 PASS/0 SKIP each; ALT p11 201 PASS/1 existing stock Include copy-up SKIP. Ubuntu26.04 first run stopped on existing observer InterferenceDetected; unchanged full repeat PASS (metadata-ubuntu2604-repeat.log). No assertions weakened.
-* Full Debian12 build PASS. First full CTest: one new unit fixture failure (manifest bytes changed without corresponding metadata map); corrected fixture, direct final unit executable 145 PASS. Final full configure/build + CTest PASS: 188 PASS, 0 FAIL, 1 expected native opt-in SKIP, 189 total, 184.97s; build-openssh-native/logs/metadata-full-debian12-final.log.
-* harness.py --self-test, sanitized evidence collector, git diff --check PASS.
+* Production call graphs, ownership/parser, conditional save/restore/durability, journal health/witness/finalization, adapter/generic boundaries, disable and incident projection audited against code.
+* Docker Debian12 existing targeted CTest: 6/6 PASS, 4.63s (`mutation_journal_tests`, `rollback_executor_tests`, `ssh_runtime_tests`, `ssh_apply_rollback_tests`, `verified_config_service_tests`, `ssh_verified_activation_tests`).
+* Four isolated probes using unchanged production objects + existing SshApplyTree/JournalOverride fake runner confirm R1/R2/R3/R5. No host SSH/runtime changes. Research harness/logs `/tmp/fic-ssh-lifecycle-audit/{repro.cpp,build.py,results.log,ctest.log}`; document includes reproduction plan/output. Initial missing runtime initialization was a harness issue, fixed with existing fixture setup.
+* No new native OpenSSH/systemd/full-build gates: documentation-only work; previous native reports remain historical. Proposed lifecycle/recovery is not implemented/tested.
+* `git diff --check` PASS; expected repository diff only this HANDOFF and the new design document.
 
-## Remaining / limits
-* No unfinished implementation. Fourteen-point security review recorded in the native report; final diff reviewed. No push authorized.
-* One WSL2 kernel, not distro VM/kernel matrix. Momentary post-cleanup P, no post-return monitoring; hidden privileged/coarse-ctime ABA and race after last check remain documented.
-* READY/selected-policy C do not prove later connections/authentication/PAM semantics. Debian12 can reread unsafe original key after cleanup; new handshake is therefore measured while snapshot is published. Debian13 ssh-keyscan banner goes to stdout, Debian12 stderr; both formats verified from cached exact sources.
+## Remaining
+* No implementation authorized by this task. Future first commits should fix R1/provenance and R5/compliance, then typed transitions/fingerprints/service checkpoints; full roadmap/test and 23-point crash matrices are in the design.
+* Approval gates before relevant implementation: public Deferred/stopped contract, external grant administration, restart availability/budgets, journal schema/upgrade with missing historical wrapper evidence, private-boundary deployment and unsupported release closure handling.
