@@ -3119,3 +3119,20 @@ target_link_libraries(ssh_verified_activation_tests PRIVATE fic-core fic-platfor
 add_test(NAME ssh_verified_activation_tests COMMAND ssh_verified_activation_tests)
 set_tests_properties(ssh_verified_activation_tests PROPERTIES LABELS unit)
 target_sources(verified_config_service_native_tests PRIVATE ${FIC_SSH_VERIFIED_SOURCES})
+
+add_executable(daemon_instance_lock_tests
+    fic/daemon/DaemonInstanceLockTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(daemon_instance_lock_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+add_test(NAME daemon_instance_lock_tests COMMAND daemon_instance_lock_tests)
+set_tests_properties(daemon_instance_lock_tests PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
+
+if(Python3_Interpreter_FOUND)
+    add_test(NAME daemon_singleton_startup_static_checks
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/daemon-singleton/static_checks.py ${CMAKE_SOURCE_DIR})
+endif()
+if(Python3_Interpreter_FOUND)
+    add_test(NAME daemon_singleton_startup_native
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/daemon-singleton/startup_native.py $<TARGET_FILE:fic> $<TARGET_FILE:daemon_instance_lock_tests>)
+    set_tests_properties(daemon_singleton_startup_native PROPERTIES TIMEOUT 40 SKIP_RETURN_CODE 77)
+endif()

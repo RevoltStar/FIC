@@ -41,6 +41,7 @@
 #include "modules/identity_access/pam/PamSlotAttachValidator.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include "rollback/DaemonMutationJournal.h"
+#include "daemon/DaemonInstanceLock.h"
 #include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
@@ -1630,6 +1631,18 @@ int main(int argc, char* argv[]) {
     std::string pathError;
     if (!fic::core::FicRuntimePaths::initializeProduction(pathError)) {
         std::cerr << "failed to initialize FIC runtime paths: " << pathError << std::endl;
+        return 1;
+    }
+
+    // Runtime-path initialization above is memory-only. This must precede
+    // config checks whose failure can trigger incident/SSH containment, all
+    // journal access and the startup policy pass. Custom sockets share it.
+    fic::daemon::DaemonInstanceLock daemonInstance;
+    const bool daemonMode = get_arg_value(argc, argv, 1) != "--maintenance" &&
+                            !packageTrustSync && !affectedPackageTrustSync;
+    if (daemonMode && !daemonInstance.tryAcquire(
+            fic::core::FicRuntimePaths::get().runtimeDir, pathError)) {
+        std::cerr << "refusing daemon startup: " << pathError << std::endl;
         return 1;
     }
 

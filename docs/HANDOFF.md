@@ -1,31 +1,27 @@
 # Current working state
 
 ## Current base
-* `main`; Stage 2 base `4578127d2798b7f1f3ee4fce543cded9b4a01af5`, initially clean. One completion commit requested: `fix(ssh): enforce compliance on unchanged owned state`; no push.
+* `main`; task base `9467b4a7073a999de1a3ac2b6e14c4c2d174ed98`, initially clean. One separate daemon singleton-lock commit, no push.
 
-## Current task
-* Stage 2 SSH R5 completed; final native/full validation passed. One completion commit, no push.
-
-## Accepted architecture / invariants
-* Ownership/journal/marker checks and shared-config Prepared gate precede effective commands. One typed compliance result before planning: Compliant permits owned/foreign no-op; unchanged owned NonCompliant/Unknown fails with reason before prepare/write/reload. Correct owned text alone is insufficient.
-* Private SshRuntime verification/audit helpers retain Unknown for unavailable/malformed evidence and NonCompliant for observed mismatch. Existing bool verification contract and post-write checks retained. No new parser/public API/enum.
-* Stage 1 unchanged: fresh Prepared discard only proven NotInstalled/no effects; installed/unknown writes retain Prepared. Full shared-config Prepared admission gate, no finishPrepared/blind reload/commit/discard. REFRESH requiring existing identity re-prepare refuses before write. Applied ID/full payload retained.
-* Effective configuration from sshd -T is not verified live runtime. No generic/adapter/transaction/AtomicFileWriter/MutationJournal/schema/rollback/incident/platform changes.
+## Current task / accepted scope
+* User deferred SSH Stage 3A: first implement early daemon-wide singleton. Only daemon mode, independent of --socket; maintenance/trust-sync/read-only routes unchanged. Do not implement SSH Stage 3A in this commit.
+* Lock before any startup journal/incident containment/apply; held for daemon lifetime. No IPC-based singleton. Root-controlled descriptor traversal + root-owned 0600 single-link regular lockfile + nonblocking flock; no symlinks, metadata repair, PID authority or unlink on exit.
+* Singleton serializes daemon processes sharing production runtime directory/filesystem namespace, not ALL FIC writers. Standalone/package coordination explicitly remains separate work.
 
 ## Completed / changed areas
-* Production: `fic/src/modules/net/ssh/{Ssh.cpp,SshRuntime.cpp,SshRuntime.h}` only.
-* Nine new R5 cases in existing full SSH executable: root/pubkey/maxtries Match, incompatible effective UsePAM, included Port, unavailable -T, missing parameter, invalid Port output, unavailable recursive Include audit. Each proves negative premise, two failed retries without effects, durable Applied preservation and recovery to successful owned no-op after external repair. Existing foreign compliant/malformed/orphan/Stage 1 cases retained.
-* Total executable: 52 scenarios, 17 nested Stage 1 fault outcomes. No-write SUCCESS audit and boundaries documented in design §23.
-* Existing native runner includes real OpenSSH semantic probes on Debian12/13 only; remaining distro gates retain full fixture executable. Temporary configs/keys only, no host/service restart. Conditional Match User root changes root/pubkey/maxtries; UsePAM disallowed in conditional Match; Include adds Port. Match all is already reflected by ordinary -T on tested OpenSSH; fixture runner is not a second OpenSSH implementation. UsePAM negative fixture injects incompatible effective output, not a claimed first-wins bypass via Include.
+* `fic/src/daemon/DaemonInstanceLock.{h,cpp}`; integrated in `fic/src/main.cpp` after memory-only runtime-path initialization and before maintenance routing/config failure containment/journal/registry/apply. Read-only flags still return earlier; daemonMode excludes maintenance/trust sync.
+* Root-owned fixtures/process tests use pipes, bounded watchdog, real flock/fork: contention, simultaneous start, release/restart, SIGKILL/restart, exception cleanup, invalid owner/mode/path/symlink/hardlink/FIFO/directory. No sleeps or host apply.
+* Production ordering static check and disposable-only real daemon rejection probe added to CTest. Probe compares security-file snapshots for default/custom socket, checks read-only flags/maintenance scope and crash/reacquisition.
+* `docs/daemon-singleton.md`: implementation contract + read-only audit of all standalone maintenance/trust-sync actions and Debian/RPM scripts, classifications and mandatory follow-ups. No package script/backend lifecycle changes. Started SSH Stage 3A test edits were removed before this task; SSH production/tests unchanged.
 
 ## Validation
-* RED before production fix: six R5 cases fail by false apply=true after independently established NonCompliant/Unknown; `/tmp/fic-ssh-stage2-red.log`.
-* Targeted SSH apply/rollback + runtime CTest PASS; `/tmp/fic-ssh-stage2-green.log`.
-* Final native Docker Debian12/13, Ubuntu24.04/26.04, ALT p11: each 52 PASS/0 FAIL/0 SKIP plus 17 fault outcomes. Logs `build-ssh-provenance/<row>/native.log`; Debian additionally 3 OPENSSH PASS each (OpenSSH9.2/10.0p2).
-* Full Debian12 configure/build + full CTest PASS: 188 PASS/0 FAIL/1 expected opt-in SKIP (`verified_config_service_native_tests`), 189 total, 181.94s. Includes SSH runtime/apply-rollback, MutationJournal/RollbackExecutor. `/tmp/fic-ssh-stage2-full-debian12.log`.
-* Shell syntax checks and `git diff --check` PASS. Final scope/diff reviewed; production fic symbol scan confirms no test-only save-outcome setter.
+* Targeted Debian12 lock CTest PASS; `/tmp/fic-singleton-targeted.log`.
+* Debian13 native g++ C++17 -Wall -Wextra -Werror compile and process suite PASS; `/tmp/fic-singleton-debian13.log`.
+* Startup boundary static check PASS. Standalone command audit coverage checked against main command selectors. Final diff/scope reviewed; `git diff --check` PASS.
+* Full Debian12 configure/build + full CTest PASS with `FIC_DAEMON_SINGLETON_NATIVE=1`: 191 PASS/0 FAIL/1 expected generic native opt-in SKIP (192 total), 170.99s. All three new lock/static/real-startup tests PASS; `/tmp/fic-singleton-full-debian12.log`.
 
-## Remaining / limitations
-* No unfinished Stage 2 implementation/validation. No push.
-* R2 full previous/target REFRESH, R3 wrapper body fingerprints, R4 shared resource lock and coordinator/verified activation integration remain future work. Stage 3 must cover bypass of shared Prepared gate through rollback of another SSH policy; no RollbackExecutor redesign here.
-* Schema 2 unresolved Prepared still requires explicit administrative resolution. Legacy value-change release→fresh apply and explicit rollback routes unchanged. Five userspaces on one WSL2 kernel, no real SSH activation/PAM/login or five-kernel VM claim.
+## Remaining / confirmed risks
+* No unfinished singleton implementation/validation. One separate daemon singleton commit, no push. SSH Stage 3A not started; maintenance/package coordination requires separate agreement.
+* Confirmed by source audit: release commands can write shared MutationJournal/resources while daemon is running; no whole-journal interprocess admission. Some resource locks exist, but journal loads precede them and cross-backend journal remains outside their domain.
+* Package preflight entrypoints use operational tryGet/initializeOrLoad, potentially creating journal/witness despite RO backend. RPM erase suppresses stop errors and proceeds to release without stopped proof. Debian checks active after bounded stop, but absent/failing manager, transitional/manual processes remain unproven. These are mandatory separate package/maintenance coordination tasks, not fixed here; see authoritative audit doc.
+* Existing SSH Stage 1/2 unchanged. SSH Stage 3A shared process-local mutex/Prepared gate pending; R2 full REFRESH, R3 fingerprints and coordinator remain future work. No global multiprocess journal safety or live SSH/PAM validation claim.
