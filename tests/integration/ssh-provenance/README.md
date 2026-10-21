@@ -30,3 +30,16 @@ not real sshd/systemd/PAM behavior or a five-kernel VM matrix.
 Related full-project gates (Debian12): `ssh_runtime_tests`, `rollback_executor_tests`,
 `mutation_journal_tests`, `atomic_file_writer_remove_tests`. The native script only
 builds/runs the complete SSH apply/rollback suite; full CTest remains separate.
+
+Debian 12/13 images also require OpenSSH server/client tools. After the fixture
+executable, `openssh-semantics.sh` runs real `sshd -T` and `-T -C` against temporary
+configs/keys: conditional root/pubkey/maxtries overrides, rejection of conditional
+`Match User root`/`UsePAM`, and an additional included Port. `Match all` itself is
+already considered by ordinary `-T` on the tested versions; the conditional probe
+therefore uses `Match User root`. No daemon/listener/reload/restart is started.
+`OPENSSH PASS` lines are separate from the executable's regression case counts.
+The script requires an explicit disposable-container marker and creates `/run/sshd`
+only inside that container. These probes confirm directive semantics, not the
+fixture runner's realism or runtime activation. The UsePAM regression injects an
+incompatible effective result; it does not claim an Include can override a
+first-obtained owned global UsePAM line.

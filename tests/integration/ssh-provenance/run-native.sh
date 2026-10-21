@@ -26,6 +26,10 @@ for row in "${rows[@]}"; do
    cmake --build /build --target ssh_apply_rollback_tests -j4
    ctest --test-dir /build --output-on-failure
    /build/ssh_apply_rollback_tests
+   case "$1" in
+    debian-12|debian-13)
+     FIC_DISPOSABLE_NATIVE=1 sh /src/tests/integration/ssh-provenance/openssh-semantics.sh;;
+   esac
   ' sh "$platform" > "$logs/native.log" 2>&1
  tail -12 "$logs/native.log"
 done

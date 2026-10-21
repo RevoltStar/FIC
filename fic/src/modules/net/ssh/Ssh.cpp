@@ -107,22 +107,6 @@ bool verifyEffectiveValue(SshRuntime& runtime,
     return runtime.verifyPolicyValue(directive, expectedValue, error);
 }
 
-bool isEffectivelyCompliant(SshRuntime& runtime,
-                            SshDirectiveSemantics semantics,
-                            const std::string& directive,
-                            const std::string& expectedValue) {
-    if (semantics == SshDirectiveSemantics::MultiValue) {
-        std::vector<std::string> values;
-        std::string error;
-        if (!runtime.effectiveValues(directive, values, error)) {
-            return false;
-        }
-        return values.size() == 1 && values.front() == expectedValue;
-    }
-    const SshComplianceResult compliance =
-        runtime.policyValueCompliance(directive, expectedValue);
-    return compliance.compliance == SshCompliance::Compliant;
-}
 
 } // namespace
 
@@ -393,8 +377,9 @@ bool Ssh::apply() {
 
     // Compliance fast-path: a configuration that already satisfies the
     // policy must not be rewritten (idempotent re-apply).
-    if (isEffectivelyCompliant(runtime, semantics, this->sshParameter,
-                               expectedValue)) {
+    const SshComplianceResult compliance =
+        runtime.policyValueCompliance(this->sshParameter, expectedValue);
+    if (compliance.compliance == SshCompliance::Compliant) {
         this->log(LocalizationManager::getLang(
                       "[module:NET][submodule:SshEdit][message:already_configured]") +
                       this->sshParameter + " = " + expectedValue,
@@ -467,12 +452,12 @@ bool Ssh::apply() {
     }
 
     if (!changed && hasExistingRecord) {
-        // Nothing to change and the state is already owned: idempotent.
-        this->log(LocalizationManager::getLang(
-                      "[module:NET][submodule:SshEdit][message:already_configured]") +
-                      this->sshParameter + " = " + expectedValue,
-                  logLevel::INFO);
-        return true;
+        this->log("SSH unchanged owned state: " +
+                      std::string(compliance.compliance == SshCompliance::NonCompliant
+                                      ? "noncompliant: " : "compliance unknown: ") +
+                      compliance.error,
+                  logLevel::ERROR);
+        return false;
     }
     // Do not re-prepare an existing active identity: schema 2 cannot retain
     // previous/target ownership for REFRESH or safely abort it after a crash.

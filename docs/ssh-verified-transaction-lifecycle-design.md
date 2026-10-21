@@ -2,7 +2,7 @@
 
 ## 1. Executive summary
 
-**Статус: проект целевого lifecycle; реализован только Stage 1 из §22.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
+**Статус: проект целевого lifecycle; реализованы Stage 1 (§22) и Stage 2 (§23).** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
 Production, API, journal schema и поведение политик этим документом не изменяются.
 
 Рекомендация: отдельный **SSH transaction coordinator** (вариант B), переиспользующий
@@ -1227,3 +1227,96 @@ verified transaction lifecycle. Пять userspaces проверены на од
 не заявляется VM/kernel matrix. Нормальный legacy apply success не переименован в
 verified success; public API, generic activator/SSH adapter, journal schema 2,
 incident subsystem и platform profiles не менялись.
+
+## 23. Stage 2 — unchanged owned state требует effective compliance
+
+База: `4578127d2798b7f1f3ee4fce543cded9b4a01af5`. Это узкое исправление R5,
+не реализация coordinator или verified runtime activation.
+
+### Механизм и исправление
+
+Раньше bool helper терял причину отрицательной effective-проверки, а следующая
+ветка `!changed && hasExistingRecord` возвращала true, поскольку owned-строка уже
+содержала эталон. Ни unchanged text, ни ownership сами по себе не доказывают
+соответствие всей effective configuration.
+
+Теперь после всех существующих provenance/marker checks вычисляется один
+`SshComplianceResult`. Общий `SshRuntime::policyValueCompliance` сохраняет причины:
+
+* `Compliant`: разрешён прежний успешный no-op — с ownership или без него.
+* `NonCompliant`: наблюдаемое несовместимое effective значение, дополнительный
+  порт/неверный ListenAddress либо небезопасный conditional override. Если planning
+  не меняет существующий owned-блок, отказ до prepare/write, с причиной в log.
+* `Unknown`: ошибка `sshd -T`, отсутствующий параметр, недостоверный port output,
+  неоднозначный scalar output или незавершённый conditional audit. Тот же отказ
+  без записи; недоступность доказательства не названа доказанным нарушением.
+
+Private runtime helpers возвращают существующий typed result вместо bool;
+`verifyPolicyValue` сохраняет публичный bool contract и диагностику. Нового parser,
+public API или enum нет. Port проверяется общим verifier: effective набор должен
+содержать только ожидаемый порт; ошибка/отсутствие вывода не означает Compliant.
+Реальная запись по-прежнему требует отдельной прежней postcondition-проверки.
+Переписывать правильную owned-строку для устранения внешнего Match/Include нельзя:
+это не устраняет причину отказа и создаёт ненужные lifecycle effects.
+
+### Аудит no-write SUCCESS в `Ssh::apply`
+
+| Ветка | Что доказано / почему SUCCESS | NonCompliant / Unknown | Prepared / ownership |
+|---|---|---|---|
+| Compliance fast-path | Загружен journal, пройдены прежние marker/provenance checks и effective result Compliant; запись не нужна | Оба исключены явным сравнением enum | Shared-config Prepared gate выполнен до runtime commands; foreign compliant не получает ownership, Applied остаётся прежним |
+| Прежняя `!changed && hasExistingRecord` | Только совпадение owned-текста, недостаточное для SUCCESS | Оба достижимы, поэтому теперь false с диагностикой | Ни prepare, ни изменение Applied, ни reload |
+| Final return true | Успешная transaction с прежними write/durability/postcondition/activation checks и commit journal | Это не no-write fast-path | Fresh planning создаёт отсутствующий policy block; existing changed planning остановлено Stage 1 REFRESH refusal |
+
+Остальные `return true` в файле относятся к helper postcondition и plan callback,
+а не успешному завершению `Ssh::apply`. Value-change release→fresh apply сохраняет
+прежний lifecycle: последующий fast-path требует Compliant, но операция в целом
+уже могла изменять файл через release. Не добавлена новая no-write ветка.
+
+Stage 1 не изменён: unresolved Prepared того же config блокирует все apply до
+`sshd -T`; нет finishPrepared/blind reload/commit/discard; REFRESH admission
+закрыт; Installed/Unknown effects сохраняют Prepared, только fresh proven no-install
+может discard. Transaction, writer receipts, compensation, MutationJournal/schema,
+rollback helpers, generic/adapter, incident subsystem и platform profiles не менялись.
+
+### Regression evidence и границы
+
+RED до production fix: шесть новых постоянных сценариев (root/pubkey/maxtries Match,
+несовместимый UsePAM output, дополнительный included Port, unavailable `sshd -T`)
+дошли до независимо подтверждённого отрицательного runtime result и получили
+ложный true. Лог `/tmp/fic-ssh-stage2-red.log`. Остальные Stage 1 tests проходили.
+
+GREEN: эти шесть плюс missing effective parameter, invalid port output и recursive
+Include/audit unavailable. Каждый проверяет два отказа подряд, byte-for-byte main
+config и Include, journal bytes, отдельно перечитанный Applied ID/status/full payload,
+отсутствие Prepared, beforeWrite/save/compensation/reload. После внешнего устранения
+причины тот же owner проходит два Compliant no-op без записи/reload/journal changes.
+Существующие foreign compliant, malformed/orphan и полный Stage 1 fault matrix
+остаются в том же executable: 52 сценария и 17 nested fault outcomes.
+
+На Debian 12/13 дополнительно выполняется real OpenSSH `sshd -T`/`-T -C` probe в
+одноразовом контейнере с временными ключами/configs. `Match User root` реально меняет
+PermitRootLogin/PubkeyAuthentication/MaxAuthTries при compliant global output;
+conditional UsePAM запрещён, Include реально добавляет второй Port. `Match all`
+сам учитывается обычным `-T` на проверенных версиях: fixture tests отдельно
+упражняют conditional audit, а не моделируют его глобальный вывод дословно.
+UsePAM regression подаёт несовместимый effective output через runner; не заявляется,
+что Include способен переопределить first-obtained owned global UsePAM.
+
+Даже Compliant означает effective **configuration**, а не доказанное состояние
+работающего sshd. Нет real systemd restart/READY/PAM/login доказательств. Пять
+контейнерных userspaces используют один WSL2 kernel.
+
+Открыты R2 (полноценный previous/target REFRESH), R3 (wrapper body fingerprints),
+R4 (общий resource lock), coordinator/verified activation integration. Обязательный
+Stage 3 regression: rollback другой SSH-политики может обойти Prepared gate;
+RollbackExecutor в Stage 2 не переделывается.
+
+Финальная validation: native Docker Debian12/13, Ubuntu24.04/26.04, ALT p11 —
+каждый 52 PASS/0 FAIL/0 SKIP, включая 17 nested fault outcomes. Debian12/13 —
+дополнительно по 3 OPENSSH PASS (9.2 / 10.0p2). Полные configure/build Debian12
+и весь CTest: 188 PASS/0 FAIL/1 ожидаемый opt-in SKIP
+(`verified_config_service_native_tests`), 189 total, 181.94s; отдельно подтверждены
+SSH runtime/apply-rollback, MutationJournal, RollbackExecutor. Лог
+`/tmp/fic-ssh-stage2-full-debian12.log`, native — `build-ssh-provenance/<row>/native.log`.
+Shell syntax checks и `git diff --check` PASS; production fic не содержит test-only
+save-outcome setter по symbol scan. Ни host SSH, ни systemd service не изменялись.

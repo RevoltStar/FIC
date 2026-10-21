@@ -215,15 +215,15 @@ bool SshRuntime::effectiveValues(const std::string& parameter,
     return false;
 }
 
-bool SshRuntime::auditConditionalOverrides(const std::string& parameter,
-                                           const std::string& expectedValue,
-                                           std::string& error) const {
+SshComplianceResult SshRuntime::auditConditionalOverrides(
+    const std::string& parameter, const std::string& expectedValue) const {
+    std::string error;
     const std::filesystem::path includeBase = options_.includeBasePath.empty()
         ? options_.configPath.parent_path()
         : options_.includeBasePath;
     if (!includeBase.is_absolute()) {
         error = "SSH Include base path must be absolute";
-        return false;
+        return {SshCompliance::Unknown, error};
     }
 
     SshConfigAuditOptions auditOptions;
@@ -235,7 +235,7 @@ bool SshRuntime::auditConditionalOverrides(const std::string& parameter,
     std::vector<SshConditionalOccurrence> occurrences;
     if (!audit.findConditionalOccurrences(parameter, occurrences, error)) {
         error = "failed to audit conditional SSH configuration: " + error;
-        return false;
+        return {SshCompliance::Unknown, error};
     }
 
     for (const SshConditionalOccurrence& occurrence : occurrences) {
@@ -246,23 +246,22 @@ bool SshRuntime::auditConditionalOverrides(const std::string& parameter,
                     occurrence.condition + " has value '" + occurrence.value +
                     "', which is weaker than or incompatible with expected value '" +
                     expectedValue + "'";
-            return false;
+            return {SshCompliance::NonCompliant, error};
         }
     }
-    error.clear();
-    return true;
+    return {SshCompliance::Compliant, {}};
 }
 
-bool SshRuntime::verifyLoadedConfiguration(
+SshComplianceResult SshRuntime::verifyLoadedConfiguration(
     const EffectiveConfiguration& configuration,
     const std::string& parameter,
-    const std::string& expectedValue,
-    std::string& error) const {
+    const std::string& expectedValue) const {
+    std::string error;
     const std::string normalizedParameter = lowerCopy(parameter);
     const auto found = configuration.find(normalizedParameter);
     if (found == configuration.end() || found->second.empty()) {
         error = "sshd -T output does not contain parameter " + parameter;
-        return false;
+        return {SshCompliance::Unknown, error};
     }
 
     if (normalizedParameter == "port") {
@@ -270,7 +269,7 @@ bool SshRuntime::verifyLoadedConfiguration(
         if (!parseDecimal(expectedValue, expectedPort) ||
             expectedPort < 1 || expectedPort > 65535) {
             error = "invalid expected SSH port '" + expectedValue + "'";
-            return false;
+            return {SshCompliance::Unknown, error};
         }
 
         std::set<int> effectivePorts;
@@ -278,7 +277,7 @@ bool SshRuntime::verifyLoadedConfiguration(
             int port = 0;
             if (!parseDecimal(value, port) || port < 1 || port > 65535) {
                 error = "sshd -T returned invalid port '" + value + "'";
-                return false;
+                return {SshCompliance::Unknown, error};
             }
             effectivePorts.insert(port);
         }
@@ -292,7 +291,7 @@ bool SshRuntime::verifyLoadedConfiguration(
             }
             error = "effective SSH ports are [" + actual +
                     "], expected the single port " + std::to_string(expectedPort);
-            return false;
+            return {SshCompliance::NonCompliant, error};
         }
 
         const auto listenAddresses = configuration.find("listenaddress");
@@ -303,7 +302,7 @@ bool SshRuntime::verifyLoadedConfiguration(
                     error = "effective ListenAddress '" + value +
                             "' uses port " + std::to_string(listenPort) +
                             ", expected " + std::to_string(expectedPort);
-                    return false;
+                    return {SshCompliance::NonCompliant, error};
                 }
             }
         }
@@ -311,16 +310,16 @@ bool SshRuntime::verifyLoadedConfiguration(
         if (found->second.size() != 1) {
             error = "sshd -T returned " + std::to_string(found->second.size()) +
                     " effective values for scalar parameter " + parameter;
-            return false;
+            return {SshCompliance::Unknown, error};
         }
         if (!scalarValueMatches(parameter, found->second.front(), expectedValue)) {
             error = "effective SSH value '" + found->second.front() +
                     "' does not match expected value '" + expectedValue + "'";
-            return false;
+            return {SshCompliance::NonCompliant, error};
         }
     }
 
-    return auditConditionalOverrides(parameter, expectedValue, error);
+    return auditConditionalOverrides(parameter, expectedValue);
 }
 
 bool SshRuntime::verifyPolicyValue(const std::string& parameter,
@@ -336,7 +335,9 @@ bool SshRuntime::verifyPolicyValue(const std::string& parameter,
         return false;
     }
 
-    return verifyLoadedConfiguration(configuration, parameter, expectedValue, error);
+    const auto result = verifyLoadedConfiguration(configuration, parameter, expectedValue);
+    error = result.error;
+    return result.compliance == SshCompliance::Compliant;
 }
 
 SshComplianceResult SshRuntime::policyValueCompliance(
@@ -357,13 +358,7 @@ SshComplianceResult SshRuntime::policyValueCompliance(
         return result;
     }
 
-    if (verifyLoadedConfiguration(configuration, parameter, expectedValue, error)) {
-        result.compliance = SshCompliance::Compliant;
-    } else {
-        result.compliance = SshCompliance::NonCompliant;
-        result.error = error;
-    }
-    return result;
+    return verifyLoadedConfiguration(configuration, parameter, expectedValue);
 }
 
 bool SshRuntime::validateConfiguration(std::string& error) const {

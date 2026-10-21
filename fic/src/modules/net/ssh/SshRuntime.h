@@ -81,13 +81,11 @@ private:
 
     bool loadEffectiveConfiguration(EffectiveConfiguration& configuration,
                                     std::string& error) const;
-    bool verifyLoadedConfiguration(const EffectiveConfiguration& configuration,
-                                   const std::string& parameter,
-                                   const std::string& expectedValue,
-                                   std::string& error) const;
-    bool auditConditionalOverrides(const std::string& parameter,
-                                   const std::string& expectedValue,
-                                   std::string& error) const;
+    SshComplianceResult verifyLoadedConfiguration(
+        const EffectiveConfiguration& configuration,
+        const std::string& parameter, const std::string& expectedValue) const;
+    SshComplianceResult auditConditionalOverrides(
+        const std::string& parameter, const std::string& expectedValue) const;
 };
 
 #endif // SSHRUNTIME_H

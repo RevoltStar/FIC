@@ -1073,6 +1073,133 @@ void requireSameSshRecord(const MutationRecord& a, const MutationRecord& b) {
             x->directive==y->directive && x->appliedValue==y->appliedValue &&
             x->disabledMutationIds==y->disabledMutationIds, "SSH record identity/status/full payload changed");
 }
+// R5: an unchanged owned line is not an effective-compliance proof.
+template <typename PolicyT>
+void unchangedOwnedComplianceCase(const std::string& policyName,
+                                  const std::string& directive,
+                                  const std::string& expected,
+                                  const std::string& initial,
+                                  const std::string& external,
+                                  const std::string& badOutput = {},
+                                  bool unknown = false,
+                                  bool unavailableProof = false) {
+    SshApplyTree tree;
+    tree.writeConfig(initial);
+    tree.writePolicyValue(policyName, expected);
+    JournalOverride guard(tree.journalPath());
+    auto policy = tree.makePolicy<PolicyT>();
+    const auto delegate = tree.runner();
+    // Supply real directive values omitted by the small fixture's default -T.
+    const auto goodRunner = [&](const auto& path, const auto& args, const auto& options) {
+        auto result = delegate(path, args, options);
+        if (result.exitCode == 0 && std::find(args.begin(), args.end(), "-T") != args.end()) {
+            if (directive == "PubkeyAuthentication")
+                result.standardOutput = "pubkeyauthentication " +
+                    std::string(readFile(tree.configPath()).find("PubkeyAuthentication yes") != std::string::npos ? "yes" : "no") + "\n";
+            if (directive == "MaxAuthTries")
+                result.standardOutput = "maxauthtries " +
+                    std::string(readFile(tree.configPath()).find("MaxAuthTries 3") != std::string::npos ? "3" : "6") + "\n";
+        }
+        return result;
+    };
+    policy->setRunner(goodRunner);
+    require(policy->apply(), "R5 initial owned apply");
+    const auto owned = readFile(tree.configPath());
+    const auto record = diskRecords(tree).at(0);
+    require(record.status == MutationStatus::Applied, "R5 requires Applied ownership");
+    const auto journalBytes = readFile(tree.journalPath());
+    const auto include = tree.tree.root / "extra.conf";
+    writeFile(include, "Port 2200\n");
+    tree.writeConfig(owned + external);
+    const auto drifted = readFile(tree.configPath());
+    const auto includeBytes = readFile(include);
+    const auto negativeRunner = [&](const auto& path, const auto& args, const auto& options) {
+        if (std::find(args.begin(), args.end(), "-T") != args.end()) {
+            if (unknown) return sshFailing("deterministic unavailable sshd -T");
+            if (!badOutput.empty()) return sshSuccess(badOutput);
+        }
+        return goodRunner(path, args, options);
+    };
+    SshRuntimeOptions options;
+    options.configPath = tree.configPath();
+    options.includeBasePath = tree.tree.root;
+    SshRuntime runtime(options, tree.executables(), negativeRunner);
+    const auto negative = runtime.policyValueCompliance(directive, expected);
+    require(!negative.error.empty(), "negative compliance must retain diagnostic reason");
+    require(negative.compliance ==
+                ((unknown || unavailableProof) ? SshCompliance::Unknown : SshCompliance::NonCompliant),
+            "R5 negative runtime premise must be independently established");
+    int writes = 0;
+    int saves = 0;
+    policy->setBeforeWriteHook([&] { ++writes; });
+    setSshSaveOutcomeHookForTests([&](auto&) { ++saves; });
+    struct ResetHook { ~ResetHook() { setSshSaveOutcomeHookForTests({}); } } reset;
+    policy->setRunner(negativeRunner);
+    const int reloads = tree.runtime()->reloadCalls;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        require(!policy->apply(), "R5 unchanged noncompliant/unknown ownership must fail");
+        require(readFile(tree.configPath()) == drifted, "R5 changed configuration");
+        require(readFile(include) == includeBytes, "R5 changed Include");
+        require(readFile(tree.journalPath()) == journalBytes, "R5 changed journal bytes");
+        const auto records = diskRecords(tree);
+        require(records.size() == 1, "R5 created Prepared ownership");
+        requireSameSshRecord(record, records.at(0));
+        require(writes == 0 && saves == 0 && tree.runtime()->reloadCalls == reloads,
+                "R5 performed write/compensation/reload");
+    }
+    tree.writeConfig(owned);
+    policy->setRunner(goodRunner);
+    SshRuntime restored(options, tree.executables(), goodRunner);
+    require(restored.policyValueCompliance(directive, expected).compliance == SshCompliance::Compliant,
+            "external repair must establish compliance");
+    require(policy->apply(), "repaired owned state must allow compliant no-op");
+    require(policy->apply(), "compliant idempotent no-op");
+    require(readFile(tree.configPath()) == owned && readFile(tree.journalPath()) == journalBytes,
+            "compliant no-op changed persistent state");
+    requireSameSshRecord(record, diskRecords(tree).at(0));
+    require(writes == 0 && saves == 0 && tree.runtime()->reloadCalls == reloads,
+            "compliant no-op performed effects");
+}
+void testR5RootMatch() {
+    unchangedOwnedComplianceCase<NET_ssh_root_login>("ssh_root_login", "PermitRootLogin", "no",
+        "PermitRootLogin yes\n", "Match all\n PermitRootLogin yes\n");
+}
+void testR5PubkeyMatch() {
+    unchangedOwnedComplianceCase<NET_ssh_pubkey_auth>("ssh_pubkey_auth", "PubkeyAuthentication", "yes",
+        "PubkeyAuthentication no\n", "Match all\n PubkeyAuthentication no\n");
+}
+void testR5MaxTriesMatch() {
+    unchangedOwnedComplianceCase<NET_ssh_max_auth_tries>("ssh_max_auth_tries", "MaxAuthTries", "3",
+        "MaxAuthTries 6\n", "Match all\n MaxAuthTries 6\n");
+}
+void testR5PamEffectiveMismatch() {
+    // UsePAM is global-only in OpenSSH: use incompatible effective output,
+    // not an invalid Match/UsePAM construction.
+    unchangedOwnedComplianceCase<NET_ssh_use_pam>("ssh_use_pam", "UsePAM", "yes",
+        "UsePAM no\n", "# effective oracle reports incompatible UsePAM\n", "usepam no\n");
+}
+void testR5IncludedPort() {
+    unchangedOwnedComplianceCase<NET_ssh_port>("ssh_port", "Port", "2222",
+        "Port 22\n", "Include extra.conf\n", "port 2222\nport 2200\n");
+}
+void testR5Unknown() {
+    unchangedOwnedComplianceCase<NET_ssh_root_login>("ssh_root_login", "PermitRootLogin", "no",
+        "PermitRootLogin yes\n", "", "", true);
+}
+
+void testR5MissingEffectiveParameter() {
+    unchangedOwnedComplianceCase<NET_ssh_root_login>("ssh_root_login", "PermitRootLogin", "no",
+        "PermitRootLogin yes\n", "", "usepam yes\n", false, true);
+}
+void testR5InvalidEffectivePort() {
+    unchangedOwnedComplianceCase<NET_ssh_port>("ssh_port", "Port", "2222",
+        "Port 22\n", "", "port invalid\n", false, true);
+}
+void testR5UnavailableAudit() {
+    unchangedOwnedComplianceCase<NET_ssh_root_login>("ssh_root_login", "PermitRootLogin", "no",
+        "PermitRootLogin yes\n", "Include sshd_config\n", "", false, true);
+}
+
 void testFailedCompensationRetainsFreshPrepared() {
     SshApplyTree tree; tree.writeConfig("Port 22\n"); tree.writePolicyValue("ssh_port","2222");
     JournalOverride guard(tree.journalPath()); auto policy=tree.makePolicy<NET_ssh_port>();
@@ -1745,6 +1872,15 @@ int main() {
         const char* name;
         void (*test)();
     } tests[] = {
+        {"R5 root Match", testR5RootMatch},
+        {"R5 pubkey Match", testR5PubkeyMatch},
+        {"R5 max tries Match", testR5MaxTriesMatch},
+        {"R5 PAM effective mismatch", testR5PamEffectiveMismatch},
+        {"R5 included port", testR5IncludedPort},
+        {"R5 unknown", testR5Unknown},
+        {"R5 missing effective parameter", testR5MissingEffectiveParameter},
+        {"R5 invalid effective port", testR5InvalidEffectivePort},
+        {"R5 unavailable audit", testR5UnavailableAudit},
         {"compliant effective state causes no mutation",
          testCompliantEffectiveStateCausesNoMutation},
         {"UsePAM apply and rollback", testUsePamApplyAndRollback},
