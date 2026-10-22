@@ -42,6 +42,7 @@
 #include "policy/registry/PolicyRegistryJson.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "daemon/DaemonInstanceLock.h"
+#include "daemon/MaintenanceAdmission.h"
 #include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
@@ -1640,9 +1641,17 @@ int main(int argc, char* argv[]) {
     fic::daemon::DaemonInstanceLock daemonInstance;
     const bool daemonMode = get_arg_value(argc, argv, 1) != "--maintenance" &&
                             !packageTrustSync && !affectedPackageTrustSync;
-    if (daemonMode && !daemonInstance.tryAcquire(
+    const auto maintenanceAdmission = get_arg_value(argc, argv, 1) == "--maintenance"
+        ? fic::daemon::maintenanceIntent(get_arg_value(argc, argv, 2), get_arg_value(argc, argv, 3))
+        : fic::daemon::MaintenanceIntent::ReadOnly;
+    if (get_arg_value(argc, argv, 1) == "--maintenance" &&
+        maintenanceAdmission == fic::daemon::MaintenanceIntent::Invalid) {
+        std::cerr << "unsupported maintenance command/action" << std::endl;
+        return 1;
+    }
+    if ((daemonMode || fic::daemon::requiresInstanceLock(maintenanceAdmission)) && !daemonInstance.tryAcquire(
             fic::core::FicRuntimePaths::get().runtimeDir, pathError)) {
-        std::cerr << "refusing daemon startup: " << pathError << std::endl;
+        std::cerr << (daemonMode ? "refusing daemon startup: " : "refusing maintenance admission: ") << pathError << std::endl;
         return 1;
     }
 

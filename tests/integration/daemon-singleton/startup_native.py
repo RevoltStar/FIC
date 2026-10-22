@@ -43,6 +43,17 @@ try:
         assert 'another daemon instance holds the lock' in result.stderr, result.stderr
         assert snapshot() == before, 'rejected startup changed security/journal/runtime files'
         assert not Path('/tmp/fic-singleton-custom.sock').exists(), 'created custom socket before lock'
+    for domain in ('dm', 'desktop', 'pam-provider', 'pam-password'):
+        result = subprocess.run([daemon, '--maintenance', domain + '-prerm-prepare', 'release'],
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode != 0 and 'another daemon instance holds the lock' in result.stderr, result.stderr
+        assert snapshot() == before, (domain, 'release modified persistent state before admission')
+    for args in (['ensure-config'], ['ensure-config-first-install'], ['incident-init'],
+                 ['bootstrap-pam-password-slots'], ['incident-pam-alt', 'attach'], ['incident-pam-alt', 'detach']):
+        result = subprocess.run([daemon, '--maintenance', *args],
+                                capture_output=True, text=True, timeout=10)
+        assert result.returncode != 0 and 'another daemon instance holds the lock' in result.stderr, result.stderr
+        assert snapshot() == before, (args, 'mutation before admission')
     for flag in ('--version', '--build-info', '--trust-list-platform-paths'):
         result = subprocess.run([daemon, flag], capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, (flag, result.stderr)

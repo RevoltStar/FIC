@@ -56,6 +56,13 @@ Read-only flags, `--maintenance` и trust-sync не захватывают daemo
 
 ## Read-only аудит standalone entrypoints
 
+Ниже — исходный аудит `90f8207`, сохранённый как обоснование M1. Текущие
+исправления M1-A/B и оставшиеся ограничения описаны в
+[maintenance-admission.md](maintenance-admission.md): preflight уже read-only,
+а перечисленные exclusive standalone writers получают daemon.lock. Это ещё не
+package-wide coordination; legacy/manual writers и package scripts остаются
+отдельной незавершённой частью. Таблица ниже не является текущим перечнем гарантий.
+
 Это аудит исходников, не доказательство native package lifecycle. Обозначения:
 **RO** — чтение managed state; **RS** — существующая resource serialization;
 **STOP** — mutation, безопасный контракт которой требует остановленного daemon.
