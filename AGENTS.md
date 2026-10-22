@@ -641,3 +641,33 @@ git diff --check
 Не используй `HANDOFF.md` как changelog.
 
 Следующий агент должен иметь возможность продолжить текущую задачу из `docs/HANDOFF.md`, не восстанавливая предыдущую переписку.
+
+
+## 17. Package lifecycle и lifecycle runtime
+
+При изменениях daemon/maintenance/packaging сохраняй принятый M1 contract:
+
+* Один engine и один daemon.lock для daemon, закрытой package-session и recovery.
+  Не добавляй второй policy/ownership engine, arbitrary executor, FD/environment
+  authority или force/bypass.
+* Предварительный runtime должен быть доступен до mutating preinst/%pre и переживать
+  удаление основного FIC. Версии/ABI, package ordering и отсутствие циклов проверяются
+  native package-manager tests; одного dependency declaration недостаточно.
+* Durable fence/tombstone сохраняется вне package-owned/deleted деревьев через
+  crash/reboot/purge. Неизвестное состояние fail-closed. Нет автоматического adoption.
+* Удаление lifecycle runtime двухстадийное: после удаления/purge FIC finalizer
+  сохраняет durable proof завершённого lifecycle вне package transaction. Runtime
+  prerm/%preun допускает erase только с proof из предыдущей завершённой transaction
+  и свежими проверками. Отсутствия FIC в package database недостаточно.
+* Совместный erase/autoremove может отказать с сохранённым runtime. Отказ не меняет
+  journal, PAM/incident protection или lifecycle provenance. Повторное удаление и
+  reinstall не обходят fence. Собственный postrm/%postun runtime не требует уже
+  удалённого ELF и не удаляет tombstone.
+* Postinst оставляет InstalledButFenced. Только deferred finalizer со свежими
+  package/journal/PAM/incident proofs завершает lifecycle. Temporary retries
+  ограничиваются по частоте/стоимости, не общим количеством; permanent watcher
+  не добавляется без отдельного архитектурного решения.
+
+Authoritative design: `docs/maintenance-runtime-package-design.md` и
+`docs/maintenance-finalizer-retry-lifecycle.md`. Текущий implementation/validation
+status смотри в `docs/HANDOFF.md`; принятый contract не означает, что весь M1 готов.

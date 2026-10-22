@@ -43,6 +43,10 @@ DaemonInstanceLock::~DaemonInstanceLock() {
     if (descriptor_ >= 0) ::close(descriptor_);
 }
 
+bool DaemonInstanceLock::heldByCurrentProcess() const {
+    return descriptor_ >= 0 && ownerProcess_ == ::getpid();
+}
+
 bool DaemonInstanceLock::tryAcquire(const std::filesystem::path& directory,
                                     std::string& error) {
     error.clear();
@@ -93,6 +97,7 @@ bool DaemonInstanceLock::tryAcquire(const std::filesystem::path& directory,
         pinned.st_dev != before.st_dev || pinned.st_ino != before.st_ino)
         return fail(error, "lockfile identity changed during acquisition");
     descriptor_ = file.release();
+    ownerProcess_ = ::getpid();
     return true;
 }
 } // namespace fic::daemon

@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <string>
+#include <sys/types.h>
 
 namespace fic::daemon {
 
@@ -14,10 +15,12 @@ public:
     ~DaemonInstanceLock();
     DaemonInstanceLock(const DaemonInstanceLock&) = delete;
     DaemonInstanceLock& operator=(const DaemonInstanceLock&) = delete;
+    bool heldByCurrentProcess() const;
     bool tryAcquire(const std::filesystem::path& runtimeDirectory, std::string& error);
 
 private:
     int descriptor_ = -1;
+    pid_t ownerProcess_ = -1;
 };
 
 } // namespace fic::daemon

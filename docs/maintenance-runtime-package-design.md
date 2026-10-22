@@ -3,9 +3,8 @@
 ## Статус
 
 Выделение runtime одобрено пользователем. Это проект пакетной архитектуры и native
-RED reproductions, **не реализация безопасного FIC package lifecycle**. Runtime
-retention при удалении требует отдельного принятия двухстадийного workflow (вопрос
-задан). Production packaging ещё не изменён; никаких fallback на legacy binary.
+RED reproductions, **не реализация безопасного FIC package lifecycle**. Двухстадийный runtime retention принят: преждевременный совместный erase/autoremove
+явно отказывает, сохраняя runtime до proof из предыдущей завершённой transaction. Production packaging ещё не изменён; никаких fallback на legacy binary.
 
 ## Схема ownership и зависимости
 
@@ -96,7 +95,7 @@ ALT RPM с prerequisite ABI сохранил helper в `main %postun`, но со
 Ни `postrm`, ни `%postun` собственного runtime не могут запустить удалённый ELF.
 Нельзя ждать завершения родительской transaction в его script.
 
-### Предложенный retention contract — ждёт согласования
+### Принятый двухстадийный retention contract
 
 * Обычный remove/purge FIC сохраняет runtime установленным. Main release completion
   означает лишь завершение security release; это **не proof удаления пакета**.

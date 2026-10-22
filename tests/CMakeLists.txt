@@ -3144,3 +3144,57 @@ endif()
 add_executable(maintenance_admission_tests fic/daemon/MaintenanceAdmissionTests.cpp)
 target_include_directories(maintenance_admission_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 add_test(NAME maintenance_admission_tests COMMAND maintenance_admission_tests)
+add_executable(stopped_writers_proof_tests fic/daemon/StoppedWritersProofTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/StoppedWritersProof.cpp)
+target_include_directories(stopped_writers_proof_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+add_test(NAME stopped_writers_proof_tests COMMAND stopped_writers_proof_tests)
+add_executable(package_lifecycle_state_tests fic/daemon/PackageLifecycleStateTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_lifecycle_state_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_lifecycle_state_tests PRIVATE fic-core)
+add_test(NAME package_lifecycle_state_tests COMMAND package_lifecycle_state_tests)
+set_tests_properties(package_lifecycle_state_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(package_finalizer_retry_tests fic/daemon/PackageFinalizerRetryTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_finalizer_retry_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_finalizer_retry_tests PRIVATE fic-core)
+add_test(NAME package_finalizer_retry_tests COMMAND package_finalizer_retry_tests)
+set_tests_properties(package_finalizer_retry_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(package_lifecycle_crash_tests fic/daemon/PackageLifecycleCrashTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_lifecycle_crash_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_lifecycle_crash_tests PRIVATE fic-core)
+add_test(NAME package_lifecycle_crash_tests COMMAND package_lifecycle_crash_tests)
+set_tests_properties(package_lifecycle_crash_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(package_manager_transaction_lock_tests fic/daemon/PackageManagerTransactionLockTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageManagerTransactionLock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_manager_transaction_lock_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+add_test(NAME package_manager_transaction_lock_tests COMMAND package_manager_transaction_lock_tests)
+set_tests_properties(package_manager_transaction_lock_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+target_link_libraries(package_manager_transaction_lock_tests PRIVATE fic-platform fic-core)
+add_executable(package_unit_masks_tests fic/daemon/PackageUnitMasksTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageUnitMasks.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_unit_masks_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_unit_masks_tests PRIVATE fic-core)
+add_test(NAME package_unit_masks_tests COMMAND package_unit_masks_tests)
+set_tests_properties(package_unit_masks_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(package_writer_processes_tests fic/daemon/PackageWriterProcessesTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp)
+target_include_directories(package_writer_processes_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_writer_processes_tests PRIVATE fic-core)
+add_test(NAME package_writer_processes_tests COMMAND package_writer_processes_tests)
+set_tests_properties(package_writer_processes_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(package_writers_quiescence_native_driver
+    integration/maintenance-lifecycle/QuiescenceDriver.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWritersQuiescence.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageUnitMasks.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/StoppedWritersProof.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_writers_quiescence_native_driver PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_writers_quiescence_native_driver PRIVATE fic-core fic-platform)

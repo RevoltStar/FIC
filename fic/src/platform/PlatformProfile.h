@@ -62,6 +62,8 @@ enum class PackageManagerKind {
 struct PackageManagerPlatformConfig {
     PackageManagerKind kind = PackageManagerKind::Dpkg;
     std::vector<std::filesystem::path> queryCandidates;
+    // Actual POSIX record-lock files, acquired in this order by the finalizer.
+    std::vector<std::filesystem::path> transactionLocks;
 };
 
 struct HostCompatibility {

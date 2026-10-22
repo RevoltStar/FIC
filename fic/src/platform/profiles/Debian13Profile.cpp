@@ -81,6 +81,7 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     profile.packageManager.kind = PackageManagerKind::Dpkg;
     profile.packageManager.queryCandidates = {"/usr/bin/dpkg-query", "/bin/dpkg-query"};
+    profile.packageManager.transactionLocks = {"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"};
     profile.ssh.configPath = "/etc/ssh/sshd_config";
     profile.ssh.includeBasePath = "/etc/ssh";
     profile.ssh.serviceUnits = {"ssh.service", "sshd.service"};

@@ -92,6 +92,7 @@ PlatformProfile makeBuildPlatformProfile() {
     };
     profile.packageManager.kind = PackageManagerKind::Rpm;
     profile.packageManager.queryCandidates = {"/bin/rpm", "/usr/bin/rpm"};
+    profile.packageManager.transactionLocks = {"/var/lib/rpm/.rpm.lock"};
     profile.ssh.configPath = "/etc/openssh/sshd_config";
     profile.ssh.includeBasePath = "/etc/openssh";
     profile.ssh.serviceUnits = {"sshd.service"};

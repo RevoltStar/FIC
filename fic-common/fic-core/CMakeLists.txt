@@ -25,6 +25,7 @@ add_library(fic-core STATIC
     src/config/SectionConfigFileHandler.cpp
     src/config/SingleLineFileHandler.cpp
     src/fs/AtomicFileWriter.cpp
+    src/fs/RootControlledDirectory.cpp
     src/fs/FileHandler.cpp
     src/fs/FileStats.cpp
     src/fs/SecureStateFile.cpp
