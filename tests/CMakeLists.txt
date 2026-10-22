@@ -3136,3 +3136,8 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/daemon-singleton/startup_native.py $<TARGET_FILE:fic> $<TARGET_FILE:daemon_instance_lock_tests>)
     set_tests_properties(daemon_singleton_startup_native PROPERTIES TIMEOUT 40 SKIP_RETURN_CODE 77)
 endif()
+if(Python3_Interpreter_FOUND)
+    add_test(NAME maintenance_preflight_native
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/daemon-singleton/preflight_native.py $<TARGET_FILE:fic>)
+    set_tests_properties(maintenance_preflight_native PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)
+endif()

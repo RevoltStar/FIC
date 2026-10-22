@@ -1,5 +1,19 @@
 # Ранний daemon singleton и границы standalone-команд
 
+## M1-A: read-only pre-stop preflight
+
+Четыре `*-prerm-prepare preflight` открывают отдельный journal через
+`validatePersistentStateReadOnly()`. Они не используют operational singleton,
+не bootstrap/recover/migrate journal/witness. Virgin/corrupt provenance даёт
+fail-closed отказ без изменения persistent state. Release по-прежнему открывает
+fresh operational journal; preflight не является разрешением на stale release.
+
+Native regression запускает настоящие четыре CLI routes на virgin/corrupt state,
+сравнивает persistent snapshots и требует отказа. Baseline RED: DM preflight
+создавал provenance до отказа backend. GREEN: все четыре route read-only.
+Это исправление не закрывает package-wide gap или legacy writer fencing.
+Дальнейший M1 admission/recovery рассматривается отдельно.
+
 ## Контракт daemon mode
 
 Один daemon process FIC удерживает `/run/fic/daemon.lock` (точнее,

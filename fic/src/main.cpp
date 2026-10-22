@@ -1647,13 +1647,25 @@ int main(int argc, char* argv[]) {
     }
 
     if (get_arg_value(argc, argv, 1) == "--maintenance") {
+        // Pre-stop inspection must never bootstrap or recover operational
+        // provenance. Release still opens fresh operational state separately.
+        std::unique_ptr<fic::rollback::MutationJournal> inspectedJournal;
+        const auto maintenanceJournal = [&](bool preflight, std::string& error)
+            -> fic::rollback::MutationJournal* {
+            if (!preflight)
+                return fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+            inspectedJournal = std::make_unique<fic::rollback::MutationJournal>(
+                fic::core::FicRuntimePaths::get().mutationJournalFile);
+            if (!inspectedJournal->validatePersistentStateReadOnly(error)) return nullptr;
+            return inspectedJournal.get();
+        };
         if (get_arg_value(argc, argv, 2) == "dm-prerm-prepare") {
             const auto action = get_arg_value(argc, argv, 3);
             if (::geteuid() != 0 || (action != "preflight" && action != "release")) {
                 std::cerr << "dm-prerm-prepare requires root and preflight/release" << std::endl; return 1;
             }
             std::string error;
-            auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+            auto* journal = maintenanceJournal(action == "preflight", error);
             if (!journal) { std::cerr << error << std::endl; return 1; }
             const fic::platform::PlatformExecutableResolver executables(platform.executables);
             DisplayManagerConfigTransaction backend(executables, platform.displayManager);
@@ -1671,7 +1683,7 @@ int main(int argc, char* argv[]) {
                 std::cerr << "desktop-prerm-prepare requires root and preflight/release" << std::endl; return 1;
             }
             std::string error;
-            auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+            auto* journal = maintenanceJournal(action == "preflight", error);
             if (!journal) { std::cerr << error << std::endl; return 1; }
             DesktopGlobalConfigReconciler coordinator({std::make_shared<GnomeSystemBackend>(executables),
                 std::make_shared<FlySystemBackend>()}, journal);
@@ -2058,7 +2070,7 @@ int main(int argc, char* argv[]) {
             }
             std::string providerJournalError;
             fic::rollback::MutationJournal* providerJournal =
-                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                maintenanceJournal(providerMode == PamProviderPackageRelease::Mode::Preflight,
                     providerJournalError);
             if (providerJournal == nullptr) {
                 std::cerr << "FIC mutation journal unavailable (fail "
@@ -2165,7 +2177,7 @@ int main(int argc, char* argv[]) {
             }
             std::string journalError;
             fic::rollback::MutationJournal* releaseJournal =
-                fic::rollback::DaemonMutationJournal::instance().tryGet(
+                maintenanceJournal(mode == PamPasswordPackageRelease::Mode::Preflight,
                     journalError);
             if (releaseJournal == nullptr) {
                 std::cerr << "FIC mutation journal unavailable (fail "
