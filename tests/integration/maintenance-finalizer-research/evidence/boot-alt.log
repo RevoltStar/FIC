@@ -1,0 +1,1 @@
+PASS: boot-enabled oneshot dispatched after private systemd container restart

@@ -1,0 +1,1 @@
+PASS: oneshot crash → bounded systemd on-failure restart, FIFO barriers

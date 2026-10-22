@@ -1,0 +1,82 @@
+
+Executing(%install): /bin/sh -e /tmp/rpmb-tmp.Kz7FIU
++ umask 022
++ /bin/mkdir -p /var/lib/m1-rpm-research/build/BUILD
++ cd /var/lib/m1-rpm-research/build/BUILD
++ /bin/chmod -Rf u+rwX -- /tmp/fic-m1-status-probe-buildroot
++ /bin/rm -rf -- /tmp/fic-m1-status-probe-buildroot
++ PATH=/usr/libexec/rpm-build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
++ mkdir -p /tmp/fic-m1-status-probe-buildroot/usr/share/fic-m1-status-probe
++ echo fixture
++ /usr/lib/rpm/brp-alt
+Cleaning files in /tmp/fic-m1-status-probe-buildroot (auto)
+Verifying and fixing files in /tmp/fic-m1-status-probe-buildroot (binconfig,pkgconfig,libtool,desktop,gnuconfig)
+Checking contents of files in /tmp/fic-m1-status-probe-buildroot/ (default)
+Compressing files in /tmp/fic-m1-status-probe-buildroot (auto)
+Verifying ELF objects in /tmp/fic-m1-status-probe-buildroot (arch=normal,fhs=normal,lfs=relaxed,lint=relaxed,rpath=normal,stack=normal,textrel=normal,unresolved=normal)
+Splitting links to aliased files under /{,s}bin in /tmp/fic-m1-status-probe-buildroot
+Processing files: fic-m1-status-probe-1-1
+Finding Requires(post) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.BqmGOB
+find-scriptlet-requires: FINDPACKAGE-COMMANDS: python3 rpm
+Requires(post): /bin/sh, python3, rpm
+Wrote: /var/lib/m1-rpm-research/build/RPMS/noarch/fic-m1-status-probe-1-1.noarch.rpm (w2.lzdio)
+
+Preparing...                            ################################# [100%]
+Updating / installing...
+1: fic-m1-status-probe-1-1              ################################# [100%]
+INSIDE_POST: 1-1
+RPM_TRANSACTION_LOCK=HELD
+INSIDE_FILETRIGGER: fic-m1-status-probe-1-1.noarch
+RPM_TRANSACTION_LOCK=HELD
+Running /usr/lib/rpm/posttrans-filetriggers
+
+TRANSACTION_EXIT: 0
+AFTER_TRANSACTION:
+fic-m1-status-probe-1-1.noarch
+
+RPM_TRANSACTION_LOCK=FREE
+
+
+Executing(%install): /bin/sh -e /tmp/rpmb-tmp.J4P8uD
++ umask 022
++ /bin/mkdir -p /var/lib/m1-rpm-research/build/BUILD
++ cd /var/lib/m1-rpm-research/build/BUILD
++ /bin/chmod -Rf u+rwX -- /tmp/fic-m1-status-probe-buildroot
++ /bin/rm -rf -- /tmp/fic-m1-status-probe-buildroot
++ PATH=/usr/libexec/rpm-build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
++ mkdir -p /tmp/fic-m1-status-probe-buildroot/usr/share/fic-m1-status-probe
++ echo fixture
++ /usr/lib/rpm/brp-alt
+Cleaning files in /tmp/fic-m1-status-probe-buildroot (auto)
+Verifying and fixing files in /tmp/fic-m1-status-probe-buildroot (binconfig,pkgconfig,libtool,desktop,gnuconfig)
+Checking contents of files in /tmp/fic-m1-status-probe-buildroot/ (default)
+Compressing files in /tmp/fic-m1-status-probe-buildroot (auto)
+Verifying ELF objects in /tmp/fic-m1-status-probe-buildroot (arch=normal,fhs=normal,lfs=relaxed,lint=relaxed,rpath=normal,stack=normal,textrel=normal,unresolved=normal)
+Splitting links to aliased files under /{,s}bin in /tmp/fic-m1-status-probe-buildroot
+Processing files: fic-m1-status-probe-1-2
+Finding Requires(post) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.lN1F2X
+find-scriptlet-requires: FINDPACKAGE-COMMANDS: python3 rpm
+Requires(post): /bin/sh, python3, rpm
+Wrote: /var/lib/m1-rpm-research/build/RPMS/noarch/fic-m1-status-probe-1-2.noarch.rpm (w2.lzdio)
+
+Preparing...                            ################################# [100%]
+Updating / installing...
+1: fic-m1-status-probe-1-2              ################################# [ 50%]
+INSIDE_POST: 1-1
+1-2
+RPM_TRANSACTION_LOCK=HELD
+error: %post(fic-m1-status-probe-1-2.noarch) scriptlet failed, exit status 1
+error: fic-m1-status-probe-1-2.noarch: install failed
+error: fic-m1-status-probe-1-1.noarch: erase skipped
+Running /usr/lib/rpm/posttrans-filetriggers
+
+TRANSACTION_EXIT: 1
+AFTER_TRANSACTION:
+fic-m1-status-probe-1-1.noarch
+fic-m1-status-probe-1-2.noarch
+
+RPM_TRANSACTION_LOCK=FREE
+
+PASS: native RPM install/upgrade/post failure visibility and transaction lock research

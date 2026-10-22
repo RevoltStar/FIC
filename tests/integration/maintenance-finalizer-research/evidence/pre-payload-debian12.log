@@ -1,0 +1,20 @@
+dpkg-deb: building package 'fic-m1-payload-probe' in '/var/lib/m1-pre-payload/1.deb'.
+
+Selecting previously unselected package fic-m1-payload-probe.
+(Reading database ... 27634 files and directories currently installed.)
+Preparing to unpack /var/lib/m1-pre-payload/1.deb ...
+PRE_PAYLOAD_HELPER=absent
+Unpacking fic-m1-payload-probe (1) ...
+Setting up fic-m1-payload-probe (1) ...
+POST_PAYLOAD_HELPER=1
+
+dpkg-deb: building package 'fic-m1-payload-probe' in '/var/lib/m1-pre-payload/2.deb'.
+
+(Reading database ... 27635 files and directories currently installed.)
+Preparing to unpack /var/lib/m1-pre-payload/2.deb ...
+PRE_PAYLOAD_HELPER=1
+Unpacking fic-m1-payload-probe (2) over (1) ...
+Setting up fic-m1-payload-probe (2) ...
+POST_PAYLOAD_HELPER=2
+
+PASS: first pre-script has no helper; upgrade pre-script sees only OLD helper; new helper appears after payload

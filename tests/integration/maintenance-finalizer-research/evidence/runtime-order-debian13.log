@@ -1,0 +1,325 @@
+dpkg-deb: building package 'fic-m1-runtime-probe' in '/var/lib/m1-runtime-order/runtime1.deb'.
+
+dpkg-deb: building package 'fic-m1-main-probe' in '/var/lib/m1-runtime-order/main1.deb'.
+
+dpkg-deb: building package 'fic-m1-runtime-probe' in '/var/lib/m1-runtime-order/runtime2.deb'.
+
+dpkg-deb: building package 'fic-m1-main-probe' in '/var/lib/m1-runtime-order/main2.deb'.
+
+Selecting previously unselected package fic-m1-main-probe.
+dpkg: regarding .../lib/m1-runtime-order/main1.deb containing fic-m1-main-probe, pre-dependency problem:
+ fic-m1-main-probe pre-depends on fic-m1-runtime-probe (= 1)
+  fic-m1-runtime-probe is not installed.
+
+dpkg: error processing archive /var/lib/m1-runtime-order/main1.deb (--install):
+ pre-dependency problem - not installing fic-m1-main-probe
+Errors were encountered while processing:
+ /var/lib/m1-runtime-order/main1.deb
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following NEW packages will be installed:
+  fic-m1-main-probe fic-m1-runtime-probe
+0 upgraded, 2 newly installed, 0 to remove and 0 not upgraded.
+Need to get 0 B/1988 B of archives.
+After this operation, 0 B of additional disk space will be used.
+Get:1 /var/lib/m1-runtime-order/runtime1.deb fic-m1-runtime-probe all 1 [948 B]
+Get:2 /var/lib/m1-runtime-order/main1.deb fic-m1-main-probe all 1 [1040 B]
+Selecting previously unselected package fic-m1-runtime-probe.
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 22310 files and directories currently installed.)
+Preparing to unpack .../m1-runtime-order/runtime1.deb ...
+Unpacking fic-m1-runtime-probe (1) ...
+Setting up fic-m1-runtime-probe (1) ...
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 22311 files and directories currently installed.)
+Preparing to unpack .../lib/m1-runtime-order/main1.deb ...
+Unpacking fic-m1-main-probe (1) ...
+Setting up fic-m1-main-probe (1) ...
+
+dpkg: regarding .../lib/m1-runtime-order/main2.deb containing fic-m1-main-probe, pre-dependency problem:
+ fic-m1-main-probe pre-depends on fic-m1-runtime-probe (= 2)
+  fic-m1-runtime-probe is installed, but is version 1.
+
+dpkg: error processing archive /var/lib/m1-runtime-order/main2.deb (--install):
+ pre-dependency problem - not installing fic-m1-main-probe
+Errors were encountered while processing:
+ /var/lib/m1-runtime-order/main2.deb
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following packages will be upgraded:
+  fic-m1-main-probe fic-m1-runtime-probe
+2 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.
+Need to get 0 B/1988 B of archives.
+After this operation, 0 B of additional disk space will be used.
+Get:1 /var/lib/m1-runtime-order/runtime2.deb fic-m1-runtime-probe all 2 [948 B]
+Get:2 /var/lib/m1-runtime-order/main2.deb fic-m1-main-probe all 2 [1040 B]
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 22313 files and directories currently installed.)
+Preparing to unpack .../m1-runtime-order/runtime2.deb ...
+Unpacking fic-m1-runtime-probe (2) over (1) ...
+Setting up fic-m1-runtime-probe (2) ...
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 22313 files and directories currently installed.)
+Preparing to unpack .../lib/m1-runtime-order/main2.deb ...
+Unpacking fic-m1-main-probe (2) over (1) ...
+Setting up fic-m1-main-probe (2) ...
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following packages will be DOWNGRADED:
+  fic-m1-main-probe fic-m1-runtime-probe
+0 upgraded, 0 newly installed, 2 downgraded, 0 to remove and 0 not upgraded.
+Need to get 0 B/1988 B of archives.
+After this operation, 0 B of additional disk space will be used.
+Get:1 /var/lib/m1-runtime-order/runtime1.deb fic-m1-runtime-probe all 1 [948 B]
+Get:2 /var/lib/m1-runtime-order/main1.deb fic-m1-main-probe all 1 [1040 B]
+dpkg: warning: downgrading fic-m1-runtime-probe (2) to (1)
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 22313 files and directories currently installed.)
+Preparing to unpack .../m1-runtime-order/runtime1.deb ...
+Unpacking fic-m1-runtime-probe (1) over (2) ...
+Setting up fic-m1-runtime-probe (1) ...
+dpkg: warning: downgrading fic-m1-main-probe (2) to (1)
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 22313 files and directories currently installed.)
+Preparing to unpack .../lib/m1-runtime-order/main1.deb ...
+Unpacking fic-m1-main-probe (1) over (2) ...
+Setting up fic-m1-main-probe (1) ...
+
+(Reading database ... 22313 files and directories currently installed.)
+Preparing to unpack .../lib/m1-runtime-order/main1.deb ...
+Unpacking fic-m1-main-probe (1) over (1) ...
+Setting up fic-m1-main-probe (1) ...
+dpkg: error processing package fic-m1-main-probe (--install):
+ installed fic-m1-main-probe package post-installation script subprocess returned error exit status 1
+Errors were encountered while processing:
+ fic-m1-main-probe
+
+install ok half-configured
+Setting up fic-m1-main-probe (1) ...
+
+(Reading database ... 22313 files and directories currently installed.)
+Removing fic-m1-main-probe (1) ...
+dpkg: error processing package fic-m1-main-probe (--remove):
+ installed fic-m1-main-probe package pre-removal script subprocess returned error exit status 1
+Errors were encountered while processing:
+ fic-m1-main-probe
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following packages will be REMOVED:
+  fic-m1-main-probe* fic-m1-runtime-probe*
+0 upgraded, 0 newly installed, 2 to remove and 0 not upgraded.
+After this operation, 0 B of additional disk space will be used.
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 22313 files and directories currently installed.)
+Removing fic-m1-main-probe (1) ...
+Removing fic-m1-runtime-probe (1) ...
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 22310 files and directories currently installed.)
+Purging configuration files for fic-m1-runtime-probe (1) ...
+Purging configuration files for fic-m1-main-probe (1) ...
+
+PHASES:
+runtime1 preinst install helper=absent
+runtime1 postinst configure helper=1
+main1 preinst install helper=1
+main1 postinst configure helper=1
+runtime1 prerm upgrade helper=1
+runtime2 preinst upgrade helper=1
+runtime1 postrm upgrade helper=2
+runtime2 postinst configure helper=2
+main1 prerm upgrade helper=2
+main2 preinst upgrade helper=2
+main1 postrm upgrade helper=2
+main2 postinst configure helper=2
+runtime2 prerm upgrade helper=2
+runtime1 preinst upgrade helper=2
+runtime2 postrm upgrade helper=1
+runtime1 postinst configure helper=1
+main2 prerm upgrade helper=1
+main1 preinst upgrade helper=1
+main2 postrm upgrade helper=1
+main1 postinst configure helper=1
+main1 prerm upgrade helper=1
+main1 preinst upgrade helper=1
+main1 postrm upgrade helper=1
+main1 postinst configure helper=1
+main1 postinst configure helper=1
+main1 prerm remove helper=1
+main1 postinst abort-remove helper=1
+main1 prerm remove helper=1
+main1 postrm remove helper=1
+runtime1 prerm remove helper=1
+runtime1 postrm remove helper=absent
+runtime1 postrm purge helper=absent
+main1 postrm purge helper=absent
+PASS transport prerequisites: fresh/upgrade/downgrade, incompatible refusal, configure failure/abort
+RED reproduced: Pre-Depends does NOT retain runtime through main postrm purge in joint apt purge
+RED reproduced: runtime own postrm cannot execute its payload; retained tombstone/proof prerequisite is necessary

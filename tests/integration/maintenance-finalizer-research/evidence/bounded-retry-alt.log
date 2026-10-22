@@ -1,0 +1,2 @@
+Created symlink '/etc/systemd/system/multi-user.target.wants/m1-boot.service' → '/etc/systemd/system/m1-boot.service'.
+PASS: closed C++ oneshot defers unproven state; single bounded timer recovers a missing event

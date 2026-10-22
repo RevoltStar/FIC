@@ -1,0 +1,1 @@
+PASS: bounded pidfd exit delivery without polling or PID reuse inference

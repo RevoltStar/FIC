@@ -1,0 +1,210 @@
+Get:1 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64 release [4210B]
+Get:2 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64-i586 release [1665B]
+Get:3 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch release [2831B]
+Fetched 8706B in 10s (796B/s)
+Get:1 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic pkglist [29.7MB]
+Get:2 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic release [137B]
+Get:3 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64-i586/classic pkglist [20.3MB]
+Get:4 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64-i586/classic release [142B]
+Get:5 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic pkglist [7967kB]
+Get:6 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic release [137B]
+Fetched 57.9MB in 6m16s (154kB/s)
+Reading Package Lists...
+Building Dependency Tree...
+Reading Package Lists...
+Building Dependency Tree...
+The following extra packages will be installed:
+  autoconf         file           librpmbuild                  rpm
+  autoconf-common  gettext        librpmbuild7                 rpm-build-file
+  autoconf_2.71    gettext-tools  libtool                      rpm-build-perl
+  automake         gnu-config     libtool-common               rpm-macros-python
+  automake-common  info-install   libtool_2.4                  rpm-macros-python3
+  automake_1.16    libasm         libzio                       rpm-macros-systemd
+  bison            libbeecrypt7   m4                           rpmspec
+  bison-runtime    libdw          patch                        which
+  debugedit        libmagic       perl-CPAN-Meta-Requirements
+  elfutils         librpm         perl-base
+  emacs-base       librpm7        perl-threads
+The following packages will be upgraded
+  librpm7  perl-base  rpm
+The following NEW packages will be installed:
+  autoconf         emacs-base     librpm                       perl-threads
+  autoconf-common  file           librpmbuild                  rpm-build
+  autoconf_2.71    gettext        librpmbuild7                 rpm-build-file
+  automake         gettext-tools  libtool                      rpm-build-perl
+  automake-common  gnu-config     libtool-common               rpm-macros-python
+  automake_1.16    info-install   libtool_2.4                  rpm-macros-python3
+  bison            libasm         libzio                       rpm-macros-systemd
+  bison-runtime    libbeecrypt7   m4                           rpmspec
+  debugedit        libdw          patch                        which
+  elfutils         libmagic       perl-CPAN-Meta-Requirements
+3 upgraded, 39 newly installed, 0 removed and 25 not upgraded.
+Need to get 10.2MB of archives.
+After unpacking 34.7MB of additional disk space will be used.
+Get:1 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic perl-base 1:5.38.4-alt1.p11:p11+415674.400.4.1@1776697020 [1996kB]
+Get:2 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic librpm7 4.13.0.1-alt45:p11+418689.100.2.1@1781016121 [353kB]
+Get:3 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic rpm 4.13.0.1-alt45:p11+418689.100.2.1@1781016121 [437kB]
+Get:4 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic autoconf-common 0.3.2-alt1:sisyphus+264199.100.1.1@1609281515 [3426B]
+Get:5 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic m4 1.4.19.0.15.bb35-alt1:sisyphus+336930.2000.1.1@1703106995 [190kB]
+Get:6 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic gnu-config 2023.01.21-alt1:sisyphus+313857.100.1.1@1674301506 [29.9kB]
+Get:7 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic autoconf_2.71 2.71-alt3:sisyphus+327753.100.1.1@1692735633 [613kB]
+Get:8 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic autoconf 2:2.71-alt1:sisyphus+325013.300.1.1@1690141700 [5216B]
+Get:9 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic automake-common 0.4.2-alt1:sisyphus+264199.200.1.1@1609281542 [3482B]
+Get:10 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic perl-threads 1:5.38.4-alt1.p11:p11+415674.400.4.1@1776697020 [63.0kB]
+Get:11 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic automake_1.16 1.16.5-alt1:sisyphus+325642.300.5.1@1690582104 [624kB]
+Get:12 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic automake 1:1.16-alt1:sisyphus+226889.100.2.1@1554763109 [3090B]
+Get:13 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic bison-runtime 3.8.2-alt1:sisyphus+336930.400.1.1@1703105149 [22.4kB]
+Get:14 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic bison 3.8.2-alt1:sisyphus+336930.400.1.1@1703105149 [729kB]
+Get:15 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic libdw 0.191-alt1:sisyphus+347509.100.1.1@1714859321 [220kB]
+Get:16 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic debugedit 5.0.0.27.6dd2-alt1:sisyphus+347441.100.1.1@1714777408 [46.8kB]
+Get:17 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic libasm 0.191-alt1:sisyphus+347509.100.1.1@1714859321 [26.4kB]
+Get:18 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic elfutils 0.191-alt1:sisyphus+347509.100.1.1@1714859321 [428kB]
+Get:19 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic emacs-base 0.0.11-alt1:sisyphus+307458.200.1.1@1664286951 [16.4kB]
+Get:20 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic libmagic 5.45-alt1:p11+348779.700.1.1@1716502839 [81.8kB]
+Get:21 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic file 5.45-alt1:p11+348779.700.1.1@1716502839 [720kB]
+Get:22 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic gettext 0.21-alt2:sisyphus+328153.300.3.1@1693315380 [87.5kB]
+Get:23 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic gettext-tools 0.21-alt2:sisyphus+328153.300.3.1@1693315380 [1668kB]
+Get:24 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic libzio 1.06-alt1:p11+349029.100.1.2@1716613752 [15.6kB]
+Get:25 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic info-install 7.1-alt1:sisyphus+338907.200.3.1@1706718831 [33.9kB]
+Get:26 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic libbeecrypt7 4.2.1-alt8:p11+348779.500.1.1@1716502739 [86.2kB]
+Get:27 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic librpm 4.0.4.212-alt1:p11+418655.300.5.1@1782823081 [326kB]
+Get:28 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic librpmbuild 4.0.4.212-alt1:p11+418655.300.5.1@1782823081 [171kB]
+Get:29 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic librpmbuild7 4.13.0.1-alt45:p11+418689.100.2.1@1781016121 [147kB]
+Get:30 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic libtool-common 0.2.3-alt1:p11+349000.100.1.1@1716588432 [7119B]
+Get:31 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic libtool_2.4 2.4.7-alt5:sisyphus+341963.200.3.1@1711659208 [395kB]
+Get:32 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic libtool 3:2.4.2-alt7@1533461531 [2738B]
+Get:33 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic patch 2.7.6.0.27.7623-alt1:sisyphus+336930.2300.1.1@1703107341 [101kB]
+Get:34 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic perl-CPAN-Meta-Requirements 2.143-alt1:sisyphus+323462.100.1.1@1687421801 [15.4kB]
+Get:35 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic rpm-build-file 4.26-alt18:p11+349465.100.1.1@1716791164 [142kB]
+Get:36 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic rpm-build-perl 0.85-alt6:sisyphus+335974.100.1.1@1701887945 [37.0kB]
+Get:37 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic rpm-macros-python 0.43.2-alt1:sisyphus+271106.100.1.1@1619868598 [22.3kB]
+Get:38 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic rpm-macros-python3 0.1.29-alt1:p11+398031.540.1.1@1762796334 [22.0kB]
+Get:39 https://distrib-coffee.ipsl.jussieu.fr p11/branch/noarch/classic rpm-macros-systemd 6-alt2:p11+356646.100.26.1@1729360985 [5995B]
+Get:40 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic rpmspec 4.13.0.1-alt45:p11+418689.100.2.1@1781016121 [94.6kB]
+Get:41 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic which 2.20-alt2.qa1:p11+349768.100.1.1@1716936615 [22.1kB]
+Get:42 https://distrib-coffee.ipsl.jussieu.fr p11/branch/x86_64/classic rpm-build 4.0.4.212-alt1:p11+418655.300.5.1@1782823081 [182kB]
+Fetched 10.2MB in 1m26s (118kB/s)
+Committing changes...
+Preparing...                            ################################# [100%]
+Updating / installing...
+ 1: perl-base-1:5.38.4-alt1.p11         ################################# [  2%]
+ 2: gnu-config-2023.01.21-alt1          ################################# [  4%]
+ 3: automake-common-0.4.2-alt1          ################################# [  7%]
+ 4: m4-1.4.19.0.15.bb35-alt1            ################################# [  9%]
+ 5: libmagic-5.45-alt1                  ################################# [ 11%]
+ 6: libdw-0.191-alt1                    ################################# [ 13%]
+ 7: autoconf-common-0.3.2-alt1          ################################# [ 16%]
+ 8: librpm7-4.13.0.1-alt45              ################################# [ 18%]
+ 9: rpm-4.13.0.1-alt45                  ################################# [ 20%]
+10: rpm-macros-python-0.43.2-alt1       ################################# [ 22%]
+11: rpm-macros-python3-0.1.29-alt1      ################################# [ 24%]
+12: rpm-macros-systemd-6-alt2           ################################# [ 27%]
+13: librpmbuild7-4.13.0.1-alt45         ################################# [ 29%]
+14: rpmspec-4.13.0.1-alt45              ################################# [ 31%]
+15: autoconf_2.71-2.71-alt3             ################################# [ 33%]
+16: autoconf-2:2.71-alt1                ################################# [ 36%]
+17: debugedit-5.0.0.27.6dd2-alt1        ################################# [ 38%]
+18: libasm-0.191-alt1                   ################################# [ 40%]
+19: elfutils-0.191-alt1                 ################################# [ 42%]
+20: file-5.45-alt1                      ################################# [ 44%]
+21: perl-threads-1:5.38.4-alt1.p11      ################################# [ 47%]
+22: automake_1.16-1.16.5-alt1           ################################# [ 49%]
+23: automake-1:1.16-alt1                ################################# [ 51%]
+24: perl-CPAN-Meta-Requirements-2.143-alt1 ################################# [ 53%]
+25: rpm-build-perl-0.85-alt6            ################################# [ 56%]
+26: which-2.20-alt2.qa1                 ################################# [ 58%]
+27: rpm-build-file-4.26-alt18           ################################# [ 60%]
+28: patch-2.7.6.0.27.7623-alt1          ################################# [ 62%]
+29: libtool-common-0.2.3-alt1           ################################# [ 64%]
+30: libtool_2.4-2.4.7-alt5              ################################# [ 67%]
+31: libtool-3:2.4.2-alt7                ################################# [ 69%]
+32: libbeecrypt7-4.2.1-alt8             ################################# [ 71%]
+33: librpm-4.0.4.212-alt1               ################################# [ 73%]
+34: librpmbuild-4.0.4.212-alt1          ################################# [ 76%]
+35: libzio-1.06-alt1                    ################################# [ 78%]
+36: info-install-7.1-alt1               ################################# [ 80%]
+37: gettext-0.21-alt2                   ################################# [ 82%]
+38: emacs-base-0.0.11-alt1              ################################# [ 84%]
+39: gettext-tools-0.21-alt2             ################################# [ 87%]
+40: bison-runtime-3.8.2-alt1            ################################# [ 89%]
+41: bison-3.8.2-alt1                    ################################# [ 91%]
+42: rpm-build-4.0.4.212-alt1            ################################# [ 93%]
+Cleaning up / removing...
+43: rpm-4.13.0.1-alt40                  ################################# [ 96%]
+44: librpm7-4.13.0.1-alt40              ################################# [ 98%]
+45: perl-base-1:5.38.4-alt1             ################################# [100%]
+Done.
+rebuilding database /var/lib/rpm started
+rebuilding database /var/lib/rpm finished
+
+Executing(%install): /bin/sh -e /tmp/rpmb-tmp.Sz64m7
+Cleaning files in /tmp/fic-m1-payload-probe-buildroot (auto)
+Verifying and fixing files in /tmp/fic-m1-payload-probe-buildroot (binconfig,pkgconfig,libtool,desktop,gnuconfig)
+Checking contents of files in /tmp/fic-m1-payload-probe-buildroot/ (default)
+Compressing files in /tmp/fic-m1-payload-probe-buildroot (auto)
+Verifying ELF objects in /tmp/fic-m1-payload-probe-buildroot (arch=normal,fhs=normal,lfs=relaxed,lint=relaxed,rpath=normal,stack=normal,textrel=normal,unresolved=normal)
+Splitting links to aliased files under /{,s}bin in /tmp/fic-m1-payload-probe-buildroot
+Processing files: fic-m1-payload-probe-1-1
+Finding Requires(pre) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.yeLQKc
+Finding Requires(post) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.OJg1YG
+Requires(pre): /bin/sh, /usr/libexec/fic-m1-payload-helper
+Requires(post): /bin/sh, /usr/libexec/fic-m1-payload-helper
+Wrote: /var/lib/m1-pre-payload/build/RPMS/noarch/fic-m1-payload-probe-1-1.noarch.rpm (w2.lzdio)
++ umask 022
++ /bin/mkdir -p /var/lib/m1-pre-payload/build/BUILD
++ cd /var/lib/m1-pre-payload/build/BUILD
++ /bin/chmod -Rf u+rwX -- /tmp/fic-m1-payload-probe-buildroot
++ :
++ /bin/rm -rf -- /tmp/fic-m1-payload-probe-buildroot
++ PATH=/usr/libexec/rpm-build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
++ mkdir -p /tmp/fic-m1-payload-probe-buildroot/usr/libexec
++ printf '#!/bin/sh\necho 1\n'
++ chmod 755 /tmp/fic-m1-payload-probe-buildroot/usr/libexec/fic-m1-payload-helper
++ /usr/lib/rpm/brp-alt
+
+Preparing...                            ################################# [100%]
+PRE_PAYLOAD_HELPER=absent
+Updating / installing...
+1: fic-m1-payload-probe-1-1             ################################# [100%]
+POST_PAYLOAD_HELPER=1
+Running /usr/lib/rpm/posttrans-filetriggers
+
+
+Executing(%install): /bin/sh -e /tmp/rpmb-tmp.dLQLIP
+Cleaning files in /tmp/fic-m1-payload-probe-buildroot (auto)
+Verifying and fixing files in /tmp/fic-m1-payload-probe-buildroot (binconfig,pkgconfig,libtool,desktop,gnuconfig)
+Checking contents of files in /tmp/fic-m1-payload-probe-buildroot/ (default)
+Compressing files in /tmp/fic-m1-payload-probe-buildroot (auto)
+Verifying ELF objects in /tmp/fic-m1-payload-probe-buildroot (arch=normal,fhs=normal,lfs=relaxed,lint=relaxed,rpath=normal,stack=normal,textrel=normal,unresolved=normal)
+Splitting links to aliased files under /{,s}bin in /tmp/fic-m1-payload-probe-buildroot
+Processing files: fic-m1-payload-probe-2-1
+Finding Requires(pre) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.Bmueh5
+Finding Requires(post) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.m7tlye
+Requires(pre): /bin/sh, /usr/libexec/fic-m1-payload-helper
+Requires(post): /bin/sh, /usr/libexec/fic-m1-payload-helper
+Wrote: /var/lib/m1-pre-payload/build/RPMS/noarch/fic-m1-payload-probe-2-1.noarch.rpm (w2.lzdio)
++ umask 022
++ /bin/mkdir -p /var/lib/m1-pre-payload/build/BUILD
++ cd /var/lib/m1-pre-payload/build/BUILD
++ /bin/chmod -Rf u+rwX -- /tmp/fic-m1-payload-probe-buildroot
++ /bin/rm -rf -- /tmp/fic-m1-payload-probe-buildroot
++ PATH=/usr/libexec/rpm-build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
++ mkdir -p /tmp/fic-m1-payload-probe-buildroot/usr/libexec
++ printf '#!/bin/sh\necho 2\n'
++ chmod 755 /tmp/fic-m1-payload-probe-buildroot/usr/libexec/fic-m1-payload-helper
++ /usr/lib/rpm/brp-alt
+
+Preparing...                            ################################# [100%]
+PRE_PAYLOAD_HELPER=1
+Updating / installing...
+1: fic-m1-payload-probe-2-1             ################################# [ 50%]
+POST_PAYLOAD_HELPER=2
+Cleaning up / removing...
+2: fic-m1-payload-probe-1-1             ################################# [100%]
+Running /usr/lib/rpm/posttrans-filetriggers
+
+PASS: first pre-script has no helper; upgrade pre-script sees only OLD helper; new helper appears after payload

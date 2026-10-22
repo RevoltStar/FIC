@@ -1,0 +1,8 @@
+MainPID=0
+ControlPID=0
+LoadState=masked
+ActiveState=inactive
+PASS: operation-owned empty-file mask recognized; start refused after manager reexec
+degraded
+Failed to start m1-legacy.service: Unit m1-legacy.service is masked.
+PASS: enabled legacy fixture cannot auto-start after private PID1 restart; persistent mask retained

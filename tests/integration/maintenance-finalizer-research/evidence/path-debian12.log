@@ -1,0 +1,9 @@
+FIRST: 1
+SECOND: NO_REDELIVERY
+Warning: Stopping m1-delivery.service, but it can still be activated by:
+  m1-delivery.path
+ATOMIC_REPLACE: 2
+Warning: Stopping m1-delivery.service, but it can still be activated by:
+  m1-delivery.path
+MANAGER_REEXEC: 3
+WATCH_RESTART: NO_INITIAL_RESCAN

@@ -1,0 +1,5 @@
+PASS temporary: >=8 attempts, hook storm rate bounded; no completion event needed
+PASS structural: installed input/hook storm never clears block or repeats costly proof
+PASS crash: no total crash budget; independent timer delivers later attempt
+PASS cost: systemd kills stuck proof; timer later retries successfully
+PASS reexec and removed delivery units: fence/tombstone retained

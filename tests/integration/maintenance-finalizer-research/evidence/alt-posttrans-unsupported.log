@@ -1,0 +1,8 @@
+
+Traceback (most recent call last):
+  File "/usr/local/bin/m1-rpm-probe.py", line 45, in <module>
+    assert run(['runuser','-u','m1builder','--','rpmbuild','--define','_topdir '+str(r/'build'),'-bb',str(spec)]).returncode==0
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError
+error: Macro %posttrans not found
+error: line 19: %posttrans

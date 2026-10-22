@@ -1,0 +1,216 @@
+
+Executing(%install): /bin/sh -e /tmp/rpmb-tmp.U5uXIV
+Cleaning files in /tmp/fic-m1-rpm-runtime-probe-buildroot (auto)
+Verifying and fixing files in /tmp/fic-m1-rpm-runtime-probe-buildroot (binconfig,pkgconfig,libtool,desktop,gnuconfig)
+Checking contents of files in /tmp/fic-m1-rpm-runtime-probe-buildroot/ (default)
+Compressing files in /tmp/fic-m1-rpm-runtime-probe-buildroot (auto)
+Verifying ELF objects in /tmp/fic-m1-rpm-runtime-probe-buildroot (arch=normal,fhs=normal,lfs=relaxed,lint=relaxed,rpath=normal,stack=normal,textrel=normal,unresolved=normal)
+Splitting links to aliased files under /{,s}bin in /tmp/fic-m1-rpm-runtime-probe-buildroot
+Processing files: fic-m1-rpm-runtime-probe-1-1
+Finding Requires(pre) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.ptj0h9
+Finding Requires(post) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.ovJ3xM
+Finding Requires(preun) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.hwUOzg
+Finding Requires(postun) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.kRvNE2
+Provides: fic-m1-lifecycle-abi = 1
+Requires(pre): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(post): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(preun): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(postun): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Wrote: /var/lib/m1-runtime-order-rpm-gated/build/RPMS/noarch/fic-m1-rpm-runtime-probe-1-1.noarch.rpm (w2.lzdio)
++ umask 022
++ /bin/mkdir -p /var/lib/m1-runtime-order-rpm-gated/build/BUILD
++ cd /var/lib/m1-runtime-order-rpm-gated/build/BUILD
++ /bin/chmod -Rf u+rwX -- /tmp/fic-m1-rpm-runtime-probe-buildroot
++ /bin/rm -rf -- /tmp/fic-m1-rpm-runtime-probe-buildroot
++ PATH=/usr/libexec/rpm-build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
++ mkdir -p /tmp/fic-m1-rpm-runtime-probe-buildroot/usr/libexec
++ printf '#!/bin/sh\necho 1\n'
++ chmod 755 /tmp/fic-m1-rpm-runtime-probe-buildroot/usr/libexec/fic-m1-rpm-runtime-probe
++ /usr/lib/rpm/brp-alt
+
+
+Executing(%install): /bin/sh -e /tmp/rpmb-tmp.mwXoE8
+Cleaning files in /tmp/fic-m1-rpm-main-probe-buildroot (auto)
+Verifying and fixing files in /tmp/fic-m1-rpm-main-probe-buildroot (binconfig,pkgconfig,libtool,desktop,gnuconfig)
+Checking contents of files in /tmp/fic-m1-rpm-main-probe-buildroot/ (default)
+Compressing files in /tmp/fic-m1-rpm-main-probe-buildroot (auto)
+Verifying ELF objects in /tmp/fic-m1-rpm-main-probe-buildroot (arch=normal,fhs=normal,lfs=relaxed,lint=relaxed,rpath=normal,stack=normal,textrel=normal,unresolved=normal)
+Splitting links to aliased files under /{,s}bin in /tmp/fic-m1-rpm-main-probe-buildroot
+Processing files: fic-m1-rpm-main-probe-1-1
+Finding Requires(pre) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.O6zpmk
+Finding Requires(post) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.1IZ7Mw
+Finding Requires(preun) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.OFT6V9
+Finding Requires(postun) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.vHIvo6
+Requires: fic-m1-rpm-runtime-probe = 1
+Requires(pre): fic-m1-rpm-runtime-probe = 1, /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(post): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(preun): fic-m1-lifecycle-abi = 1, /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(postun): fic-m1-lifecycle-abi = 1, /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Wrote: /var/lib/m1-runtime-order-rpm-gated/build/RPMS/noarch/fic-m1-rpm-main-probe-1-1.noarch.rpm (w2.lzdio)
++ umask 022
++ /bin/mkdir -p /var/lib/m1-runtime-order-rpm-gated/build/BUILD
++ cd /var/lib/m1-runtime-order-rpm-gated/build/BUILD
++ /bin/chmod -Rf u+rwX -- /tmp/fic-m1-rpm-main-probe-buildroot
++ /bin/rm -rf -- /tmp/fic-m1-rpm-main-probe-buildroot
++ PATH=/usr/libexec/rpm-build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
++ mkdir -p /tmp/fic-m1-rpm-main-probe-buildroot/usr/share/fic-m1-rpm-main
++ echo data
++ /usr/lib/rpm/brp-alt
+shell.req: /tmp/fic-m1-rpm-main-probe-buildroot/.pre:fic-m1-rpm-main-probe: /usr/libexec/fic-m1-rpm-runtime-probe -> /usr/libexec/fic-m1-rpm-runtime-probe (raw, not installed)
+shell.req: /tmp/fic-m1-rpm-main-probe-buildroot/.post:fic-m1-rpm-main-probe: /usr/libexec/fic-m1-rpm-runtime-probe -> /usr/libexec/fic-m1-rpm-runtime-probe (raw, not installed)
+shell.req: /tmp/fic-m1-rpm-main-probe-buildroot/.preun:fic-m1-rpm-main-probe: /usr/libexec/fic-m1-rpm-runtime-probe -> /usr/libexec/fic-m1-rpm-runtime-probe (raw, not installed)
+shell.req: /tmp/fic-m1-rpm-main-probe-buildroot/.postun:fic-m1-rpm-main-probe: /usr/libexec/fic-m1-rpm-runtime-probe -> /usr/libexec/fic-m1-rpm-runtime-probe (raw, not installed)
+
+
+Executing(%install): /bin/sh -e /tmp/rpmb-tmp.bMzjJw
+Cleaning files in /tmp/fic-m1-rpm-runtime-probe-buildroot (auto)
+Verifying and fixing files in /tmp/fic-m1-rpm-runtime-probe-buildroot (binconfig,pkgconfig,libtool,desktop,gnuconfig)
+Checking contents of files in /tmp/fic-m1-rpm-runtime-probe-buildroot/ (default)
+Compressing files in /tmp/fic-m1-rpm-runtime-probe-buildroot (auto)
+Verifying ELF objects in /tmp/fic-m1-rpm-runtime-probe-buildroot (arch=normal,fhs=normal,lfs=relaxed,lint=relaxed,rpath=normal,stack=normal,textrel=normal,unresolved=normal)
+Splitting links to aliased files under /{,s}bin in /tmp/fic-m1-rpm-runtime-probe-buildroot
+Processing files: fic-m1-rpm-runtime-probe-2-1
+Finding Requires(pre) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.GwhGlm
+Finding Requires(post) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.mkufXr
+Finding Requires(preun) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.CxqMcJ
+Finding Requires(postun) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.mtq8cO
+Provides: fic-m1-lifecycle-abi = 1
+Requires(pre): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(post): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(preun): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(postun): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Wrote: /var/lib/m1-runtime-order-rpm-gated/build/RPMS/noarch/fic-m1-rpm-runtime-probe-2-1.noarch.rpm (w2.lzdio)
++ umask 022
++ /bin/mkdir -p /var/lib/m1-runtime-order-rpm-gated/build/BUILD
++ cd /var/lib/m1-runtime-order-rpm-gated/build/BUILD
++ /bin/chmod -Rf u+rwX -- /tmp/fic-m1-rpm-runtime-probe-buildroot
++ /bin/rm -rf -- /tmp/fic-m1-rpm-runtime-probe-buildroot
++ PATH=/usr/libexec/rpm-build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
++ mkdir -p /tmp/fic-m1-rpm-runtime-probe-buildroot/usr/libexec
++ printf '#!/bin/sh\necho 2\n'
++ chmod 755 /tmp/fic-m1-rpm-runtime-probe-buildroot/usr/libexec/fic-m1-rpm-runtime-probe
++ /usr/lib/rpm/brp-alt
+
+
+Executing(%install): /bin/sh -e /tmp/rpmb-tmp.BnAfJ4
+Cleaning files in /tmp/fic-m1-rpm-main-probe-buildroot (auto)
+Verifying and fixing files in /tmp/fic-m1-rpm-main-probe-buildroot (binconfig,pkgconfig,libtool,desktop,gnuconfig)
+Checking contents of files in /tmp/fic-m1-rpm-main-probe-buildroot/ (default)
+Compressing files in /tmp/fic-m1-rpm-main-probe-buildroot (auto)
+Verifying ELF objects in /tmp/fic-m1-rpm-main-probe-buildroot (arch=normal,fhs=normal,lfs=relaxed,lint=relaxed,rpath=normal,stack=normal,textrel=normal,unresolved=normal)
+Splitting links to aliased files under /{,s}bin in /tmp/fic-m1-rpm-main-probe-buildroot
+Processing files: fic-m1-rpm-main-probe-2-1
+Finding Requires(pre) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.r8XjDw
+Finding Requires(post) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.BcsK2L
+Finding Requires(preun) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.mb8YHa
+Finding Requires(postun) (using /usr/lib/rpm/find-scriptlet-requires)
+Executing(+autodep): /bin/sh -e /tmp/rpmb-autodep.UD87oI
+Requires: fic-m1-rpm-runtime-probe = 2
+Requires(pre): fic-m1-rpm-runtime-probe = 2, /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(post): /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(preun): fic-m1-lifecycle-abi = 1, /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Requires(postun): fic-m1-lifecycle-abi = 1, /bin/sh, /usr/libexec/fic-m1-rpm-runtime-probe
+Wrote: /var/lib/m1-runtime-order-rpm-gated/build/RPMS/noarch/fic-m1-rpm-main-probe-2-1.noarch.rpm (w2.lzdio)
++ umask 022
++ /bin/mkdir -p /var/lib/m1-runtime-order-rpm-gated/build/BUILD
++ cd /var/lib/m1-runtime-order-rpm-gated/build/BUILD
++ /bin/chmod -Rf u+rwX -- /tmp/fic-m1-rpm-main-probe-buildroot
++ /bin/rm -rf -- /tmp/fic-m1-rpm-main-probe-buildroot
++ PATH=/usr/libexec/rpm-build:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
++ mkdir -p /tmp/fic-m1-rpm-main-probe-buildroot/usr/share/fic-m1-rpm-main
++ echo data
++ /usr/lib/rpm/brp-alt
+shell.req: /tmp/fic-m1-rpm-main-probe-buildroot/.pre:fic-m1-rpm-main-probe: /usr/libexec/fic-m1-rpm-runtime-probe -> /usr/libexec/fic-m1-rpm-runtime-probe (raw, not installed)
+shell.req: /tmp/fic-m1-rpm-main-probe-buildroot/.post:fic-m1-rpm-main-probe: /usr/libexec/fic-m1-rpm-runtime-probe -> /usr/libexec/fic-m1-rpm-runtime-probe (raw, not installed)
+shell.req: /tmp/fic-m1-rpm-main-probe-buildroot/.preun:fic-m1-rpm-main-probe: /usr/libexec/fic-m1-rpm-runtime-probe -> /usr/libexec/fic-m1-rpm-runtime-probe (raw, not installed)
+shell.req: /tmp/fic-m1-rpm-main-probe-buildroot/.postun:fic-m1-rpm-main-probe: /usr/libexec/fic-m1-rpm-runtime-probe -> /usr/libexec/fic-m1-rpm-runtime-probe (raw, not installed)
+
+error: Failed dependencies:
+	fic-m1-rpm-runtime-probe = 1 is needed by fic-m1-rpm-main-probe-1-1.noarch
+	fic-m1-lifecycle-abi = 1 is needed by fic-m1-rpm-main-probe-1-1.noarch
+	/usr/libexec/fic-m1-rpm-runtime-probe is needed by fic-m1-rpm-main-probe-1-1.noarch
+
+Preparing...                            ################################# [100%]
+Updating / installing...
+1: fic-m1-rpm-runtime-probe-1-1         ################################# [ 50%]
+2: fic-m1-rpm-main-probe-1-1            ################################# [100%]
+Running /usr/lib/rpm/posttrans-filetriggers
+
+error: Failed dependencies:
+	fic-m1-rpm-runtime-probe = 2 is needed by fic-m1-rpm-main-probe-2-1.noarch
+
+Preparing...                            ################################# [100%]
+Updating / installing...
+1: fic-m1-rpm-runtime-probe-2-1         ################################# [ 25%]
+2: fic-m1-rpm-main-probe-2-1            ################################# [ 50%]
+Cleaning up / removing...
+3: fic-m1-rpm-main-probe-1-1            ################################# [ 75%]
+4: fic-m1-rpm-runtime-probe-1-1         ################################# [100%]
+Running /usr/lib/rpm/posttrans-filetriggers
+
+Preparing...                            ################################# [100%]
+Updating / installing...
+1: fic-m1-rpm-runtime-probe-1-1         ################################# [ 25%]
+2: fic-m1-rpm-main-probe-1-1            ################################# [ 50%]
+Cleaning up / removing...
+3: fic-m1-rpm-main-probe-2-1            ################################# [ 75%]
+4: fic-m1-rpm-runtime-probe-2-1         ################################# [100%]
+Running /usr/lib/rpm/posttrans-filetriggers
+
+error: %preun(fic-m1-rpm-main-probe-1-1.noarch) scriptlet failed, exit status 1
+error: fic-m1-rpm-main-probe-1-1.noarch: erase failed
+
+fic-m1-rpm-main-probe-1-1.noarch
+
+RETENTION: earlier transaction final proof required
+error: %preun(fic-m1-rpm-runtime-probe-1-1.noarch) scriptlet failed, exit status 1
+error: fic-m1-rpm-runtime-probe-1-1.noarch: erase failed
+
+package fic-m1-rpm-main-probe is not installed
+
+
+PHASES:
+runtime1 pre 1 helper=absent
+runtime1 post 1 helper=1
+main1 pre 1 helper=1
+main1 post 1 helper=1
+runtime2 pre 2 helper=1
+runtime2 post 2 helper=2
+main2 pre 2 helper=2
+main2 post 2 helper=2
+main1 preun 1 helper=2
+main1 postun 1 helper=2
+runtime1 preun 1 helper=2
+runtime1 postun 1 helper=2
+runtime1 pre 2 helper=2
+runtime1 post 2 helper=1
+main1 pre 2 helper=1
+main1 post 2 helper=1
+main2 preun 1 helper=1
+main2 postun 1 helper=1
+runtime2 preun 1 helper=1
+runtime2 postun 1 helper=1
+main1 preun 0 helper=1
+main1 preun 0 helper=1
+main1 postun 0 helper=1
+runtime1 preun 0 helper=1
+runtime1 preun 0 helper=1
+runtime1 postun 0 helper=absent
+PASS: native Requires(pre)/erase ABI ordering, fresh/upgrade/downgrade/incompatible refusal/failed erase
+PASS retention prototype: runtime retained through main erase and until modeled post-transaction proof
+RED reproduced: runtime own postun cannot execute its payload; package lock still held before transaction return

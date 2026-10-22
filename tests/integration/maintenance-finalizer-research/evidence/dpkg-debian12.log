@@ -1,0 +1,56 @@
+dpkg-deb: building package 'fic-m1-status-probe' in '/var/lib/m1-dpkg-research/probe.deb'.
+
+Selecting previously unselected package fic-m1-status-probe.
+(Reading database ... 27634 files and directories currently installed.)
+Preparing to unpack .../lib/m1-dpkg-research/probe.deb ...
+Unpacking fic-m1-status-probe (1) ...
+Setting up fic-m1-status-probe (1) ...
+INSIDE_POSTINST: install ok half-configured
+dpkg: error processing package fic-m1-status-probe (--install):
+ installed fic-m1-status-probe package post-installation script subprocess returned error exit status 1
+Errors were encountered while processing:
+ fic-m1-status-probe
+
+install ok half-configured
+
+Setting up fic-m1-status-probe (1) ...
+INSIDE_POSTINST: install ok half-configured
+
+install ok installed
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+0 upgraded, 0 newly installed, 1 reinstalled, 0 to remove and 6 not upgraded.
+Need to get 0 B/812 B of archives.
+After this operation, 0 B of additional disk space will be used.
+Get:1 /var/lib/m1-dpkg-research/probe.deb fic-m1-status-probe all 1 [812 B]
+debconf: delaying package configuration, since apt-utils is not installed
+(Reading database ...
+(Reading database ... 5%
+(Reading database ... 10%
+(Reading database ... 15%
+(Reading database ... 20%
+(Reading database ... 25%
+(Reading database ... 30%
+(Reading database ... 35%
+(Reading database ... 40%
+(Reading database ... 45%
+(Reading database ... 50%
+(Reading database ... 55%
+(Reading database ... 60%
+(Reading database ... 65%
+(Reading database ... 70%
+(Reading database ... 75%
+(Reading database ... 80%
+(Reading database ... 85%
+(Reading database ... 90%
+(Reading database ... 95%
+(Reading database ... 100%
+(Reading database ... 27634 files and directories currently installed.)
+Preparing to unpack .../lib/m1-dpkg-research/probe.deb ...
+Unpacking fic-m1-status-probe (1) over (1) ...
+Setting up fic-m1-status-probe (1) ...
+INSIDE_POSTINST: install ok half-configured
+
+PASS: failed postinst → half-configured → dpkg --configure -a → installed; apt reinstall
