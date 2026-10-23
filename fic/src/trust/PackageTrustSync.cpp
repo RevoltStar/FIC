@@ -299,7 +299,7 @@ bool syncPackageManagedExecutableIds(
     const fic::platform::PlatformExecutableResolver& executables,
     const std::vector<fic::platform::ExecutableId>& executableIds,
     PackageTrustSyncResult& result,
-    std::string& error) {
+    std::string& error,const std::function<bool(std::string&)>& admission) {
     result = {};
     if (executableIds.empty()) {
         error.clear();
@@ -351,7 +351,7 @@ bool syncPackageManagedExecutableIds(
     }
 
     if (!CommandHashStore::updateHashes(
-            verifiedPaths, candidatePaths, error)) {
+            verifiedPaths, candidatePaths, error,admission)) {
         return false;
     }
     result.updated = verifiedPaths.size();
@@ -365,10 +365,10 @@ bool syncPackageManagedExecutables(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,
     PackageTrustSyncResult& result,
-    std::string& error) {
+    std::string& error,const std::function<bool(std::string&)>& admission) {
     return syncPackageManagedExecutableIds(
         platform, executables,
-        declaredExecutableIds(platform.executables), result, error);
+        declaredExecutableIds(platform.executables), result, error,admission);
 }
 
 bool syncSelectedPackageManagedExecutables(
@@ -376,9 +376,9 @@ bool syncSelectedPackageManagedExecutables(
     const fic::platform::PlatformExecutableResolver& executables,
     const std::vector<fic::platform::ExecutableId>& executableIds,
     PackageTrustSyncResult& result,
-    std::string& error) {
+    std::string& error,const std::function<bool(std::string&)>& admission) {
     return syncPackageManagedExecutableIds(
-        platform, executables, executableIds, result, error);
+        platform, executables, executableIds, result, error,admission);
 }
 
 } // namespace fic::trust

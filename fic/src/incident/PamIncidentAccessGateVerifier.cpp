@@ -487,6 +487,12 @@ IncidentGateDetachProof PamIncidentAccessGateVerifier::proveDetached(
         platform, "/var/lib/pam/account", 0, diagnostic);
 }
 
+IncidentGateDetachProof PamIncidentAccessGateVerifier::proveDetached(
+    const ::fic::platform::PamPlatformConfig& platform,
+    const std::filesystem::path& selectionPath,std::string& diagnostic) {
+    return proveDetachedImpl(platform,selectionPath,0,diagnostic);
+}
+
 IncidentGateDetachProof PamIncidentAccessGateVerifier::proveDetachedForTests(
     const ::fic::platform::PamPlatformConfig& platform,
     const std::filesystem::path& selectionPath,

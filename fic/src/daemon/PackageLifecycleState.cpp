@@ -130,6 +130,14 @@ AtomicWriteOptions writeOptions() {
 bool PackageLifecycleStore::inspect(std::optional<PackageLifecycleState>& state,std::string& error) const {
     std::optional<AtomicTargetState> snapshot; return read(path_,state,snapshot,error);
 }
+bool PackageLifecycleStore::confirmDurable(const PackageLifecycleState& expected,std::string& error) const {
+    std::optional<PackageLifecycleState> current;std::optional<AtomicTargetState> snapshot;
+    if(!valid(expected)||!read(path_,current,snapshot,error)||!current||!snapshot||encode(*current)!=encode(expected)) {
+        if(error.empty())error="stale/invalid lifecycle durability proof";
+        return false;
+    }
+    return AtomicFileWriter::ensureTargetDurableIfCurrentState(path_.string(),*snapshot,&error);
+}
 bool PackageLifecycleStore::create(const DaemonInstanceLock& guard,const PackageLifecycleState& state,std::string& error) {
     if(!guard.heldByCurrentProcess() || !valid(state) || state.generation!=0 || !state.lastAttemptBoot.empty() ||
        (state.phase!=PackagePhase::Installing && state.phase!=PackagePhase::Fencing)) {

@@ -1,4 +1,5 @@
 #include "daemon/PackageReleaseSession.h"
+#include "daemon/PackagePamHooks.h"
 #include <array>
 #include <unistd.h>
 namespace fic::daemon {
@@ -88,4 +89,54 @@ bool PackageReleaseSession::releaseManagedResources(const DaemonInstanceLock& gu
     fic::rollback::MutationJournal finalJournal(paths_.mutationJournalFile);
     return finalJournal.validatePersistentStateReadOnly(error);
 }
+bool PackageReleaseSession::completeRelease(const DaemonInstanceLock& guard,const std::string& id,std::string& error) const {
+    if(!guard.heldByCurrentProcess()){error="complete package release requires daemon admission";return false;}
+    PackageLifecycleStore store(lifecycle_.fenceFile);std::optional<PackageLifecycleState> state;
+    const auto refresh=[&] {
+        if(!store.inspect(state,error))return false;
+        if(!state||state->operationId!=id||state->operation!=PackageOperation::Remove||
+           state->phase<PackagePhase::Fencing||state->phase>PackagePhase::ReleaseComplete) {
+            error="complete release requires matching pending removal";return false;
+        }
+        return true;
+    };
+    if(!refresh())return false;
+    if(state->phase<=PackagePhase::PasswordReleased &&
+       (!releaseManagedResources(guard,id,error)||!refresh()))return false;
+    PackageUnitMasks masks(lifecycle_.maskDirectory,lifecycle_.systemUnitDirectory);
+    std::vector<LegacyWriterImage> images;
+    if(!readLegacyWriterInventory(lifecycle_.maskDirectory/id/"writers.json",id,images,error))return false;
+    fic::platform::PlatformExecutableResolver executables(platform_.executables);
+    PackageWritersQuiescence writers(executables);
+    if(!writers.stopAndProve(guard,masks,id,images,
+        std::chrono::steady_clock::now()+std::chrono::seconds(30),error))return false;
+    const auto proveResources=[&] {
+        fic::rollback::MutationJournal journal(paths_.mutationJournalFile);
+        if(!journal.validatePersistentStateReadOnly(error))return false;
+        PackageReleaseResources resources(platform_,paths_);
+        if(platform_.id=="alt-p11")for(const auto domain:{PackageReleaseDomain::AltHistoryTopology,PackageReleaseDomain::AltFaillockTopology})
+            if(!resources.proveReleased(domain,journal,error))return false;
+        const bool password=resources.supports(PackageReleaseDomain::PamPassword,error);
+        if(!password&&platform_.id!="alt-p11")return false;
+        error.clear();
+        for(const auto domain:domains) {
+            if(domain==PackageReleaseDomain::PamPassword&&!password)continue;
+            if(!resources.proveReleased(domain,journal,error))return false;
+        }
+        return true;
+    };
+    if(!proveResources())return false;
+    PackagePamHooks hooks(platform_);
+    if(state->phase==PackagePhase::PasswordReleased) {
+        if(!hooks.detach(guard,std::chrono::steady_clock::now()+std::chrono::seconds(30),error)||
+           !store.advance(guard,*state,PackagePhase::HooksDetached,error)||!refresh())return false;
+    }
+    // Separate fresh domain/journal/physical hook proofs. Replaying a durable
+    // HooksDetached/ReleaseComplete performs no policy or hook compensation.
+    if(!proveResources()||!hooks.proveDetached(error))return false;
+    if(state->phase==PackagePhase::HooksDetached &&
+       !store.advance(guard,*state,PackagePhase::ReleaseComplete,error))return false;
+    return refresh()&&store.confirmDurable(*state,error);
+}
+
 }

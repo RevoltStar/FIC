@@ -22,6 +22,7 @@ g++ "$@" "$src/tests/integration/maintenance-lifecycle/QuiescenceDriver.cpp" \
     "$common/fs/RootControlledDirectory.cpp" "$common/integrity/ContentDigest.cpp" \
     "$common/process/ProcessExecutor.cpp" "$common/process/ProcessPipeIo.cpp" \
     -lcrypto -o "$out/m1-quiescence"
+g++ "$@" "$src/tests/fic/daemon/PackageUnknownWriterFixture.cpp" -o "$out/m1-unknown-writer"
 g++ "$@" "$src/tests/fic/daemon/PackageWriterProcessesTests.cpp" \
     "$src/fic/src/daemon/PackageWriterProcesses.cpp" \
     "$src/fic/src/daemon/PackageWriterInventory.cpp" "$src/fic/src/daemon/DaemonInstanceLock.cpp" \

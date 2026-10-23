@@ -69,7 +69,9 @@ public:
         Preflight,
         // Stage B: locked fresh re-inspection + recovery + transition +
         // final proof.
-        Release
+        Release,
+        // Fresh read-only final-state proof; no recovery or release.
+        ProveReleased
     };
 
     struct Options {

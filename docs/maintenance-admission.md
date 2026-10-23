@@ -40,8 +40,10 @@ Mutating topology-команды теперь сначала получают о
 stages. Daemon policy backends вызывают managers напрямую, без дочернего
 maintenance-процесса. Package-session использует те же managers под своим guard;
 advisory pre-stop inspection не создаёт topology PID-lock/debug artifacts.
-Trust sync пока сохраняет только hash-store serialization; его координация с
-lifecycle fence ещё не завершена.
+Trust sync сохраняет hash-store serialization, но теперь требует Installed
+до выполнения и повторно под hash-store lock перед записью. Публикация fence и
+финальный hash-store proof в ещё не подключённом package controller должны
+использовать тот же lock; reader-side recheck сам по себе не закрывает M1.
 
 `check-config`, `wait-daemon`, `incident-pam-verify`,
 `incident-pam-prove-detached`, `validate-pam-slots-before-attach` и
@@ -52,9 +54,9 @@ lifecycle fence ещё не завершена.
 ## Незавершённая часть M1
 
 Свободный lock не доказывает stopped legacy writers. В текущей реализации ещё нет
-интегрированного package-session, persistent lifecycle fence/startup gate,
-процессного/cgroup proof, ownership-safe masks, закрытого install/abort/recovery и
-production finalizer. Shell DEB/RPM sequence ещё не перенесена в coordinator;
+production package controller и закрытого install/abort/recovery/finalizer.
+Resource/hook session, masks/quiescence и ранний startup gate реализованы отдельно,
+но упаковка ещё не создаёт finalized Installed state. Shell DEB/RPM sequence ещё не перенесена в coordinator;
 исходные package admission defects из `daemon-singleton.md` остаются до этого этапа.
 Нельзя считать новый guard полной package safety.
 

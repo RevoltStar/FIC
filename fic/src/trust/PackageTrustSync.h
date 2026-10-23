@@ -5,6 +5,7 @@
 #include "platform/PlatformProfile.h"
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -19,14 +20,14 @@ bool syncPackageManagedExecutables(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,
     PackageTrustSyncResult& result,
-    std::string& error);
+    std::string& error,const std::function<bool(std::string&)>& admission = {});
 
 bool syncSelectedPackageManagedExecutables(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,
     const std::vector<fic::platform::ExecutableId>& executableIds,
     PackageTrustSyncResult& result,
-    std::string& error);
+    std::string& error,const std::function<bool(std::string&)>& admission = {});
 
 } // namespace fic::trust
 

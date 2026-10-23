@@ -388,6 +388,8 @@ bool PamPasswordPackageRelease::run(
     report.topologyBefore = snapshot.classification.topologyClass;
     report.foreignProducerPresent = snapshot.foreignQualityProducer;
 
+    if(mode==Mode::ProveReleased)return proveFinalState(snapshot,report,error);
+
     if (mode == Mode::Preflight) {
         // Strictly read-only: no lock, no recovery, no transition. The
         // prepared leftovers are reported as recoverable by the release

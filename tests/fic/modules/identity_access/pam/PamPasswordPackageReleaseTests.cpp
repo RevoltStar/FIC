@@ -451,6 +451,10 @@ void testP2_qualityReleasesToNone() {
     PamPasswordPackageRelease::Report report;
     const std::size_t invocationsAfterApply =
         env.mutator.invocations.size();
+    auto proof=env.makeRelease();
+    const auto journalBefore=readFile(env.tree.path()/"journal.json");
+    require(!proof.run(PamPasswordPackageRelease::Mode::ProveReleased,report,error),"active password accepted as released");
+    require(readFile(env.tree.path()/"journal.json")==journalBefore&&env.mutator.invocations.size()==invocationsAfterApply,"password proof mutated active state");
     require(env.runPreflight(report, error),
         "P2 preflight: " + error);
     require(report.topologyBefore == PamPasswordTopologyClass::FicQuality,
@@ -462,6 +466,10 @@ void testP2_qualityReleasesToNone() {
             std::vector<std::string>{kFicPasswordQualityHookProfileId},
         "P2: exactly the quality identity detached");
     requireFullyReleased(env, false);
+    const auto callsAfterRelease=env.mutator.invocations.size();
+    require(proof.run(PamPasswordPackageRelease::Mode::ProveReleased,report,error),error);
+    require(env.mutator.invocations.size()==callsAfterRelease&&!report.changedSystemState,"password proof invoked mutation");
+
 }
 
 void testP3_historyInitialReleasesToNone() {

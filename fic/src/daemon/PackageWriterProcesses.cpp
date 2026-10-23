@@ -180,7 +180,23 @@ bool proveNoPackageWriterProcesses(const std::vector<LegacyWriterImage>& referen
         std::string path(link,length);const std::string deleted=" (deleted)";
         if(path.size()>=deleted.size()&&path.compare(path.size()-deleted.size(),deleted.size(),deleted)==0)path.resize(path.size()-deleted.size());
         const auto name=std::filesystem::path(path).filename().string();
-        bool writer=name=="fic"||name=="fic-runtime"||name=="fic-dick"||name=="fic-notify-dispatcher";
+        bool writer=name=="fic"||name=="fic-runtime"||name=="fic-dick"||name=="fic-notify-dispatcher"||name=="fic-udevadm-trigger";
+        // Installed collector/notification writers are scripts: their kernel
+        // exe is an interpreter, so executable fingerprints alone cannot find
+        // a manual invocation. argv is ONLY an additional reason to refuse,
+        // never positive evidence that an unknown root process is harmless.
+        std::string command;
+        if(!procText(process.fd,"cmdline",command,metadata,deadline)) {
+            if(gone(process.fd))continue;
+            return fail(error,"privileged process command identity unprovable");
+        }
+        if(!command.empty()&&command.back()!='\0')return fail(error,"incomplete process command identity");
+        for(std::size_t offset=0;offset<command.size();) {
+            const auto end=command.find('\0',offset);
+            const auto argument=std::filesystem::path(command.substr(offset,end-offset)).filename().string();
+            writer|=argument=="fic-notify-dispatcher"||argument=="fic-udevadm-trigger";
+            offset=end+1;
+        }
         for(const auto& image:references) {
             if(static_cast<std::uint64_t>(before.st_size)!=image.size)continue;
             const Key key{before.st_dev,before.st_ino,before.st_size,before.st_mtim.tv_sec,before.st_mtim.tv_nsec,before.st_ctim.tv_sec,before.st_ctim.tv_nsec};

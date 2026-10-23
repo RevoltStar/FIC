@@ -77,15 +77,35 @@ int main(int argc,char** argv) {
         }
         // Canonical writer name with an unknown executable is not silently
         // classified as harmless, and the proof never terminates it.
-        fs::copy_file("/bin/sleep",root/"fic");int readyPipe[2];require(::pipe2(readyPipe,O_CLOEXEC)==0,"exec pipe");
+        require(argc==2,"expected separate unknown-writer fixture executable");
+        fs::copy_file(argv[1],root/"fic");int readyPipe[2];require(::pipe(readyPipe)==0,"unknown writer pipe");
         const auto unknown=::fork();require(unknown>=0,"fork unknown writer");
-        if(unknown==0){::close(readyPipe[0]);::execl((root/"fic").c_str(),"fic","30",nullptr);const char e='E';(void)::write(readyPipe[1],&e,1);::_exit(6);}
+        if(unknown==0){::close(readyPipe[0]);const auto fd=std::to_string(readyPipe[1]);
+            ::execl((root/"fic").c_str(),"spoofed-harmless-name",fd.c_str(),nullptr);::_exit(6);}
         struct ReapUnknown {pid_t child;~ReapUnknown(){if(child>0){::kill(child,SIGKILL);::waitpid(child,nullptr,0);}}} reapUnknown{unknown};
-        ::close(readyPipe[1]);char signal;require(::read(readyPipe[0],&signal,1)==0,"unknown writer exec failed");::close(readyPipe[0]);
+        ::close(readyPipe[1]);char signal;require(::read(readyPipe[0],&signal,1)==1&&signal=='R',"unknown writer readiness failed");::close(readyPipe[0]);
         require(!prove()&&error.find("writer remains")!=std::string::npos,"unknown canonical writer ignored: "+error);
         int unknownStatus=0;require(::waitpid(unknown,&unknownStatus,WNOHANG)==0,"proof killed unknown process");
         require(::kill(unknown,SIGKILL)==0&&::waitpid(unknown,&unknownStatus,0)==unknown,"unknown cleanup");reapUnknown.child=-1;
         require(prove(),error);
+        for(const auto* scriptName:{"fic-notify-dispatcher","fic-udevadm-trigger"}) {
+            const auto script=root/scriptName;
+            {std::ofstream out(script);out<<"printf R\nread token\n";}
+            int ready[2],input[2];require(::pipe(ready)==0&&::pipe(input)==0,"script pipes");
+            const auto child=::fork();require(child>=0,"fork script");
+            if(child==0) {
+                ::dup2(input[0],STDIN_FILENO);::dup2(ready[1],STDOUT_FILENO);
+                for(const auto fd:{ready[0],ready[1],input[0],input[1]})::close(fd);
+                ::execl("/bin/sh","sh",script.c_str(),nullptr);::_exit(3);
+            }
+            struct ScriptCleanup {pid_t pid;~ScriptCleanup(){if(pid>0){::kill(pid,SIGKILL);::waitpid(pid,nullptr,0);}}} cleanup{child};
+            ::close(input[0]);::close(ready[1]);char signal;
+            require(::read(ready[0],&signal,1)==1&&signal=='R',"manual script readiness");::close(ready[0]);
+            require(!prove()&&error.find("writer remains")!=std::string::npos,"interpreter-based manual writer missed: "+error);
+            int status=0;require(::waitpid(child,&status,WNOHANG)==0,"proof terminated manual script");
+            ::close(input[1]);require(::waitpid(child,&status,0)==child,"manual script cleanup");cleanup.pid=-1;
+            fs::remove(script);require(prove(),error);
+        }
         require(!proveNoPackageWriterProcesses({reference},std::chrono::steady_clock::now(),error),"expired budget accepted");
         auto invalid=reference;invalid.digest.clear();
         require(!proveNoPackageWriterProcesses({invalid},std::chrono::steady_clock::now()+std::chrono::seconds(5),error),"invalid reference accepted");

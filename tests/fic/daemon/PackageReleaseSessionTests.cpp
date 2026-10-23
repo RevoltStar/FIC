@@ -1,4 +1,5 @@
 #include "daemon/PackageReleaseSession.h"
+#include "daemon/PackagePamHooks.h"
 #include <csignal>
 #include <filesystem>
 #include <fstream>
@@ -10,7 +11,7 @@
 using namespace fic::daemon;
 namespace fs=std::filesystem;
 namespace {
-bool quiescent=true;int crashDomain=-1;int failedDomain=-1;std::vector<int> releaseOrder;std::filesystem::path lockDirectory;
+bool quiescent=true,hookFailure=false,hookCrash=false,hookProof=true,resourceProof=true;int crashDomain=-1;int failedDomain=-1;std::vector<int> releaseOrder;std::filesystem::path lockDirectory;
 void require(bool yes,const std::string& error){if(!yes)throw std::runtime_error(error);}
 std::string bytes(const fs::path& path){std::ifstream in(path);return std::string(std::istreambuf_iterator<char>(in),{});}
 }
@@ -18,6 +19,20 @@ std::string bytes(const fs::path& path){std::ifstream in(path);return std::strin
 // arbitrary executor/callback/force API is added. Real domain backends have
 // their own physical rollback/native gates; here faults exercise orchestration.
 namespace fic::daemon {
+bool PackagePamHooks::detach(const DaemonInstanceLock& guard,std::chrono::steady_clock::time_point,std::string& error) const {
+    require(guard.heldByCurrentProcess(),"hook detach lost admission");
+    if(hookCrash)::kill(::getpid(),SIGKILL);
+    if(hookFailure){error="injected partial hook detach failure";return false;}
+    return true;
+}
+bool PackagePamHooks::proveDetached(std::string& error) const {
+    if(!hookProof){error="injected hook proof failure";return false;}return true;
+}
+bool PackageReleaseResources::proveReleased(PackageReleaseDomain,fic::rollback::MutationJournal& journal,std::string& error) const {
+    if(!resourceProof){error="injected resource proof failure";return false;}
+    for(const auto& record:journal.records())if(record.isActive()){error="retained active ownership";return false;}
+    return true;
+}
 bool PackageReleaseResources::supports(PackageReleaseDomain,std::string& error) const {error.clear();return true;}
 bool PackageReleaseResources::preflight(PackageReleaseDomain,fic::rollback::MutationJournal& journal,
     PackageResourceReleaseReport&,std::string& error) const {error.clear();return journal.usable();}
@@ -95,13 +110,15 @@ int main() {
                 failedDomain=-1;
             }
             crashDomain=crash;
-            if(crash>=0) {
+            if(crash>=-1) {
                 const auto child=::fork();require(child>=0,"fork release");
-                if(child==0){DaemonInstanceLock guard;if(!guard.tryAcquire(paths.runtimeDir,error))::_exit(2);(void)session.releaseManagedResources(guard,id,error);::_exit(3);}
+                if(child==0){DaemonInstanceLock guard;if(!guard.tryAcquire(paths.runtimeDir,error))::_exit(2);
+                    if(crash==-1){hookCrash=true;(void)session.completeRelease(guard,id,error);}
+                    else (void)session.releaseManagedResources(guard,id,error);::_exit(3);}
                 int status=0;require(::waitpid(child,&status,0)==child&&WIFSIGNALED(status)&&WTERMSIG(status)==SIGKILL,"release crash barrier");
                 require(store.inspect(state,error),error);
                 const PackagePhase expected[]={PackagePhase::Quiescent,PackagePhase::DmReleased,PackagePhase::DeReleased,PackagePhase::ProviderReleased};
-                require(state->phase==(crash>=4?PackagePhase::Quiescent:expected[crash]),"crash advanced/lost last durable phase");
+                require(state->phase==(crash==-1?PackagePhase::PasswordReleased:crash>=4?PackagePhase::Quiescent:expected[crash]),"crash advanced/lost last durable phase");
             }
             crashDomain=-1;DaemonInstanceLock restarted;require(restarted.tryAcquire(paths.runtimeDir,error),error);
             releaseOrder.clear();
@@ -111,6 +128,22 @@ int main() {
             fic::rollback::MutationJournal verified(paths.mutationJournalFile);require(verified.validatePersistentStateReadOnly(error)&&verified.records().size()==(alt?6u:4u),error);
             for(const auto& record:verified.records())require(record.status==fic::rollback::MutationStatus::RolledBack,"completed domain compensated/reconstructed");
             require(session.releaseManagedResources(restarted,id,error),"resource replay failed");
+            hookFailure=true;
+            require(!session.completeRelease(restarted,id,error),"failed hook detach completed release");
+            require(store.inspect(state,error)&&state->phase==PackagePhase::PasswordReleased,"partial hook detach lost durable phase");
+            hookFailure=false;hookProof=false;
+            require(!session.completeRelease(restarted,id,error),"missing final hook proof completed release");
+            require(store.inspect(state,error)&&state->phase==PackagePhase::HooksDetached,"hook proof failure advanced completion");
+            hookProof=true;resourceProof=false;
+            require(!session.completeRelease(restarted,id,error),"missing final resource proof completed release");
+            resourceProof=true;releaseOrder.clear();
+            require(session.completeRelease(restarted,id,error),error);
+            require(releaseOrder.empty(),"post-detach replay mutated resource domains");
+            require(store.inspect(state,error)&&state->phase==PackagePhase::ReleaseComplete,"release completion cleared fence or proved removal");
+            AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){return path!=lifecycle.fenceFile.string();});
+            require(!session.completeRelease(restarted,id,error),"visible ReleaseComplete without durability accepted");
+            AtomicFileWriter::setDirectoryFsyncHookForTests({});
+            require(session.completeRelease(restarted,id,error),"repeat complete release failed");
             require(store.inspect(state,error),error);
             require(store.begin(restarted,*state,{PackageOperation::Recover,PackagePhase::Recovering,std::string(32,'c'),"1",0},error),error);
             require(!session.releaseManagedResources(restarted,std::string(32,'c'),error),"resource release admitted recovery operation");

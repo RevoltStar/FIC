@@ -44,6 +44,7 @@
 #include "daemon/DaemonInstanceLock.h"
 #include "daemon/PackageReleaseResources.h"
 #include "daemon/MaintenanceAdmission.h"
+#include "daemon/PackageLifecycleAdmission.h"
 #include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
@@ -1656,6 +1657,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    if (daemonMode || fic::daemon::requiresInstanceLock(maintenanceAdmission)) {
+        // No config failure containment, journal opening or policy mutation is
+        // allowed before durable lifecycle completion. Absence is not recovery.
+        fic::daemon::PackageLifecycleAdmission lifecycle;
+        if (!lifecycle.requireInstalled(daemonInstance,pathError)) {
+            std::cerr << "refusing lifecycle admission: " << pathError << std::endl;
+            return 1;
+        }
+    }
+
+    if (packageTrustSync || affectedPackageTrustSync) {
+        fic::daemon::PackageLifecycleAdmission lifecycle;
+        if(!lifecycle.inspectInstalled(pathError)) {
+            std::cerr << "refusing trust-sync lifecycle admission: " << pathError << std::endl;
+            return 1;
+        }
+    }
+
     if (get_arg_value(argc, argv, 1) == "--maintenance") {
         // Pre-stop inspection must never bootstrap or recover operational
         // provenance. Release still opens fresh operational state separately.
@@ -2318,13 +2337,19 @@ int main(int argc, char* argv[]) {
         }
         fic::trust::PackageTrustSyncResult result;
         std::string syncError;
+        // Advisory early check above avoids writes for an already pending
+        // lifecycle. Repeat under the existing hash-store lock which fence
+        // publication/final proof must also hold to close the check/write race.
+        const auto admission=[](std::string& error) {
+            return fic::daemon::PackageLifecycleAdmission().inspectInstalled(error);
+        };
         const bool synchronized =
             affectedPackageTrustSync
                 ? fic::trust::syncSelectedPackageManagedExecutables(
                       platform, executables, affectedExecutableIds,
-                      result, syncError)
+                      result, syncError, admission)
                 : fic::trust::syncPackageManagedExecutables(
-                      platform, executables, result, syncError);
+                      platform, executables, result, syncError, admission);
         if (!synchronized) {
             std::cerr << "package trust sync failed: " << syncError << std::endl;
             return 1;

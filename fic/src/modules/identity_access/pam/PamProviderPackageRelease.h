@@ -50,7 +50,7 @@ namespace fic::identity::pam {
 // ---------------------------------------------------------------------------
 class PamProviderPackageRelease {
 public:
-    enum class Mode { Preflight, Release };
+    enum class Mode { Preflight, Release, ProveReleased };
 
     struct Options {
         // Cross-process mutation serialization of the release stage. Empty
@@ -84,6 +84,7 @@ public:
     bool run(Mode mode, Report& report, std::string& error);
 
 private:
+    bool proveReleased(std::string& error);
     // Read-only eligibility proof shared by both modes.
     bool preflight(Report& report, std::string& error);
     // Releasability proof of one active flag record (pure primitives only).

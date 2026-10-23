@@ -194,6 +194,9 @@ void testActiveAssignmentRelease() {
                                       harness.options());
     PamProviderPackageRelease::Report report;
     std::string error;
+    const auto journalBefore=readFile(harness.journalPath),configBefore=readFile(harness.configPath);
+    require(!release.run(PamProviderPackageRelease::Mode::ProveReleased,report,error),"active provider accepted as released");
+    require(readFile(harness.journalPath)==journalBefore&&readFile(harness.configPath)==configBefore,"proof mutated active provider");
     require(release.run(PamProviderPackageRelease::Mode::Release, report,
                         error),
             "release: " + error);
@@ -203,6 +206,9 @@ void testActiveAssignmentRelease() {
     for (const MutationRecord& record : harness.journal.records()) {
         require(!record.isActive(), "record resolved");
     }
+    require(release.run(PamProviderPackageRelease::Mode::ProveReleased,report,error),error);
+    require(!report.changedSystemState&&readFile(harness.configPath)==kForeign,"released provider proof mutated state");
+
 }
 
 void testOrphanBlockRejects() {

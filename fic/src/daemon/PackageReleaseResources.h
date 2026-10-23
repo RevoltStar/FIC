@@ -23,10 +23,12 @@ public:
     bool supports(PackageReleaseDomain,std::string& error) const;
     bool preflight(PackageReleaseDomain,fic::rollback::MutationJournal&,
         PackageResourceReleaseReport&,std::string& error) const;
+    bool proveReleased(PackageReleaseDomain,fic::rollback::MutationJournal&,std::string& error) const;
     bool release(const DaemonInstanceLock&,PackageReleaseDomain,fic::rollback::MutationJournal&,
         PackageResourceReleaseReport&,std::string& error) const;
 private:
-    bool run(PackageReleaseDomain,fic::rollback::MutationJournal&,bool preview,
+    enum class Action { Preflight, Release, Proof };
+    bool run(PackageReleaseDomain,fic::rollback::MutationJournal&,Action,
         PackageResourceReleaseReport&,std::string& error) const;
     const fic::platform::PlatformProfile& platform_;
     const fic::core::FicProductPaths& paths_;

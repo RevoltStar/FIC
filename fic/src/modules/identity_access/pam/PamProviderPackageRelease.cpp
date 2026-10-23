@@ -627,6 +627,13 @@ bool PamProviderPackageRelease::run(Mode mode, Report& report,
         return preflight(report, error);
     }
 
+    if(mode==Mode::ProveReleased) {
+        report={};
+        // No recovery/initialization or ownership mutation in proof mode.
+        Report inspected;
+        return journal_.usable()&&preflight(inspected,error)&&proveReleased(error);
+    }
+
     // Stage B: exclusive acquisition of the SHARED managed-provider
     // mutation lock (same domain as apply/runtime rollback, §59-§64). A
     // held lock refuses the release safely: no journal/file mutation.
@@ -779,6 +786,10 @@ bool PamProviderPackageRelease::run(Mode mode, Report& report,
             result.changedSystemState;
     }
 
+    return proveReleased(error);
+}
+
+bool PamProviderPackageRelease::proveReleased(std::string& error) {
     // Independent final proof (§73): no active provider domain records and
     // no FIC serialization on any known provider primary.
     for (const MutationRecord& record : journal_.records()) {

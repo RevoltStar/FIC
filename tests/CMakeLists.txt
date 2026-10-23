@@ -3183,13 +3183,15 @@ target_include_directories(package_unit_masks_tests PRIVATE ${CMAKE_SOURCE_DIR}/
 target_link_libraries(package_unit_masks_tests PRIVATE fic-core)
 add_test(NAME package_unit_masks_tests COMMAND package_unit_masks_tests)
 set_tests_properties(package_unit_masks_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(package_unknown_writer_fixture fic/daemon/PackageUnknownWriterFixture.cpp)
 add_executable(package_writer_processes_tests fic/daemon/PackageWriterProcessesTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterInventory.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
 target_include_directories(package_writer_processes_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(package_writer_processes_tests PRIVATE fic-core)
-add_test(NAME package_writer_processes_tests COMMAND package_writer_processes_tests)
+add_dependencies(package_writer_processes_tests package_unknown_writer_fixture)
+add_test(NAME package_writer_processes_tests COMMAND package_writer_processes_tests $<TARGET_FILE:package_unknown_writer_fixture>)
 set_tests_properties(package_writer_processes_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 add_executable(package_writers_quiescence_native_driver
     integration/maintenance-lifecycle/QuiescenceDriver.cpp
@@ -3219,3 +3221,41 @@ target_include_directories(package_release_session_tests PRIVATE ${CMAKE_SOURCE_
 target_link_libraries(package_release_session_tests PRIVATE fic-core fic-policy fic-platform Threads::Threads)
 add_test(NAME package_release_session_tests COMMAND package_release_session_tests)
 set_tests_properties(package_release_session_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)
+
+add_executable(package_pam_hooks_tests fic/daemon/PackagePamHooksTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackagePamHooks.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/PamIncidentAccessGateVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/AltIncidentAccessGateTopology.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp)
+target_include_directories(package_pam_hooks_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_pam_hooks_tests PRIVATE fic-core fic-platform ${CMAKE_DL_LIBS})
+add_dependencies(package_pam_hooks_tests pam_fic_access)
+add_test(NAME package_pam_hooks_tests COMMAND package_pam_hooks_tests $<TARGET_FILE:pam_fic_access>)
+set_tests_properties(package_pam_hooks_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(package_pam_hooks_native_driver
+    integration/maintenance-lifecycle/PackagePamHooksDriver.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackagePamHooks.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/PamIncidentAccessGateVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/AltIncidentAccessGateTopology.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp)
+target_include_directories(package_pam_hooks_native_driver PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_pam_hooks_native_driver PRIVATE fic-core fic-platform ${CMAKE_DL_LIBS})
+
+add_test(NAME package_pam_hooks_native
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/maintenance-lifecycle/native_pam_hooks.py
+    ${CMAKE_SOURCE_DIR} $<TARGET_FILE:package_pam_hooks_native_driver> $<TARGET_FILE:pam_fic_access>
+    $<$<STREQUAL:${FIC_TARGET_PLATFORM},alt-p11>:alt>)
+set_tests_properties(package_pam_hooks_native PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "native;root")
+
+add_executable(package_lifecycle_admission_tests fic/daemon/PackageLifecycleAdmissionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleAdmission.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_lifecycle_admission_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_lifecycle_admission_tests PRIVATE fic-core)
+add_test(NAME package_lifecycle_admission_tests COMMAND package_lifecycle_admission_tests)
+set_tests_properties(package_lifecycle_admission_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)

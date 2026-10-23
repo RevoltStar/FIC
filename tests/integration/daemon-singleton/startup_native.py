@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Opt-in: execute real daemon's rejected startup only in a disposable container."""
 import hashlib
+import json
 import os
 from pathlib import Path
 import select
@@ -16,7 +17,7 @@ daemon, driver = sys.argv[1:3]
 
 def snapshot():
     result = {}
-    for root in map(Path, ('/opt/fic', '/etc/ssh', '/etc/pam.d', '/run/fic')):
+    for root in map(Path, ('/opt/fic', '/etc/ssh', '/etc/pam.d', '/run/fic', '/var/lib/fic-lifecycle')):
         paths = [root]
         if root.is_dir():
             paths.extend(root.rglob('*'))
@@ -74,3 +75,35 @@ restarted = subprocess.run([driver, '--hold', '/run/fic'], input='Q',
                            capture_output=True, text=True, timeout=10)
 assert restarted.returncode == 0 and restarted.stdout.strip() == 'LOCKED', restarted.stderr
 print('PASS: real daemon default/custom socket refused before startup effects; read-only scope, crash/restart')
+
+# Real ELF lifecycle fence must reject before configuration-failure containment
+# and journal/bootstrap, including after a crashed previous lock holder.
+fence_root=Path('/var/lib/fic-lifecycle')
+assert not fence_root.exists(), 'fixture refuses existing lifecycle provenance'
+fence_root.mkdir(mode=0o700)
+fence=fence_root/'state.json'
+try:
+    for phase,operation in ((0,0),(12,0),(13,2),('corrupt',0),('missing',0)):
+        if fence.exists():
+            fence.unlink()
+        if phase=='corrupt':
+            fence.write_text('{}\n')
+        elif phase!='missing':
+            fence.write_text(json.dumps({'version':1,'operation':operation,'phase':phase,
+                'id':'a'*32,'package_version':'1','generation':0,'attempt_boot':'','attempt_ms':0,'failure':0})+'\n')
+        if fence.exists():
+            fence.chmod(0o600)
+        before=snapshot()
+        for args in ([],['--socket','/tmp/fic-singleton-custom.sock'],['--maintenance','incident-init'],
+                     ['--maintenance','ensure-config'],['--maintenance','pam-alt-pwhistory','prepare']):
+            result=subprocess.run([daemon,*args],capture_output=True,text=True,timeout=10)
+            assert result.returncode!=0 and 'refusing lifecycle admission:' in result.stderr, result.stderr
+            assert snapshot()==before, (phase,args,'lifecycle refusal mutated system state')
+        result=subprocess.run([daemon,'--trust-sync-platform'],capture_output=True,text=True,timeout=10)
+        assert result.returncode!=0 and 'refusing trust-sync lifecycle admission:' in result.stderr, result.stderr
+        assert snapshot()==before, (phase,'trust-sync changed state before lifecycle proof')
+finally:
+    if fence.exists():
+        fence.unlink()
+    fence_root.rmdir()
+print('PASS: actual daemon/standalone lifecycle gate rejects pending/tombstone/corrupt/missing proof before security effects')

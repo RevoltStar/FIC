@@ -30,6 +30,11 @@ public:
     static IncidentGateDetachProof proveDetached(
         const ::fic::platform::PamPlatformConfig& platform,
         std::string& diagnostic);
+    // Package infrastructure may inspect a separately pinned selection area;
+    // root ownership/trust requirements are unchanged.
+    static IncidentGateDetachProof proveDetached(
+        const ::fic::platform::PamPlatformConfig& platform,
+        const std::filesystem::path& selectionPath,std::string& diagnostic);
     static IncidentGateDetachProof proveDetachedForTests(
         const ::fic::platform::PamPlatformConfig& platform,
         const std::filesystem::path& selectionPath,

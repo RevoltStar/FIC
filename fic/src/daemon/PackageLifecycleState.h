@@ -35,6 +35,9 @@ class PackageLifecycleStore {
 public:
     explicit PackageLifecycleStore(std::filesystem::path path) : path_(std::move(path)) {}
     bool inspect(std::optional<PackageLifecycleState>& state, std::string& error) const;
+    // Snapshot-bound recovery barrier for an already published phase. Reading
+    // a visible phase alone cannot acknowledge a failed rename-directory fsync.
+    bool confirmDurable(const PackageLifecycleState& expected,std::string& error) const;
     bool create(const DaemonInstanceLock&, const PackageLifecycleState&, std::string& error);
     // Starts a new typed operation from an exact current snapshot; recovery
     // proofs belong to the closed coordinator, never to a caller-provided flag.

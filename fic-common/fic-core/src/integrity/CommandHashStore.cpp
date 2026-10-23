@@ -251,7 +251,7 @@ bool CommandHashStore::saveHashes(
 bool CommandHashStore::updateHashes(
     const std::vector<std::string>& executables,
     const std::vector<std::string>& removedExecutables,
-    std::string& error) {
+    std::string& error,const std::function<bool(std::string&)>& admission) {
     if (!command_hash_directory_exists(error)) {
         return false;
     }
@@ -265,6 +265,8 @@ bool CommandHashStore::updateHashes(
         error = "failed to acquire command hash write lock: " + hashFile + ".lock";
         return false;
     }
+
+    if(admission&&!admission(error))return false;
 
     std::vector<std::pair<std::string, std::string>> hashes;
     hashes.reserve(executables.size());

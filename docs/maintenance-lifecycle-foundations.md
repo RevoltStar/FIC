@@ -101,8 +101,13 @@ backend-ы; Release требует PID-bound guard. Upgrade lifecycle не до�
 DM→DE→provider→password под одним guard. ALT перед DM отключает pwhistory→faillock
 через прежние managers, после quiescence. Прерванные domains переигрываются через
 их существующий idempotent release; частичный release не компенсирует чужое состояние.
-Успех оставляет `PasswordReleased`, а не разрешение удаления/старта. Upgrade не
-допускается в resource release. Hook detach/controller/recovery ещё не подключены.
+Resource-stage оставляет `PasswordReleased`. `completeRelease` затем повторно
+доказывает quiescence и конечное состояние каждого domain, снимает фиксированные
+PAM profiles/includes и последним incident gate, выполняет независимые свежие
+proofs и оставляет `ReleaseComplete`. Это не proof удаления пакета/разрешение
+startup. После HooksDetached повтор не мутирует policy state. Частичная ошибка
+сохраняет fence; нет компенсации, присваивающей ownership. Upgrade не допускается
+в removal stage. Production package controller/recovery ещё не подключены.
 
 Для ALT `inspectReadOnly` переиспользует физический/семантический inspection без
 создания topology PID-lock/debug artifacts. Проверка включённого pwhistory может
@@ -118,6 +123,28 @@ service aliases в том же PAM-каталоге и сканирует физ
 Escape/chain/dangling/foreign aliases, writable targets и gate inode aliases не
 становятся доказанным отсутствием gate. Policy attach/control-flow alias contract
 не расширяется.
+
+## Ранняя lifecycle admission
+
+Daemon и exclusive standalone mutators после daemon.lock требуют finalized
+Installed в `/var/lib/fic-lifecycle/state.json`, до config-failure containment и
+journal. Missing/corrupt/pending/RemovedTombstone — отказ, без adoption. Snapshot-bound
+`ensureTargetDurableIfCurrentState` подтверждает уже опубликованную фазу: один
+visible Installed/ReleaseComplete после failed directory-fsync не считается
+подтверждённым completion. Нормальная admission не выполняет package recovery.
+
+Trust-sync сохраняет hash-store resource serialization и предварительно проверяет
+lifecycle. Перед hash update проверка повторяется внутри того же существующего
+hash-store lock через внутренний admission callback. **Будущий coordinator должен
+также удерживать этот lock при публикации fence и финальном hash-store proof**;
+один callback не доказывает межпроцессную безопасность пока writer/controller
+не подключён. Внешнего API bypass/FD/environment authority нет. Read-only routes
+не требуют Installed.
+
+**Промежуточная сборка ещё не является устанавливаемым M1 lifecycle:** production
+install/recovery controller не создаёт Installed proof. До его реализации ранний
+gate намеренно откажет normal startup/standalone mutations без finalized state.
+Не подменять это ручной записью Installed или permissive missing fallback.
 
 ## Validation boundary
 

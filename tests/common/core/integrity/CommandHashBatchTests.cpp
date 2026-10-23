@@ -7,6 +7,10 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+#include <sys/file.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+#include <cerrno>
 #include <unistd.h>
 
 namespace {
@@ -118,6 +122,23 @@ int main() {
         {}, {equalsName.string()}, error));
     assert(error.find("0x3D") != std::string::npos);
     assert(readFile(paths.commandHashFile) == beforeFailure);
+
+    bool admitted=false;
+    assert(!CommandHashStore::updateHashes({first.string()},{second.string()},error,[&](std::string& denied) {
+        admitted=true;
+        // Independent file description in another process must see the same
+        // existing lock held during the admission recheck (not a racy precheck).
+        const auto child=::fork();assert(child>=0);
+        if(child==0) {
+            const int fd=::open((paths.commandHashFile.string()+".lock").c_str(),O_RDWR|O_CLOEXEC);
+            if(fd<0)::_exit(2);
+            const bool busy=::flock(fd,LOCK_EX|LOCK_NB)!=0&&(errno==EWOULDBLOCK||errno==EAGAIN);
+            ::close(fd);::_exit(busy?0:3);
+        }
+        int status=0;assert(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+        denied="lifecycle pending";return false;
+    }));
+    assert(admitted&&error=="lifecycle pending"&&readFile(paths.commandHashFile)==beforeFailure);
 
     const fs::path hashBackup = root / "db/commandhash.backup";
     fs::rename(paths.commandHashFile, hashBackup);
