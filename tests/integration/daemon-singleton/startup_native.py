@@ -49,7 +49,9 @@ try:
         assert result.returncode != 0 and 'another daemon instance holds the lock' in result.stderr, result.stderr
         assert snapshot() == before, (domain, 'release modified persistent state before admission')
     for args in (['ensure-config'], ['ensure-config-first-install'], ['incident-init'],
-                 ['bootstrap-pam-password-slots'], ['incident-pam-alt', 'attach'], ['incident-pam-alt', 'detach']):
+                 ['bootstrap-pam-password-slots'], ['incident-pam-alt', 'attach'], ['incident-pam-alt', 'detach'],
+                 ['pam-alt-faillock', 'enable'], ['pam-alt-faillock', 'disable'],
+                 ['pam-alt-pwhistory', 'enable'], ['pam-alt-pwhistory', 'disable'], ['pam-alt-pwhistory', 'prepare']):
         result = subprocess.run([daemon, '--maintenance', *args],
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode != 0 and 'another daemon instance holds the lock' in result.stderr, result.stderr

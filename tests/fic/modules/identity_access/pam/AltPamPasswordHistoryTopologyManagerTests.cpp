@@ -116,6 +116,14 @@ void testRoundTripAndStorage() {
     AltPamPasswordHistoryTopologyManager manager(
         tree.platform(), tree.options());
     std::string error;
+    {
+        const auto before = TemporaryTree::read(tree.target());
+        AltPamPasswordHistoryTopologyState observed;
+        require(manager.inspectReadOnly(observed, error) && observed == AltPamPasswordHistoryTopologyState::Disabled, error);
+        require(!fs::exists(tree.options().lockFilePath) && !fs::exists(tree.options().lockDebugLogPath),
+                "read-only preflight created lock/debug files");
+        require(TemporaryTree::read(tree.target()) == before, "read-only preflight changed PAM");
+    }
     AltPamPasswordHistoryTopologyState state;
     require(manager.status(state, error) &&
                 state == AltPamPasswordHistoryTopologyState::Disabled,
@@ -135,6 +143,15 @@ void testRoundTripAndStorage() {
     require(!failedProof,
             "ALT password-history fsync failure was accepted");
     const std::string enabled = TemporaryTree::read(tree.target());
+    {
+        auto options = tree.options();
+        options.lockFilePath = tree.root / "run/unused-preflight.lock";
+        AltPamPasswordHistoryTopologyManager reader(tree.platform(), options);
+        AltPamPasswordHistoryTopologyState observed;
+        require(reader.inspectReadOnly(observed, error) && observed == AltPamPasswordHistoryTopologyState::Enabled, error);
+        require(!fs::exists(options.lockFilePath) && TemporaryTree::read(tree.target()) == enabled,
+                "enabled read-only preflight mutated state");
+    }
     require(enabled.find(AltPamPasswordHistoryTopologyManager::LOCK_RULE) !=
                 std::string::npos &&
                 enabled.find(AltPamPasswordHistoryTopologyManager::HISTORY_RULE) !=

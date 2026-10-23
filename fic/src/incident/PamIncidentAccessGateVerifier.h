@@ -23,6 +23,10 @@ public:
     static bool proveForTests(
         const ::fic::platform::PamPlatformConfig& platform,
         uid_t expectedOwner, std::string& diagnostic);
+    // Detach proof scans physical rules, including trusted one-hop local
+    // service aliases. This does not extend policy attach alias authority.
+    // Only pam-auth-update platforms additionally require selection DB proof;
+    // a declared packageTopologyTarget has no Debian selection dependency.
     static IncidentGateDetachProof proveDetached(
         const ::fic::platform::PamPlatformConfig& platform,
         std::string& diagnostic);

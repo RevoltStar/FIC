@@ -1272,6 +1272,18 @@ bool AltPamFaillockTopologyManager::status(
             options_.lockFilePath.string();
         return false;
     }
+    return inspectReadOnly(state,strategy,error);
+}
+
+bool AltPamFaillockTopologyManager::inspectReadOnly(AltPamFaillockTopologyState& state,std::string& error) {
+    std::optional<fic::platform::PamFaillockStrategy> strategy;
+    return inspectReadOnly(state,strategy,error);
+}
+
+bool AltPamFaillockTopologyManager::inspectReadOnly(AltPamFaillockTopologyState& state,
+    std::optional<fic::platform::PamFaillockStrategy>& strategy,std::string& error) {
+    const auto* capability=capabilityConfig(platformConfig_,PamCapability::AuthenticationLockout);
+    if(!canEnable(error)||!capability)return false;
     std::vector<ManagedTargetState> targets;
     if (!loadManagedTargets(*capability, targets, error)) {
         return false;

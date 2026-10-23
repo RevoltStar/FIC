@@ -3184,7 +3184,9 @@ target_link_libraries(package_unit_masks_tests PRIVATE fic-core)
 add_test(NAME package_unit_masks_tests COMMAND package_unit_masks_tests)
 set_tests_properties(package_unit_masks_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 add_executable(package_writer_processes_tests fic/daemon/PackageWriterProcessesTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp)
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterInventory.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
 target_include_directories(package_writer_processes_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(package_writer_processes_tests PRIVATE fic-core)
 add_test(NAME package_writer_processes_tests COMMAND package_writer_processes_tests)
@@ -3198,3 +3200,22 @@ add_executable(package_writers_quiescence_native_driver
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
 target_include_directories(package_writers_quiescence_native_driver PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(package_writers_quiescence_native_driver PRIVATE fic-core fic-platform)
+add_executable(package_database_snapshot_tests fic/daemon/PackageDatabaseSnapshotTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageDatabaseSnapshot.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageManagerTransactionLock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_database_snapshot_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_database_snapshot_tests PRIVATE fic-core fic-platform)
+add_test(NAME package_database_snapshot_tests COMMAND package_database_snapshot_tests)
+add_executable(package_release_session_tests fic/daemon/PackageReleaseSessionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageReleaseSession.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageUnitMasks.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterInventory.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp)
+target_include_directories(package_release_session_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_release_session_tests PRIVATE fic-core fic-policy fic-platform Threads::Threads)
+add_test(NAME package_release_session_tests COMMAND package_release_session_tests)
+set_tests_properties(package_release_session_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)

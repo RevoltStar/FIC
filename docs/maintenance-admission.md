@@ -9,7 +9,8 @@
   `pam-provider-prerm-prepare release`, `pam-password-prerm-prepare release`;
 * `ensure-config`, `ensure-config-first-install`, `incident-init`,
   `bootstrap-pam-password-slots`;
-* `incident-pam-alt attach/detach`.
+* `incident-pam-alt attach/detach`;
+* `pam-alt-faillock enable/disable`, `pam-alt-pwhistory prepare/enable/disable`.
 
 Guard удерживается в `main` до завершения операции. Не передаётся через environment
 или дочерним maintenance writers. Занятый/недоверенный lock — отказ без journal load,
@@ -32,10 +33,15 @@ Preflight не является разрешением действовать п
 
 ## Отдельно сериализованные и read-only маршруты
 
-`pam-alt-faillock status/enable/disable` и
-`pam-alt-pwhistory status/prepare/enable/disable` пока сохраняют существующие
-per-resource topology locks. Их scope — соответствующая topology, не whole journal
-или package lifecycle. Trust sync сохраняет hash-store serialization.
+`pam-alt-faillock status` и `pam-alt-pwhistory status` сохраняют существующие
+per-resource topology locks (включая диагностические PID-lock artifacts).
+Mutating topology-команды теперь сначала получают общий daemon admission:
+одного resource lock недостаточно для исключения нового writer между package
+stages. Daemon policy backends вызывают managers напрямую, без дочернего
+maintenance-процесса. Package-session использует те же managers под своим guard;
+advisory pre-stop inspection не создаёт topology PID-lock/debug artifacts.
+Trust sync пока сохраняет только hash-store serialization; его координация с
+lifecycle fence ещё не завершена.
 
 `check-config`, `wait-daemon`, `incident-pam-verify`,
 `incident-pam-prove-detached`, `validate-pam-slots-before-attach` и

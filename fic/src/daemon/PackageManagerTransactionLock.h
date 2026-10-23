@@ -21,12 +21,14 @@ public:
     PackageManagerLockResult tryAcquire(const DaemonInstanceLock&,
         const fic::platform::PackageManagerPlatformConfig&, std::string& error);
     bool heldByCurrentProcess() const;
+    bool covers(fic::platform::PackageManagerKind) const;
     bool revalidate(std::string& error) const;
 private:
     struct Entry {int fd; std::filesystem::path path; dev_t device; ino_t inode;};
     std::vector<Entry> entries_;
     std::unique_lock<std::mutex> local_;
     pid_t owner_ = -1;
+    fic::platform::PackageManagerKind kind_=fic::platform::PackageManagerKind::Dpkg;
 };
 }
 #endif

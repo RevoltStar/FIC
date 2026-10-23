@@ -24,5 +24,13 @@ g++ "$@" "$src/tests/integration/maintenance-lifecycle/QuiescenceDriver.cpp" \
     -lcrypto -o "$out/m1-quiescence"
 g++ "$@" "$src/tests/fic/daemon/PackageWriterProcessesTests.cpp" \
     "$src/fic/src/daemon/PackageWriterProcesses.cpp" \
+    "$src/fic/src/daemon/PackageWriterInventory.cpp" "$src/fic/src/daemon/DaemonInstanceLock.cpp" \
+    "$common/fs/AtomicFileWriter.cpp" "$common/fs/SecureStateFile.cpp" \
     "$common/fs/RootControlledDirectory.cpp" "$common/integrity/ContentDigest.cpp" \
     -lcrypto -o "$out/m1-process-tests"
+g++ "$@" "$src/tests/integration/maintenance-lifecycle/PackageDatabaseDriver.cpp" \
+    "$src/fic/src/daemon/PackageDatabaseSnapshot.cpp" \
+    "$src/fic/src/daemon/PackageManagerTransactionLock.cpp" "$src/fic/src/daemon/DaemonInstanceLock.cpp" \
+    "$src/fic/src/platform/PlatformExecutableResolver.cpp" \
+    "$common/fs/RootControlledDirectory.cpp" "$common/process/ProcessExecutor.cpp" \
+    "$common/process/ProcessPipeIo.cpp" -o "$out/m1-package-db"

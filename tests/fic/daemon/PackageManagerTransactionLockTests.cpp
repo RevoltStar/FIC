@@ -45,6 +45,7 @@ int main(int argc,char** argv) {
         {
             PackageManagerTransactionLock first,second;
             require(first.tryAcquire(daemon,config,error)==PackageManagerLockResult::Acquired,error);
+            require(first.covers(PackageManagerKind::Dpkg)&&!first.covers(PackageManagerKind::Rpm),"manager identity not bound to lock set");
             require(second.tryAcquire(daemon,config,error)==PackageManagerLockResult::Busy,"same-process lock reentry released POSIX locks");
             const auto pid=::fork();require(pid>=0,"fork");
             if(pid==0) {

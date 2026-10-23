@@ -22,9 +22,10 @@ inline MaintenanceIntent maintenanceIntent(const std::string& command, const std
         command == "incident-init" || command == "bootstrap-pam-password-slots")
         return MaintenanceIntent::ExclusiveMutation;
     if (command == "pam-alt-faillock" || command == "pam-alt-pwhistory") {
-        if (action == "status" || action == "enable" || action == "disable" ||
+        if (action == "status") return MaintenanceIntent::ResourceSerialized;
+        if (action == "enable" || action == "disable" ||
             (command == "pam-alt-pwhistory" && action == "prepare"))
-            return MaintenanceIntent::ResourceSerialized;
+            return MaintenanceIntent::ExclusiveMutation;
         return MaintenanceIntent::Invalid;
     }
     return MaintenanceIntent::Invalid;

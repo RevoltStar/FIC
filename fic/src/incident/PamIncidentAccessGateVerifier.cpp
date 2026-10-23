@@ -177,7 +177,7 @@ enum class IncidentModuleReference { Other, Referenced, Unprovable };
 
 IncidentModuleReference incidentModuleReference(
     const std::string& module,
-    const ::fic::platform::PamPlatformConfig& platform) {
+    const ::fic::platform::PamPlatformConfig& platform,uid_t expectedOwner) {
     if (module.empty()) return IncidentModuleReference::Other; // include rule
     const std::filesystem::path path(module);
     if (path.filename() == "pam_fic_access.so") {
@@ -209,12 +209,30 @@ IncidentModuleReference incidentModuleReference(
         std::error_code error;
         const auto status = std::filesystem::symlink_status(candidate, error);
         if (error == std::errc::no_such_file_or_directory) continue;
-        if (error || std::filesystem::is_symlink(status) ||
-            !std::filesystem::is_regular_file(status)) {
-            return IncidentModuleReference::Unprovable;
-        }
+        if (error) return IncidentModuleReference::Unprovable;
         struct stat candidateInfo {};
-        if (::stat(candidate.c_str(), &candidateInfo) != 0) {
+        if(std::filesystem::is_symlink(status)) {
+            const auto allowed=platform.trustedModuleAliases.find(candidate.filename().string());
+            if(allowed==platform.trustedModuleAliases.end()||
+               std::find(platform.moduleDirectories.begin(),platform.moduleDirectories.end(),candidate.parent_path())==platform.moduleDirectories.end())
+                return IncidentModuleReference::Unprovable;
+            const std::filesystem::path targetName(allowed->second);
+            if(targetName.empty()||targetName!=targetName.filename()||targetName=="."||targetName=="..")
+                return IncidentModuleReference::Unprovable;
+            struct stat before{},after{};
+            if(::lstat(candidate.c_str(),&before)||!S_ISLNK(before.st_mode)||before.st_uid!=expectedOwner||before.st_nlink!=1)
+                return IncidentModuleReference::Unprovable;
+            char target[4096];const auto length=::readlink(candidate.c_str(),target,sizeof(target));
+            if(length<=0||length>=static_cast<ssize_t>(sizeof(target))||std::string(target,length)!=allowed->second)
+                return IncidentModuleReference::Unprovable;
+            const auto physical=candidate.parent_path()/targetName;std::string detail;
+            if(!trustedRegularFile(physical,expectedOwner,detail)||::lstat(physical.c_str(),&candidateInfo)||
+               !S_ISREG(candidateInfo.st_mode)||candidateInfo.st_uid!=expectedOwner||(candidateInfo.st_mode&0022))
+                return IncidentModuleReference::Unprovable;
+            if(::lstat(candidate.c_str(),&after)||after.st_dev!=before.st_dev||after.st_ino!=before.st_ino||
+               after.st_uid!=expectedOwner||after.st_ctim.tv_sec!=before.st_ctim.tv_sec||after.st_ctim.tv_nsec!=before.st_ctim.tv_nsec)
+                return IncidentModuleReference::Unprovable;
+        } else if(!std::filesystem::is_regular_file(status)||::stat(candidate.c_str(), &candidateInfo) != 0) {
             return IncidentModuleReference::Unprovable;
         }
         std::vector<std::filesystem::path> gatePaths;
@@ -241,20 +259,25 @@ IncidentGateDetachProof proveDetachedImpl(
     const ::fic::platform::PamPlatformConfig& platform,
     const std::filesystem::path& selectionPath, uid_t expectedOwner,
     std::string& diagnostic) {
-    std::string selection;
-    if (!readProofFile(selectionPath, expectedOwner, selection, diagnostic)) {
-        return IncidentGateDetachProof::Unprovable;
-    }
-    std::istringstream state(selection);
-    std::string line;
-    while (std::getline(state, line)) {
-        if (line == "Module: fic-incident-access") {
-            diagnostic = "incident gate remains selected";
-            return IncidentGateDetachProof::Referenced;
-        }
-        if (line.find("fic-incident-access") != std::string::npos) {
-            diagnostic = "incident gate selection state is ambiguous";
+    // Selection belongs to pam-auth-update platforms only. ALT's declared
+    // packageTopologyTarget uses a package-owned physical account block;
+    // absence of Debian's /var/lib/pam must never be used as a fallback proof.
+    if (platform.incidentAccessGate.packageTopologyTarget.empty()) {
+        std::string selection;
+        if (!readProofFile(selectionPath, expectedOwner, selection, diagnostic)) {
             return IncidentGateDetachProof::Unprovable;
+        }
+        std::istringstream state(selection);
+        std::string line;
+        while (std::getline(state, line)) {
+            if (line == "Module: fic-incident-access") {
+                diagnostic = "incident gate remains selected";
+                return IncidentGateDetachProof::Referenced;
+            }
+            if (line.find("fic-incident-access") != std::string::npos) {
+                diagnostic = "incident gate selection state is ambiguous";
+                return IncidentGateDetachProof::Unprovable;
+            }
         }
     }
     if (platform.configDirectories.empty()) {
@@ -262,6 +285,7 @@ IncidentGateDetachProof proveDetachedImpl(
         return IncidentGateDetachProof::Unprovable;
     }
     bool requiredDirectorySeen = false;
+    std::size_t inspectedFiles=0,totalBytes=0;
     for (std::size_t index = 0; index < platform.configDirectories.size(); ++index) {
         const auto& directory = platform.configDirectories[index];
         std::error_code error;
@@ -297,22 +321,65 @@ IncidentGateDetachProof proveDetachedImpl(
             if (error) break;
             const auto& entry = *entries;
             const auto fileStatus = entry.symlink_status(error);
-            if (error || !std::filesystem::is_regular_file(fileStatus)) {
+            if (error || ++inspectedFiles>4096) {
+                diagnostic = "PAM file inventory is unprovable/oversized";
+                return IncidentGateDetachProof::Unprovable;
+            }
+            auto physicalPath=entry.path();
+            struct stat aliasBefore{};
+            const bool alias=std::filesystem::is_symlink(fileStatus);
+            if(alias) {
+                if(::lstat(entry.path().c_str(),&aliasBefore)||!S_ISLNK(aliasBefore.st_mode)||
+                   aliasBefore.st_uid!=expectedOwner||aliasBefore.st_nlink!=1) {
+                    diagnostic="untrusted PAM service alias: "+entry.path().string();
+                    return IncidentGateDetachProof::Unprovable;
+                }
+                char target[4096];
+                const auto length=::readlink(entry.path().c_str(),target,sizeof(target));
+                if(length<=0||length>=static_cast<ssize_t>(sizeof(target))) {
+                    diagnostic="untrusted PAM service alias: "+entry.path().string();
+                    return IncidentGateDetachProof::Unprovable;
+                }
+                const std::filesystem::path name(std::string(target,length));
+                if(name.is_absolute()||name!=name.filename()||name=="."||name=="..") {
+                    diagnostic="PAM service alias escapes its configuration directory";
+                    return IncidentGateDetachProof::Unprovable;
+                }
+                physicalPath=entry.path().parent_path()/name;
+                // readProofFile below refuses another symlink, missing target,
+                // unsafe ownership/mode and unstable bytes. Analyze the actual
+                // target's complete rules; this does NOT authorize that alias
+                // for policy attach/control-flow decisions.
+            } else if(!std::filesystem::is_regular_file(fileStatus)) {
                 diagnostic = "PAM service entry is unprovable: " +
                     entry.path().string();
                 return IncidentGateDetachProof::Unprovable;
             }
             std::string content;
-            if (!readProofFile(entry.path(), expectedOwner, content, diagnostic)) {
+            if (!readProofFile(physicalPath, expectedOwner, content, diagnostic)) {
                 return IncidentGateDetachProof::Unprovable;
+            }
+            totalBytes+=content.size();
+            if(totalBytes>16*1024*1024) {
+                diagnostic="PAM proof byte budget exceeded";
+                return IncidentGateDetachProof::Unprovable;
+            }
+            if(alias) {
+                struct stat confirmed{};
+                if(::lstat(entry.path().c_str(),&confirmed)||confirmed.st_dev!=aliasBefore.st_dev||
+                   confirmed.st_ino!=aliasBefore.st_ino||confirmed.st_uid!=expectedOwner||
+                   confirmed.st_ctim.tv_sec!=aliasBefore.st_ctim.tv_sec||confirmed.st_ctim.tv_nsec!=aliasBefore.st_ctim.tv_nsec) {
+                    diagnostic="PAM service alias changed during proof";
+                    return IncidentGateDetachProof::Unprovable;
+                }
             }
             std::vector<::fic::identity::pam::PamRule> rules;
             if (!::fic::identity::pam::PamConfiguration::parseRulesContent(
-                    entry.path(), content, rules, diagnostic)) {
+                    physicalPath, content, rules, diagnostic)) {
                 return IncidentGateDetachProof::Unprovable;
             }
             for (const auto& rule : rules) {
-                const auto reference = incidentModuleReference(rule.module, platform);
+                const auto reference = incidentModuleReference(rule.module, platform,expectedOwner);
                 if (reference == IncidentModuleReference::Referenced) {
                     diagnostic = "incident PAM module remains referenced: " +
                         entry.path().string();

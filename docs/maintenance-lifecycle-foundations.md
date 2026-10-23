@@ -65,6 +65,10 @@ release/fence/resource writes. После stop нужно получить admis
    отвергаются; inventory никого не завершает.
 
 Legacy images нужно захватить до unpack и сохранить в lifecycle provenance.
+`writeLegacyWriterInventory` сохраняет exclusive immutable operation-bound ledger;
+`readLegacyWriterInventory` проверяет bounded schema, metadata и operation ID.
+Потерянный/повреждённый ledger не становится пустым inventory. Fingerprints
+продолжают работать после удаления исходного executable path во время unpack.
 Сам census не запрещает будущий ручной запуск старой копии: административный
 запрет независимых legacy launches остаётся deployment prerequisite. Zombie
 leader не доказывает отсутствие live worker threads: при недоступном `exe`
@@ -74,6 +78,46 @@ leader не доказывает отсутствие live worker threads: пр�
 cgroup inventory ≤4096 каталогов/262144 entries/depth64; process inventory
 ≤4096 processes/tasks, 16 MiB metadata, 256 MiB fingerprints, 64 MiB/image,
 ≤8 legacy images. Превышение — отказ без release, не усечение proof.
+
+## Package database и существующие release engines
+
+`PackageDatabaseReader` выполняет только фиксированный native query, под matching
+PM locks с повторной identity check. Общий переданный output budget расходуется
+между вызовами, один вызов ограничен 5 s и общим deadline. Parser различает dpkg
+Installed, Incomplete, ConfigFiles и Absent; half-configured и reinstreq не являются
+Installed. RPM EVR сохраняет epoch; несколько записей одного FIC package не
+схлопываются. RPM installed row сама по себе не доказывает успешный `%post`.
+Snapshot не является manifest/domain proof и не разрешает runtime erase.
+
+`PackageReleaseResources` предоставляет фиксированные DM/DE/provider/password
+операции для прежних maintenance routes и будущей package-session. Он не загружает
+и не создаёт journal: caller передаёт fresh admitted journal либо отдельно
+проверенный read-only preflight journal. Все ownership decisions выполняют прежние
+backend-ы; Release требует PID-bound guard. Upgrade lifecycle не допускает release
+фазы: после quiescence переходит к recovery без удаления ownership/PAM hooks.
+
+`PackageReleaseSession` — пока не подключённый к CLI фиксированный resource stage:
+свежий read-only preflight, admission/masks/quiescence, затем свежий journal и
+DM→DE→provider→password под одним guard. ALT перед DM отключает pwhistory→faillock
+через прежние managers, после quiescence. Прерванные domains переигрываются через
+их существующий idempotent release; частичный release не компенсирует чужое состояние.
+Успех оставляет `PasswordReleased`, а не разрешение удаления/старта. Upgrade не
+допускается в resource release. Hook detach/controller/recovery ещё не подключены.
+
+Для ALT `inspectReadOnly` переиспользует физический/семантический inspection без
+создания topology PID-lock/debug artifacts. Проверка включённого pwhistory может
+брать существующий transaction advisory lock без изменения файлов. Это advisory
+preflight: после admission нужны новые proofs. Standalone topology mutators тоже
+получают daemon admission, сохраняя прежние backend locks.
+
+`PamIncidentAccessGateVerifier::proveDetached` проверяет selection database только
+на pam-auth-update платформах. На ALT physical package target не требует Debian
+`/var/lib/pam/account`. Detached scan допускает доверенные одношаговые относительные
+service aliases в том же PAM-каталоге и сканирует физический target. Module aliases
+разрешены только явно в platform profile: ALT `pam_unix.so → pam_tcb.so`.
+Escape/chain/dangling/foreign aliases, writable targets и gate inode aliases не
+становятся доказанным отсутствием gate. Policy attach/control-flow alias contract
+не расширяется.
 
 ## Validation boundary
 

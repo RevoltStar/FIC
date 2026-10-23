@@ -479,6 +479,20 @@ bool validatePamTrustedServiceAliases(const PamPlatformConfig& pam,
     return true;
 }
 
+bool validatePamTrustedModuleAliases(const PamPlatformConfig& pam,std::string& error) {
+    const auto module=[](const std::string& value) {
+        return value.size()>7&&value.size()<=128&&value.rfind("pam_",0)==0&&
+            value.compare(value.size()-3,3,".so")==0&&
+            value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-")==std::string::npos;
+    };
+    for(const auto& [alias,target]:pam.trustedModuleAliases) {
+        if(!module(alias)||!module(target)||alias==target||alias=="pam_fic_access.so"||target=="pam_fic_access.so") {
+            error="native PAM module alias must name distinct non-gate module basenames";return false;
+        }
+    }
+    return true;
+}
+
 bool validatePamProviderConfigTopology(
     const PamCapabilityConfig& capability,
     const fic::identity::pam::PamProviderDescriptor& provider,
@@ -1140,6 +1154,7 @@ bool validatePlatformProfile(const PlatformProfile& profile, std::string& error)
                        "PAM module directory", error) ||
         !validatePamComposition(profile.pam, error) ||
         !validatePamTrustedServiceAliases(profile.pam, error) ||
+        !validatePamTrustedModuleAliases(profile.pam, error) ||
         !validatePamTrustedAuthenticationBypasses(profile.pam, error) ||
         !validatePath(profile.passwordAging.loginDefsPath,
                       "login.defs path", error) ||

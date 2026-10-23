@@ -303,6 +303,14 @@ void testCanonicalRoundTrip() {
     TemporaryTree tree;
     AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
     std::string error;
+    {
+        const auto before = TemporaryTree::read(tree.target());
+        AltPamFaillockTopologyState observed;
+        require(manager.inspectReadOnly(observed, error) && observed == AltPamFaillockTopologyState::Disabled, error);
+        require(!fs::exists(tree.options().lockFilePath) && !fs::exists(tree.options().lockDebugLogPath),
+                "read-only preflight created lock/debug files");
+        require(TemporaryTree::read(tree.target()) == before, "read-only preflight changed PAM");
+    }
     PamTopologyManager& topology = manager;
     PamTopologyStatus genericStatus;
     require(topology.canEnable(error), error);
@@ -316,6 +324,15 @@ void testCanonicalRoundTrip() {
             error);
     require(manager.enable(error), error);
     const std::string enabled = TemporaryTree::read(tree.target());
+    {
+        auto options = tree.options();
+        options.lockFilePath = tree.root / "run/unused-preflight.lock";
+        AltPamFaillockTopologyManager reader(tree.platform(), options);
+        AltPamFaillockTopologyState observed;
+        require(reader.inspectReadOnly(observed, error) && observed == AltPamFaillockTopologyState::Enabled, error);
+        require(!fs::exists(options.lockFilePath) && TemporaryTree::read(tree.target()) == enabled,
+                "enabled read-only preflight mutated state");
+    }
     require(enabled.find(
                 std::string(AltPamFaillockTopologyManager::PREAUTH_BEGIN) +
                 "\n" + AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE + "\n") !=

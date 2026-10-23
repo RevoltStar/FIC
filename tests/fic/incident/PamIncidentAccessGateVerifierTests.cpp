@@ -23,6 +23,14 @@ void write(const std::filesystem::path& path, const std::string& content) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::string(argv[1]) == "--platform-detached") {
+        std::string diagnostic;
+        const auto proof=fic::incident::PamIncidentAccessGateVerifier::proveDetached(
+            fic::platform::makeBuildPlatformProfile().pam,diagnostic);
+        std::cout<<diagnostic<<'\n';
+        return proof==fic::incident::IncidentGateDetachProof::ProvenDetached?0:
+            proof==fic::incident::IncidentGateDetachProof::Referenced?1:2;
+    }
     if (argc == 4 && std::string(argv[1]) == "--detached-fixture") {
         fic::platform::PamPlatformConfig config;
         config.configDirectories = {argv[3]};
@@ -151,6 +159,25 @@ int main(int argc, char** argv) {
               "account required " + moduleAlias.string() + "\n");
         require(detached() == Proof::Unprovable);
         std::filesystem::remove(moduleAlias);
+        const auto nativeModule=modules/"pam_native.so";
+        write(nativeModule,"native module fixture");
+        config.trustedModuleAliases={{"pam_unix_alias.so","pam_native.so"}};
+        std::filesystem::create_symlink("pam_native.so",moduleAlias);
+        require(detached() == Proof::ProvenDetached);
+        ::chmod(nativeModule.c_str(),0666);
+        require(detached() == Proof::Unprovable);
+        ::chmod(nativeModule.c_str(),0644);
+        std::filesystem::remove(moduleAlias);
+        std::filesystem::create_symlink("pam_fic_access.so",moduleAlias);
+        require(detached() == Proof::Unprovable); // declared native target drift
+        std::filesystem::remove(moduleAlias);
+        std::filesystem::remove(nativeModule);
+        std::filesystem::create_hard_link(modules/"pam_fic_access.so",nativeModule);
+        std::filesystem::create_symlink("pam_native.so",moduleAlias);
+        require(detached() == Proof::Referenced); // inode check survives native alias
+        std::filesystem::remove(moduleAlias);
+        std::filesystem::remove(nativeModule);
+        config.trustedModuleAliases.clear();
         write(services / "common-account", "account required pam_unix.so\n");
         write(vendor / "vendor-login",
               "account required pam_fic_access.so\n");
@@ -165,6 +192,37 @@ int main(int argc, char** argv) {
         std::filesystem::remove(services / "unprovable-alias");
         write(services / "*", "# a literal glob-like service name\n");
         require(detached() == Proof::ProvenDetached);
+        std::filesystem::remove(selection);
+        require(detached() == Proof::Unprovable); // no Debian missing-state fallback
+        config.incidentAccessGate.packageTopologyTarget=services/"common-account";
+        require(detached() == Proof::ProvenDetached); // ALT has no selection DB
+        const auto localAlias=services/"local-alias";
+        std::filesystem::create_symlink("common-account",localAlias);
+        require(detached() == Proof::ProvenDetached);
+        write(services/"common-account","account required pam_fic_access.so\n");
+        require(detached() == Proof::Referenced);
+        write(services/"common-account","account required pam_unix.so\n");
+        ::chmod((services/"common-account").c_str(),0666);
+        require(detached() == Proof::Unprovable);
+        ::chmod((services/"common-account").c_str(),0644);
+        std::filesystem::remove(localAlias);
+        for(const auto& target:{std::filesystem::path("../pam-state/account"),
+            std::filesystem::path("missing-target"),std::filesystem::path("local-alias")}) {
+            std::filesystem::create_symlink(target,localAlias);
+            require(detached() == Proof::Unprovable);
+            std::filesystem::remove(localAlias);
+        }
+        std::filesystem::create_symlink("common-account",localAlias);
+        std::filesystem::create_symlink("local-alias",services/"alias-chain");
+        require(detached() == Proof::Unprovable);
+        std::filesystem::remove(services/"alias-chain");
+        if(::geteuid()==0) {
+            require(::lchown(localAlias.c_str(),1,1)==0);
+            require(detached() == Proof::Unprovable);
+        }
+        std::filesystem::remove(localAlias);
+        config.incidentAccessGate.packageTopologyTarget.clear();
+        write(selection,"Module: pam_unix\n");
         std::filesystem::remove(vendor / "vendor-login");
         std::filesystem::remove(vendor);
         require(detached() == Proof::ProvenDetached);

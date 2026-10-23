@@ -20,6 +20,14 @@ int main() {
         expect("incident-pam-alt", "attach", MaintenanceIntent::ExclusiveMutation);
         expect("incident-pam-alt", "detach", MaintenanceIntent::ExclusiveMutation);
         expect("incident-pam-alt", "force", MaintenanceIntent::Invalid);
+        for(const auto* command:{"pam-alt-faillock","pam-alt-pwhistory"}) {
+            expect(command,"status",MaintenanceIntent::ResourceSerialized);
+            expect(command,"enable",MaintenanceIntent::ExclusiveMutation);
+            expect(command,"disable",MaintenanceIntent::ExclusiveMutation);
+            expect(command,"force",MaintenanceIntent::Invalid);
+        }
+        expect("pam-alt-pwhistory","prepare",MaintenanceIntent::ExclusiveMutation);
+        expect("pam-alt-faillock","prepare",MaintenanceIntent::Invalid);
         expect("future-command", "release", MaintenanceIntent::Invalid);
         for (auto intent : {MaintenanceIntent::ReadOnly, MaintenanceIntent::ResourceSerialized, MaintenanceIntent::Invalid})
             if (requiresInstanceLock(intent)) throw std::runtime_error("unexpected global lock");

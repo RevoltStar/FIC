@@ -375,6 +375,9 @@ struct PamPlatformConfig {
     // joint runtime topology domain: the flag is domain-level, not
     // per-capability.
     bool passwordTopologyRuntimeMutable = false;
+    // Native loader aliases, basename -> exact same-directory target.
+    // Used only for module identity/absence proofs, not authentication bypass.
+    std::map<std::string,std::string> trustedModuleAliases;
 };
 
 enum class LocalShadowKind {

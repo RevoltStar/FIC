@@ -115,6 +115,8 @@ PlatformProfile makeBuildPlatformProfile() {
         "/lib/security", "/lib64/security",
         "/usr/lib/security", "/usr/lib64/security"
     };
+    // ALT pam0_tcb owns this exact native loader alias (p11 native audit).
+    profile.pam.trustedModuleAliases={{"pam_unix.so","pam_tcb.so"}};
 #ifdef FIC_LIBRARY_ARCHITECTURE
     profile.pam.moduleDirectories.push_back(
         std::filesystem::path("/lib") / FIC_LIBRARY_ARCHITECTURE / "security");

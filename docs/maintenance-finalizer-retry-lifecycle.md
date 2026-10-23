@@ -116,27 +116,27 @@ AccuracySec; это не realtime SLA. Infinite crashes, administrative masks, �
 
 ## Удаление finalizer, purge и восстановление
 
-Finalizer принадлежит основному пакету FIC, а persistent fence — root-controlled
-каталогу вне удаляемых package-owned деревьев. Release package-session держит
-daemon.lock через все действия и финальные proofs; выставляет durable release
-phase до исчезновения helper/units. Снятие delivery units не снимает fence.
+Finalizer и delivery units принадлежат предварительному `fic-runtime`, а persistent
+fence — root-controlled каталогу вне удаляемых package-owned деревьев. Runtime
+содержит единственный engine. Полный package/version/lifetime contract:
+[maintenance-runtime-package-design.md](maintenance-runtime-package-design.md).
 
-* Пока пакет устанавливается/обновляется: helper/units должны быть восстановлены
-  package manager; postinst оставляет InstalledButFenced, включает доставку.
-* Успешное remove/purge: helper, timer/path/service исчезают; **автоматическая
-  финализация отсутствующего пакета не требуется**. Fence остаётся tombstone,
-  запрещающим старому cooperative бинарнику startup. Полный purge не удаляет этот
-  security state; отсутствие fence не используется как proof успешного удаления.
-* Failed erase/partial removal: fence сохраняется независимо от наличия helper.
-  Если helper исчез, автоматическая доставка технически невозможна. Требуется
-  reinstall/закрытый recovery после восстановления пакета. Нельзя обещать timer
-  recovery при удалённом timer или исполнителе.
-* Reinstall/abort-remove: восстановленный helper читает прежний fence, manifest,
-  journal и masks; выполняет закрытый recovery с fresh proofs, не считает reinstall
-  автоматическим разрешением. Окончательный installed proof остаётся отложенным.
-* Раннее удаление helper в upgrade и старый timer, видящий новый бинарник, не дают
-  authority: протокол/версия fence/manifest должны быть согласованы под lock;
-  непонятное сочетание остаётся fenced.
+* Main postinst оставляет InstalledButFenced; runtime автоматически доставляет
+  попытки finalizer после окончания package transaction, при boot и по timer.
+* Main remove/purge сохраняет runtime. ReleaseComplete доказывает только security
+  release. Finalizer под реальными PM locks подтверждает фактическое удаление и
+  необходимые domain proofs, затем сохраняет RemovedTombstone.
+* Удаление runtime — вторая transaction, разрешённая только с durable proof из
+  предыдущей завершённой transaction и свежими проверками. DB absence недостаточно.
+  Joint erase/autoremove может отказать с сохранённым runtime.
+* После разрешённого удаления runtime автоматических попыток нет: tombstone
+  сохраняется через purge/reboot, а его отсутствие не является removal proof.
+  Reinstall восстанавливает engine/delivery и требует закрытого fresh recovery.
+* Failed erase/partial removal и abort-remove сохраняют fence. Нет автоматического
+  ownership adoption, небезопасной компенсации либо запуска поверх partial state.
+* Upgrade/downgrade останавливает/fences writers, но не выполняет release ownership
+  и PAM detach: Fencing → Quiescent → Recovering → InstalledButFenced. Exact final
+  version/protocol/schema проверяются finalizer; неизвестное сочетание fenced.
 
 Гарантии старых неблокирующихся бинарников ограничены согласованным deployment
 contract: persistent masks managed units + проверенные process/cgroup identities;

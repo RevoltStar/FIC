@@ -57,6 +57,7 @@ public:
     bool prepareStorage(std::string& error) const;
     bool status(AltPamPasswordHistoryTopologyState& state,
                 std::string& error);
+    bool inspectReadOnly(AltPamPasswordHistoryTopologyState& state,std::string& error);
     bool inspect(PamTopologyStatus& status, std::string& error) override;
     bool canEnable(std::string& error) const override;
     bool enable(std::string& error) override;
@@ -68,6 +69,8 @@ private:
 
     bool statusImpl(AltPamPasswordHistoryTopologyState& state,
                     bool& unavailable, std::string& error);
+    bool inspectReadOnlyImpl(AltPamPasswordHistoryTopologyState& state,
+                    bool& unavailable,std::string& error);
     bool verifySemanticEffectiveness(std::string& error) const;
 };
 

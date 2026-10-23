@@ -77,6 +77,9 @@ public:
         AltPamFaillockTopologyOptions options);
 
     bool status(AltPamFaillockTopologyState& state, std::string& error);
+    // Advisory package preflight: same physical/semantic inspection without
+    // creating/truncating the topology PID lock. Repeat under admission later.
+    bool inspectReadOnly(AltPamFaillockTopologyState& state,std::string& error);
     bool inspect(PamTopologyStatus& status, std::string& error) override;
     bool canEnable(std::string& error) const override;
     bool enable(std::string& error) override;
@@ -96,6 +99,8 @@ private:
     bool status(AltPamFaillockTopologyState& state,
                 std::optional<fic::platform::PamFaillockStrategy>& strategy,
                 std::string& error);
+    bool inspectReadOnly(AltPamFaillockTopologyState& state,
+                std::optional<fic::platform::PamFaillockStrategy>& strategy,std::string& error);
     bool verifySemanticEffectiveness(std::string& error) const;
 };
 

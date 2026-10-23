@@ -29,6 +29,9 @@ PackageManagerTransactionLock::~PackageManagerTransactionLock() {
 bool PackageManagerTransactionLock::heldByCurrentProcess() const {
     return owner_==::getpid() && !entries_.empty() && local_.owns_lock();
 }
+bool PackageManagerTransactionLock::covers(fic::platform::PackageManagerKind kind) const {
+    return heldByCurrentProcess()&&kind_==kind;
+}
 bool PackageManagerTransactionLock::revalidate(std::string& error) const {
     if(!heldByCurrentProcess()) {error="package locks not owned by this process";return false;}
     for(const auto& entry:entries_) {
@@ -72,7 +75,7 @@ PackageManagerLockResult PackageManagerTransactionLock::tryAcquire(const DaemonI
         }
         acquired.back().device=before.st_dev;acquired.back().inode=before.st_ino;
     }
-    entries_=std::move(acquired);owner_=::getpid();local_=std::move(local);
+    entries_=std::move(acquired);owner_=::getpid();local_=std::move(local);kind_=config.kind;
     if(!revalidate(error)) {
         for(const auto& entry:entries_) ::close(entry.fd);
         entries_.clear();owner_=-1;local_.unlock();

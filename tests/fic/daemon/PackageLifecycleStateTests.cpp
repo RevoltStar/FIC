@@ -63,6 +63,18 @@ int main() {
         require(store.inspect(state,error),error);
         require(store.advance(guard,*state,PackagePhase::Installed,error),error);
         require(store.inspect(state,error),error);
+        PackageLifecycleState upgrading{PackageOperation::Upgrade,PackagePhase::Fencing,std::string(32,'d'),"next-version",0};
+        require(store.begin(guard,*state,upgrading,error),error);
+        require(store.inspect(state,error),error);
+        require(store.advance(guard,*state,PackagePhase::Quiescent,error),error);
+        require(store.inspect(state,error),error);
+        require(!store.advance(guard,*state,PackagePhase::DmReleased,error),"upgrade entered destructive release chain");
+        require(!store.advance(guard,*state,PackagePhase::ReleaseComplete,error),"upgrade claimed removal release");
+        require(store.advance(guard,*state,PackagePhase::Recovering,error),error);
+        require(store.inspect(state,error),error);
+        for(const auto phase:{PackagePhase::InstalledButFenced,PackagePhase::InfrastructureProven,PackagePhase::Installed}) {
+            require(store.advance(guard,*state,phase,error),error);require(store.inspect(state,error),error);
+        }
         PackageLifecycleState removing{PackageOperation::Remove,PackagePhase::Fencing,std::string(32,'c'),"next-version",0};
         require(store.begin(guard,*state,removing,error),error);
         const auto child=::fork(); require(child>=0,"fork");

@@ -13,7 +13,9 @@ bool compatible(PackageOperation op, PackagePhase phase) {
         phase == PackagePhase::InfrastructureProven || phase == PackagePhase::Installed;
     switch (op) {
     case PackageOperation::Install: return phase == PackagePhase::Installing || installed;
-    case PackageOperation::Upgrade: return release || phase == PackagePhase::Recovering || installed;
+    // Upgrade quiesces writers but NEVER releases policy ownership/PAM hooks.
+    case PackageOperation::Upgrade: return phase==PackagePhase::Fencing ||
+        phase==PackagePhase::Quiescent || phase == PackagePhase::Recovering || installed;
     case PackageOperation::Remove: return release || phase==PackagePhase::RemovedTombstone;
     case PackageOperation::Recover: return phase == PackagePhase::Recovering || installed;
     }
@@ -108,7 +110,7 @@ bool transition(PackageOperation op, PackagePhase from, PackagePhase to) {
     if (from==PackagePhase::InstalledButFenced) return to==PackagePhase::InfrastructureProven;
     if (from==PackagePhase::ReleaseComplete && op==PackageOperation::Remove)
         return to==PackagePhase::RemovedTombstone;
-    if (from==PackagePhase::ReleaseComplete && op==PackageOperation::Upgrade)
+    if (from==PackagePhase::Quiescent && op==PackageOperation::Upgrade)
         return to==PackagePhase::Recovering;
     if (from==PackagePhase::Fencing) return to==PackagePhase::Quiescent;
     if (from==PackagePhase::Quiescent) return to==PackagePhase::DmReleased;

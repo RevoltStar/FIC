@@ -664,6 +664,17 @@ bool AltPamPasswordHistoryTopologyManager::statusImpl(
         error = "could not acquire PAM topology lock";
         return false;
     }
+    return inspectReadOnlyImpl(state,unavailable,error);
+}
+
+bool AltPamPasswordHistoryTopologyManager::inspectReadOnly(AltPamPasswordHistoryTopologyState& state,std::string& error) {
+    bool unavailable=false;return inspectReadOnlyImpl(state,unavailable,error);
+}
+
+bool AltPamPasswordHistoryTopologyManager::inspectReadOnlyImpl(AltPamPasswordHistoryTopologyState& state,
+    bool& unavailable,std::string& error) {
+    unavailable=false;
+    if(!canEnable(error))return false;
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::PasswordHistory);
     TargetSnapshot snapshot;

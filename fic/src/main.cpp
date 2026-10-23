@@ -42,6 +42,7 @@
 #include "policy/registry/PolicyRegistryJson.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "daemon/DaemonInstanceLock.h"
+#include "daemon/PackageReleaseResources.h"
 #include "daemon/MaintenanceAdmission.h"
 #include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include <fic/ipc/FicAdminSocket.h>
@@ -1676,17 +1677,16 @@ int main(int argc, char* argv[]) {
             std::string error;
             auto* journal = maintenanceJournal(action == "preflight", error);
             if (!journal) { std::cerr << error << std::endl; return 1; }
-            const fic::platform::PlatformExecutableResolver executables(platform.executables);
-            DisplayManagerConfigTransaction backend(executables, platform.displayManager);
-            if (!backend.releaseAll(*journal, error, true) || (action == "release" &&
-                (!fic::rollback::ScopeTransition(*journal, fic::rollback::ScopeTransition::Domain::DisplayManager).invalidate("DM package release", error) ||
-                 !backend.releaseAll(*journal, error)))) {
+            fic::daemon::PackageReleaseResources resources(platform,fic::core::FicRuntimePaths::get());
+            fic::daemon::PackageResourceReleaseReport report;
+            const auto domain=fic::daemon::PackageReleaseDomain::DisplayManager;
+            if (!(action=="preflight" ? resources.preflight(domain,*journal,report,error) :
+                  resources.release(daemonInstance,domain,*journal,report,error))) {
                 std::cerr << error << std::endl; return 1;
             }
             return 0;
         }
         if (get_arg_value(argc, argv, 2) == "desktop-prerm-prepare") {
-            const fic::platform::PlatformExecutableResolver executables(platform.executables);
             const auto action = get_arg_value(argc, argv, 3);
             if (::geteuid() != 0 || (action != "preflight" && action != "release")) {
                 std::cerr << "desktop-prerm-prepare requires root and preflight/release" << std::endl; return 1;
@@ -1694,9 +1694,11 @@ int main(int argc, char* argv[]) {
             std::string error;
             auto* journal = maintenanceJournal(action == "preflight", error);
             if (!journal) { std::cerr << error << std::endl; return 1; }
-            DesktopGlobalConfigReconciler coordinator({std::make_shared<GnomeSystemBackend>(executables),
-                std::make_shared<FlySystemBackend>()}, journal);
-            if (!coordinator.releaseAll(*journal, error, action == "preflight")) {
+            fic::daemon::PackageReleaseResources resources(platform,fic::core::FicRuntimePaths::get());
+            fic::daemon::PackageResourceReleaseReport report;
+            const auto domain=fic::daemon::PackageReleaseDomain::Desktop;
+            if (!(action=="preflight" ? resources.preflight(domain,*journal,report,error) :
+                  resources.release(daemonInstance,domain,*journal,report,error))) {
                 std::cerr << error << std::endl; return 1;
             }
             return 0;
@@ -2087,15 +2089,13 @@ int main(int argc, char* argv[]) {
                           << providerJournalError << std::endl;
                 return 1;
             }
-            PamProviderPackageRelease::Options providerOptions;
-            providerOptions.lockFilePath =
-                paths.runtimeDir / "pam-provider-managed.lock";
-            providerOptions.lockDebugLogPath = paths.lockDebugLogFile;
-            PamProviderPackageRelease providerRelease(
-                *providerJournal, platform.pam, providerOptions);
-            PamProviderPackageRelease::Report providerReport;
-            if (!providerRelease.run(providerMode, providerReport,
-                                     maintenanceError)) {
+            fic::daemon::PackageReleaseResources resources(platform,paths);
+            fic::daemon::PackageResourceReleaseReport report;
+            auto& providerReport=report.provider;
+            const auto domain=fic::daemon::PackageReleaseDomain::PamProvider;
+            if (!(providerMode==PamProviderPackageRelease::Mode::Preflight ?
+                  resources.preflight(domain,*providerJournal,report,maintenanceError) :
+                  resources.release(daemonInstance,domain,*providerJournal,report,maintenanceError))) {
                 std::cerr << "FIC package provider release ("
                           << providerReleaseMode << ") failed: "
                           << maintenanceError << std::endl;
@@ -2148,40 +2148,10 @@ int main(int argc, char* argv[]) {
                           << std::endl;
                 return 1;
             }
-            const fic::platform::PamCapabilityConfig* releaseQuality =
-                nullptr;
-            const std::vector<std::string>* releaseQualityServices =
-                nullptr;
-            const fic::platform::PamCapabilityConfig* releaseHistory =
-                nullptr;
-            const std::vector<std::string>* releaseHistoryServices =
-                nullptr;
-            const bool qualityResolved =
-                fic::identity::pam::resolveCapability(
-                    platform.pam,
-                    fic::platform::PamCapability::PasswordQuality,
-                    releaseQuality, releaseQualityServices,
-                    maintenanceError);
-            const bool historyResolved =
-                fic::identity::pam::resolveCapability(
-                    platform.pam,
-                    fic::platform::PamCapability::PasswordHistory,
-                    releaseHistory, releaseHistoryServices,
-                    maintenanceError);
-            const bool authUpdateTopology =
-                (qualityResolved &&
-                 releaseQuality->topology ==
-                     fic::platform::PamTopologyStrategyKind::
-                         PamAuthUpdate) ||
-                (historyResolved &&
-                 releaseHistory->topology ==
-                     fic::platform::PamTopologyStrategyKind::
-                         PamAuthUpdate);
-            if (!authUpdateTopology) {
-                std::cerr << "FIC package password release requires a "
-                             "pam-auth-update password topology; this "
-                             "platform does not provide one"
-                          << std::endl;
+            fic::daemon::PackageReleaseResources resources(platform,paths);
+            const auto domain=fic::daemon::PackageReleaseDomain::PamPassword;
+            if (!resources.supports(domain,maintenanceError)) {
+                std::cerr << maintenanceError << std::endl;
                 return 1;
             }
             std::string journalError;
@@ -2194,16 +2164,11 @@ int main(int argc, char* argv[]) {
                           << journalError << std::endl;
                 return 1;
             }
-            const fic::platform::PlatformExecutableResolver
-                releaseExecutables(platform.executables);
-            PamPasswordPackageRelease::Options releaseOptions;
-            releaseOptions.lockFilePath =
-                paths.runtimeDir / "pam-password-package-release.lock";
-            releaseOptions.lockDebugLogPath = paths.lockDebugLogFile;
-            PamPasswordPackageRelease packageRelease(
-                *releaseJournal, releaseExecutables, releaseOptions);
-            PamPasswordPackageRelease::Report releaseReport;
-            if (!packageRelease.run(mode, releaseReport, maintenanceError)) {
+            fic::daemon::PackageResourceReleaseReport report;
+            auto& releaseReport=report.password;
+            if (!(mode==PamPasswordPackageRelease::Mode::Preflight ?
+                  resources.preflight(domain,*releaseJournal,report,maintenanceError) :
+                  resources.release(daemonInstance,domain,*releaseJournal,report,maintenanceError))) {
                 std::cerr << "FIC package password release ("
                           << releaseMode << ") failed: "
                           << maintenanceError << std::endl;

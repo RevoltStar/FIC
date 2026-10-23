@@ -1,0 +1,44 @@
+#include "daemon/PackageDatabaseSnapshot.h"
+#include <iostream>
+#include <stdexcept>
+using namespace fic::daemon;
+using fic::platform::PackageManagerKind;
+void require(bool yes,const std::string& error){if(!yes)throw std::runtime_error(error);}
+int main() {
+    try {
+        PackageDatabaseSnapshot snapshot;std::string error;
+        const auto parse=[&](PackageManagerKind kind,const std::string& text){return parseFicPackageDatabase(kind,text,snapshot,error);};
+        require(parse(PackageManagerKind::Dpkg,"fic\tinstall ok installed\t1:2.0-3\tamd64\nfic-runtime\tinstall ok installed\t1:2.0-3\tamd64\n"),error);
+        require(snapshot.packages.size()==2&&snapshot.packages.at("fic").state==PackageInstallState::Installed&&
+            snapshot.packages.at("fic").version=="1:2.0-3","installed version identity lost");
+        for(const auto* status:{"install ok half-configured","install ok unpacked","install ok triggers-pending",
+            "install ok triggers-awaited","install reinstreq installed","deinstall ok installed","purge ok half-installed"}) {
+            require(parse(PackageManagerKind::Dpkg,std::string("fic\t")+status+"\t2\tamd64\n")&&
+                snapshot.packages.at("fic").state==PackageInstallState::Incomplete,"incomplete dpkg state treated as installed");
+        }
+        require(parse(PackageManagerKind::Dpkg,"fic\tdeinstall ok config-files\t2\tamd64\n")&&
+            snapshot.packages.at("fic").state==PackageInstallState::ConfigFiles,"config-files state lost");
+        require(parse(PackageManagerKind::Dpkg,"fic\tpurge ok not-installed\t\t\n")&&
+            snapshot.packages.at("fic").state==PackageInstallState::Absent,"not-installed observation lost");
+        require(parse(PackageManagerKind::Rpm,"fic\t(none)\t2.0-alt1\tx86_64\nfic-runtime\t2\t2.0-alt1\tx86_64\n"),error);
+        require(snapshot.packages.at("fic").version=="0:2.0-alt1"&&snapshot.packages.at("fic-runtime").version=="2:2.0-alt1","RPM epoch normalized incorrectly");
+        require(!parse(PackageManagerKind::Rpm,"fic\t(none)\t1-alt1\tx86_64\nfic\t(none)\t2-alt1\tx86_64\n")&&
+            snapshot.packages.empty(),"failed RPM upgrade duplicate versions collapsed");
+        for(const auto* text:{"fic\tinstall ok mystery\t2\tamd64\n","fic\tinstall ok installed\t2\tamd64",
+            "fic\tinstall ok installed\t2\t\n","fic\tinstall ok installed extra\t2\tamd64\n",
+            "fic\tinstall ok installed\t2\tamd64\textra\n"})
+            require(!parse(PackageManagerKind::Dpkg,text)&&snapshot.packages.empty(),"unproven dpkg output accepted");
+        require(!parse(PackageManagerKind::Rpm,"fic\t01\t2-alt1\tx86_64\n"),"ambiguous epoch accepted");
+        require(!parse(static_cast<PackageManagerKind>(123),""),"unknown package manager accepted");
+        require(!parse(PackageManagerKind::Dpkg,std::string(1024*1024+1,'x')),"oversized output accepted");
+        require(parse(PackageManagerKind::Rpm,"unrelated\t(none)\t1\tx86_64\n")&&snapshot.packages.empty(),"unrelated package claimed");
+        fic::platform::PlatformExecutableResolver noExecutables({});
+        PackageDatabaseReader reader(noExecutables,PackageManagerKind::Dpkg);
+        PackageManagerTransactionLock noLocks;
+        std::size_t budget=1234;
+        require(!reader.read(noLocks,std::chrono::steady_clock::now()+std::chrono::seconds(1),budget,snapshot,error)&&
+            budget==1234&&snapshot.packages.empty()&&error.find("transaction locks")!=std::string::npos,
+            "database query proceeded without matching transaction admission");
+        std::cout<<"PASS: dpkg incomplete/config-files/installed distinction, RPM EVR/duplicate refusal, bounded strict parser\n";
+    }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
+}

@@ -1930,6 +1930,21 @@ void testModeAndOwnerCatalogValidation() {
             "logical object without system profile was accepted");
 }
 
+void testNativeModuleAliasValidation() {
+    auto profile=fic::platform::makeBuildPlatformProfile();std::string error;
+    if(profile.id=="alt-p11")require(profile.pam.trustedModuleAliases.at("pam_unix.so")=="pam_tcb.so",
+        "ALT native pam0_tcb alias must be explicit");
+    profile.pam.trustedModuleAliases={{"pam_unix.so","pam_tcb.so"}};
+    require(fic::platform::validatePlatformProfile(profile,error),error);
+    for(const auto& pair:std::vector<std::pair<std::string,std::string>>{
+        {"../pam_unix.so","pam_tcb.so"},{"pam_unix.so","/tmp/pam_tcb.so"},
+        {"pam_unix.so","pam_unix.so"},{"pam_unix.so","pam_fic_access.so"},
+        {"pam_fic_access.so","pam_tcb.so"},{"pam_unix.so","pam_bad\n.so"}}) {
+        profile.pam.trustedModuleAliases={pair};
+        require(!fic::platform::validatePlatformProfile(profile,error),"invalid native module alias accepted");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1939,6 +1954,7 @@ int main() {
         testPamCompositionIsMechanismDriven();
         testCmakePamProviderSelectionMatchesProfile();
         testInvalidProfileIsRejected();
+        testNativeModuleAliasValidation();
         testExecutableResolver();
         testProviderLinkedExecutableResolver();
         testOsReleaseParsing();
