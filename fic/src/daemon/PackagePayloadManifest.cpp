@@ -7,6 +7,7 @@
 #include <array>
 #include <cerrno>
 #include <fcntl.h>
+#include <iterator>
 #include <set>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -21,7 +22,7 @@ bool field(const std::string& value,std::size_t limit) {
     return !value.empty()&&value.size()<=limit&&std::all_of(value.begin(),value.end(),[](unsigned char c){return c>=32&&c!=127;});
 }
 bool pathValid(const std::filesystem::path& path) {
-    if(!path.is_absolute()||path.lexically_normal()!=path||path.filename().empty()||!field(path.string(),4096))return false;
+    if(!path.is_absolute()||path.lexically_normal().string()!=path.string()||path.filename().empty()||!field(path.string(),4096))return false;
     for(const auto& component:path)if(component=="."||component=="..")return false;
     return true;
 }
@@ -33,9 +34,10 @@ bool managedSlot(const std::filesystem::path& path) {
 // Only standard first-component usr-merge links, with exact declared targets.
 // No generic canonical()/realpath fallback or adoption of nested symlinks.
 bool physicalPath(const std::filesystem::path& input,std::filesystem::path& output,std::string& error) {
-    output=input;auto it=input.begin();++it;
+    output=input;if(input=="/")return true;auto it=input.begin();++it;
     if(it==input.end())return fail(error,"invalid payload path");
     const auto first=*it;
+    if(std::next(it)==input.end())return true; // the leaf itself is never resolved
     if(first!="lib"&&first!="lib64"&&first!="bin"&&first!="sbin")return true;
     const auto prefix=std::filesystem::path("/")/first;
     struct stat info{};
@@ -88,6 +90,28 @@ bool PackagePayloadManifest::load(const std::filesystem::path& path,const std::s
         }
         out.entries_=std::move(entries);error.clear();return true;
     } catch(...) {return fail(error,"unknown/corrupt payload manifest");}
+}
+bool PackagePayloadManifest::proveComplete(const std::vector<std::filesystem::path>& ownedPaths,
+    std::chrono::steady_clock::time_point deadline,std::string& error) const {
+    if(entries_.empty()||ownedPaths.empty()||ownedPaths.size()>8192)return fail(error,"unloaded/empty payload coverage proof");
+    std::set<std::filesystem::path> declared,seen;
+    for(const auto& entry:entries_)declared.insert(entry.path);
+    for(const auto& path:ownedPaths) {
+        if(std::chrono::steady_clock::now()>=deadline)return fail(error,"payload coverage deadline exceeded");
+        if((path!="/"&&!pathValid(path))||!seen.insert(path).second)return fail(error,"invalid/duplicate native payload path");
+        if(declared.erase(path))continue;
+        // Undeclared objects may only be real trusted directories. Do not
+        // follow a symlink at the leaf or accept absence as a directory.
+        std::filesystem::path physical;if(!physicalPath(path,physical,error))return false;
+        struct stat info{};
+        if(::lstat(physical.c_str(),&info)||!S_ISDIR(info.st_mode))return fail(error,"native package payload omitted from manifest: "+path.string());
+        const int fd=fic::core::openRootControlledDirectory(physical,error);
+        if(fd<0)return false;
+        ::close(fd);
+    }
+    if(std::chrono::steady_clock::now()>=deadline)return fail(error,"payload coverage deadline exceeded");
+    if(!declared.empty())return fail(error,"manifest claims path absent from native package file list");
+    error.clear();return true;
 }
 bool PackagePayloadManifest::proveInstalled(gid_t ficGroup,std::chrono::steady_clock::time_point deadline,std::string& error) const {
     if(entries_.empty())return fail(error,"unloaded payload manifest");

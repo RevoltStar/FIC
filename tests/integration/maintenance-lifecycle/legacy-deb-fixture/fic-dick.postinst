@@ -1,0 +1,24 @@
+#!/bin/sh
+set -e
+
+if ! getent group fic >/dev/null 2>&1; then
+    groupadd --system fic
+fi
+
+if [ -d /opt/fic ]; then
+    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
+    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
+    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
+
+    if [ -d /opt/fic/bin ]; then
+        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
+    fi
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl enable fic-device.service || true
+    systemctl enable fic_get_device_info.service || true
+fi
+
+exit 0

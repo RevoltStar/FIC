@@ -33,6 +33,21 @@ int main(int argc,char** argv) {
         publish(valid);
         require(PackagePayloadManifest::load(manifest,"fic-runtime","1:2.0-3",proof,error),error);
         require(proof.proveInstalled(0,deadline(),error),error);
+        const std::vector<fs::path> owned{"/",directory,file,link};
+        require(proof.proveComplete(owned,deadline(),error),error);
+        require(!proof.proveComplete({directory,file},deadline(),error),"unowned manifest symlink accepted");
+        write(directory/"omitted","foreign");
+        require(!proof.proveComplete({directory,file,link,directory/"omitted"},deadline(),error),"omitted native payload file accepted");
+        fs::remove(directory/"omitted");
+        require(!proof.proveComplete({directory,file,link,directory/"missing"},deadline(),error),"missing payload treated as directory");
+        fs::create_directory(directory/"writable");::chmod((directory/"writable").c_str(),0777);
+        require(!proof.proveComplete({directory,file,link,directory/"writable"},deadline(),error),"unsafe native directory accepted");
+        fs::remove(directory/"writable");
+        fs::create_directory_symlink(directory,directory/"alias");
+        require(!proof.proveComplete({directory,file,link,directory/"alias"},deadline(),error),"undeclared directory alias accepted");
+        fs::remove(directory/"alias");
+        require(!proof.proveComplete({directory,file,link,file},deadline(),error),"duplicate native path accepted");
+        require(!proof.proveComplete(owned,std::chrono::steady_clock::now(),error),"expired coverage accepted");
         require(!proof.proveRemoved(deadline(),error),"installed payload counted removed");
         write(file,"foreign\n");require(!proof.proveInstalled(0,deadline(),error),"foreign bytes accepted");write(file,"original\n");
         ::chmod(file.c_str(),0664);require(!proof.proveInstalled(0,deadline(),error),"writable payload accepted");::chmod(file.c_str(),0644);
@@ -50,7 +65,9 @@ int main(int argc,char** argv) {
             json{{"schema",1u},{"package","fic-runtime"},{"version","1:2.0-3"},{"files",json::array({ordinary,ordinary})}}}) {
             publish(invalid);require(!PackagePayloadManifest::load(manifest,"fic-runtime","1:2.0-3",proof,error),"invalid schema/duplicate/empty manifest accepted");
         }
-        auto bad=valid;bad["files"][0]["mode"]=0u;publish(bad);
+        auto bad=valid;bad["files"][0]["path"]="/usr//payload";publish(bad);
+        require(!PackagePayloadManifest::load(manifest,"fic-runtime","1:2.0-3",proof,error),"noncanonical repeated slash accepted");
+        bad=valid;bad["files"][0]["mode"]=0u;publish(bad);
         require(!PackagePayloadManifest::load(manifest,"fic-runtime","1:2.0-3",proof,error),"zero-mode disabled metadata proof");
         bad=valid;bad["files"][0]["path"]="/etc/pam.d/fic-password-quality";
         bad["files"][0]["kind"]="managed-pam-slot";bad["files"][0]["identity"]="";publish(bad);
@@ -78,7 +95,12 @@ int main(int argc,char** argv) {
             const auto child=::fork();require(child>=0,"fork alias probe");
             if(child==0) {
                 if(::chdir(isolated.c_str())||::chroot("."))::_exit(98);
-                const bool proven=proof.proveInstalled(0,deadline(),error);::_exit(proven==expected?0:99);
+                const bool proven=proof.proveInstalled(0,deadline(),error);
+                if(expected) {
+                    if(!proof.proveComplete({"/","/usr","/usr/lib","/lib/payload"},deadline(),error))::_exit(96);
+                    if(proof.proveComplete({"/","/usr","/lib","/lib/payload"},deadline(),error))::_exit(97);
+                }
+                ::_exit(proven==expected?0:99);
             }
             int status=0;require(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0,"usr-merge alias proof mismatch/chroot unavailable");
         };

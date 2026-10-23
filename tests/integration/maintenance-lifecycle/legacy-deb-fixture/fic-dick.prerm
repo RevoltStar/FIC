@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl disable fic-device.service || true
+    systemctl disable fic_get_device_info.service || true
+    systemctl daemon-reload || true
+fi
+
+exit 0

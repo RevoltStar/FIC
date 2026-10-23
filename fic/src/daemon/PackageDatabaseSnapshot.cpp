@@ -25,6 +25,20 @@ bool parseDpkgStatus(const std::string& text,PackageInstallState& state) {
     return true;
 }
 }
+bool parseFicPackageOwnedPaths(const std::string& output,std::vector<std::filesystem::path>& paths,std::string& error) {
+    paths.clear();
+    if(output.empty()||output.size()>1024*1024||output.back()!='\n')return fail(error,"package file list empty/oversized/incomplete");
+    std::istringstream lines(output);std::string line;std::set<std::filesystem::path> parsed;
+    while(std::getline(lines,line)) {
+        if(line=="/.")line="/"; // dpkg's root directory spelling
+        const std::filesystem::path path(line);
+        if(line.empty()||line.size()>4096||line.front()!='/'||path.lexically_normal().string()!=line||
+           std::any_of(line.begin(),line.end(),[](unsigned char c){return c<32||c==127;})||
+           !parsed.insert(path).second||parsed.size()>8192)return fail(error,"unknown/duplicate package file list path");
+        for(const auto& component:path)if(component=="."||component=="..")return fail(error,"noncanonical package file list path");
+    }
+    paths.assign(parsed.begin(),parsed.end());error.clear();return true;
+}
 bool parseFicPackageDatabase(fic::platform::PackageManagerKind kind,const std::string& output,
     PackageDatabaseSnapshot& snapshot,std::string& error) {
     snapshot={};
@@ -92,7 +106,24 @@ bool PackageDatabaseReader::read(const PackageManagerTransactionLock& locks,
 }
 bool PackageDatabaseReader::query(std::chrono::steady_clock::time_point deadline,std::size_t& budget,
     PackageDatabaseSnapshot& snapshot,std::string& error) const {
-    snapshot={};
+    std::string output;snapshot={};
+    return executeQuery("",deadline,budget,output,error)&&parseFicPackageDatabase(kind_,output,snapshot,error);
+}
+bool PackageDatabaseReader::readOwnedPaths(const PackageManagerTransactionLock& locks,const std::string& package,
+    std::chrono::steady_clock::time_point deadline,std::size_t& budget,
+    std::vector<std::filesystem::path>& paths,std::string& error) const {
+    paths.clear();
+    if(std::find(names.begin(),names.end(),package)==names.end())return fail(error,"unknown payload package");
+    if(!locks.covers(kind_))return fail(error,"package file list requires matching transaction locks");
+    if(!locks.revalidate(error))return false;
+    std::string output;
+    if(!executeQuery(package,deadline,budget,output,error)||!parseFicPackageOwnedPaths(output,paths,error))return false;
+    if(!locks.revalidate(error)){paths.clear();return false;}
+    return true;
+}
+bool PackageDatabaseReader::executeQuery(const std::string& ownedPackage,
+    std::chrono::steady_clock::time_point deadline,std::size_t& budget,std::string& output,std::string& error) const {
+    output.clear();
     const auto remaining=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now());
     if(remaining.count()<=0||budget==0)return fail(error,"package proof deadline/output budget exhausted");
     if(kind_!=fic::platform::PackageManagerKind::Dpkg&&kind_!=fic::platform::PackageManagerKind::Rpm)
@@ -101,15 +132,17 @@ bool PackageDatabaseReader::query(std::chrono::steady_clock::time_point deadline
     if(!executables_.resolve(fic::platform::ExecutableId::PackageQuery,query,error))return false;
     ProcessOptions options;options.clearEnvironment=true;options.environment={{"LANG","C"},{"LC_ALL","C"}};
     options.timeout=std::min(remaining,std::chrono::milliseconds(5000));options.maxOutputBytes=std::min<std::size_t>(budget,1024*1024);
-    const std::vector<std::string> args=kind_==fic::platform::PackageManagerKind::Dpkg?
+    std::vector<std::string> args=kind_==fic::platform::PackageManagerKind::Dpkg?
         std::vector<std::string>{"--show","--showformat=${Package}\t${Status}\t${Version}\t${Architecture}\n","fic*"}:
         std::vector<std::string>{"-qa","--queryformat","%{NAME}\t%{EPOCH}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"};
+    if(!ownedPackage.empty())args=kind_==fic::platform::PackageManagerKind::Dpkg?
+        std::vector<std::string>{"--listfiles",ownedPackage}:std::vector<std::string>{"-ql",ownedPackage};
     const auto result=ProcessExecutor::execute(query,args,options);
     const auto captured=result.standardOutput.size()+result.standardError.size();
     if(captured>budget){budget=0;return fail(error,"package database query output budget exceeded");}
     budget-=captured;
     if(!result.success()) {error="package database query failed: "+result.error+" "+result.standardError;return false;}
     if(std::chrono::steady_clock::now()>=deadline)return fail(error,"package database proof deadline exceeded");
-    return parseFicPackageDatabase(kind_,result.standardOutput,snapshot,error);
+    output=result.standardOutput;error.clear();return true;
 }
 }

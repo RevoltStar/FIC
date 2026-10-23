@@ -21,6 +21,11 @@ class PackagePayloadManifest {
 public:
     static bool load(const std::filesystem::path&,const std::string& package,
         const std::string& version,PackagePayloadManifest&,std::string& error);
+    // Requires a fresh native file list read under package-manager locks by
+    // the caller. Directories are checked physically; no missing payload entry
+    // or undeclared symlink/file can be hidden behind a directory declaration.
+    bool proveComplete(const std::vector<std::filesystem::path>& ownedPaths,
+        std::chrono::steady_clock::time_point deadline,std::string& error) const;
     bool proveInstalled(gid_t ficGroup,std::chrono::steady_clock::time_point deadline,std::string& error) const;
     bool proveRemoved(std::chrono::steady_clock::time_point deadline,std::string& error) const;
     const std::vector<PackagePayloadEntry>& entries() const {return entries_;}

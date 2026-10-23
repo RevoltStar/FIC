@@ -5,7 +5,7 @@
 int main(int argc,char** argv) {
     const auto* opt=std::getenv("FIC_MAINTENANCE_NATIVE");
     if(::geteuid()!=0||!opt||std::string(opt)!="1")return 77;
-    if(argc!=2)return 2;
+    if(argc!=2&&argc!=3)return 2;
     const bool rpm=std::string(argv[1])=="rpm";
     if(!rpm&&std::string(argv[1])!="dpkg")return 2;
     fic::platform::PackageManagerPlatformConfig config;
@@ -28,6 +28,14 @@ int main(int argc,char** argv) {
         if(!reader.read(locks,deadline,budget,snapshot,error)){std::cerr<<error;return 1;}
         for(const auto& [name,entry]:snapshot.packages)
             std::cout<<name<<'\t'<<static_cast<int>(entry.state)<<'\t'<<entry.version<<'\t'<<entry.architecture<<'\n';
+    }
+    if(argc==3) {
+        std::vector<std::filesystem::path> paths;
+        if(!reader.readOwnedPaths(locks,argv[2],deadline,budget,paths,error)){std::cerr<<error;return 1;}
+        for(const auto& path:paths)std::cout<<"OWNED\t"<<path.string()<<'\n';
+        if(!reader.readOwnedPaths(locks,argv[2],deadline,budget,paths,error)){std::cerr<<error;return 1;}
+        if(reader.readOwnedPaths(locks,"unrelated",deadline,budget,paths,error)||!paths.empty())return 3;
+        std::cout<<"OWNED_REPEAT_AND_UNKNOWN_REFUSAL_PASS\n";
     }
     if(!locks.revalidate(error)){std::cerr<<error;return 1;}
     std::cout<<"BUDGET_REMAINING\t"<<budget<<'\n';return 0;

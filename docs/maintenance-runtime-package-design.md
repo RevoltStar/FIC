@@ -100,8 +100,19 @@ validators. Нельзя считать совпадение payload manifest д
 Неизвестный mutable role/path отвергается. Сохранённые conffiles не мешают removal
 proof только при успешном отдельном domain/hook proof.
 
-**Ещё требуется:** сверить полноту manifest с native package file lists, включить
-manifests в runtime packaging, сохранить требуемый removal snapshot до удаления
+`PackageDatabaseReader.readOwnedPaths` выполняет только фиксированный native
+`dpkg-query --listfiles` / `rpm -ql` для известного FIC package под matching PM
+locks с повторной проверкой их identity. Вывод ограничен общим бюджетом/timeout,
+неполные/дублирующиеся/ненормализованные пути отвергаются. `proveComplete`
+сверяет supplied manifest со свежим native list: каждый manifest entry обязан
+принадлежать пакету, каждый native non-directory object обязан быть описан.
+Пропущенный путь допускается только как физически проверенный trusted directory;
+symlink, dangling/missing path и writable directory не считаются каталогами.
+Directory proof не заменяет независимый byte/metadata proof и package/version
+consistency. Нет broad directory exclusions или разрешения omission произвольного
+manifest metadata. Оба proof API пока не включены в lifecycle finalizer.
+
+**Ещё требуется:** включить manifests в runtime packaging, сохранить требуемый removal snapshot до удаления
 main payload и объединить proofs в finalizer. Одного успешного reader/generator
 недостаточно для снятия fence или разрешения runtime erase. Межпроцессный contract
 координирует cooperative writers; независимые privileged изменения между read
@@ -213,3 +224,25 @@ engine (`FIC_LIFECYCLE_PACKAGE_VERSION=1`): configured runtime prerequisite,
 preinst → fenced preparation. Копия ELF с другим inode/version/ABI не получает
 authority; PAM/SSH/incident/journal не меняются. Это всё ещё component/package-order
 fixture, **не actual FIC packages, install finalization, removal или recovery**.
+
+### Подтверждённый пробел legacy abort execution
+
+`tests/integration/maintenance-lifecycle/native_legacy_abort_deb.py` воспроизводит
+native dpkg upgrade failure с точными текущими legacy `fic-dick postinst/prerm`
+из package producer `2c9e69c`, frozen в `legacy-deb-fixture` (postinst SHA256 выводится). После failed new preinst
+**сам dpkg** вызывает old postinst `abort-upgrade 2`. Его unconditional `find`
+меняет metadata sentinel по canonical MutationJournal path с 0600 на 0640, пока
+независимый процесс держит настоящий descriptor-based `daemon.lock`. Sentinel
+не является реальным journal; test не доказывает ни corruption/recovery конкретного
+journal, ни успешность actual FIC migration. Доказаны автоматическое исполнение
+старого скрипта и отсутствие serialization его filesystem mutations.
+
+RED воспроизведён на Debian 12/13 и Ubuntu 24.04/26.04 в disposable containers.
+Systemd masks ограждают units, но не maintainer scripts. Административный запрет
+независимого ручного legacy execution не покрывает этот штатный abort path.
+Поэтому нельзя объявлять прямой upgrade таких legacy packages безопасным только
+по mask/process census/daemon.lock. Pending architecture decision: prerequisite
+runtime отвергает несовместимые установленные scripts до переходов основных
+packages (с отдельным подготовительным upgrade contract), либо требуется отдельно
+спроектированная координация legacy package execution. Ни такое ограничение,
+ни вмешательство в installed maintainer scripts автоматически не реализованы.
