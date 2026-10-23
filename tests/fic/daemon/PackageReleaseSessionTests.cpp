@@ -144,6 +144,18 @@ int main() {
             require(!session.completeRelease(restarted,id,error),"visible ReleaseComplete without durability accepted");
             AtomicFileWriter::setDirectoryFsyncHookForTests({});
             require(session.completeRelease(restarted,id,error),"repeat complete release failed");
+            const auto provenJournal=bytes(paths.mutationJournalFile),provenFence=bytes(lifecycle.fenceFile);
+            releaseOrder.clear();hookFailure=true;failedDomain=0;
+            require(session.proveReleased(restarted,error),error);
+            DaemonInstanceLock absent;
+            require(!session.proveReleased(absent,error),"unadmitted deferred proof accepted");
+            resourceProof=false;
+            require(!session.proveReleased(restarted,error),"deferred proof ignored resource drift");
+            resourceProof=true;hookProof=false;
+            require(!session.proveReleased(restarted,error),"deferred proof ignored physical hook drift");
+            hookProof=true;hookFailure=false;failedDomain=-1;
+            require(releaseOrder.empty()&&bytes(paths.mutationJournalFile)==provenJournal&&bytes(lifecycle.fenceFile)==provenFence,
+                "read-only deferred proof performed release/journal/fence mutation");
             require(store.inspect(state,error),error);
             require(store.begin(restarted,*state,{PackageOperation::Recover,PackagePhase::Recovering,std::string(32,'c'),"1",0,id},error),error);
             require(!session.releaseManagedResources(restarted,std::string(32,'c'),error),"resource release admitted recovery operation");

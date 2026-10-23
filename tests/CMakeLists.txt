@@ -3271,3 +3271,13 @@ target_include_directories(package_lifecycle_coordinator_tests PRIVATE ${CMAKE_S
 target_link_libraries(package_lifecycle_coordinator_tests PRIVATE fic-core fic-platform fic-policy)
 add_test(NAME package_lifecycle_coordinator_tests COMMAND package_lifecycle_coordinator_tests)
 set_tests_properties(package_lifecycle_coordinator_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)
+
+add_executable(package_payload_manifest_tests fic/daemon/PackagePayloadManifestTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackagePayloadManifest.cpp)
+target_include_directories(package_payload_manifest_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_payload_manifest_tests PRIVATE fic-core)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME package_payload_manifest_tests COMMAND package_payload_manifest_tests
+        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/packaging/lib/build-payload-manifest.py)
+    set_tests_properties(package_payload_manifest_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
+endif()

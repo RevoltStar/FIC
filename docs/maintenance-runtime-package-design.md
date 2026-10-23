@@ -84,6 +84,29 @@ fic-core/policy/ipc остаются статически слинкованны
 
 ## Legacy bootstrap и crash boundaries
 
+### Payload evidence (integration ещё не завершена)
+
+`packaging/lib/build-payload-manifest.py` строит version-bound SHA-256 manifest
+из staged payload, а не из уже установленного состояния. Output исключён из
+собственного payload, чтобы не образовать рекурсивный digest. `PackagePayloadManifest`
+проверяет root-controlled source, schema/duplicates/budgets, exact file metadata,
+digests и symlink targets. Поддерживаются только проверенные стандартные первые
+usr-merge aliases; nested/unknown/foreign aliases отвергаются. Proofs read-only;
+они не являются ownership engine и не разрешают менять ресурсы.
+
+Семь известных PAM slots и ALT `fic-pwhistory.conf` имеют отдельные фиксированные
+роли: их mutable content/provenance по-прежнему доказывают существующие PAM/journal
+validators. Нельзя считать совпадение payload manifest доказательством их ownership.
+Неизвестный mutable role/path отвергается. Сохранённые conffiles не мешают removal
+proof только при успешном отдельном domain/hook proof.
+
+**Ещё требуется:** сверить полноту manifest с native package file lists, включить
+manifests в runtime packaging, сохранить требуемый removal snapshot до удаления
+main payload и объединить proofs в finalizer. Одного успешного reader/generator
+недостаточно для снятия fence или разрешения runtime erase. Межпроцессный contract
+координирует cooperative writers; независимые privileged изменения между read
+proofs не становятся атомарной filesystem transaction.
+
 1. Runtime payload ставится в новом месте и ещё не меняет policy resources. Его
    собственный initial pre-script не выполняет FIC group/chown/stop/attach actions,
    которые потребовали бы ещё отсутствующего coordinator.

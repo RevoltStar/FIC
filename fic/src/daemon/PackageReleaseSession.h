@@ -20,7 +20,11 @@ public:
     // post-transaction package removal proof and never authorizes startup.
     bool completeRelease(const DaemonInstanceLock&,const std::string& operationId,std::string& error) const;
     bool releaseManagedResources(const DaemonInstanceLock&,const std::string& operationId,std::string& error) const;
+    // Fresh independent read-only proof for deferred finalization. No journal
+    // bootstrap, policy release, hook detach, compensation or fence transition.
+    bool proveReleased(const DaemonInstanceLock&,std::string& error) const;
 private:
+    bool proveReleasedResources(std::string& error) const;
     const fic::platform::PlatformProfile& platform_;
     const fic::core::FicProductPaths& paths_;
     PackageReleaseSessionPaths lifecycle_;
