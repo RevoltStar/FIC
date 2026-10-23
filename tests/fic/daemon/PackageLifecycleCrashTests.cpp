@@ -34,7 +34,7 @@ int main() {
                         PackageLifecycleStore store(dir/"state");
                         PackageLifecycleState state{phases[0]==PackagePhase::Fencing ?
                             PackageOperation::Remove : PackageOperation::Install,
-                            phases[0],std::string(32,'a'),"version",0};
+                            phases[0],std::string(32,'a'),"version",0,std::string(32,'a')};
                         if(!store.create(guard,state,error))::_exit(3);
                         for(std::size_t i=1;i<=stop;++i) {
                             if(!store.advance(guard,state,phases[i],error))::_exit(4);

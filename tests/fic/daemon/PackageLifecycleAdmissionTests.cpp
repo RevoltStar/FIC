@@ -22,7 +22,7 @@ int main() {
         const auto file=root/"state.json";PackageLifecycleAdmission admission(file);PackageLifecycleStore store(file);
         require(!admission.requireInstalled(guard,error)&&!fs::exists(file),"missing state adopted/created");
         const std::string id(32,'a');
-        require(store.create(guard,{PackageOperation::Install,PackagePhase::Installing,id,"1",0},error),error);
+        require(store.create(guard,{PackageOperation::Install,PackagePhase::Installing,id,"1",0,id},error),error);
         const auto before=read(file);
         require(!admission.requireInstalled(guard,error)&&read(file)==before,"installing state admitted/changed");
         std::optional<PackageLifecycleState> state;
@@ -38,7 +38,7 @@ int main() {
         const auto child=::fork();require(child>=0,"fork");
         if(child==0)::_exit(admission.requireInstalled(guard,error)?2:0);
         int status=0;require(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0,"inherited admission accepted");
-        require(store.inspect(state,error)&&store.begin(guard,*state,{PackageOperation::Remove,PackagePhase::Fencing,std::string(32,'b'),"1",0},error),error);
+        require(store.inspect(state,error)&&store.begin(guard,*state,{PackageOperation::Remove,PackagePhase::Fencing,std::string(32,'b'),"1",0,std::string(32,'b')},error),error);
         for(const auto phase:{PackagePhase::Quiescent,PackagePhase::DmReleased,PackagePhase::DeReleased,
             PackagePhase::ProviderReleased,PackagePhase::PasswordReleased,PackagePhase::HooksDetached,
             PackagePhase::ReleaseComplete,PackagePhase::RemovedTombstone}) {

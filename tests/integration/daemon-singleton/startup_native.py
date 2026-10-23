@@ -89,8 +89,8 @@ try:
         if phase=='corrupt':
             fence.write_text('{}\n')
         elif phase!='missing':
-            fence.write_text(json.dumps({'version':1,'operation':operation,'phase':phase,
-                'id':'a'*32,'package_version':'1','generation':0,'attempt_boot':'','attempt_ms':0,'failure':0})+'\n')
+            fence.write_text(json.dumps({'version':2,'operation':operation,'phase':phase,
+                'id':'a'*32,'mask_id':'a'*32,'package_version':'1','generation':0,'attempt_boot':'','attempt_ms':0,'failure':0})+'\n')
         if fence.exists():
             fence.chmod(0o600)
         before=snapshot()

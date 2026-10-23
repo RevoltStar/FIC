@@ -49,7 +49,7 @@ bool PackageReleaseSession::releaseManagedResources(const DaemonInstanceLock& gu
     if(!readLegacyWriterInventory(lifecycle_.maskDirectory/id/"writers.json",id,images,error))return false;
     fic::platform::PlatformExecutableResolver executables(platform_.executables);
     PackageWritersQuiescence writers(executables);
-    if(!writers.stopAndProve(guard,masks,id,images,
+    if(!writers.stopAndProve(guard,masks,state->maskOperationId,images,
         std::chrono::steady_clock::now()+std::chrono::seconds(30),error))return false;
     if(state->phase==PackagePhase::Fencing) {
         if(!store.advance(guard,*state,PackagePhase::Quiescent,error)||!inspect(store,id,state,error))return false;
@@ -108,7 +108,7 @@ bool PackageReleaseSession::completeRelease(const DaemonInstanceLock& guard,cons
     if(!readLegacyWriterInventory(lifecycle_.maskDirectory/id/"writers.json",id,images,error))return false;
     fic::platform::PlatformExecutableResolver executables(platform_.executables);
     PackageWritersQuiescence writers(executables);
-    if(!writers.stopAndProve(guard,masks,id,images,
+    if(!writers.stopAndProve(guard,masks,state->maskOperationId,images,
         std::chrono::steady_clock::now()+std::chrono::seconds(30),error))return false;
     const auto proveResources=[&] {
         fic::rollback::MutationJournal journal(paths_.mutationJournalFile);

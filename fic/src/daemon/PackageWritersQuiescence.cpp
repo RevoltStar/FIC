@@ -76,6 +76,9 @@ bool emptyWriterCgroups(std::chrono::steady_clock::time_point deadline,std::stri
     return true;
 }
 }
+bool PackageWritersQuiescence::validateEnvironment(std::string& error) const {
+    return managerEnvironment(error);
+}
 bool PackageWritersQuiescence::requestStopBeforeAdmission(std::chrono::steady_clock::time_point deadline,std::string& error) const {
     if(!managerEnvironment(error))return false;
     std::vector<std::string> args{"stop"};

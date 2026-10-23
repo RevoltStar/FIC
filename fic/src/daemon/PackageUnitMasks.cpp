@@ -95,6 +95,9 @@ bool load(const std::filesystem::path& root,const std::string& id,Plan& plan,std
     return true;
 }
 }
+bool PackageUnitMasks::validateProvenance(const std::string& id,std::string& error) const {
+    Plan plan;return load(state_,id,plan,error);
+}
 bool PackageUnitMasks::prepare(const DaemonInstanceLock& guard,const std::string& id,std::string& error) {
     if(!guard.heldByCurrentProcess() || !validId(id) || !privateRoot(state_,error))
         return fail(error,"mask plan requires instance admission and private state area");

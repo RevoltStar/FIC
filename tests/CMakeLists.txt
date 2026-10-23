@@ -3259,3 +3259,15 @@ target_include_directories(package_lifecycle_admission_tests PRIVATE ${CMAKE_SOU
 target_link_libraries(package_lifecycle_admission_tests PRIVATE fic-core)
 add_test(NAME package_lifecycle_admission_tests COMMAND package_lifecycle_admission_tests)
 set_tests_properties(package_lifecycle_admission_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+
+add_executable(package_lifecycle_coordinator_tests fic/daemon/PackageLifecycleCoordinatorTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageUnitMasks.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterInventory.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_lifecycle_coordinator_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_lifecycle_coordinator_tests PRIVATE fic-core fic-platform fic-policy)
+add_test(NAME package_lifecycle_coordinator_tests COMMAND package_lifecycle_coordinator_tests)
+set_tests_properties(package_lifecycle_coordinator_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)

@@ -21,8 +21,12 @@ int main() {
         require(guard.tryAcquire(root/"runtime",error),error);
         PackageLifecycleStore store(root/"state");std::optional<PackageLifecycleState> state;
         require(store.inspect(state,error)&&!state,"virgin inspection");
-        PackageLifecycleState initial{PackageOperation::Remove,PackagePhase::Fencing,std::string(32,'a'),"test-version",0};
+        PackageLifecycleState initial{PackageOperation::Remove,PackagePhase::Fencing,std::string(32,'a'),"test-version",0,std::string(32,'a')};
         require(!store.create(empty,initial,error),"unadmitted create");
+        auto noMask=initial;noMask.maskOperationId.clear();
+        require(!store.create(guard,noMask,error),"implicit mask identity fallback");
+        noMask.maskOperationId=std::string(32,'c');
+        require(!store.create(guard,noMask,error),"initial foreign mask identity");
         require(store.create(guard,initial,error),error);
         require(!store.create(guard,initial,error),"exclusive create replaced existing fence");
         require(store.inspect(state,error)&&state&&state->generation==0,"read durable fence");
@@ -45,15 +49,17 @@ int main() {
         require(store.inspect(state,error)&&state->phase==PackagePhase::RemovedTombstone,"post-transaction tombstone persistence");
         require(store.admitFinalizerAttempt(guard,*state,boot,100000,error)==FinalizerAdmission::Terminal,"final tombstone retried");
         auto removed=*state;
-        PackageLifecycleState recovery{PackageOperation::Recover,PackagePhase::Recovering,std::string(32,'b'),"next-version",0};
+        PackageLifecycleState recovery{PackageOperation::Recover,PackagePhase::Recovering,std::string(32,'b'),"next-version",0,std::string(32,'a')};
         auto invalid=recovery; invalid.operation=PackageOperation::Install;
         require(!store.begin(guard,removed,invalid,error),"incompatible operation/phase");
         invalid=recovery; invalid.operationId=removed.operationId;
         require(!store.begin(guard,removed,invalid,error),"operation identity reuse");
         require(!store.begin(empty,removed,recovery,error),"unadmitted recovery");
+        auto lostMasks=recovery;lostMasks.maskOperationId=lostMasks.operationId;
+        require(!store.begin(guard,removed,lostMasks,error),"recovery discarded retained masks");
         require(store.begin(guard,removed,recovery,error),error);
         require(!store.begin(guard,removed,recovery,error),"stale recovery replay");
-        require(store.inspect(state,error)&&state->phase==PackagePhase::Recovering,"recovery persisted");
+        require(store.inspect(state,error)&&state->phase==PackagePhase::Recovering&&state->maskOperationId==removed.maskOperationId&&state->operationId!=removed.operationId,"recovery lost retained mask provenance");
         require(!store.advance(guard,*state,PackagePhase::Installed,error),"recovery bypassed package proof");
         require(!store.advance(guard,*state,PackagePhase::InfrastructureProven,error),"recovery skipped InstalledButFenced");
         require(store.advance(guard,*state,PackagePhase::InstalledButFenced,error),error);
@@ -63,7 +69,7 @@ int main() {
         require(store.inspect(state,error),error);
         require(store.advance(guard,*state,PackagePhase::Installed,error),error);
         require(store.inspect(state,error),error);
-        PackageLifecycleState upgrading{PackageOperation::Upgrade,PackagePhase::Fencing,std::string(32,'d'),"next-version",0};
+        PackageLifecycleState upgrading{PackageOperation::Upgrade,PackagePhase::Fencing,std::string(32,'d'),"next-version",0,std::string(32,'d')};
         require(store.begin(guard,*state,upgrading,error),error);
         require(store.inspect(state,error),error);
         require(store.advance(guard,*state,PackagePhase::Quiescent,error),error);
@@ -75,7 +81,7 @@ int main() {
         for(const auto phase:{PackagePhase::InstalledButFenced,PackagePhase::InfrastructureProven,PackagePhase::Installed}) {
             require(store.advance(guard,*state,phase,error),error);require(store.inspect(state,error),error);
         }
-        PackageLifecycleState removing{PackageOperation::Remove,PackagePhase::Fencing,std::string(32,'c'),"next-version",0};
+        PackageLifecycleState removing{PackageOperation::Remove,PackagePhase::Fencing,std::string(32,'c'),"next-version",0,std::string(32,'c')};
         require(store.begin(guard,*state,removing,error),error);
         const auto child=::fork(); require(child>=0,"fork");
         if(child==0) {
@@ -86,13 +92,18 @@ int main() {
         int status=0;require(::waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0,"fork inherited authority");
         std::ifstream validInput(root/"state");
         const std::string validBytes((std::istreambuf_iterator<char>(validInput)),{});
-        auto duplicate=validBytes; duplicate.insert(1,"\"version\":1,");
+        auto oldSchema=validBytes;
+        const auto schemaAt=oldSchema.find("\"version\":2");require(schemaAt!=std::string::npos,"schema fixture");
+        oldSchema.replace(schemaAt,11,"\"version\":1");
+        {std::ofstream old(root/"state");old<<oldSchema;}
+        require(!store.inspect(state,error),"obsolete development schema adopted");
+        auto duplicate=validBytes; duplicate.insert(1,"\"version\":2,");
         {std::ofstream invalidJson(root/"state");invalidJson<<duplicate;}
         require(!store.inspect(state,error),"duplicate lifecycle key accepted");
         auto floating=validBytes;
-        const auto versionAt=floating.find("\"version\":1");
+        const auto versionAt=floating.find("\"version\":2");
         require(versionAt!=std::string::npos,"version fixture");
-        floating.replace(versionAt,11,"\"version\":1.0");
+        floating.replace(versionAt,11,"\"version\":2.0");
         {std::ofstream invalidJson(root/"state");invalidJson<<floating;}
         require(!store.inspect(state,error),"floating schema version accepted");
         {std::ofstream oversized(root/"state");oversized<<std::string(5000,'x');}

@@ -33,6 +33,8 @@ bool validBootId(const std::string& id) {
 bool valid(const PackageLifecycleState& s) {
     return s.operationId.size() == 32 && std::all_of(s.operationId.begin(), s.operationId.end(),
         [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }) &&
+        s.maskOperationId.size()==32&&std::all_of(s.maskOperationId.begin(),s.maskOperationId.end(),
+            [](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');})&&
         !s.packageVersion.empty() && s.packageVersion.size() <= 128 &&
         s.packageVersion.find_first_of("\r\n\0", 0, 3) == std::string::npos &&
         static_cast<unsigned>(s.operation) <= static_cast<unsigned>(PackageOperation::Recover) &&
@@ -45,9 +47,9 @@ bool valid(const PackageLifecycleState& s) {
          validBootId(s.lastAttemptBoot));
 }
 std::string encode(const PackageLifecycleState& s) {
-    return json{{"version",1},{"operation",static_cast<unsigned>(s.operation)},
+    return json{{"version",2},{"operation",static_cast<unsigned>(s.operation)},
         {"phase",static_cast<unsigned>(s.phase)},{"id",s.operationId},
-        {"package_version",s.packageVersion},{"generation",s.generation},
+        {"mask_id",s.maskOperationId},{"package_version",s.packageVersion},{"generation",s.generation},
         {"attempt_boot",s.lastAttemptBoot},{"attempt_ms",s.lastAttemptMs},
         {"failure",static_cast<unsigned>(s.lastFailure)}}.dump() + "\n";
 }
@@ -85,15 +87,15 @@ bool read(const std::filesystem::path& path, std::optional<PackageLifecycleState
             if(event==json::parse_event_t::key && !keys.insert(value.get<std::string>()).second) duplicate=true;
             return true;
         });
-        if (duplicate || !j.is_object() || j.size()!=9 ||
-            !j.at("version").is_number_unsigned() || j.at("version")!=1 || !j.at("operation").is_number_unsigned() ||
+        if (duplicate || !j.is_object() || j.size()!=10 ||
+            !j.at("version").is_number_unsigned() || j.at("version")!=2 || !j.at("operation").is_number_unsigned() ||
             !j.at("phase").is_number_unsigned() || !j.at("generation").is_number_unsigned() ||
             !j.at("attempt_ms").is_number_unsigned() || !j.at("failure").is_number_unsigned())
             throw std::runtime_error("schema");
         const auto op=j.at("operation").get<unsigned long long>(), phase=j.at("phase").get<unsigned long long>();
         if(op>3 || phase>13) throw std::runtime_error("enum");
         PackageLifecycleState parsed{static_cast<PackageOperation>(op), static_cast<PackagePhase>(phase),
-            j.at("id").get<std::string>(),j.at("package_version").get<std::string>(),j.at("generation").get<unsigned long>()};
+            j.at("id").get<std::string>(),j.at("package_version").get<std::string>(),j.at("generation").get<unsigned long>(),j.at("mask_id").get<std::string>(),{},0,FinalizerFailure::None};
         parsed.lastAttemptBoot=j.at("attempt_boot").get<std::string>();
         parsed.lastAttemptMs=j.at("attempt_ms").get<std::uint64_t>();
         const auto failure=j.at("failure").get<unsigned long long>();
@@ -139,7 +141,7 @@ bool PackageLifecycleStore::confirmDurable(const PackageLifecycleState& expected
     return AtomicFileWriter::ensureTargetDurableIfCurrentState(path_.string(),*snapshot,&error);
 }
 bool PackageLifecycleStore::create(const DaemonInstanceLock& guard,const PackageLifecycleState& state,std::string& error) {
-    if(!guard.heldByCurrentProcess() || !valid(state) || state.generation!=0 || !state.lastAttemptBoot.empty() ||
+    if(!guard.heldByCurrentProcess() || !valid(state) || state.maskOperationId!=state.operationId || state.generation!=0 || !state.lastAttemptBoot.empty() ||
        (state.phase!=PackagePhase::Installing && state.phase!=PackagePhase::Fencing)) {
         error="lifecycle creation requires instance admission and initial typed provenance";return false;
     }
@@ -156,7 +158,8 @@ bool PackageLifecycleStore::begin(const DaemonInstanceLock& guard,
         (next.operation==PackageOperation::Remove || next.operation==PackageOperation::Upgrade) &&
         next.phase==PackagePhase::Fencing;
     if (!guard.heldByCurrentProcess() || !valid(next) || next.generation!=0 || !next.lastAttemptBoot.empty() ||
-        next.operationId==expected.operationId || (!recovery && !release)) {
+        next.operationId==expected.operationId || (!recovery && !release) ||
+        next.maskOperationId!=(expected.phase==PackagePhase::Installed?next.operationId:expected.maskOperationId)) {
         error="invalid new lifecycle operation/admission"; return false;
     }
     return replace(guard,expected,next,error);

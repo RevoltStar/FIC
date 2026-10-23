@@ -1,7 +1,7 @@
 # Current working state
 
 ## Current base
-* `main`; stage base `94d8904` (latest implementation commit: `git log -1`); no push. M1 unfinished; SSH Stage3A deferred.
+* `main`; latest committed base `da4c563` (then preparation stage; see `git log -1`); no push. M1 unfinished; SSH Stage3A deferred.
 
 ## Current task
 * Complete M1 (attachment `9aef83ea-6744-4c0f-b167-aa1f49d956c5`). Continue autonomously; no checkpoint-only stop.
@@ -23,7 +23,12 @@
 * ALT advisory inspectReadOnly reuses manager inspection without PID-lock/debug writes; original status/apply retain local locks. Standalone ALT topology mutators now require daemon admission; status keeps original resource serialization. Trust-sync reader recheck now implemented, but publication/final proof side must take same hash-store lock in future coordinator; not yet complete coordination.
 * ALT detached PAM proof fixed: physical package target does not require Debian selection DB; trusted single-hop same-directory service aliases, explicitly declared Unix→TCB module alias. Escaping/unsafe/unknown aliases refuse. Attach semantics unchanged.
 
+* New internal PackageLifecycleCoordinator.prepare: guarded fixed install/upgrade/remove preparation, trusted private storage, immutable mask plan+writer fingerprints before fence, real hash-store lock across fence publication, masks+fresh quiescence; retries retain inventory even after original ELF disappears. Upgrade quiesces without initializing journal/releasing ownership. No package entrypoint/prerequisite checks yet.
+* Tests cover unsupported environment, foreign/busy hash lock, wrong admission/op, persisted provenance, foreign-mask preservation, SIGKILL at install/upgrade publication and restart with original ELF removed. Native driver is test-only fixed fixture, not an alternate production entrypoint.
+
 ## Validation
+* Real coordinator preparation setup → container/PID1 restart → verify PASS on D12/D13/U24/U26/ALT: `build-m1-evidence/coordinator-native-{debian12,debian13,ubuntu2404,ubuntu2604,alt-p11}.log`. Actual systemd/cgroup/procfs, foreign mask inode, original ELF absent retry and corrupt inventory refusal. Component evidence only, not actual FIC packages/recovery. Native build harness linker/header issues fixed; final targeted builds succeeded. Five containers retain private test fence/masks; do not interpret them as production state.
+* Full D12 configure/build + CTest: 205 PASS / 2 expected native SKIP (207 total), 176.29s: `build-m1-evidence/coordinator-full-debian12.log`. After header/explicit-init/contention test changes, fic + coordinator target and 2 CTests PASS: `coordinator-contention-tests.log`.
 * Hook/domain/session tests 4 PASS: `build-m1-evidence/complete-release-tests.log`; includes partial hook failures and SIGKILL, no post-detach resource writes.
 * Actual native package PAM infrastructure (real updater/actual module loadability), 2 tests PASS each on D12/D13/U24/U26/ALT: `pam-hooks-native-{debian12,debian13,ubuntu2404,ubuntu2604}.log`, `pam-hooks-native-alt-p11-green.log` in build-m1-evidence. Fixtures, NOT actual FIC lifecycle/authentication. ALT added libpam0-devel only inside disposable fixture, restored network none. ALT initial unit failed /run noexec; fixture moved to private /var/lib.
 * New daemon real ELF pending/missing/corrupt/tombstone admission + hash-store callback under real lock + snapshot-bound phase durability tests PASS: `trust-lifecycle-admission-tests.log`, `lifecycle-durability-tests.log`.
@@ -36,9 +41,9 @@
 * `git diff --check` PASS. Docker works. All five `fic-m1-masks-*` running again, dummy units only. Source mounted RO; no host security mutation.
 
 ## Remaining
-* Next: production operation preparation/recovery/install/abort controller, runtime split and actual finalizer. Hook/admission stage ready for a coherent intermediate commit; M1 not complete.
-* IMPORTANT next design detail discovered: masks must persist across abort/reinstall/upgrade while operation IDs change. Existing PackageUnitMasks.prepare rejects prior operation-owned links as custom. Prefer explicit mask provenance ID distinct from operation ID in typed fence (development schema may change cleanly; no dual-read/migration), preserve original mask plan through recovery. Do not unlink masks to prepare a new operation. Writer inventories remain operation-bound. This is internal realization of accepted retained masks contract, not a reason to stop/reopen accepted architecture.
-* Coordinator fence publication/final proof must hold existing hash-store lock (callback recheck only implements reader side). Main startup gate is already strict; do not claim installable lifecycle until production bootstrap/recovery exists.
+* Next: closed configure/recovery/abort controller, runtime version/ABI/prerequisite binding, runtime packaging split and actual finalizer. Preparation stage implemented internally, not wired to package CLI. M1 not complete.
+* Lifecycle fence schema2 now requires separate maskOperationId. Store rejects old/unknown development format; no migration/dual-read. Recovery preparation itself is NOT implemented: it must preserve old maskOperationId with a new operation ID/inventory; never unmask to create a new plan. MutationJournal schema unchanged.
+* Coordinator preparation now holds existing hash-store lock while publishing initial/new fence. Final proof/Installed publication must also hold it; callback alone is not complete coordination. Main startup remains strict until legitimate finalization; no manual Installed/bypass.
 * Runtime ELF split/CMake/DEB/RPM prerequisites/version/lifetime/retention scripts and production finalizer/hook/path/boot/timer delivery NOT implemented. Existing package scripts still unsafe between commands and ignore stop errors.
 * Must audit/move all security mutations from ALL package scripts under coordinator, preserving platform order. Trust-sync coordination remains.
 * Actual FIC package install/upgrade/downgrade/remove/purge/reinstall/abort/autoremove/partial/crash/reboot matrix NOT done. Research/fixtures/parser/resource tests are not actual lifecycle safety proof.

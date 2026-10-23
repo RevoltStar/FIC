@@ -25,6 +25,9 @@ struct PackageLifecycleState {
     std::string operationId;
     std::string packageVersion;
     unsigned long generation = 0;
+    // Mask provenance survives recovery with a NEW operation ID. Never unmask
+    // writers merely to prepare the next lifecycle operation.
+    std::string maskOperationId;
     std::string lastAttemptBoot;
     std::uint64_t lastAttemptMs = 0;
     FinalizerFailure lastFailure = FinalizerFailure::None;

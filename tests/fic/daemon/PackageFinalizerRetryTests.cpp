@@ -19,7 +19,7 @@ int main() {
         PackageLifecycleStore store(root/"state");
         const std::string boot="12345678-1234-1234-1234-123456789abc";
         const std::string nextBoot="87654321-1234-1234-1234-123456789abc";
-        PackageLifecycleState state{PackageOperation::Install,PackagePhase::Installing,std::string(32,'a'),"version",0};
+        PackageLifecycleState state{PackageOperation::Install,PackagePhase::Installing,std::string(32,'a'),"version",0,std::string(32,'a')};
         require(store.create(guard,state,error),error);
         const auto refresh=[&] {
             std::optional<PackageLifecycleState> current;

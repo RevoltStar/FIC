@@ -35,3 +35,4 @@ g++ "$@" "$src/tests/integration/maintenance-lifecycle/PackageDatabaseDriver.cpp
     "$src/fic/src/platform/PlatformExecutableResolver.cpp" \
     "$common/fs/RootControlledDirectory.cpp" "$common/process/ProcessExecutor.cpp" \
     "$common/process/ProcessPipeIo.cpp" -o "$out/m1-package-db"
+sh "$src/tests/integration/maintenance-lifecycle/build-coordinator-native.sh" "$src" "$out"

@@ -11,6 +11,7 @@ class PackageWritersQuiescence {
 public:
     explicit PackageWritersQuiescence(const fic::platform::PlatformExecutableResolver& executables)
         : executables_(executables) {}
+    bool validateEnvironment(std::string& error) const;
     // Fixed stop request before admission: the running cooperative daemon
     // holds daemon.lock itself. This method NEVER opens journal/fence/resources.
     // Caller must still acquire admission and repeat all proofs before release.

@@ -13,6 +13,7 @@ public:
         : state_(std::move(stateDirectory)),units_(std::move(systemUnitDirectory)) {}
     bool prepare(const DaemonInstanceLock&,const std::string& operationId,std::string& error);
     bool publish(const DaemonInstanceLock&,const std::string& operationId,std::string& error);
+    bool validateProvenance(const std::string& operationId,std::string& error) const;
     bool provePublished(const std::string& operationId,std::string& error) const;
     bool restore(const DaemonInstanceLock&,const std::string& operationId,std::string& error);
 private:

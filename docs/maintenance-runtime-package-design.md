@@ -6,6 +6,19 @@
 RED reproductions, **не реализация безопасного FIC package lifecycle**. Двухстадийный runtime retention принят: преждевременный совместный erase/autoremove
 явно отказывает, сохраняя runtime до proof из предыдущей завершённой transaction. Production packaging ещё не изменён; никаких fallback на legacy binary.
 
+В engine реализована внутренняя preparation install/upgrade/remove под daemon.lock:
+неизменяемый inventory writers, fence и persistent masks, повторный systemd/cgroup/
+process proof; upgrade не выполняет release. Она пока не подключена к package CLI:
+проверки runtime prerequisite/manifest и полный configure/recovery/finalizer ещё
+не завершены. Component tests не доказывают готовность пакетного lifecycle.
+
+ID операции и ID mask provenance разделены в отдельном lifecycle fence (schema 2).
+Новая операция после Installed получает новый mask plan; recovery незавершённой
+операции обязана сохранить прежний mask ID при новом operation ID. Прежние маски
+нельзя снимать ради подготовки recovery. Неизвестный формат/отсутствующий inventory
+отвергается; fallback на предыдущий development format нет. MutationJournal schema
+не изменена. Обновление этой модели само по себе не реализует recovery proofs.
+
 ## Схема ownership и зависимости
 
 | Пакет | Ownership / роль | Зависимость |
@@ -146,3 +159,13 @@ runtime. Такой bootstrap/copy/keeper механизм здесь не вв�
 security/package mutations. Это dummy packages, **не actual FIC native PASS**.
 Actual legacy ELF→link upgrade, real FIC install/release/recovery, corrupted proofs,
 crash/reboot между пакетами и окончательная матрица остаются обязательными.
+
+Preparation component имеет отдельный native probe:
+`tests/integration/maintenance-lifecycle/build-coordinator-native.sh`,
+`native_coordinator.py setup`, restart **того же изолированного контейнера**, затем
+`native_coordinator.py verify` (обязательно `FIC_MAINTENANCE_NATIVE=1`). Требуются
+dummy FIC units из `native_masks.py`; не запускать на рабочем хосте. Probe проверяет
+реальный systemd/cgroup/procfs, persistent masks, повтор после PID1 restart,
+сохранение чужой маски и отказ при повреждении inventory. Он не устанавливает FIC,
+не снимает lifecycle fence, не подтверждает finalizer/package recovery. Результаты
+конкретных запусков фиксируются в HANDOFF.

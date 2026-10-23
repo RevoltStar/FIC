@@ -86,7 +86,7 @@ int main() {
             {
                 DaemonInstanceLock guard,empty;require(guard.tryAcquire(paths.runtimeDir,error),error);
                 require(!session.preflight(error)&&!fs::exists(paths.mutationJournalFile),"virgin preflight initialized journal");
-                require(store.create(guard,{PackageOperation::Remove,PackagePhase::Fencing,id,"1",0},error),error);
+                require(store.create(guard,{PackageOperation::Remove,PackagePhase::Fencing,id,"1",0,id},error),error);
                 PackageUnitMasks masks(lifecycle.maskDirectory,lifecycle.systemUnitDirectory);
                 require(masks.prepare(guard,id,error)&&writeLegacyWriterInventory(guard,lifecycle.maskDirectory/id/"writers.json",id,{},error)&&
                     masks.publish(guard,id,error),error);
@@ -145,7 +145,7 @@ int main() {
             AtomicFileWriter::setDirectoryFsyncHookForTests({});
             require(session.completeRelease(restarted,id,error),"repeat complete release failed");
             require(store.inspect(state,error),error);
-            require(store.begin(restarted,*state,{PackageOperation::Recover,PackagePhase::Recovering,std::string(32,'c'),"1",0},error),error);
+            require(store.begin(restarted,*state,{PackageOperation::Recover,PackagePhase::Recovering,std::string(32,'c'),"1",0,id},error),error);
             require(!session.releaseManagedResources(restarted,std::string(32,'c'),error),"resource release admitted recovery operation");
         }
         }
