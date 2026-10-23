@@ -668,6 +668,18 @@ git diff --check
   ограничиваются по частоте/стоимости, не общим количеством; permanent watcher
   не добавляется без отдельного архитектурного решения.
 
+* Несовместимые legacy maintainer scripts должны отклоняться предварительным
+  runtime до любых main/aux package transitions, включая old prerm/%preun.
+  Native version и фактические scripts обязательны; unknown не совместимы.
+  Отказ только нового preinst недостаточен. Pre-Depends/Requires(pre) сами по
+  себе не доказывают свежий successful admission каждой операции: прежняя
+  configuration и failed RPM %post требуют отдельных proofs. До доказательства
+  не объявлять прямой legacy upgrade безопасным.
+* Подготовительный переход несовместимых legacy packages пока не реализовывать
+  без отдельного согласования; installed scripts не патчить/не исполнять для
+  «проверки», security state и metadata не ремонтировать автоматически.
+  Совместимость и подтверждённое препятствие: `docs/maintenance-legacy-compatibility.md`.
+
 Authoritative design: `docs/maintenance-runtime-package-design.md` и
 `docs/maintenance-finalizer-retry-lifecycle.md`. Текущий implementation/validation
 status смотри в `docs/HANDOFF.md`; принятый contract не означает, что весь M1 готов.

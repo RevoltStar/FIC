@@ -241,8 +241,12 @@ RED воспроизведён на Debian 12/13 и Ubuntu 24.04/26.04 в dispos
 Systemd masks ограждают units, но не maintainer scripts. Административный запрет
 независимого ручного legacy execution не покрывает этот штатный abort path.
 Поэтому нельзя объявлять прямой upgrade таких legacy packages безопасным только
-по mask/process census/daemon.lock. Pending architecture decision: prerequisite
-runtime отвергает несовместимые установленные scripts до переходов основных
-packages (с отдельным подготовительным upgrade contract), либо требуется отдельно
-спроектированная координация legacy package execution. Ни такое ограничение,
-ни вмешательство в installed maintainer scripts автоматически не реализованы.
+по mask/process census/daemon.lock. Пользователь принял explicit incompatible
+legacy refusal предварительным runtime до основных package transitions; отдельный
+подготовительный переход пока не реализовывать. Последующая native проверка
+**не подтвердила достаточность dependency contract**: previously-configured DEB
+runtime после повторного отказа не блокирует exact Pre-Depends, а RPM Requires(pre)
+не требует успешного runtime %post. Матрица, evidence и препятствие:
+[`maintenance-legacy-compatibility.md`](maintenance-legacy-compatibility.md).
+Новая граница совместимости принята как требование, но production ранний admission
+не реализован и не объявлен безопасным; старые scripts не модифицировались.

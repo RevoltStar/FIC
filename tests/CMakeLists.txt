@@ -3281,3 +3281,18 @@ if(Python3_Interpreter_FOUND)
         ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/packaging/lib/build-payload-manifest.py)
     set_tests_properties(package_payload_manifest_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
 endif()
+
+# Research reproductions, NOT production lifecycle gates. Require a fresh,
+# explicitly opted-in disposable container; default CTest must not install RPMs
+# or DEBs. Assertions record dependency-contract limitations as REPRODUCED_RED.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME legacy_predepends_admission_reproduction
+        COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/integration/maintenance-lifecycle/native_legacy_predepends_deb.py
+        ${CMAKE_SOURCE_DIR} previous-refusal)
+    add_test(NAME legacy_rpm_admission_reproduction
+        COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/integration/maintenance-lifecycle/native_legacy_admission_rpm.py)
+    set_tests_properties(legacy_predepends_admission_reproduction legacy_rpm_admission_reproduction
+        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE LABELS "research;native;root")
+endif()

@@ -1,11 +1,11 @@
 # Current working state
 
 ## Current base
-* `main`; latest coverage stage see `git log -1`; payload/deferred-proof stage `32d9c0e`, previous `2c9e69c`. No push. M1 unfinished; SSH Stage3A deferred.
+* `main`; latest legacy-admission research stage see `git log -1`; coverage `95e72ca`, payload/deferred-proof `32d9c0e`. No push. M1 unfinished; SSH Stage3A deferred.
 
 ## Current task
 * Finish M1 attachment `9aef83ea-6744-4c0f-b167-aa1f49d956c5`, autonomously; no checkpoint-only stop.
-* Latest stage: manifest native coverage + regression/native file-list tests; legacy automatic abort RED reproduction.
+* Current stage: accepted incompatible-legacy refusal boundary; native dependency/admission matrix establishes a further technical blocker (see below). No production guard or preparatory migration added.
 
 ## Accepted architecture / invariants
 * AGENTS.md §17, `maintenance-runtime-package-design.md`, `maintenance-finalizer-retry-lifecycle.md` authoritative.
@@ -26,6 +26,8 @@
 * New native coverage stage: fixed `readOwnedPaths` query under matching PM locks, strict bounded path parser, `proveComplete` rejects omitted non-directory payload/unowned manifest entries/unsafe directory/symlink. No arbitrary metadata exclusion. Main finalizer not yet integrated.
 
 ## Validation
+* Current research/CMake stage: full D12 configure/build + CTest GREEN 206 PASS / 4 expected native SKIP (210), 173.18s: `legacy-admission-full-debian12.log`. Two new tests default skip without FIC_LEGACY_PACKAGE_ORDER_NATIVE; manual fresh native matrix runs separately. Opt-in native CTest D12 registration check PASS (RED reproduced, not lifecycle safety): `legacy-predepends-ctest-native-debian12.log`, 1.16s.
+* Current legacy admission research: 7 actual dpkg/apt scenarios × D12/D13/U24/U26 (28) assertions matched. Missing/never-configured cases preserve full protected snapshots; prior-configured cases REPRODUCED_RED with journal-path metadata changed. Logs `legacy-predepends-{distro}-{mode}.log`. Actual ALT dummy RPM Requires(pre)/failed %post/new %pre order reproduced, old product retained by independent refusal, `legacy-admission-alt-p11.log`. These are model gate/frozen old script/sentinels, NOT real journal/lifecycle PASS. New opt-in CTest research tests default skip 77; fresh disposable container required. Production C++ unchanged.
 * Committed payload stage: full D12 configure/build + CTest 206 PASS / 2 expected native SKIP (208), 174.16s: `build-m1-evidence/payload-full-debian12.log`.
 * Current coverage: fic + 2 affected targets build, 2 CTest PASS `payload-completeness-tests.log`. Initial parser test caught repeated-slash normalization bug; fixed using exact string normalization, rerun GREEN.
 * Native actual dummy DEB file-list under real PM locks PASS Debian12/13/Ubuntu2404/2604: `file-list-native-*.log`. ALT actual dummy RPM PASS in `file-list-native-alt-p11-history.log`; includes failed harness attempts (missing rpm-build, root rpmbuild refused) and subsequent successful unprivileged build/query, then repeated-fixture refusal. Extra RPM build dependencies installed only disposable ALT container, not host.
@@ -36,7 +38,8 @@
 * Shell syntax and git diff --check PASS. Full host security state unchanged; tests only disposable containers/chroot.
 
 ## Remaining / blocker
-* **Architecture question sent to user:** automatic legacy package abort scripts ignore lock/fence and mutate /opt/fic. Unit masks + manual-launch prohibition do not cover dpkg's own old postinst abort-upgrade. Need accept explicit unsupported-legacy refusal in prerequisite runtime before main transitions + separate preparation contract, or design broader legacy package execution control. Do not silently narrow legacy support or claim masks fix scripts. See final section of runtime-package-design doc / native RED reproduction.
+* User accepted explicit incompatible installed-version/script refusal by preliminary runtime BEFORE any main/aux transitions. Unknown versions not compatible; separate preparatory transition NOT authorized to implement. Contract now in AGENTS.md and upgrade docs.
+* **Confirmed architecture blocker:** exact DEB Pre-Depends accepts previously configured runtime=2 even after same-version reinstall/configure-a gate refuses. Separate direct dpkg, genuine local-repository apt upgrade and joint upgrade then run old prerm→new preinst refusal→old postinst abort-upgrade; old metadata mutation occurs. First refusal of NEVER-configured runtime is safe in the fixture, but this does not cover every required path. ALT Requires(pre) orders availability, not successful runtime %post; new main pre executes despite failure (independent main refusal preserves old dummy RPM). No production early guard can be claimed safe from dependency declarations alone. Need additional accepted per-transaction/deployment admission boundary; do not patch scripts/PM DB, add arbitrary executor, weaken fence or implement preparation as workaround. See `maintenance-legacy-compatibility.md` for matrix/evidence/options.
 * Actual runtime package split/CMake install/staging and all main/aux DEB/RPM scripts NOT switched: still old unsafe between commands/ignored stop errors. No complete configure/recover/abort controller/finalizer/hook/path/boot/timer delivery.
 * Before bootstrap: persist pre-unpack first-install absence/authority evidence. Installing alone cannot authorize neutralizing incident state or fixing /opt/fic authority after extraction. Existing/corrupt state must remain preserved, no adoption.
 * Integrate manifests delivery in preliminary runtime, exact package/version/completeness cross-proof, fixed metadata-manifest identity policy, immutable operation-bound removal snapshot before deleting main payload. Read-only coverage currently does not authorize lifecycle transitions.
@@ -46,6 +49,6 @@
 
 ## Environment after reboot
 * Docker works, ample disk. Five `fic-m1-masks-*` systemd fixtures running; source RO/no host security mounts. D12 has dummy fic-runtime with earlier real ELF (before package-release route), dummy fic-m1-entrypoint-fixture + canonical Installing fence/masks. /opt/fic absent. Do not treat as clean fresh install or manually clear state. Other four fixtures have private component Installing fence/masks.
-* New `fic-m1-alt-filelist` disposable stopped container has rpm-build + dummy fic-cli only, no actual FIC installation. Full log contains native PASS. No need repeat existing fixture without explicit test cleanup.
+* `fic-m1-rpm-order:tooling` test image committed from disposable ALT file-list container for rpm-build tools (dummy fic-cli, no actual FIC). New `fic-m1-alt-filelist` disposable stopped container has rpm-build + dummy fic-cli only, no actual FIC installation. Full log contains native PASS. No need repeat existing fixture without explicit test cleanup.
 * Build `build-env-full-debian12` one writer only. Use git safe.directory /src and drop DAC_OVERRIDE/DAC_READ_SEARCH for full tests, FIC_DAEMON_SINGLETON_NATIVE=1 FIC_MAINTENANCE_NATIVE=1, QT_QPA_PLATFORM=offscreen. Mount source RO and build RW.
 * New Python ignored globally: git add -f. Logs ignored, preserve build-m1-evidence across reboot.
