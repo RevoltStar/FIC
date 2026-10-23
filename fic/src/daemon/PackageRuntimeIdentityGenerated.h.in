@@ -1,0 +1,9 @@
+#ifndef FIC_PACKAGE_RUNTIME_IDENTITY_GENERATED_H
+#define FIC_PACKAGE_RUNTIME_IDENTITY_GENERATED_H
+namespace fic::daemon {
+// Distinct from product/IPC/journal/config schema versions. Empty development
+// builds cannot authorize package lifecycle operations.
+inline constexpr const char* LifecycleRuntimePackageVersion = "@FIC_LIFECYCLE_PACKAGE_VERSION@";
+inline constexpr unsigned LifecycleRuntimeAbi = 1;
+}
+#endif

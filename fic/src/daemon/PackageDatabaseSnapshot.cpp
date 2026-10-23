@@ -64,12 +64,35 @@ bool parseFicPackageDatabase(fic::platform::PackageManagerKind kind,const std::s
     }
     snapshot=std::move(parsed);error.clear();return true;
 }
+bool proveRuntimePackagePrerequisite(const PackageDatabaseSnapshot& snapshot,
+    const std::string& expectedVersion,std::string& error) {
+    const auto runtime=snapshot.packages.find("fic-runtime");
+    if(!validField(expectedVersion,128)||runtime==snapshot.packages.end()||
+        runtime->second.state!=PackageInstallState::Installed||runtime->second.version!=expectedVersion) {
+        error="configured exact-version fic-runtime prerequisite is unproven";return false;
+    }
+    error.clear();return true;
+}
+bool PackageDatabaseReader::observeRuntimePrerequisite(const std::string& expectedVersion,std::chrono::steady_clock::time_point deadline,
+    std::size_t& budget,std::string& error) const {
+    if(!validField(expectedVersion,128))
+        return fail(error,"runtime prerequisite observation requires exact version");
+    PackageDatabaseSnapshot snapshot;
+    return query(deadline,budget,snapshot,error)&&proveRuntimePackagePrerequisite(snapshot,expectedVersion,error);
+}
 bool PackageDatabaseReader::read(const PackageManagerTransactionLock& locks,
     std::chrono::steady_clock::time_point deadline,std::size_t& budget,
     PackageDatabaseSnapshot& snapshot,std::string& error) const {
     snapshot={};
     if(!locks.covers(kind_))return fail(error,"package database manager differs from held transaction locks");
     if(!locks.revalidate(error))return false;
+    if(!query(deadline,budget,snapshot,error))return false;
+    if(!locks.revalidate(error)){snapshot={};return false;}
+    return true;
+}
+bool PackageDatabaseReader::query(std::chrono::steady_clock::time_point deadline,std::size_t& budget,
+    PackageDatabaseSnapshot& snapshot,std::string& error) const {
+    snapshot={};
     const auto remaining=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now());
     if(remaining.count()<=0||budget==0)return fail(error,"package proof deadline/output budget exhausted");
     if(kind_!=fic::platform::PackageManagerKind::Dpkg&&kind_!=fic::platform::PackageManagerKind::Rpm)
@@ -83,10 +106,10 @@ bool PackageDatabaseReader::read(const PackageManagerTransactionLock& locks,
         std::vector<std::string>{"-qa","--queryformat","%{NAME}\t%{EPOCH}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"};
     const auto result=ProcessExecutor::execute(query,args,options);
     const auto captured=result.standardOutput.size()+result.standardError.size();
-    budget=captured>budget?0:budget-captured;
+    if(captured>budget){budget=0;return fail(error,"package database query output budget exceeded");}
+    budget-=captured;
     if(!result.success()) {error="package database query failed: "+result.error+" "+result.standardError;return false;}
     if(std::chrono::steady_clock::now()>=deadline)return fail(error,"package database proof deadline exceeded");
-    if(!locks.revalidate(error))return false;
     return parseFicPackageDatabase(kind_,result.standardOutput,snapshot,error);
 }
 }

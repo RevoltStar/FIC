@@ -38,6 +38,11 @@ try:
     assert select.select([holder.stdout], [], [], 10)[0], 'lock-holder readiness timeout'
     assert holder.stdout.readline().strip() == 'LOCKED', 'lock-holder failed'
     before = snapshot()
+    for command,action,version,abi in (('package-prepare','install','wrong','1'),('package-prepare','upgrade','1','2'),('package-release','remove','1','1')):
+        result=subprocess.run([daemon,'--maintenance',command,action,version,abi],
+                              capture_output=True,text=True,timeout=10)
+        assert result.returncode!=0 and 'refusing package runtime prerequisite:' in result.stderr, result.stderr
+        assert snapshot()==before, 'unproven package runtime changed security state before prerequisite'
     for extra in ([], ['--socket', '/tmp/fic-singleton-custom.sock']):
         result = subprocess.run([daemon, *extra], capture_output=True, text=True, timeout=10)
         assert result.returncode != 0, 'second daemon startup succeeded'

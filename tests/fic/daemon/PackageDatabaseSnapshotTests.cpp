@@ -11,6 +11,13 @@ int main() {
         require(parse(PackageManagerKind::Dpkg,"fic\tinstall ok installed\t1:2.0-3\tamd64\nfic-runtime\tinstall ok installed\t1:2.0-3\tamd64\n"),error);
         require(snapshot.packages.size()==2&&snapshot.packages.at("fic").state==PackageInstallState::Installed&&
             snapshot.packages.at("fic").version=="1:2.0-3","installed version identity lost");
+        require(proveRuntimePackagePrerequisite(snapshot,"1:2.0-3",error),error);
+        require(!proveRuntimePackagePrerequisite(snapshot,"2.0-3",error),"runtime epoch mismatch accepted");
+        require(!proveRuntimePackagePrerequisite(snapshot,"",error),"missing compiled runtime identity accepted");
+        for(const auto state:{PackageInstallState::Absent,PackageInstallState::ConfigFiles,PackageInstallState::Incomplete}) {
+            snapshot.packages.at("fic-runtime").state=state;
+            require(!proveRuntimePackagePrerequisite(snapshot,"1:2.0-3",error),"unconfigured runtime accepted");
+        }
         for(const auto* status:{"install ok half-configured","install ok unpacked","install ok triggers-pending",
             "install ok triggers-awaited","install reinstreq installed","deinstall ok installed","purge ok half-installed"}) {
             require(parse(PackageManagerKind::Dpkg,std::string("fic\t")+status+"\t2\tamd64\n")&&
@@ -22,6 +29,9 @@ int main() {
             snapshot.packages.at("fic").state==PackageInstallState::Absent,"not-installed observation lost");
         require(parse(PackageManagerKind::Rpm,"fic\t(none)\t2.0-alt1\tx86_64\nfic-runtime\t2\t2.0-alt1\tx86_64\n"),error);
         require(snapshot.packages.at("fic").version=="0:2.0-alt1"&&snapshot.packages.at("fic-runtime").version=="2:2.0-alt1","RPM epoch normalized incorrectly");
+        require(proveRuntimePackagePrerequisite(snapshot,"2:2.0-alt1",error),error);
+        require(!proveRuntimePackagePrerequisite(snapshot,"0:2.0-alt1",error)&&
+            !proveRuntimePackagePrerequisite(snapshot,"2:2.0-alt2",error),"RPM runtime epoch/release mismatch accepted");
         require(!parse(PackageManagerKind::Rpm,"fic\t(none)\t1-alt1\tx86_64\nfic\t(none)\t2-alt1\tx86_64\n")&&
             snapshot.packages.empty(),"failed RPM upgrade duplicate versions collapsed");
         for(const auto* text:{"fic\tinstall ok mystery\t2\tamd64\n","fic\tinstall ok installed\t2\tamd64",
@@ -32,6 +42,7 @@ int main() {
         require(!parse(static_cast<PackageManagerKind>(123),""),"unknown package manager accepted");
         require(!parse(PackageManagerKind::Dpkg,std::string(1024*1024+1,'x')),"oversized output accepted");
         require(parse(PackageManagerKind::Rpm,"unrelated\t(none)\t1\tx86_64\n")&&snapshot.packages.empty(),"unrelated package claimed");
+        require(!proveRuntimePackagePrerequisite(snapshot,"1",error),"missing runtime accepted");
         fic::platform::PlatformExecutableResolver noExecutables({});
         PackageDatabaseReader reader(noExecutables,PackageManagerKind::Dpkg);
         PackageManagerTransactionLock noLocks;
@@ -39,6 +50,8 @@ int main() {
         require(!reader.read(noLocks,std::chrono::steady_clock::now()+std::chrono::seconds(1),budget,snapshot,error)&&
             budget==1234&&snapshot.packages.empty()&&error.find("transaction locks")!=std::string::npos,
             "database query proceeded without matching transaction admission");
+        require(!reader.observeRuntimePrerequisite("",std::chrono::steady_clock::now()+std::chrono::seconds(1),budget,error)&&budget==1234,
+            "prerequisite query proceeded without exact version");
         std::cout<<"PASS: dpkg incomplete/config-files/installed distinction, RPM EVR/duplicate refusal, bounded strict parser\n";
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

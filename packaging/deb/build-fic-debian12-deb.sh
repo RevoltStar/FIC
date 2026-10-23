@@ -105,6 +105,13 @@ verify_built_binary() {
             exit 1
         fi
     done
+    if [ "$component" = fic ]; then
+        grep -Fqx "lifecycle_package_version=$PACKAGE_VERSION" <<< "$build_info" &&
+            grep -Fqx 'lifecycle_abi=1' <<< "$build_info" || {
+                echo "Lifecycle runtime identity mismatch for $binary_path" >&2
+                exit 1
+            }
+    fi
 }
 
 verify_deb_metadata() {
@@ -1222,6 +1229,7 @@ build_project() {
     if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
         cmake_args+=(
             "-DFIC_TARGET_PLATFORM=$FIC_PACKAGING_TARGET_PLATFORM"
+            "-DFIC_LIFECYCLE_PACKAGE_VERSION=$PACKAGE_VERSION"
         )
     fi
 

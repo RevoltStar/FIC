@@ -53,6 +53,18 @@ find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
 
 set(FIC_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+set(FIC_LIFECYCLE_PACKAGE_VERSION "" CACHE STRING "Exact native package version of the lifecycle runtime (including epoch/release)")
+string(LENGTH "${FIC_LIFECYCLE_PACKAGE_VERSION}" FIC_LIFECYCLE_PACKAGE_VERSION_LENGTH)
+if(FIC_LIFECYCLE_PACKAGE_VERSION_LENGTH GREATER 128 OR
+   (NOT FIC_LIFECYCLE_PACKAGE_VERSION STREQUAL "" AND
+    NOT FIC_LIFECYCLE_PACKAGE_VERSION MATCHES "^[0-9][0-9A-Za-z.+:~_-]*$"))
+    message(FATAL_ERROR "FIC_LIFECYCLE_PACKAGE_VERSION must be an exact native package version")
+endif()
+file(MAKE_DIRECTORY "${FIC_GENERATED_INCLUDE_DIR}/daemon")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/daemon/PackageRuntimeIdentityGenerated.h.in"
+    "${FIC_GENERATED_INCLUDE_DIR}/daemon/PackageRuntimeIdentityGenerated.h"
+    @ONLY)
 file(MAKE_DIRECTORY "${FIC_GENERATED_INCLUDE_DIR}/platform")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/PasswordAgingPolicyDefaultsGenerated.h.in"

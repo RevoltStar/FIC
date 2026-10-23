@@ -45,6 +45,10 @@
 #include "daemon/PackageReleaseResources.h"
 #include "daemon/MaintenanceAdmission.h"
 #include "daemon/PackageLifecycleAdmission.h"
+#include "daemon/PackageLifecycleCoordinator.h"
+#include "daemon/PackageRuntimePrerequisite.h"
+#include "daemon/PackageRuntimeIdentityGenerated.h"
+#include "daemon/PackageReleaseSession.h"
 #include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
@@ -1597,6 +1601,8 @@ int main(int argc, char* argv[]) {
     if (get_arg_value(argc, argv, 1) == "--build-info") {
         fic::version::writeBuildInfo(std::cout, "fic");
         std::cout << "target_platform=" << platform.id << std::endl;
+        std::cout << "lifecycle_package_version=" << fic::daemon::LifecycleRuntimePackageVersion << '\n'
+                  << "lifecycle_abi=" << fic::daemon::LifecycleRuntimeAbi << std::endl;
         return 0;
     }
     if (get_arg_value(argc, argv, 1) == "--trust-list-platform-paths") {
@@ -1635,6 +1641,52 @@ int main(int argc, char* argv[]) {
     if (!fic::core::FicRuntimePaths::initializeProduction(pathError)) {
         std::cerr << "failed to initialize FIC runtime paths: " << pathError << std::endl;
         return 1;
+    }
+
+    // Closed package entrypoint has its own stop/admission/reproof sequence.
+    // This is not normal maintenance admission and never clears a fence.
+    if (get_arg_value(argc,argv,1)=="--maintenance" &&
+        fic::daemon::maintenanceIntent(get_arg_value(argc,argv,2),get_arg_value(argc,argv,3))==
+            fic::daemon::MaintenanceIntent::LifecycleSession) {
+        const auto action=get_arg_value(argc,argv,3),version=get_arg_value(argc,argv,4);
+        constexpr auto abi=fic::daemon::LifecycleRuntimeAbi;
+        if(argc!=6 || get_arg_value(argc,argv,5)!=std::to_string(abi)) {
+            std::cerr<<"refusing package runtime prerequisite: exact operation, version and supported ABI required"<<std::endl;return 1;
+        }
+        if(!fic::daemon::proveExecutingPackageRuntime(platform,version,abi,pathError)) {
+            std::cerr<<"refusing package runtime prerequisite: "<<pathError<<std::endl;return 1;
+        }
+        const auto operation=action=="install"?fic::daemon::PackageOperation::Install:
+            action=="upgrade"?fic::daemon::PackageOperation::Upgrade:fic::daemon::PackageOperation::Remove;
+        const auto& paths=fic::core::FicRuntimePaths::get();
+        if(operation==fic::daemon::PackageOperation::Remove &&
+           !fic::daemon::PackageReleaseSession(platform,paths,{}).preflight(pathError)) {
+            std::cerr<<"refusing package removal preflight: "<<pathError<<std::endl;return 1;
+        }
+        fic::daemon::PackageLifecycleCoordinator coordinator(platform,paths);
+        if(!coordinator.requestStopBeforeAdmission(pathError)) {
+            std::cerr<<"refusing package writer stop: "<<pathError<<std::endl;return 1;
+        }
+        fic::daemon::DaemonInstanceLock guard;
+        fic::daemon::PackageLifecycleState prepared;
+        if(!guard.tryAcquire(paths.runtimeDir,pathError)||
+           !fic::daemon::proveExecutingPackageRuntime(platform,version,abi,pathError)||
+           !coordinator.prepare(guard,operation,version,prepared,pathError)) {
+            std::cerr<<"refusing package preparation: "<<pathError<<std::endl;return 1;
+        }
+        if(operation==fic::daemon::PackageOperation::Remove) {
+            const fic::daemon::PackageReleaseSessionPaths lifecycle{
+                fic::daemon::PackageLifecycleStateFile,
+                std::filesystem::path(fic::daemon::PackageLifecycleDirectory)/"operations","/etc/systemd/system"};
+            if(!fic::daemon::PackageReleaseSession(platform,paths,lifecycle).completeRelease(
+                guard,prepared.operationId,pathError)) {
+                std::cerr<<"package security release incomplete (fence retained): "<<pathError<<std::endl;return 1;
+            }
+            std::cout<<"package security release complete (awaiting removal finalizer): "<<prepared.operationId<<std::endl;
+            return 0;
+        }
+        std::cout<<"package operation prepared (still fenced): "<<prepared.operationId<<std::endl;
+        return 0;
     }
 
     // Runtime-path initialization above is memory-only. This must precede

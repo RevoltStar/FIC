@@ -7,6 +7,13 @@ void expect(const std::string& command, const std::string& action, MaintenanceIn
 }
 int main() {
     try {
+        for(const auto* action:{"install","upgrade"})
+            expect("package-prepare",action,MaintenanceIntent::LifecycleSession);
+        expect("package-release","remove",MaintenanceIntent::LifecycleSession);
+        for(const auto* action:{"install","upgrade","recover","force","","unknown"})
+            expect("package-release",action,MaintenanceIntent::Invalid);
+        for(const auto* action:{"remove","recover","force","","unknown"})
+            expect("package-prepare",action,MaintenanceIntent::Invalid);
         for (const auto* domain : {"dm-prerm-prepare", "desktop-prerm-prepare", "pam-provider-prerm-prepare", "pam-password-prerm-prepare"}) {
             expect(domain, "preflight", MaintenanceIntent::ReadOnly);
             expect(domain, "release", MaintenanceIntent::PackageMutation);
@@ -31,7 +38,7 @@ int main() {
         expect("future-command", "release", MaintenanceIntent::Invalid);
         for (auto intent : {MaintenanceIntent::ReadOnly, MaintenanceIntent::ResourceSerialized, MaintenanceIntent::Invalid})
             if (requiresInstanceLock(intent)) throw std::runtime_error("unexpected global lock");
-        if (!requiresInstanceLock(MaintenanceIntent::ExclusiveMutation) || !requiresInstanceLock(MaintenanceIntent::PackageMutation))
+        if (!requiresInstanceLock(MaintenanceIntent::ExclusiveMutation) || !requiresInstanceLock(MaintenanceIntent::PackageMutation) || !requiresInstanceLock(MaintenanceIntent::LifecycleSession))
             throw std::runtime_error("missing mutation lock");
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

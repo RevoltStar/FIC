@@ -76,5 +76,12 @@ for unit in units:
 foreign = Path("/etc/systemd/system/fic-notify.service")
 assert foreign.readlink() == Path("/dev/null")
 assert str(foreign.lstat().st_ino) == (root / "foreign-inode").read_text()
+if sys.argv[1] == "verify":
+    run("/usr/local/bin/m1-coordinator", "restore-fixture")
+    assert str(foreign.lstat().st_ino) == (root / "foreign-inode").read_text()
+    for unit in units:
+        if unit != "fic-notify.service":
+            assert not os.path.lexists(Path("/etc/systemd/system") / unit)
+    run("systemctl", "daemon-reload")
 print("PASS preparation component: " + sys.argv[1] +
       "; persistent masks, retained writer inventory, no journal/release/finalization", flush=True)

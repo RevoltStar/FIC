@@ -6,11 +6,15 @@
 RED reproductions, **не реализация безопасного FIC package lifecycle**. Двухстадийный runtime retention принят: преждевременный совместный erase/autoremove
 явно отказывает, сохраняя runtime до proof из предыдущей завершённой transaction. Production packaging ещё не изменён; никаких fallback на legacy binary.
 
-В engine реализована внутренняя preparation install/upgrade/remove под daemon.lock:
+В engine реализована preparation install/upgrade/remove под daemon.lock:
 неизменяемый inventory writers, fence и persistent masks, повторный systemd/cgroup/
-process proof; upgrade не выполняет release. Она пока не подключена к package CLI:
-проверки runtime prerequisite/manifest и полный configure/recovery/finalizer ещё
-не завершены. Component tests не доказывают готовность пакетного lifecycle.
+process proof; upgrade не выполняет release. Закрытые CLI routes:
+`--maintenance package-prepare install|upgrade <native-version> <ABI>` и
+`--maintenance package-release remove <native-version> <ABI>`. Второй удерживает
+тот же guard через подготовку, загрузку journal и весь security release до
+ReleaseComplete. Ни один route не снимает fence. Package scripts ещё не переведены;
+manifest/configure/recovery/finalizer не завершены. Component tests не доказывают
+готовность пакетного lifecycle.
 
 ID операции и ID mask provenance разделены в отдельном lifecycle fence (schema 2).
 Новая операция после Installed получает новый mask plan; recovery незавершённой
@@ -53,6 +57,16 @@ fic-core/policy/ipc остаются статически слинкованны
 * Новый main pre-script принимает только настроенный runtime ожидаемой полной
   package version (включая release/epoch, где применимо) и ожидаемого lifecycle ABI.
   Installed-but-unconfigured или случайный старый runtime не даёт authority.
+  Engine сверяет requested version/ABI с compiled identity и свой `/proc/self/exe`
+  с доверенным runtime path, затем exact installed DB record. Проверка до stop
+  read-only, после daemon.lock повторяется. Такой запрос из maintainer script не
+  претендует на владение locks родительской transaction и не является final proof.
+  Для finalizer отдельный `PackageDatabaseReader.read` по-прежнему требует реальные
+  matching PM locks и повторяет их identity proof после query.
+* `FIC_LIFECYCLE_PACKAGE_VERSION` задаётся packaging отдельно от product version:
+  DEB full version, RPM `0:VERSION-RELEASE` (текущие RPM не задают Epoch). Empty
+  development identity запрещает lifecycle routes. `--build-info` показывает её
+  и lifecycle ABI; build scripts проверяют совпадение перед упаковкой.
 * Finalizer сверяет согласованность версий main/runtime/обязательных FIC-пакетов,
   immutable manifest, реальный installed state и весь lifecycle proof; dependency
   resolver не заменяет эти проверки. Не использовать только имя ELF/`--version`.
@@ -169,3 +183,10 @@ dummy FIC units из `native_masks.py`; не запускать на рабоч�
 сохранение чужой маски и отказ при повреждении inventory. Он не устанавливает FIC,
 не снимает lifecycle fence, не подтверждает finalizer/package recovery. Результаты
 конкретных запусков фиксируются в HANDOFF.
+
+`native_runtime_entrypoint_deb.py <actual-fic-ELF>` использует dummy DEBs с реальным
+engine (`FIC_LIFECYCLE_PACKAGE_VERSION=1`): configured runtime prerequisite,
+отказ из half-configured postinst, отказ несовместимого main preinst и корректный
+preinst → fenced preparation. Копия ELF с другим inode/version/ABI не получает
+authority; PAM/SSH/incident/journal не меняются. Это всё ещё component/package-order
+fixture, **не actual FIC packages, install finalization, removal или recovery**.

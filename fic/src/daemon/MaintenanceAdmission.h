@@ -2,8 +2,14 @@
 #define FIC_MAINTENANCE_ADMISSION_H
 #include <string>
 namespace fic::daemon {
-enum class MaintenanceIntent { ReadOnly, ResourceSerialized, ExclusiveMutation, PackageMutation, Invalid };
+enum class MaintenanceIntent { ReadOnly, ResourceSerialized, ExclusiveMutation, PackageMutation, LifecycleSession, Invalid };
 inline MaintenanceIntent maintenanceIntent(const std::string& command, const std::string& action) {
+    if (command == "package-prepare") {
+        if (action == "install" || action == "upgrade") return MaintenanceIntent::LifecycleSession;
+        return MaintenanceIntent::Invalid;
+    }
+    if (command == "package-release")
+        return action == "remove" ? MaintenanceIntent::LifecycleSession : MaintenanceIntent::Invalid;
     if (command == "check-config" || command == "wait-daemon" ||
         command == "incident-pam-verify" || command == "incident-pam-prove-detached" ||
         command == "validate-pam-slots-before-attach") return MaintenanceIntent::ReadOnly;
@@ -31,7 +37,7 @@ inline MaintenanceIntent maintenanceIntent(const std::string& command, const std
     return MaintenanceIntent::Invalid;
 }
 inline bool requiresInstanceLock(MaintenanceIntent intent) {
-    return intent == MaintenanceIntent::ExclusiveMutation || intent == MaintenanceIntent::PackageMutation;
+    return intent == MaintenanceIntent::ExclusiveMutation || intent == MaintenanceIntent::PackageMutation || intent == MaintenanceIntent::LifecycleSession;
 }
 }
 #endif
