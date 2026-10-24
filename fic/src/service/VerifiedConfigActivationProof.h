@@ -13,6 +13,10 @@ struct ActivationProof {
     std::function<void(std::chrono::steady_clock::time_point)> published;
     std::function<void(const ServiceState&, std::chrono::steady_clock::time_point)> ready;
 };
+// Read-only preflight shared with callers that must reject known unsupported
+// publication environments before making persistent configuration changes.
+// Performs no mkdir/mount/restart and grants no later activation authority.
+void validatePublicationEnvironment(const ActivationRequest&, std::vector<std::string>* residualPaths = nullptr);
 ActivationResult activateWithProof(const ActivationRequest&, const ActivationProof&);
 #ifdef FIC_ACTIVATOR_TESTING
 struct TestHooks;

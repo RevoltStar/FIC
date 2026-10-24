@@ -15,3 +15,14 @@ target_compile_definitions(ssh_apply_rollback_tests PRIVATE FIC_SSH_TRANSACTION_
 target_include_directories(ssh_apply_rollback_tests PRIVATE ${FIC_SSH_TEST_ROOT}/fic/src)
 target_link_libraries(ssh_apply_rollback_tests PRIVATE fic-core fic-policy fic-platform Threads::Threads)
 add_test(NAME ssh_apply_rollback_tests COMMAND ssh_apply_rollback_tests)
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SSH_PROVENANCE_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
+target_sources(ssh_apply_rollback_tests PRIVATE
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/VerifiedConfigServiceActivator.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/VerifiedConfigMountSupport.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/VerifiedConfigLaunchContract.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/VerifiedConfigSystemd.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/ssh/SshVerifiedInputClosure.cpp)
+target_link_libraries(ssh_apply_rollback_tests PRIVATE PkgConfig::SSH_PROVENANCE_SYSTEMD)

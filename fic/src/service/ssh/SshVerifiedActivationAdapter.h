@@ -7,6 +7,13 @@ struct SshVerifiedActivationRequest {
     // Caller-authorized references, NEVER enrolled from observed files here.
     ActivationRequest reference;
     std::map<std::string, std::string> policies;
+    // Operation-local expectations from the production caller. No journal or
+    // ownership authority is inferred from these read-only observations.
+    std::map<std::string,std::string> expectedService;
+    // Optional authoritative enabled policy values. Only independently proven
+    // compliant selections enter the receipt; they never gate this apply.
+    std::map<std::string,std::string> additionalPolicies;
+    std::map<std::string,std::string> observedMetadata;
 };
 struct SshVerifiedActivationResult {
     SshActivationStatus status = SshActivationStatus::Refused;
@@ -20,6 +27,12 @@ struct SshVerifiedActivationResult {
 };
 class SshVerifiedActivationAdapter {
 public:
+    static std::map<std::string,std::string> serviceAdmission();
+    // Read-only Debian input capture. Caller MUST first prove journal/managed
+    // ownership and supply the expected main-file digest. Foreign root-owned
+    // configuration is referenced, never enrolled as policy ownership.
+    static SshVerifiedActivationRequest captureReference(
+        const std::map<std::string,std::string>& policies,const std::string& expectedMainSha);
     static SshVerifiedActivationResult activate(const SshVerifiedActivationRequest&);
 };
 } // namespace fic::service::ssh

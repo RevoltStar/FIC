@@ -3,6 +3,7 @@
 #include "service/ssh/SshPersistentMetadata.h"
 #include "service/ssh/SshServiceAdmission.h"
 #include "service/VerifiedConfigMountSupport.h"
+#include "service/VerifiedConfigSystemd.h"
 #include <fic/core/integrity/ContentDigest.h>
 #include <iostream>
 #include <nlohmann/json.hpp>
@@ -78,6 +79,51 @@ int main() {
     }
     require(d::classifyServiceAdmission("inactive","dead","123")==d::ServiceAdmission::Wait,"pending startup job refused");++checks;
     for(const auto* state:{"inactive","failed","unknown"})deny([&]{d::classifyServiceAdmission(state,"dead","");});
+    // Cross enablement/runtime matrix and transitions exercise the actual
+    // production admission loop, with a virtual deadline instead of sleeps.
+    for(const std::string enabled:{"enabled","disabled"}) {
+        for(const std::string initial:{"active","inactive","activating","failed","auto-restart"}) {
+            for(const std::string finish:{"active","failed","timeout","disabled-final"}) {
+                unsigned reads=0,waits=0;bool passed=false;
+                const auto state=[&](const std::string& phase) {
+                    fic::service::detail::ServiceState out;
+                    out.properties=goodLaunch;
+                    out.properties["launch.UnitFileState"]=nlohmann::json({{"type","s"},{"value",enabled}}).dump();
+                    out.properties["ActiveState"]=phase=="auto-restart"?"activating":phase;
+                    out.properties["SubState"]=phase=="active"?"running":phase=="auto-restart"?"auto-restart":"dead";
+                    out.properties["Job"]="";return out;
+                };
+                try {
+                    d::awaitServiceAdmission([&] {
+                        ++reads;return state(reads==1||finish=="timeout"?initial:finish=="active"||finish=="disabled-final"?"active":"failed");
+                    },[&] {
+                        auto out=state("active");
+                        if(finish=="disabled-final") out.properties["launch.UnitFileState"]=nlohmann::json({{"type","s"},{"value","disabled"}}).dump();
+                        return out;
+                    },[&](const auto& out){d::validateLaunchProfile(out.properties);},[&] {
+                        if(++waits>=3)throw fic::service::detail::Failure(ActivationStatus::TimedOut,"virtual admission deadline");
+                    });passed=true;
+                } catch(const fic::service::detail::Failure&) {}
+                const bool expected=enabled=="enabled"&&finish!="disabled-final"&&
+                    (initial=="active"||((initial=="activating"||initial=="auto-restart")&&finish=="active"));
+                require(passed==expected,"admission transition matrix mismatch");
+                require(enabled!="disabled"||waits==0,"disabled runtime entered wait loop");++checks;
+            }
+        }
+    }
+    {
+        d::RestartBudget budget;using Clock=std::chrono::steady_clock;
+        const auto initial=Clock::time_point{};
+        const auto window=std::chrono::seconds(10);
+        require(budget.availableAt(initial,window,2)==initial+window,"unknown previous starts were not aged out");
+        require(budget.availableAt(initial+window,window,2)==initial+window,"budget never became available");
+        budget.record(initial+window);budget.record(initial+window+std::chrono::seconds(1));
+        require(budget.availableAt(initial+window+std::chrono::seconds(2),window,2)==initial+window*2,"rolling budget exceeded burst");
+        require(budget.availableAt(initial+window*2,window,2)==initial+window*2,"expired attempts never released capacity");
+        require(budget.availableAt(initial+window*2,window,1)==initial+window*3,"limit change reused stale allowance");
+        require(budget.availableAt(initial+window*2,std::chrono::microseconds(0),1)==initial+window*2,"disabled rate limit waited");
+        checks+=6;
+    }
     Fixture f;
     require(f.closure().negativeSetDirectories.count(dir), "empty glob negative set not protected"); ++checks;
     f.bytes[dir+"/10.conf"] = "Port 2222\nInclude " + dir + "/nested.inc\n";

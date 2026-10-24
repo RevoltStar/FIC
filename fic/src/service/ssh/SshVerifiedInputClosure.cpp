@@ -67,7 +67,7 @@ void validateEmptyOptions(const std::string& bytes) {
     }
     if (assignments != 1) unsupported("explicit empty SSHD_OPTS required");
 }
-Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies) {
+static Closure classifyClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies, bool requireKeys) {
     validatePolicies(policies);
     fic::service::detail::validateRequest(r);
     if (r.unit != "ssh.service") unsupported("only ssh.service is supported");
@@ -127,8 +127,24 @@ Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes, con
             }
             if (conditional && selected.count(key))
                 unsupported("conditional assignment of selected SSH policy unsupported");
+            const auto portPolicy=policies.find("ssh_port");
+            if(portPolicy!=policies.end()) {
+                if(key=="port" && name!="/etc/ssh/sshd_config" &&
+                   (args.size()!=1 || args.front()!=portPolicy->second))
+                    unsupported("foreign Include Port conflicts with selected SSH port; no mutation allowed");
+                if(key=="listenaddress" && args.size()==1) {
+                    const auto& address=args.front();
+                    std::string port;
+                    if(!address.empty()&&address.front()=='[') {
+                        const auto close=address.find(']');
+                        if(close!=std::string::npos && close+1<address.size() && address[close+1]==':') port=address.substr(close+2);
+                    } else if(std::count(address.begin(),address.end(),':')==1) port=address.substr(address.find(':')+1);
+                    if(!port.empty() && port!=portPolicy->second)
+                        unsupported("explicit ListenAddress port conflicts with selected SSH port; no mutation allowed");
+                }
+            }
             if (key == "hostkey") {
-                if (args.size() != 1 || !path(args[0]) || !bytes.count(args[0]) || !bytes.count(args[0] + ".pub")) unsupported("HostKey and public companion require explicit reference coverage");
+                if (args.size() != 1 || !path(args[0])) unsupported("HostKey and public companion require explicit reference coverage");
                 result.hostKeys.insert(args[0]);
             }
             if (key != "include") continue;
@@ -173,11 +189,17 @@ Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes, con
         // Debian OpenSSH built-in defaults. Require coverage of the complete
         // fixed set; do not infer ownership or silently omit a missing key.
         for (const auto* key : {"/etc/ssh/ssh_host_rsa_key", "/etc/ssh/ssh_host_ecdsa_key", "/etc/ssh/ssh_host_ed25519_key"}) {
-            if (!bytes.count(key) || !bytes.count(std::string(key)+".pub"))
-                unsupported("Debian implicit HostKey defaults require complete trusted reference coverage");
             result.hostKeys.insert(key);
         }
     }
+    if(requireKeys)for(const auto& key:result.hostKeys)
+        if(!bytes.count(key)||!bytes.count(key+".pub"))unsupported("HostKey inputs require complete trusted reference coverage");
     return result;
+}
+Closure validateClosure(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies) {
+    return classifyClosure(r,bytes,policies,true);
+}
+std::set<std::string> discoverHostKeys(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies) {
+    return classifyClosure(r,bytes,policies,false).hostKeys;
 }
 } // namespace fic::service::ssh::detail

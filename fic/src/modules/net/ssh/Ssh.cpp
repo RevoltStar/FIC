@@ -5,6 +5,9 @@
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/net/ssh/SshRuntime.h"
+#include "modules/net/ssh/SshResourceLock.h"
+#include "service/ssh/SshVerifiedActivationAdapter.h"
+#include <fic/core/integrity/ContentDigest.h>
 
 #include "rollback/DaemonMutationJournal.h"
 
@@ -16,13 +19,6 @@
 #include <utility>
 
 namespace {
-
-// Serializes sshd_config access between policy apply and the rollback
-// executor's SSH undo path within this process.
-std::mutex& sshBackendMutex() {
-    static std::mutex mutex;
-    return mutex;
-}
 
 std::string sshMutationResource(const std::filesystem::path& configPath,
                                 const std::string& parameter) {
@@ -150,7 +146,7 @@ bool Ssh::apply() {
         return false;
     }
 
-    const std::lock_guard<std::mutex> lock(sshBackendMutex());
+    const std::lock_guard<std::mutex> lock(sshResourceMutex());
 
     const std::optional valueOpt = this->getValue();
     if(!valueOpt){
@@ -179,6 +175,18 @@ bool Ssh::apply() {
         return false;
     }
 
+    using Adapter = fic::service::ssh::SshVerifiedActivationAdapter;
+    using Reference = fic::service::ssh::SshVerifiedActivationRequest;
+    const bool verified = platformConfig_.applyContract == fic::platform::SshApplyContract::DebianVerified;
+    if (platformConfig_.applyContract == fic::platform::SshApplyContract::UnsupportedSocketActivation) {
+        this->log("UnsupportedConfiguration: Ubuntu SSH socket activation requires a separate verified contract", logLevel::ERROR);
+        return false;
+    }
+    std::map<std::string,std::string> serviceBaseline;
+    if (verified) {
+        try { serviceBaseline = Adapter::serviceAdmission(); }
+        catch (const std::exception& e) { this->log(e.what(), logLevel::ERROR); return false; }
+    }
     SshRuntime runtime(*runtimeOptions_, executables_, commandRunner_);
     const std::string sshPath = platformConfig_.configPath.string();
     const std::string resource =
@@ -298,6 +306,10 @@ bool Ssh::apply() {
                 valueChanged = true;
             }
         }
+        if (valueChanged && verified) {
+            this->log("SSH REFRESH unsupported: existing ownership retained; explicit release/recovery required", logLevel::ERROR);
+            return false;
+        }
         if (valueChanged) {
             SshRollbackOptions rollbackOptions = makeRollbackOptions();
             for (const fic::rollback::MutationRecord& record : activeRecords) {
@@ -375,11 +387,51 @@ bool Ssh::apply() {
         }
     }
 
+    Reference baseline;
+    std::map<std::string,std::string> additionalPolicies;
+    if(verified) for(const auto* id:{"ssh_root_login","ssh_pubkey_auth","ssh_use_pam","ssh_max_auth_tries","ssh_port"}) {
+        if(this->moduleConf->hasPolicyStatus(id)&&this->moduleConf->getPolicyStatus(id)=="ENABLE"&&this->moduleConf->hasConfiguredValue(id))
+            additionalPolicies.emplace(id,this->moduleConf->getPolicyValue(id));
+    }
+    const std::map<std::string,std::string> selected{{this->policyName, expectedValue}};
+    if (verified) {
+        try {
+            if (!this->sshConfig_->loadSnapshot()) throw std::runtime_error("SSH main snapshot unavailable");
+            baseline = Adapter::captureReference(selected,
+                fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content));
+            baseline.expectedService = serviceBaseline;
+            baseline.additionalPolicies = additionalPolicies;
+        } catch (const std::exception& e) { this->log(e.what(), logLevel::ERROR); return false; }
+    }
+    // Every foreign input must remain the exact captured reference. Only the
+    // main file may change, and only when separately bound to our CAS receipt.
+    const auto sameInputs = [&](const Reference& next, bool ownMainChanged) {
+        if (baseline.reference.paths.size() != next.reference.paths.size()) return false;
+        auto metadata = next.observedMetadata;
+        auto expectedMetadata = baseline.observedMetadata;
+        if (ownMainChanged) { metadata.erase(sshPath); expectedMetadata.erase(sshPath); }
+        if (metadata != expectedMetadata) return false;
+        for (std::size_t i=0; i<baseline.reference.paths.size(); ++i) {
+            const auto& a=baseline.reference.paths[i]; const auto& b=next.reference.paths[i];
+            if (a.path!=b.path || a.kind!=b.kind || a.manifest!=b.manifest ||
+                (!(ownMainChanged && a.path==sshPath) && a.sha256!=b.sha256)) return false;
+        }
+        return true;
+    };
+
     // Compliance fast-path: a configuration that already satisfies the
     // policy must not be rewritten (idempotent re-apply).
     const SshComplianceResult compliance =
         runtime.policyValueCompliance(this->sshParameter, expectedValue);
+    if (verified && compliance.compliance == SshCompliance::Unknown) {
+        this->log("SSH compliance unknown: " + compliance.error, logLevel::ERROR);
+        return false;
+    }
     if (compliance.compliance == SshCompliance::Compliant) {
+        if (verified) {
+            const auto result = Adapter::activate(baseline);
+            if (!result.success()) { this->log(result.diagnostic, logLevel::ERROR); return false; }
+        }
         this->log(LocalizationManager::getLang(
                       "[module:NET][submodule:SshEdit][message:already_configured]") +
                       this->sshParameter + " = " + expectedValue,
@@ -487,6 +539,31 @@ bool Ssh::apply() {
     SshConfigTransactionHooks hooks;
     hooks.beforeWrite = beforeWriteHook_;
     hooks.beforeRestore = beforeRestoreHook_;
+    if (verified) {
+        hooks.verifiedAdmission = [&](std::string& error) {
+            try {
+                if (Adapter::serviceAdmission() != serviceBaseline) throw std::runtime_error("SSH runtime/launch changed before CAS");
+                const auto current = Adapter::captureReference(selected,
+                    fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content));
+                if (!sameInputs(current, false)) throw std::runtime_error("SSH inputs changed before CAS");
+                return true;
+            } catch (const std::exception& e) { error=e.what(); return false; }
+        };
+        hooks.verifiedActivation = [&](const AtomicTargetState& installed, std::string& error) {
+            try {
+                if (!AtomicFileWriter::targetStateMatches(sshPath, installed, &error)) return false;
+                if (Adapter::serviceAdmission()!=serviceBaseline) throw std::runtime_error("SSH runtime/launch changed after save");
+                auto next = Adapter::captureReference(selected, fic::core::ContentDigest::sha256Hex(installed.content));
+                if (!sameInputs(next, true)) throw std::runtime_error("foreign SSH input changed after save; provenance retained");
+                if (!AtomicFileWriter::targetStateMatches(sshPath, installed, &error)) return false;
+                next.expectedService=serviceBaseline;
+                next.additionalPolicies=additionalPolicies;
+                const auto result=Adapter::activate(next);
+                if (!result.success()) { error="Persistent configuration saved; verified activation failed; provenance retained: " + result.diagnostic; return false; }
+                return true;
+            } catch (const std::exception& e) { error=e.what(); return false; }
+        };
+    }
 
     SshConfigTransactionResult transaction = runSshConfigTransaction(
         *this->sshConfig_, runtime, hooks,

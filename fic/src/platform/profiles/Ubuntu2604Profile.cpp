@@ -96,6 +96,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.packageManager.transactionLocks = {"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"};
     profile.ssh.configPath = "/etc/ssh/sshd_config";
     profile.ssh.includeBasePath = "/etc/ssh";
+    profile.ssh.applyContract = SshApplyContract::UnsupportedSocketActivation;
     profile.ssh.serviceUnits = {"ssh.service", "sshd.service"};
     profile.ssh.socketUnits = {"ssh.socket", "sshd.socket"};
     profile.ssh.optionVariable = "SSHD_OPTS";

@@ -201,18 +201,9 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
     std::unique_ptr<SystemdActivation> service;
     try {
         operation.ns = namespaceIdentity(::getpid());
-        if (!capable()) throw Failure(ActivationStatus::UnsupportedConfiguration, "root and effective CAP_SYS_ADMIN required");
-        std::ifstream selinux("/sys/fs/selinux/enforce"); char enforcing = '0'; selinux >> enforcing;
-        if (enforcing == '1') throw Failure(ActivationStatus::UnsupportedConfiguration, "SELinux enforcing snapshot labels unsupported");
+        detail::validatePublicationEnvironment(request, &result.residualPaths);
         const auto deadline = std::chrono::steady_clock::now() + request.timeout;
         const auto workspace = fic::core::FicRuntimePaths::get().runtimeDir / "verified-config-activator";
-        if (!workspace.is_absolute() || workspace != workspace.lexically_normal()) throw Failure(ActivationStatus::UnsupportedConfiguration, "invalid workspace");
-        const auto mountInfo = readMountInfo();
-        for (const auto& m : mountInfo) if (m.source.rfind("fic-vcsa.", 0) == 0) {
-            result.residualPaths.push_back(m.target);
-        }
-        if (!result.residualPaths.empty()) throw Failure(ActivationStatus::ResidualMounts, "previous activation mounts require manual inspection; not adopted or unmounted");
-        requireSafePublicationParent(workspace / "prospective-operation", true, ActivationStatus::UnsupportedConfiguration);
         service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths);
         const auto launch = service->preflight();
         if (proof) {
@@ -227,10 +218,6 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         auto budget = request.maxSnapshotBytes;
         for (const auto& p : request.paths) {
             requireSafePublicationParent(p.path, false, ActivationStatus::UnsupportedConfiguration);
-            if (p.path == workspace || below(p.path, workspace) || below(workspace, p.path))
-                throw Failure(ActivationStatus::UnsupportedConfiguration, "controlled path overlaps workspace");
-            for (const auto& m : mountInfo) if (m.target == p.path || (p.kind == ControlledPathKind::Directory && below(m.target, p.path)))
-                throw Failure(ActivationStatus::UnsupportedConfiguration, "controlled target has an existing/nested mount");
             try {
                 auto source = openAbsolute(p.path, O_RDONLY);
                 verifyTree(source.get(), p, request.maxSnapshotBytes);
@@ -350,6 +337,27 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
     operation.cleanup(result);
     return result;
 }
+}
+void detail::validatePublicationEnvironment(const ActivationRequest& request, std::vector<std::string>* residualPaths) {
+    validateRequest(request);
+    if (!capable()) throw Failure(ActivationStatus::UnsupportedConfiguration, "root and effective CAP_SYS_ADMIN required");
+    std::ifstream selinux("/sys/fs/selinux/enforce"); char enforcing = '0'; selinux >> enforcing;
+    if (enforcing == '1') throw Failure(ActivationStatus::UnsupportedConfiguration, "SELinux enforcing snapshot labels unsupported");
+    const auto workspace = fic::core::FicRuntimePaths::get().runtimeDir / "verified-config-activator";
+    if (!workspace.is_absolute() || workspace != workspace.lexically_normal()) throw Failure(ActivationStatus::UnsupportedConfiguration, "invalid workspace");
+    const auto mounts = readMountInfo();
+    std::vector<std::string> residual;
+    for (const auto& m : mounts) if (m.source.rfind("fic-vcsa.", 0) == 0) residual.push_back(m.target);
+    if (residualPaths) *residualPaths = residual;
+    if (!residual.empty()) throw Failure(ActivationStatus::ResidualMounts, "previous activation mounts require manual inspection; not adopted or unmounted");
+    requireSafePublicationParent(workspace / "prospective-operation", true, ActivationStatus::UnsupportedConfiguration);
+    for (const auto& p : request.paths) {
+        requireSafePublicationParent(p.path, false, ActivationStatus::UnsupportedConfiguration);
+        if (p.path == workspace || below(p.path, workspace) || below(workspace, p.path))
+            throw Failure(ActivationStatus::UnsupportedConfiguration, "controlled path overlaps workspace");
+        for (const auto& m : mounts) if (m.target == p.path || (p.kind == ControlledPathKind::Directory && below(m.target, p.path)))
+            throw Failure(ActivationStatus::UnsupportedConfiguration, "controlled target has an existing/nested mount");
+    }
 }
 ActivationResult VerifiedConfigServiceActivator::activate(const ActivationRequest& request) { return perform(request, {}); }
 ActivationResult detail::activateWithProof(const ActivationRequest& request, const detail::ActivationProof& proof) {

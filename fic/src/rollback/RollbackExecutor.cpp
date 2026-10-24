@@ -1,3 +1,4 @@
+#include "modules/net/ssh/SshResourceLock.h"
 #include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
 #include "rollback/RollbackExecutor.h"
 #include "rollback/ScopeTransition.h"
@@ -1363,6 +1364,9 @@ RollbackReport rollbackPolicyBeforeDisable(
     const PolicyRef& policy,
     const std::string& resourceHint,
     const RollbackExecutorDeps& deps) {
+    std::unique_lock<std::mutex> sshLock(sshResourceMutex(), std::defer_lock);
+    const bool sshResource = policy.moduleName == "NET" && policy.submoduleName == "SshEdit";
+    if (sshResource) sshLock.lock();
     const RollbackEnrollment enrollment =
         effectiveRollbackEnrollment(policy, deps);
     if (enrollment == RollbackEnrollment::NotEnrolled) {
@@ -1390,6 +1394,22 @@ RollbackReport rollbackPolicyBeforeDisable(
             ? "Mutation journal недоступен"
             : journalError;
         return report;
+    }
+
+    if (sshResource) {
+        RollbackReport blocked;
+        blocked.status = RollbackStatus::Failed;
+        if (!deps.sshOptions) { blocked.message = "SSH rollback options unavailable"; return blocked; }
+        const auto options = deps.sshOptions();
+        if (!options.configPath.is_absolute()) { blocked.message="SSH rollback requires an absolute resource path"; return blocked; }
+        const auto prefix = "ssh:" + options.configPath.string() + ":";
+        for (const auto& record : journal->records()) {
+            if (record.undo.backend == MutationBackend::Ssh &&
+                record.status == MutationStatus::Prepared && record.resource.rfind(prefix, 0) == 0) {
+                blocked.message = "SSH recovery required: unresolved Prepared mutation " + std::to_string(record.id);
+                return blocked;
+            }
+        }
     }
 
     if (policy.moduleName == "OSS" && policy.submoduleName == "DisplayManager") {

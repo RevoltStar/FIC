@@ -3,6 +3,7 @@
 #include "service/ssh/SshPersistentMetadata.h"
 #include "service/ssh/SshServiceAdmission.h"
 #include <thread>
+#include <mutex>
 #include <algorithm>
 #include "service/VerifiedConfigActivationProof.h"
 #include "service/VerifiedConfigLaunchContract.h"
@@ -78,6 +79,51 @@ void validateLaunch(const d::LaunchContract& launch) {
             env != "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin") unsupported("SSH v1 manager environment outside supported profile");
     }
 }
+std::map<std::string,std::string> metadataIdentities(const detail::PersistentMetadata& state) {
+    std::map<std::string,std::string> result;
+    for(const auto& [path,root]:state.roots) {
+        Json value=Json::array({root.mount,root.device,root.inode,root.mode,root.uid,root.gid});
+        Json files=Json::object();
+        for(const auto& [name,s]:state.attributes.at(path))files[name]=Json::array({s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink,s.st_size,
+            s.st_mtim.tv_sec,s.st_mtim.tv_nsec,s.st_ctim.tv_sec,s.st_ctim.tv_nsec});
+        result.emplace(path,fic::core::ContentDigest::sha256Hex(Json::array({value,files}).dump()));
+    }
+    return result;
+}
+d::ServiceState admit(d::SystemdActivation& service
+#ifdef FIC_ACTIVATOR_TESTING
+    , const std::function<void()>& waiting = {}
+#endif
+) {
+    return detail::awaitServiceAdmission([&] { return service.current(); },
+        [&] { return service.preflight(); },
+        [](const auto& state) { detail::validateLaunchProfile(state.properties); },
+        [&] {
+#ifdef FIC_ACTIVATOR_TESTING
+            if(waiting) waiting();
+#endif
+            std::this_thread::sleep_for(std::min(service.remaining(),std::chrono::milliseconds(50)));
+        });
+}
+detail::RestartBudget restartBudget;
+void awaitRestartBudget(d::SystemdActivation& service, const d::ServiceState& expected, bool reserve) {
+    const auto interval=value(expected.properties,"StartLimitIntervalUSec").get<std::uint64_t>();
+    const auto burst=value(expected.properties,"StartLimitBurst").get<std::uint64_t>();
+    if(interval>30000000 || (interval && (!burst||burst>1024)))
+        unsupported("SSH restart budget outside bounded supported profile (interval <=30s, burst 1..1024)");
+    while(true) {
+        const auto now=std::chrono::steady_clock::now();
+        const auto next=restartBudget.availableAt(now,std::chrono::microseconds(interval),burst);
+        if(next<=now) break;
+        const auto remaining=service.remaining();
+        std::this_thread::sleep_for(std::min({remaining,std::chrono::milliseconds(50),
+            std::chrono::duration_cast<std::chrono::milliseconds>(next-now)+std::chrono::milliseconds(1)}));
+    }
+    const auto current=admit(service);
+    if(current.properties!=expected.properties)
+        throw d::Failure(ActivationStatus::InterferenceDetected,"SSH service changed while awaiting restart budget");
+    if(reserve) restartBudget.record(std::chrono::steady_clock::now());
+}
 struct Capture : detail::PersistentMetadata {
     detail::InputBytes bytes;
 };
@@ -119,14 +165,47 @@ void validateCaptured(const SshVerifiedActivationRequest& request, const Capture
     if (env == observed.bytes.end()) unsupported("explicit EnvironmentFile reference required");
     detail::validateEmptyOptions(env->second);
 }
-SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
+// One bounded process-local receipt; it grants no persistent ownership and is
+// discarded on any detected interference/failure. No cache survives daemon restart.
+struct RuntimeReceipt {
+    std::string reference;
+    std::map<std::string,std::string> launch, policies;
+};
+RuntimeReceipt runtimeReceipt;
+std::mutex receiptMutex;
+std::string referenceIdentity(const SshVerifiedActivationRequest& request, const Capture& observed) {
+    Json paths=Json::array();
+    for(const auto& p:request.reference.paths) paths.push_back({p.path.string(),static_cast<int>(p.kind),p.sha256,p.manifest});
+    auto boot=d::openAbsolute("/proc/sys/kernel/random/boot_id",O_RDONLY);
+    // procfs virtual files have zero st_size; bounded descriptor read, no path fallback.
+    char bytes[80]; const auto count=::read(boot.get(),bytes,sizeof(bytes));
+    if(count<=0||count==static_cast<ssize_t>(sizeof(bytes))) unsupported("boot identity unavailable");
+    auto binary=d::openAbsolute("/usr/sbin/sshd",O_RDONLY);
+    const auto identity=d::identity(binary.get());std::uint64_t budget=16*1024*1024;
+    const auto binaryTree=d::readTree(binary.get(),ControlledPathKind::File,budget);
+    return fic::core::ContentDigest::sha256Hex(Json({paths,metadataIdentities(observed),std::string(bytes,count),
+        Json::array({identity.mount,identity.inode,identity.device,identity.mode,identity.uid,identity.gid}),
+        fic::core::ContentDigest::sha256Hex(binaryTree.files.at(""))}).dump());
+}
+SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
 #ifdef FIC_ACTIVATOR_TESTING
     , const detail::AdapterTestHooks* tests = nullptr
 #endif
 ) {
+    const std::lock_guard<std::mutex> receiptLock(receiptMutex);
+    SshVerifiedActivationRequest request=supplied;
     SshVerifiedActivationResult result;
+    std::string receiptKey;
+    bool receiptEligible=!request.expectedService.empty()&&!request.observedMetadata.empty();
+#ifdef FIC_ACTIVATOR_TESTING
+    if(tests) receiptEligible=false;
+#endif
     try {
         d::validateRequest(request.reference); detail::validatePolicies(request.policies);
+        for(auto it=request.additionalPolicies.begin();it!=request.additionalPolicies.end();) {
+            try { detail::validatePolicies({*it}); ++it; }
+            catch(const d::Failure&) { it=request.additionalPolicies.erase(it); }
+        }
         for (const auto& p : request.reference.paths)
             if (p.kind != ControlledPathKind::File && p.kind != ControlledPathKind::Directory) unsupported("unsupported SSH reference object kind");
         const auto deadline = std::chrono::steady_clock::now() + request.reference.timeout;
@@ -134,13 +213,50 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
         if ((profile.id != "debian-12" && profile.id != "debian-13") ||
             !fic::platform::validateHostCompatibility(profile, "/etc/os-release", error)) unsupported("SSH verified activation v1 supports Debian 12/13 only");
         d::SystemdActivation service(request.reference.unit, deadline, request.reference.paths);
-        while(true) {
-            const auto state=service.current();detail::validateLaunchProfile(state.properties);
-            if(detail::classifyServiceAdmission(state.at("ActiveState"),state.at("SubState"),state.at("Job"))==detail::ServiceAdmission::Ready)break;
-            std::this_thread::sleep_for(std::min(service.remaining(),std::chrono::milliseconds(50)));
-        }
-        auto launch = service.preflight(); detail::validateLaunchProfile(launch.properties);
+        auto launch=admit(service
+#ifdef FIC_ACTIVATOR_TESTING
+            , tests ? tests->admissionWait : std::function<void()>{}
+#endif
+        );
+        if(!request.expectedService.empty()&&request.expectedService!=launch.properties)
+            throw d::Failure(ActivationStatus::InterferenceDetected,"SSH service differs from caller admission proof");
         const auto observed = capture(request.reference); validateCaptured(request, observed);
+        if(!request.observedMetadata.empty()&&request.observedMetadata!=metadataIdentities(observed))
+            throw d::Failure(ActivationStatus::InterferenceDetected,"SSH input metadata differs from caller reference capture");
+        if(receiptEligible) {
+            receiptKey=referenceIdentity(request,observed);
+            if(runtimeReceipt.reference==receiptKey && runtimeReceipt.launch==launch.properties) {
+                // Accumulate only policy values already proved on this exact
+                // runtime/input identity. New selections still require activation.
+                const auto selected=request.policies;
+                for(const auto& [id,expected]:runtimeReceipt.policies)
+                    request.policies.emplace(id,expected);
+                bool covered=true;
+                for(const auto& [id,expected]:selected) {
+                    const auto found=runtimeReceipt.policies.find(id);
+                    if(found==runtimeReceipt.policies.end()||found->second!=expected) covered=false;
+                }
+                if(covered) {
+                    const auto again=admit(service);
+                    validateCaptured(request,capture(request.reference));
+                    if(again.properties!=launch.properties || referenceIdentity(request,capture(request.reference))!=receiptKey)
+                        throw d::Failure(ActivationStatus::InterferenceDetected,"SSH receipt changed during recheck");
+                    // Executable trust remains a live condition even for no-op.
+                    if(!CommandHashStore::verifyHash("/usr/sbin/sshd",error)) unsupported("SSH executable trust not proven");
+                    auto expectedBinary=d::openAbsolute("/usr/sbin/sshd",O_RDONLY);
+                    struct stat processBinary{},diskBinary{};
+                    if(::stat(("/proc/"+again.at("MainPID")+"/exe").c_str(),&processBinary)||
+                       ::fstat(expectedBinary.get(),&diskBinary)||processBinary.st_dev!=diskBinary.st_dev||processBinary.st_ino!=diskBinary.st_ino)
+                        throw d::Failure(ActivationStatus::InterferenceDetected,"SSH receipt process executable changed");
+                    result.status=SshActivationStatus::Success;
+                    result.inputs=result.semantics=result.persistent=ProofState::Proven;
+                    result.activation.status=result.activation.primaryStatus=ActivationStatus::Success;
+                    result.activation.readinessConfirmed=true;
+                    result.diagnostic="current verified runtime receipt; no restart";
+                    return result;
+                }
+            }
+        }
         fic::platform::PlatformExecutableResolver resolver(profile.executables);
         std::filesystem::path binary;
         if (!resolver.resolve(fic::platform::ExecutableId::Sshd, binary, error) || binary != "/usr/sbin/sshd" ||
@@ -176,9 +292,21 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
         for (const auto* key : {"ActiveState", "SubState", "MainPID", "InvocationID", "Job", "Result"}) proof.expectedConfiguration.erase(key);
         proof.sourceRoots = observed.roots; proof.sourceAttributes = observed.attributes;
         bool publishedProof = false, runtimeProof = false;
+        auto provenPolicies=request.policies;
         std::string promotedInvocation, promotedPid;
         proof.published = [&](auto) {
-            validateCaptured(request, capture(request.reference, true)); semantics(); publishedProof = true;
+            const auto protectedInputs=capture(request.reference,true);
+            validateCaptured(request, protectedInputs); semantics();
+            for(const auto& [id,expected]:request.additionalPolicies) {
+                if(request.policies.count(id)) continue;
+                try {
+                    auto candidate=request;candidate.policies={{id,expected}};
+                    validateCaptured(candidate,protectedInputs);
+                    if(runtime.policyValueCompliance(sshPolicyDirectiveKeyword(id),expected).compliance==SshCompliance::Compliant)
+                        provenPolicies[id]=expected;
+                } catch(const d::Failure&) { /* Optional selections cannot fail this policy. */ }
+            }
+            checkBinary(); publishedProof = true;
         };
         proof.ready = [&](const d::ServiceState& ready, auto) {
             if (std::chrono::steady_clock::now() >= deadline) throw d::Failure(ActivationStatus::TimedOut, "SSH proof deadline exceeded");
@@ -192,6 +320,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
 #ifdef FIC_ACTIVATOR_TESTING
         if (tests && tests->beforeActivation) tests->beforeActivation();
 #endif
+        if(receiptEligible) awaitRestartBudget(service,launch,true);
         auto activationRequest = request.reference;
         activationRequest.timeout = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
         if (activationRequest.timeout.count() <= 0) throw d::Failure(ActivationStatus::TimedOut, "SSH proof deadline exceeded");
@@ -217,18 +346,35 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
                 result.persistent == ProofState::NonCompliant ? SshActivationStatus::RuntimeActivatedButPersistentDrift : SshActivationStatus::ActivationFailed;
         }
         result.diagnostic = result.activation.diagnostic;
+        if(result.success()) {
+#ifdef FIC_ACTIVATOR_TESTING
+            if(tests&&tests->beforeFinalConfirmation) tests->beforeFinalConfirmation();
+#endif
+            const auto receiptState=service.current();
+            service.confirm(receiptState);
+            if(receiptState.at("InvocationID")!=promotedInvocation||receiptState.at("MainPID")!=promotedPid)
+                throw d::Failure(ActivationStatus::InterferenceDetected,"runtime changed before receipt publication");
+            if(receiptEligible) runtimeReceipt={receiptKey,receiptState.properties,provenPolicies};
+        }
         if (std::chrono::steady_clock::now() >= deadline) {
             result.status = SshActivationStatus::ActivationFailed;
             result.persistent = ProofState::NotProven;
             result.diagnostic = "runtime outcome preserved; persistent proof deadline exceeded";
         }
     } catch (const SemanticFailure& e) {
+        result.status=result.activationAttempted?SshActivationStatus::ActivationFailed:SshActivationStatus::Refused;
         result.semantics = e.mismatch ? ProofState::NonCompliant : ProofState::NotProven;
-        result.diagnostic = e.what();
+        result.diagnostic = e.mismatch ? "NonCompliant: selected SSH effective values differ" :
+            "Unknown: selected SSH syntax/semantics proof unavailable";
     } catch (const d::Failure& e) {
-        result.diagnostic = e.what();
+        result.status=result.activationAttempted?SshActivationStatus::ActivationFailed:SshActivationStatus::Refused;
+        result.diagnostic = std::string(activationStatusName(e.status))+": "+e.what();
         if (e.status == ActivationStatus::UnsupportedConfiguration) result.semantics = ProofState::Unsupported;
-    } catch (...) { result.diagnostic = "SSH proof unavailable"; }
+    } catch (...) {
+        result.status=result.activationAttempted?SshActivationStatus::ActivationFailed:SshActivationStatus::Refused;
+        result.diagnostic = "Unknown: SSH proof unavailable";
+    }
+    if(!result.success()) runtimeReceipt={};
     return result;
 }
 } // namespace
@@ -240,6 +386,67 @@ detail::ServiceAdmission detail::classifyServiceAdmission(const std::string& act
     throw d::Failure(ActivationStatus::ReadinessUnconfirmed,"SSH RuntimeNotReady: inactive/failed/unsupported runtime; no configuration mutation");
 }
 void detail::validateLaunchProfile(const std::map<std::string, std::string>& launch) { validateLaunch(launch); }
+std::map<std::string,std::string> SshVerifiedActivationAdapter::serviceAdmission() {
+    const std::lock_guard<std::mutex> receiptLock(receiptMutex);
+    const auto profile=fic::platform::makeBuildPlatformProfile();std::string error;
+    if(::geteuid()!=0||(profile.id!="debian-12"&&profile.id!="debian-13")||
+       !fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))unsupported("SSH admission supports root on Debian12/13 only");
+    // The generic environment contract requires a real reference, even for
+    // readonly admission. Do not satisfy it with a placeholder digest.
+    if(!fic::ssh::trustedSshInput("/etc/default/ssh",false,false,error))unsupported("untrusted SSH EnvironmentFile");
+    auto env=d::openAbsolute("/etc/default/ssh",O_RDONLY);std::uint64_t budget=65536;
+    const auto tree=d::readTree(env.get(),ControlledPathKind::File,budget);
+    const auto& content=tree.files.at("");detail::validateEmptyOptions(content);
+    std::vector<ControlledPath> targets{{"/etc/default/ssh",ControlledPathKind::File,fic::core::ContentDigest::sha256Hex(content),{}}};
+    d::SystemdActivation service("ssh.service",std::chrono::steady_clock::now()+std::chrono::seconds(60),targets);
+    const auto ready=admit(service);awaitRestartBudget(service,ready,false);
+    return ready.properties;
+}
+SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
+    const std::map<std::string,std::string>& policies,const std::string& expectedMainSha) {
+    if(::geteuid()!=0||!fic::core::ContentDigest::isCanonicalSha256Hex(expectedMainSha))
+        unsupported("trusted reference requires root and explicit expected main-file identity");
+    detail::validatePolicies(policies);
+    const auto profile=fic::platform::makeBuildPlatformProfile();std::string error;
+    if((profile.id!="debian-12"&&profile.id!="debian-13")||
+       !fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))
+        unsupported("trusted SSH reference supports Debian12/13 only");
+    SshVerifiedActivationRequest out;out.policies=policies;out.reference.unit="ssh.service";
+    out.reference.timeout=std::chrono::seconds(60);
+    detail::InputBytes bytes;detail::PersistentMetadata initial;
+    std::uint64_t budget=out.reference.maxSnapshotBytes;
+    const auto add=[&](const std::filesystem::path& path,ControlledPathKind kind) {
+        if(!fic::ssh::trustedSshInput(path,kind==ControlledPathKind::Directory,false,error))
+            unsupported("untrusted SSH reference source");
+        auto fd=d::openAbsolute(path,O_RDONLY);
+        const auto tree=d::readTree(fd.get(),kind,budget);
+        initial.roots.emplace(path.string(),d::identity(fd.get()));
+        initial.attributes.emplace(path.string(),tree.attributes);
+        ControlledPath input;input.path=path;input.kind=kind;
+        for(const auto& [relative,content]:tree.files) {
+            const auto name=kind==ControlledPathKind::File?path.string():(path/relative).string();
+            if(!bytes.emplace(name,content).second)unsupported("duplicate SSH reference input");
+            const auto digest=fic::core::ContentDigest::sha256Hex(content);
+            if(kind==ControlledPathKind::File)input.sha256=digest;
+            else input.manifest.emplace(relative,digest);
+        }
+        out.reference.paths.push_back(std::move(input));
+    };
+    add("/etc/ssh/sshd_config",ControlledPathKind::File);
+    if(fic::core::ContentDigest::sha256Hex(bytes.at("/etc/ssh/sshd_config"))!=expectedMainSha)
+        throw d::Failure(ActivationStatus::ChecksumMismatch,"main SSH source differs from caller-authorized state");
+    add("/etc/ssh/sshd_config.d",ControlledPathKind::Directory);
+    add("/etc/default/ssh",ControlledPathKind::File);
+    const auto keys=detail::discoverHostKeys(out.reference,bytes,policies);
+    for(const auto& key:keys) {add(key,ControlledPathKind::File);add(key+".pub",ControlledPathKind::File);}
+    // Re-read through the actual adapter's metadata/manifest checks. A changed
+    // source is refused; discovery is never authority to bless later bytes.
+    const auto observed=capture(out.reference);
+    detail::requireStableMetadata(initial,observed);validateCaptured(out,observed);
+    d::validatePublicationEnvironment(out.reference);
+    out.observedMetadata=metadataIdentities(observed);
+    return out;
+}
 SshVerifiedActivationResult SshVerifiedActivationAdapter::activate(const SshVerifiedActivationRequest& r) { return perform(r); }
 #ifdef FIC_ACTIVATOR_TESTING
 namespace detail {

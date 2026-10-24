@@ -79,6 +79,12 @@ SshConfigTransactionResult runSshConfigTransaction(
             return result;
         }
         if (hooks.beforeWrite) hooks.beforeWrite();
+        if(bool(hooks.verifiedAdmission)!=bool(hooks.verifiedActivation)) {
+            result.message="incomplete verified SSH transaction contract";return result;
+        }
+        if(hooks.verifiedAdmission&&!hooks.verifiedAdmission(error)) {
+            result.message="SSH admission refused before save: "+error;return result;
+        }
         // An exception/unknown result from the writer is never no-effect.
         result.persistentEffect = SshPersistentEffect::Unknown;
         auto saved = handler.saveFileIfUnchanged(error);
@@ -95,7 +101,7 @@ SshConfigTransactionResult runSshConfigTransaction(
             result.conflict = saved.preconditionFailed && !saved.installed;
             result.message = result.conflict ? "sshd_config изменился во время операции; конкурентная запись отклонена, файл не изменён: " + error
                                             : "Ошибка записи sshd_config: " + error;
-            if (saved.installed) compensate(handler, runtime, hooks, before, result);
+            if (saved.installed && !hooks.verifiedActivation) compensate(handler, runtime, hooks, before, result);
             return result;
         }
         if (!saved.installed || !saved.installedTargetState) {
@@ -105,26 +111,37 @@ SshConfigTransactionResult runSshConfigTransaction(
         if (!saved.durabilityConfirmed) {
             if (!ensureSshConfigDurableIfCurrentState(handler.filePath(), *saved.installedTargetState, error)) {
                 result.message = "Durability записи sshd_config не подтверждена: " + error;
-                compensate(handler, runtime, hooks, before, result);
+                if(!hooks.verifiedActivation) compensate(handler, runtime, hooks, before, result);
                 return result;
             }
             result.persistentEffect = SshPersistentEffect::DurableInstalled;
         }
         if (!runtime.validateConfiguration(error)) {
             result.message = "sshd не принимает новую конфигурацию: " + error;
-            compensate(handler, runtime, hooks, before, result);
+            if(!hooks.verifiedActivation) compensate(handler, runtime, hooks, before, result);
             return result;
         }
         if (!verifyPostcondition || !verifyPostcondition(error)) {
             result.message = "Проверка результата не пройдена: " + error;
-            compensate(handler, runtime, hooks, before, result);
+            if(!hooks.verifiedActivation) compensate(handler, runtime, hooks, before, result);
             return result;
         }
         result.activation = SshRuntimeReconciliation::FailedOrUnknown;
+        if(hooks.verifiedActivation) {
+            if(!hooks.verifiedActivation(*saved.installedTargetState,error)) {
+                result.message="persistent SSH configuration saved; verified activation unproven; provenance retained: "+error;
+                return result;
+            }
+            result.activation=SshRuntimeReconciliation::Verified;
+            if(!AtomicFileWriter::targetStateMatches(handler.filePath(),*saved.installedTargetState,&error)) {
+                result.message="verified SSH runtime observed; persistent main-file drift: "+error;return result;
+            }
+            result.message=successMessage+"; verified runtime and persistent state confirmed";result.ok=true;return result;
+        }
         const auto activation = runtime.activateIfRunning();
         if (!activation.ok) {
             result.message = "Перезагрузка SSH-сервиса не удалась: " + activation.message;
-            compensate(handler, runtime, hooks, before, result);
+            if(!hooks.verifiedActivation) compensate(handler, runtime, hooks, before, result);
             return result;
         }
         result.activation = SshRuntimeReconciliation::LegacyAccepted;

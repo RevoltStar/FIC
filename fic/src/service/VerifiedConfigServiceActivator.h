@@ -41,8 +41,8 @@ struct ActivationResult {
     bool success() const { return status == ActivationStatus::Success; }
 };
 
-// One controlled activation, NOT persistent protection. Not integrated into any
-// production policy. Supports already running notify/main services without a
+// One controlled activation, NOT persistent protection. The Debian SSH adapter
+// reuses this engine. Supports already running notify/main services without a
 // mount sandbox, in the same mount namespace as the system manager.
 class VerifiedConfigServiceActivator {
 public:

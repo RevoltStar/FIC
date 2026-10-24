@@ -2514,7 +2514,7 @@ void testSshNoRecordsNoMarkersIsNothingToDo() {
             "a foreign configuration must not be touched");
 }
 
-void testSshPreparedRecordResolvedByDisable() {
+void testSshPreparedRecordBlocksDisable() {
     SshTree tree;
     tree.writeConfig("Port 22\n");
     const UndoRemoveSshManagedPolicy undo =
@@ -2527,11 +2527,16 @@ void testSshPreparedRecordResolvedByDisable() {
     recordPrepared(kSshPortPolicy, tree.sshResource("Port"),
                    UndoAction{MutationBackend::Ssh, undo});
 
-    const RollbackReport report = rollbackPolicyBeforeDisable(
-        kSshPortPolicy, "Port", tree.deps());
-    require(report.status == RollbackStatus::Success, report.message);
-    require(readFile(tree.configPath()).find("#@FIC_") == std::string::npos,
-            "the prepared mutation must be rolled back");
+    const auto owned=readFile(tree.configPath());
+    const auto provenance=readFile(journal.tree.root / "journal.json");
+    int writes=0;tree.beforeWrite=[&] { ++writes; };
+    for(const auto& policy:{kSshPortPolicy,kSshRootLoginPolicy}) {
+        const auto report=rollbackPolicyBeforeDisable(policy,"Port",tree.deps());
+        require(report.status==RollbackStatus::Failed && report.message.find("Prepared")!=std::string::npos,report.message);
+        require(!report.rollbackCompleted(),"unresolved shared resource allowed disable");
+        require(readFile(tree.configPath())==owned && readFile(journal.tree.root / "journal.json")==provenance &&
+                writes==0 && tree.commands_->reloadCalls==0,"disable changed ambiguous SSH state/provenance/runtime");
+    }
 }
 
 void testSshRollbackCompensationRacePreservesExternalEdit() {
@@ -3094,7 +3099,7 @@ int main(int argc, char** argv) {
          testSshRollbackNothingToDoAfterCrash},
         {"ssh rollback nothing-to-do reload failure refuses disable",
          testSshRollbackNothingToDoReloadFailureRefusesDisable},
-        {"ssh prepared record resolved by disable", testSshPreparedRecordResolvedByDisable},
+        {"ssh prepared shared resource blocks disable", testSshPreparedRecordBlocksDisable},
         {"ssh repeated disable is idempotent", testSshRepeatedDisableIsIdempotent},
         {"ssh provenance refused when markers present without records",
          testSshProvenanceRefusedWhenMarkersPresentWithoutRecords},

@@ -3296,3 +3296,15 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(legacy_predepends_admission_reproduction legacy_rpm_admission_reproduction
         PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE LABELS "research;native;root")
 endif()
+
+# Ssh policy callers use the same verified engine as fic.
+get_property(FIC_LOCAL_TEST_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(ssh_caller IN LISTS FIC_LOCAL_TEST_TARGETS)
+    get_target_property(ssh_sources ${ssh_caller} SOURCES)
+    if("${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/Ssh.cpp" IN_LIST ssh_sources)
+        target_sources(${ssh_caller} PRIVATE ${FIC_VERIFIED_CONFIG_SOURCES}
+            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
+            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp)
+        target_link_libraries(${ssh_caller} PRIVATE PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+    endif()
+endforeach()

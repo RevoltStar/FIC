@@ -14,12 +14,17 @@ struct SshConfigTransactionHooks {
     // Deterministic test seam invoked right before the compensation restore
     // (simulates an external modification racing with the restore).
     std::function<void()> beforeRestore;
+    // Strict caller: readonly admission immediately before CAS, then verified
+    // activation pinned to this exact installed state. Any post-save failure
+    // retains bytes/provenance and NEVER invokes legacy compensation/reload.
+    std::function<bool(std::string&)> verifiedAdmission;
+    std::function<bool(const AtomicTargetState&,std::string&)> verifiedActivation;
 };
 
 enum class SshPersistentEffect { Unknown, NotInstalled, Installed, DurableInstalled };
 enum class SshCompensationEffect { NotAttempted, RestoredDurably, RefusedByCAS, FailedOrUnknown };
 // Legacy command acceptance is diagnostic evidence, NOT verified runtime resolution.
-enum class SshRuntimeReconciliation { NotAttempted, LegacyAccepted, FailedOrUnknown };
+enum class SshRuntimeReconciliation { NotAttempted, LegacyAccepted, Verified, FailedOrUnknown };
 
 #ifdef FIC_SSH_TRANSACTION_TESTING
 // Test-only observation fault: never compiled into production fic.

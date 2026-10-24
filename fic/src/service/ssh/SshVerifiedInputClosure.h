@@ -14,5 +14,7 @@ Closure validateClosure(const ActivationRequest&, const InputBytes&, const std::
 void validateCompatibleDropIn(const std::string& bytes);
 void validateEmptyOptions(const std::string& bytes);
 void validateLaunchProfile(const std::map<std::string, std::string>& launch);
+std::set<std::string> discoverHostKeys(const ActivationRequest&, const InputBytes&,
+    const std::map<std::string,std::string>& policies);
 void validatePolicies(const std::map<std::string, std::string>& policies);
 } // namespace fic::service::ssh::detail

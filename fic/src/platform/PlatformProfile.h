@@ -78,7 +78,10 @@ enum class SshPamServiceRouting {
     ConfigurablePamServiceName
 };
 
+enum class SshApplyContract { Legacy, DebianVerified, UnsupportedSocketActivation };
+
 struct SshPlatformConfig {
+    SshApplyContract applyContract = SshApplyContract::Legacy;
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
     std::vector<std::string> serviceUnits;
