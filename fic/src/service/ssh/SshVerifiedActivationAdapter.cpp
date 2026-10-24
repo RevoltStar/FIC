@@ -82,7 +82,7 @@ Capture capture(const ActivationRequest& request, bool published = false, bool p
     return out;
 }
 void validateCaptured(const SshVerifiedActivationRequest& request, const Capture& observed) {
-    const auto closure = detail::validateClosure(request.reference, observed.bytes);
+    const auto closure = detail::validateClosure(request.reference, observed.bytes, request.policies);
     for (const auto& [root, entries] : observed.attributes) {
         for (const auto& [name, st] : entries) {
             if (st.st_uid != 0 || (st.st_mode & 0022)) unsupported("SSH tree requires root-controlled metadata");

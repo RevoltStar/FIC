@@ -29,7 +29,7 @@ struct Fixture {
         }
         reference.paths.push_back({dir, ControlledPathKind::Directory, "", manifest});
     }
-    auto closure() { return d::validateClosure(reference, bytes); }
+    auto closure(const std::map<std::string,std::string>& policies = {{"ssh_root_login","no"}}) { return d::validateClosure(reference, bytes, policies); }
 };
 int main() {
     unsigned checks = 0;
@@ -70,9 +70,25 @@ int main() {
     f.bytes[mainFile] += "Include " + dir + "/nested.inc " + dir + "/absent.conf\n"; f.sync();
     require(f.closure().order.size() == 4, "multiple/repeated literal Include rejected"); ++checks;
     require(f.closure().order == f.closure().order, "stable repeated reference diverged"); ++checks;
-    for (const auto& text : {"Match all\nUsePAM no\n", "Match exec /bad\n", "UnknownFicDirective yes\n", "Include relative.conf\n", "Include /uncovered/*.conf\n", "Include /outside/missing.conf\n", "Include /etc/ssh/../escape\n", "Include /etc/ssh/?/*.conf\n", "Include \"/etc/a\"\n", "Port=22\n", "Include /etc/a\\\n"}) {
+    for (const auto& text : {"Match all\nPermitRootLogin yes\n", "Match exec /bad\n", "UnknownFicDirective yes\n", "Include relative.conf\n", "Include /uncovered/*.conf\n", "Include /outside/missing.conf\n", "Include /etc/ssh/../escape\n", "Include /etc/ssh/?/*.conf\n", "Include \"/etc/a\"\n", "Port=22\n", "Include /etc/a\\\n"}) {
         Fixture bad; bad.bytes[mainFile] += text; bad.sync(); deny([&] { bad.closure(); });
     }
+    Fixture relative; relative.bytes[mainFile] += "Include sshd_config.d/inside.inc\n";
+    relative.bytes[dir+"/inside.inc"]="X11Forwarding no\n";relative.sync();
+    require(relative.closure().order.size()==2,"in-bound relative Include rejected"); ++checks;
+    Fixture match;match.bytes[mainFile]+="Match User backup\nX11Forwarding no\n";match.sync();
+    match.closure(); ++checks;
+    Fixture conditional;conditional.bytes[mainFile]+="Match User root\nInclude sshd_config.d/conditional.inc\n";
+    conditional.bytes[dir+"/conditional.inc"]="PermitRootLogin yes\n";conditional.sync();
+    deny([&]{conditional.closure();});
+    conditional.closure({{"ssh_pubkey_auth","yes"}}); ++checks;
+    for(const auto& text:{"Include /opt/evil/*.conf\n","Match User backup\nInclude /opt/evil/*.conf\n"}) {
+        Fixture outside;outside.bytes[dir+"/outside.conf"]=text;outside.sync();deny([&]{outside.closure();});
+    }
+    // Even a caller-protected outside directory cannot expand Debian authority.
+    Fixture external;external.bytes[mainFile]+="Include /opt/evil/*.conf\n";external.sync();
+    external.reference.paths.push_back({"/opt/evil",ControlledPathKind::Directory,"",{}});
+    deny([&]{external.closure();});
     Fixture cycle; cycle.bytes[dir+"/cycle.conf"] = "Include " + mainFile + "\n"; cycle.sync(); deny([&] { cycle.closure(); });
     Fixture deep;
     deep.bytes[mainFile] += "Include " + dir + "/1.inc\n";

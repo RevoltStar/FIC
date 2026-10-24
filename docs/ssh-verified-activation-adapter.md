@@ -94,8 +94,9 @@ NUL или дополнительных аргументов. Даже `SSHD_OPT
 `SshVerifiedInputClosure` использует `parseSshConfigLine` только внутри строгого
 ASCII subset. Корень — `/etc/ssh/sshd_config`. Разрешены:
 
-* literal absolute normalized Include без symlink, traversal, quoting/escapes;
-* только glob `/absolute/reference-directory/*.conf`, с wildcard лишь в basename;
+* literal normalized Include внутри `/etc/ssh/sshd_config.d/`, без symlink, traversal, quoting/escapes;
+* relative Include разрешается относительно `/etc/ssh` и обязан остаться внутри `.d`;
+* только glob `*.conf` внутри поддерживаемой `.d` области, с wildcard лишь в basename;
 * вложенные/несколько/повторные Include в исходном порядке, до глубины 16,
   256 file visits, 65536 lines и 8192 bytes/line;
 * пустой glob, если его **корень каталога** является явным Directory target с
@@ -109,7 +110,8 @@ negative set, а не только текущие matches. При original-FD д
 P выявляет появившийся файл. Защита отдельными File targets вместо Directory
 не допускается для glob даже при пустом результате.
 
-Дополнительные trusted directories явно задаются caller. Missing Include без
+Caller не может расширить Include boundary дополнительными trusted directories.
+Путь проверяется до expansion, даже при пустом glob или Include внутри Match. Missing Include без
 выразимой защиты namespace, directory-glob, `?`, произвольные wildcard patterns,
 `~`, `%`, не-ASCII paths, неоднозначный syntax и рекурсия отклоняются.
 Placeholder-файлы и автоматические исправления отсутствуют.
@@ -119,8 +121,11 @@ MaxAuthTries, Port, ListenAddress, AddressFamily, HostKey, PidFile, LogLevel,
 VersionAddendum, PermitTTY, PasswordAuthentication, KbdInteractiveAuthentication,
 PrintMotd, X11Forwarding, AcceptEnv, Subsystem, AuthorizedKeysFile, UseDNS,
 PermitEmptyPasswords, StrictModes, LoginGraceTime. Native sshd дополнительно
-проверяет их значения/арность. Все неизвестные directives и **весь Match**
-отклоняются, включая Match all/exec и Include внутри условной конфигурации.
+проверяет их значения/арность. Неизвестные directives отклоняются. Match с первым
+критерием all/User/Group/Address/LocalAddress/LocalPort/Host классифицируется
+консервативно: любой subsequent conditional assignment выбранной директивы
+отклоняется; контекст разделяется с Include. Посторонние директивы внутри Match
+не запрещают другую выбранную политику. Match exec/unknown criteria отклоняются.
 Это не доказательство всех Match contexts через несколько `-T -C` probes.
 
 Нужен explicit HostKey; каждый такой private key и companion `.pub` должен
@@ -262,7 +267,7 @@ OpenSSH может перечитывать persistent inputs после сня�
   изменённый loaded launch contract не дают verified-policy Success.
 * Include graph и negative namespaces защищены exact directory snapshot; symlinks,
   неподдерживаемые пути и mount changes дают отказ, а не обход closure.
-* Весь Match исключён. Unknown/NonCompliant не повышаются до Proven.
+* Conditional assignments выбранных директив исключены; Include проверяется независимо от Match. Unknown/NonCompliant не повышаются до Proven.
 * `-T` повторяется на RO inputs до restart; runtime proof дополнен новым READY
   процессом с ожидаемым executable. Ошибки не скрывают B или cleanup failure.
 * После READY оригинал может измениться через старый FD. Runtime факт сохраняется,
@@ -285,3 +290,14 @@ OpenSSH может перечитывать persistent inputs после сня�
 [SSH native follow-up](verified-config-openssh-native-validation.md#ssh-adapter-v1-follow-up).
 Набор unit проверяет reference, closure/limits, env/profile и malformed requests;
 real Debian gate проверяет фактический adapter/sshd, а не mock restart.
+
+## Debian boundary follow-up — незавершённая интеграция
+
+Первый classifier подэтап нового Debian SSH ТЗ: bounded Include topology и
+policy-specific conditional refusal. Production caller передаёт selected policies
+в closure validation. Это не завершённый Debian end-to-end: service admission,
+launch-profile adjustments, implicit HostKey coverage, reference builder, verified
+policy apply и no-op receipt ещё требуют реализации/проверки. M1 не изменяется.
+Native `boundary_syntax.py` в disposable Debian12/13 проверяет только настоящий
+OpenSSH syntax/context для Match, не restart/RO snapshot/apply. Источники и
+ownership из успешного classifier самостоятельно не выводятся.

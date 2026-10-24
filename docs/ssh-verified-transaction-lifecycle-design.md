@@ -1320,3 +1320,13 @@ SSH runtime/apply-rollback, MutationJournal, RollbackExecutor. Лог
 `/tmp/fic-ssh-stage2-full-debian12.log`, native — `build-ssh-provenance/<row>/native.log`.
 Shell syntax checks и `git diff --check` PASS; production fic не содержит test-only
 save-outcome setter по symbol scan. Ни host SSH, ни systemd service не изменялись.
+
+## Debian supported-boundary follow-up (in progress)
+
+Новое ТЗ `da117094-3d53-47b9-ae43-ed5a943d3347` ограничивает supported launch и
+Include/config authority штатным Debian12/13; M1 заморожен, Ubuntu socket activation
+остаётся отдельной будущей задачей. Первый implemented classifier substage описан
+в `ssh-verified-activation-adapter.md`: Includes только `.d`, selected-policy Match
+refusal. Старые выводы о blanket Match refusal относятся к аудированной v1 базе.
+Service admission, production verified integration и полная native matrix пока
+не подтверждены; прежние проектные разделы не являются completion claim.

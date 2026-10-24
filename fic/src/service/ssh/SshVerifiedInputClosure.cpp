@@ -48,7 +48,8 @@ void validateEmptyOptions(const std::string& bytes) {
     }
     if (assignments != 1) unsupported("explicit empty SSHD_OPTS required");
 }
-Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes) {
+Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies) {
+    validatePolicies(policies);
     fic::service::detail::validateRequest(r);
     if (r.unit != "ssh.service") unsupported("only ssh.service is supported");
     std::set<std::string> directories;
@@ -71,9 +72,12 @@ Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes) {
     }
     Closure result; std::set<std::string> active;
     std::size_t visits = 0, lines = 0;
+    bool conditional = false; // Include parsing shares OpenSSH textual Match context.
+    std::set<std::string> selected;
+    for (const auto& [id, value] : policies) selected.insert(normalizeSshKeyword(sshPolicyDirectiveKeyword(id)));
     const std::set<std::string> supported{
         "permitrootlogin", "pubkeyauthentication", "usepam", "maxauthtries", "port",
-        "include", "listenaddress", "addressfamily", "hostkey", "pidfile", "loglevel",
+        "match", "include", "listenaddress", "addressfamily", "hostkey", "pidfile", "loglevel",
         "versionaddendum", "permittty", "passwordauthentication", "kbdinteractiveauthentication",
         "printmotd", "x11forwarding", "acceptenv", "subsystem", "authorizedkeysfile",
         "usedns", "permitemptypasswords", "strictmodes", "logingracetime"};
@@ -97,16 +101,33 @@ Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes) {
             const auto key = normalizeSshKeyword(parsed.directive.keyword);
             if (!supported.count(key)) unsupported("unsupported SSH directive or Match context");
             const auto& args = parsed.directive.arguments;
+            if (key == "match") {
+                const std::set<std::string> criteria{"all","user","group","address","localaddress","localport","host"};
+                if (!criteria.count(normalizeSshKeyword(args.front()))) unsupported("unsupported SSH Match criterion");
+                conditional = true; continue;
+            }
+            if (conditional && selected.count(key))
+                unsupported("conditional assignment of selected SSH policy unsupported");
             if (key == "hostkey") {
                 if (args.size() != 1 || !path(args[0]) || !bytes.count(args[0]) || !bytes.count(args[0] + ".pub")) unsupported("HostKey and public companion require explicit reference coverage");
                 result.hostKeys.insert(args[0]);
             }
             if (key != "include") continue;
             for (const auto& arg : args) {
-                const bool glob = arg.size() > 6 && arg.compare(arg.size()-6, 6, "*.conf") == 0;
-                const auto parent = std::filesystem::path(arg).parent_path().string();
+                std::filesystem::path resolved(arg);
+                if (resolved.is_relative()) resolved = std::filesystem::path("/etc/ssh") / resolved;
+                const auto include = resolved.string();
+                // Check the pattern itself BEFORE expansion, including empty
+                // glob sets and Includes textually inside any Match context.
+                const auto relative = resolved.lexically_relative("/etc/ssh/sshd_config.d");
+                if (include != resolved.lexically_normal().string() || relative.empty() ||
+                    relative.is_absolute() || relative.begin()->string() == ".." ||
+                    include.rfind("/etc/ssh/sshd_config.d/", 0) != 0)
+                    unsupported("Include outside supported Debian SSH configuration boundary");
+                const bool glob = include.size() > 6 && include.compare(include.size()-6, 6, "*.conf") == 0;
+                const auto parent = std::filesystem::path(include).parent_path().string();
                 if (glob) {
-                    if (std::filesystem::path(arg).filename() != "*.conf" || !path(parent) || !directories.count(parent))
+                    if (std::filesystem::path(include).filename() != "*.conf" || !path(parent) || !directories.count(parent))
                         unsupported("Include glob requires exact protected directory root");
                     result.negativeSetDirectories.insert(parent);
                     // Enumerate the verified manifest bytes, never glob a mutable tree.
@@ -117,8 +138,8 @@ Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes) {
                             base.size() >= 5 && base.compare(base.size()-5, 5, ".conf") == 0) visit(candidate, depth+1);
                     }
                 } else {
-                    if (!path(arg)) unsupported("Include path outside literal absolute grammar");
-                    if (bytes.count(arg)) visit(arg, depth+1);
+                    if (!path(include)) unsupported("Include path outside literal absolute grammar");
+                    if (bytes.count(include)) visit(include, depth+1);
                     else {
                         if (!directories.count(parent)) unsupported("absent literal Include requires protected exact parent");
                         result.negativeSetDirectories.insert(parent);
