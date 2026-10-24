@@ -124,3 +124,23 @@ the production bounded restart budget avoids consuming the stock burst.
 This is module end-to-end evidence, not complete daemon/package/M1 admission,
 PAM login or a cross-kernel/VM proof. Generic/adapter experiments retain their
 own independent results. Only sanitized diagnostics/results are exported.
+
+## Ubuntu socket activation
+
+The same driver links the real five policy classes and MutationJournal. The runner
+selects `ubuntu_socket.py` for `ubuntu-24.04` / `ubuntu-26.04`; fixture administrative
+enablement is separate from production actions. It starts with socket enabled/active,
+service disabled/inactive and explicitly probes absent `/run/sshd`. No host SSH.
+
+```sh
+bash tests/integration/verified_config_service/openssh_native/run-native.sh fic-ssh-audit:ubuntu2404 ubuntu-24.04
+bash tests/integration/verified_config_service/openssh_native/run-native.sh fic-ssh-audit:ubuntu2604 ubuntu-26.04
+```
+
+Fixture keys/trust stay inside the container. Exported results contain policy outcomes,
+provenance facts, invocation/source fingerprints and bounded diagnostics. Tests check
+native effective values, kernel listeners/old inode disappearance, PID1→sshd inherited
+FDs, no-op, safe foreign inputs, fail-closed runtime/launch/config states, CAS/durability/
+unknown writer/journal failure/Prepared and active-refusal/offline ownership release.
+Adapter fault cases use existing deterministic engine checkpoints rather than timing races.
+The audit under `ssh-ubuntu-socket-research` remains separate evidence, not policy PASS.

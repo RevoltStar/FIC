@@ -25,7 +25,7 @@ const std::vector<std::string> serviceProperties{
     "RootDirectory", "RootImage", "RootHash", "RootHashPath", "RootHashSignature", "RootImageOptions",
     "PrivateUsers", "PrivateNetwork", "PrivateIPC", "NetworkNamespacePath", "IPCNamespacePath",
     "MountAPIVFS", "ProtectProc", "ProcSubset", "RuntimeDirectory", "StateDirectory", "CacheDirectory",
-    "LogsDirectory", "ConfigurationDirectory", "StandardInput", "StandardOutput", "StandardError", "LogNamespace",
+    "LogsDirectory", "ConfigurationDirectory", "RuntimeDirectoryMode", "StandardInput", "StandardOutput", "StandardError", "LogNamespace",
     "ExtensionDirectories", "ExtensionImages",
     "LoadCredential", "LoadCredentialEncrypted", "SetCredential", "SetCredentialEncrypted"};
 void requireBus(int result, const std::string& operation) {
@@ -215,7 +215,7 @@ std::string fingerprintUnitSource(int root, const std::string& name, std::uint64
         before.st_size, before.st_mtim.tv_sec, before.st_mtim.tv_nsec, before.st_ctim.tv_sec, before.st_ctim.tv_nsec,
         fic::core::ContentDigest::sha256Hex(bytes)})}}.dump();
 }
-LaunchContract readLaunchContract(const std::string& unit, std::chrono::steady_clock::time_point deadline) {
+static LaunchContract readContract(const std::string& unit, std::chrono::steady_clock::time_point deadline, bool socket) {
     sd_bus* rawBus = nullptr;
     if (sd_bus_new(&rawBus) < 0) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot allocate systemd connection");
     std::unique_ptr<sd_bus, decltype(&sd_bus_unref)> bus(rawBus, sd_bus_unref);
@@ -233,8 +233,16 @@ LaunchContract readLaunchContract(const std::string& unit, std::chrono::steady_c
     const char* object = nullptr; requireBus(sd_bus_message_read(reply.get(), "o", &object), "unit object");
     LaunchContract contract;
     readProperties(bus.get(), object, "org.freedesktop.systemd1.Unit", unitProperties, contract, deadline);
-    auto service = serviceProperties; service.insert(service.end(), commands.begin(), commands.end());
-    readProperties(bus.get(), object, "org.freedesktop.systemd1.Service", service, contract, deadline);
+    if(socket) {
+        const std::vector<std::string> socketUnit{"Id","Names","LoadState","ActiveState","SubState","Job","InvocationID","Triggers"};
+        readProperties(bus.get(),object,"org.freedesktop.systemd1.Unit",socketUnit,contract,deadline);
+        const std::vector<std::string> properties{"Listen","Accept","FreeBind","BindIPv6Only","ReusePort","SocketProtocol",
+            "BindToDevice","Symlinks","FileDescriptorName","ExecStartPre","ExecStartPost","ExecStopPre","ExecStopPost"};
+        readProperties(bus.get(),object,"org.freedesktop.systemd1.Socket",properties,contract,deadline);
+    } else {
+        auto service = serviceProperties; service.insert(service.end(), commands.begin(), commands.end());
+        readProperties(bus.get(), object, "org.freedesktop.systemd1.Service", service, contract, deadline);
+    }
     timeout(bus.get(), deadline);
     sd_bus_message* envRaw = nullptr;
     const int envResult = sd_bus_get_property(bus.get(), "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
@@ -252,6 +260,12 @@ LaunchContract readLaunchContract(const std::string& unit, std::chrono::steady_c
     contract["launch.file:" + fragment] = fingerprintUnitSource(root.get(), fragment, budget);
     for (const auto& path : dropins) contract["launch.file:" + path.get<std::string>()] = fingerprintUnitSource(root.get(), path.get<std::string>(), budget);
     return contract;
+}
+LaunchContract readLaunchContract(const std::string& unit,std::chrono::steady_clock::time_point deadline) {
+    return readContract(unit,deadline,false);
+}
+LaunchContract readSshSocketContract(std::chrono::steady_clock::time_point deadline) {
+    return readContract("ssh.socket",deadline,true);
 }
 std::set<std::string> validateEnvironmentFiles(const LaunchContract& contract,
                                                 const std::vector<ControlledPath>* targets) {
@@ -286,7 +300,7 @@ std::set<std::string> validateEnvironmentFiles(const LaunchContract& contract,
     }
     return covered;
 }
-void validateLaunchContract(const LaunchContract& contract, const std::vector<ControlledPath>* targets) {
+void validateLaunchContract(const LaunchContract& contract, const std::vector<ControlledPath>* targets, ActivationProfile profile) {
     // First require ALL core properties even when the provided map is malformed.
     for (const auto& key : unitProperties) value(contract, key);
     for (const auto& key : serviceProperties) value(contract, key);
@@ -295,7 +309,9 @@ void validateLaunchContract(const LaunchContract& contract, const std::vector<Co
         throw Failure(ActivationStatus::UnsupportedConfiguration, "required manager environment missing");
     if (value(contract, "NeedDaemonReload") != false || value(contract, "Transient") != false || value(contract, "SourcePath") != "")
         throw Failure(ActivationStatus::UnsupportedConfiguration, "unit needs reload, is transient, or has external generated source");
-    if (!value(contract, "TriggeredBy").empty() || value(contract, "FileDescriptorStoreMax") != 0 ||
+    const auto triggers=value(contract,"TriggeredBy");
+    const bool validTriggers=profile==ActivationProfile::UbuntuSshSocket ? triggers==Json::array({"ssh.socket"}) : triggers.empty();
+    if (!validTriggers || value(contract, "FileDescriptorStoreMax") != 0 ||
         value(contract, "NFileDescriptorStore") != 0 || value(contract, "PIDFile") != "" ||
         value(contract, "ExitType") != "main" || value(contract, "RemainAfterExit") != false)
         throw Failure(ActivationStatus::UnsupportedConfiguration, "activation triggers, retained FDs or alternate main identity unsupported");

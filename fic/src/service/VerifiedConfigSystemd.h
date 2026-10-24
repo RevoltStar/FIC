@@ -1,5 +1,5 @@
 #pragma once
-#include "service/VerifiedConfigMountSupport.h"
+#include "service/VerifiedConfigLaunchContract.h"
 #include <chrono>
 
 namespace fic::service::detail {
@@ -8,6 +8,7 @@ struct ServiceState {
     std::string at(const std::string& key) const;
 };
 class SystemdActivation {
+    ActivationProfile profile_;
     std::string executable_, unit_, namespace_, originalInvocation_, job_;
     std::map<std::string, std::string> configuration_;
     std::vector<ControlledPath> targets_;
@@ -16,7 +17,8 @@ class SystemdActivation {
     void verifyConfiguration(const ServiceState&) const;
 public:
     SystemdActivation(const std::string& unit, std::chrono::steady_clock::time_point deadline,
-                      const std::vector<ControlledPath>& targets = {});
+                      const std::vector<ControlledPath>& targets = {},
+                      ActivationProfile profile = ActivationProfile::ActiveNotifyService);
     std::chrono::milliseconds remaining() const;
     ServiceState preflight();
     void restart();

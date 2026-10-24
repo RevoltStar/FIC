@@ -2,11 +2,11 @@
 
 ## Статус
 
-Коммит A задачи `0632096f-d7d8-4bd3-a9bf-c6408faf409b`: native audit и контракт
-для production integration B. **Исследование не является готовым policy end-to-end**.
-На этой точке production Ubuntu по-прежнему Unsupported. После A реализация B
-продолжается в рамках того же задания; дополнительное согласование не требуется,
-пока соблюдены его архитектурные ограничения.
+Коммит A `49ac50a` фиксирует native audit. Production integration B использует
+общий verified engine и закрытый Ubuntu socket profile; аудит и production gates
+разделяются. Окончательные результаты B: **51 native group PASS на каждой Ubuntu**.
+Sanitized [evidence](ubuntu-ssh-socket-policy-validation.json) содержит image IDs,
+версии, реальные listener/FD facts и исходы каждого сценария; secret bytes исключены.
 
 ## Измеренная база
 
@@ -60,12 +60,12 @@ Fixtures: `tests/integration/ssh-ubuntu-socket-research/`; сокращённы�
 * Без `/run/sshd` оба native `sshd -T/-t` дают255 на **обеих** версиях. Отсутствие
   runtime directory при inactive service нормально, это нельзя спрятать fixture mkdir.
 
-## Supported profile для B
+## Supported profile
 
 | Socket | Service | Допуск |
 |---|---|---|
-| persistently enabled, active/listening, no Job | inactive/dead, no Job | поддержать; normal connection trigger под RO inputs |
-| persistently enabled, active/listening, no Job | active/running, no Job | поддержать; verified service refresh при изменении semantics |
+| persistently enabled, active/listening, no Job | inactive/dead, no Job | поддерживается; normal connection trigger под RO inputs |
+| persistently enabled, active/running либо listening, no Job | active/running, no Job | поддерживается; verified service refresh при изменении semantics |
 | enabled, уже pending lifecycle | transitional/pending/auto-restart | bounded wait, затем повторный полный admission |
 | disabled/masked/unknown | любое, в том числе manually active | отказ до persistent mutation; без enable/unmask/start/reset-failed |
 | enabled, inactive/failed без ожидаемого Job | любое | отказ, не ремонтировать |
@@ -110,7 +110,7 @@ credentials. Existing directory с неверными ownership/mode либо sy
 3. Ubuntu-specific hook не копирует и не монтирует данные: эти гарантии, watcher,
    write-denial, namespace checks и cleanup остаются в существующем engine.
 4. Под RO вычислить native selected semantics и endpoint expectation. Если listener
-   должен измениться: stop старого service, native daemon-reload, проверить exact
+   должен измениться: stop старого service, native daemon-reload, проверить ограниченную grammar и точный набор endpoints
    generator output **и** typed loaded Listen, restart уже active socket.
    При неизменном listener не делать лишний reload/restart socket.
 5. Получить новый штатный sshd: restart уже active service либо normal loopback
@@ -120,13 +120,34 @@ credentials. Existing directory с неверными ownership/mode либо sy
    sshd, отсутствие прежних controlled listeners. Один ss/Listen/TCP probe не proof.
 7. После cleanup повторить P, source/loaded/socket/runtime proofs; journal commit.
    Ошибки после effect/unknown сохраняют provenance, без blind restore.
-8. Расширить existing receipt socket/generator/inode identities; no-op не пишет,
-   не reload/restart socket/service. Start limits учитывать без их изменения/reset.
+8. Receipt включает socket/generator/inode identities; no-op не пишет,
+   не reload/restart socket/service. Start limits учитываются без изменения/reset:
+   максимум service/socket interval и минимум burst в одном консервативном ledger.
+   Исходное неизвестное окно выжидается до save; interval0 либо <=30s/burst1..1024.
 
-Изменения B: platform mode + generator executable trust catalog; существующие
+Production integration: platform mode + generator executable trust catalog; существующие
 Ssh adapter/reference/receipt; narrow socket typed reader/profile/hook в generic
 internal APIs; отдельная bounded Ubuntu socket lifecycle/proof реализация без
 второго snapshot engine. Journal schema, M1, package scripts и public IPC не менять.
+
+### Реализация и proof
+
+`UbuntuSshSocketFlow` содержит только фиксированный lifecycle и наблюдение;
+снимки, RO mounts, observers и cleanup остаются в `VerifiedConfigServiceActivator`.
+Typed D-Bus reader закрепляет все Listen entries, UnitFileState/Job/InvocationID,
+источники unit/drop-ins и generator executable identity/hash. При изменении Port
+проверяются generated grammar/reset/полный набор endpoints, загруженный Listen,
+уникальный kernel endpoint→inode и FD PID1. Затем каждый inode должен находиться
+в FD нового MainPID; лишний TCP LISTEN в sshd отвергается. Старые controlled inode
+не должны оставаться LISTEN. Перед READY и после cleanup повторно закрепляются
+socket source, invocation, endpoints/inodes и executable нового sshd.
+
+Порядок ListenStream строк не является семантикой набора: допускается native
+порядок IPv4/IPv6, но не дубликаты, лишние директивы/entries либо другой header.
+Foreign root-controlled input не получает ownership. Receipt привязан к boot,
+конфигурации/metadata, generator identity, socket contract/kernel inode и service
+identity; при сбое сбрасывается. Изменение foreign source или runtime требует
+нового proof, прежний SUCCESS не используется автоматически.
 
 ### Rollback граница
 
@@ -135,9 +156,42 @@ Prepared gate/ownership-safe CAS сохраняются. Активный Ubuntu
 activation разрешён явный safe refusal с сохранённым ownership. Для доказанно
 offline socket **и** service допускается release только FIC artifacts без runtime
 claim; повторные offline checks до/после write и отсутствие blind compensation
-обязательны. Тестировать оба состояния и точно сообщать release/runtime отдельно.
+обязательны. Оба состояния проверяются native; release/runtime сообщаются отдельно.
+Если typed manager state недоступен (включая выгруженный socket unit), offline
+proof не считается полученным: release также отказывает без adoption/запуска unit.
 
-## Проверки B и ограничения
+## Итоговая validation B
+
+| Gate | Результат |
+|---|---|
+| Ubuntu24.04 /26.04 real policy+socket native | 51 groups PASS каждое |
+| Debian12 /13 OpenSSH native | 30 generic +59 adapter +24 module groups PASS каждое |
+| Generic native Debian12/13 | 201 PASS каждое |
+| Generic native Ubuntu24/26 | 202 PASS каждое |
+| Generic native ALT p11 | 201 PASS /1 SKIP |
+| SSH provenance Debian12/13, Ubuntu24/26, ALT p11 | 55 groups PASS каждое; новая offline fault matrix включена |
+| Full Debian12 configure/build/CTest | 207 PASS /4 SKIP, 211 total |
+| Shell/Python syntax, git diff --check | PASS |
+
+Native команды: `tests/integration/verified_config_service/openssh_native/run-native.sh`
+с image/profile из evidence; generic `tests/integration/verified_config_service/run-native.sh`;
+provenance `tests/integration/ssh-provenance/run-native.sh` (все пять rows).
+Все проверки реально выполнены в Docker. Root CTest намеренно пропускает privileged
+native и package research gates без соответствующего окружения. Generic native
+проверен отдельно. Один ранний generic Ubuntu26 запуск отказал на namespace event;
+повторный полный202 PASS, production checks не ослаблялись.
+
+51 Ubuntu group включает пять real policies/receipt, native effective values,
+IPv4/IPv6/wildcard/default22, actual kernel/PID1→sshd inheritance и исчезновение старых
+inode; foreign compliant/no enrollment; recursive literal Include/unrelated Match;
+ослабляющие selected conditional inputs, внешние Include, symlink, foreign Port;
+CAS/admission races, saved/unknown/durability/journal faults/Prepared; unsupported
+units/generator mask; active/offline rollback; actual cleanup EBUSY/persistent drift,
+foreign restart/generated mutation, ptrace pending-ready/timeout/failed, foreign
+listener bind failure/stale listener reconciliation; known failed socket до save,
+disabled socket/manual active service и допустимые administrative drop-ins.
+
+## Ограничения
 
 Настоящие пять policy classes + journal + systemd/sshd на обеих Ubuntu; fresh apply,
 foreign compliant, no-op, Port/IPv4/IPv6/FD inheritance, stale generator/loaded/kernel

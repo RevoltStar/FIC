@@ -204,7 +204,10 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         detail::validatePublicationEnvironment(request, &result.residualPaths);
         const auto deadline = std::chrono::steady_clock::now() + request.timeout;
         const auto workspace = fic::core::FicRuntimePaths::get().runtimeDir / "verified-config-activator";
-        service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths);
+        const auto profile=proof?proof->profile:ActivationProfile::ActiveNotifyService;
+        if(proof && ((profile==ActivationProfile::UbuntuSshSocket)!=bool(proof->sshSocketActivation)))
+            throw Failure(ActivationStatus::UnsupportedConfiguration,"incomplete closed SSH socket proof");
+        service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths, profile);
         const auto launch = service->preflight();
         if (proof) {
             if (proof->expectedConfiguration.empty() || !proof->published || !proof->ready ||
@@ -304,7 +307,8 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
 #endif
         if (proof) { proof->published(deadline); verifyPublished(); }
         if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace changed after publication");
-        service->restart();
+        if(proof && proof->profile==ActivationProfile::UbuntuSshSocket) proof->sshSocketActivation(deadline);
+        else service->restart();
 #ifdef FIC_ACTIVATOR_TESTING
         hooks.checkpoint(detail::TestPhase::RestartQueued, operation.directory);
 #endif

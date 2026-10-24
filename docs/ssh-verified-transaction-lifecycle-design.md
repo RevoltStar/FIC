@@ -1353,4 +1353,22 @@ undo/write/reprepare. R3 wrapper-body fingerprints и полноценное sem
 M1/fence/package lifecycle не менялись. Native module runner вызывает реальные
 policy/journal/runtime компоненты в disposable systemd/OpenSSH контейнере, не
 синтезируя Installed и не выдавая этот gate за полный daemon/package end-to-end.
-Ubuntu socket activation остаётся отдельной задачей после финальных Debian gates.
+Ubuntu socket activation реализована отдельным bounded profile (см. следующий раздел).
+Следующий профиль — ALT p11, затем installed all-distribution acceptance.
+
+
+## Ubuntu verified socket integration
+
+Ubuntu 24.04/26.04 теперь выбирают `UbuntuSocketVerified` в общем Ssh transaction
+path; прежние упоминания Ubuntu LegacyReload выше относятся к историческим этапам.
+Debian service contract, ALT legacy path, CAS/Prepared/provenance, schema и M1
+не меняются. Native socket/service admission происходит до persistent mutation;
+неподдерживаемый режим не переключается автоматически. Narrow internal profile
+переиспользует тот же generic RO engine. Socket/generator/kernel FD identities
+входят в operation proof и bounded process-local receipt.
+
+Offline rollback использует те же conditional transaction hooks с отдельной
+проекцией `NotAttempted` для runtime. Active socket release safe-refuses; после
+неизвестного/installed эффекта ownership/provenance сохраняются, blind compensation
+не добавлена. Схема, native matrix, эксплуатационный эффект смены Port и пределы
+root ABA: [Ubuntu socket contract](ubuntu-ssh-socket-activation-spec.md).

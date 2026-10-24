@@ -286,6 +286,8 @@ pam_pwhistory (впрочем, как и pam_pwquality) имеют не очен
 
 ## Ubuntu SSH socket activation
 
-- Отдельная задача **Ubuntu SSH socket activation — verified end-to-end integration**:
-  [ТЗ](docs/ubuntu-ssh-socket-activation-spec.md). До её реализации Ubuntu 24.04/26.04
-  остаются Unsupported в новом strict SSH policy path, без legacy fallback.
+- Ubuntu 24.04/26.04: bounded verified socket profile реализован поверх общего engine;
+  [контракт и native acceptance](docs/ubuntu-ssh-socket-activation-spec.md).
+  Native acceptance:51 groups PASS на каждой Ubuntu; regression/ограничения — `docs/HANDOFF.md`.
+- Следующий этап — ALT p11 SSH verified activation, затем общее тестирование
+  установленного FIC на всех поддерживаемых дистрибутивах. M1 остаётся заморожен.

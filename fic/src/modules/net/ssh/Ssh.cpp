@@ -125,6 +125,7 @@ Ssh::Ssh(fic::platform::SshPlatformConfig platformConfig,
 
 SshRollbackOptions Ssh::makeRollbackOptions() const {
     SshRollbackOptions options;
+    options.ubuntuSocket=platformConfig_.applyContract==fic::platform::SshApplyContract::UbuntuSocketVerified;
     options.configPath = platformConfig_.configPath;
     options.includeBasePath = platformConfig_.includeBasePath;
     options.serviceUnits = platformConfig_.serviceUnits;
@@ -177,11 +178,7 @@ bool Ssh::apply() {
 
     using Adapter = fic::service::ssh::SshVerifiedActivationAdapter;
     using Reference = fic::service::ssh::SshVerifiedActivationRequest;
-    const bool verified = platformConfig_.applyContract == fic::platform::SshApplyContract::DebianVerified;
-    if (platformConfig_.applyContract == fic::platform::SshApplyContract::UnsupportedSocketActivation) {
-        this->log("UnsupportedConfiguration: Ubuntu SSH socket activation requires a separate verified contract", logLevel::ERROR);
-        return false;
-    }
+    const bool verified = platformConfig_.applyContract != fic::platform::SshApplyContract::Legacy;
     std::map<std::string,std::string> serviceBaseline;
     if (verified) {
         try { serviceBaseline = Adapter::serviceAdmission(); }
@@ -401,6 +398,7 @@ bool Ssh::apply() {
                 fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content));
             baseline.expectedService = serviceBaseline;
             baseline.additionalPolicies = additionalPolicies;
+            Adapter::prepareRuntimeProbe(baseline);
         } catch (const std::exception& e) { this->log(e.what(), logLevel::ERROR); return false; }
     }
     // Every foreign input must remain the exact captured reference. Only the

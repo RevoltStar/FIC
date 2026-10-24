@@ -12,6 +12,8 @@ namespace fic::platform {
 
 const char* executableIdName(ExecutableId id) {
     switch (id) {
+    case ExecutableId::SshSocketGenerator:
+        return "sshd-socket-generator";
     case ExecutableId::Sshd:
         return "sshd";
     case ExecutableId::Systemctl:

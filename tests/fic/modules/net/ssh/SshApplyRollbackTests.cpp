@@ -1279,7 +1279,7 @@ struct Stage1FaultReset {
     }
 };
 void testVerifiedTransactionRetainsFacts() {
-    for(const std::string fault:{"success","admission","activation","postcondition","durability","drift"}) {
+    for(const bool offline:{false,true}) for(const std::string fault:{"success","admission","activation","postcondition","durability","drift"}) {
         Stage1FaultReset reset;SshApplyTree tree;tree.writeConfig("Port 22\n");
         JournalOverride guard(tree.journalPath());
         UndoRemoveSshManagedPolicy undo;undo.policyName="ssh_port";undo.directive="Port";undo.appliedValue="2222";
@@ -1288,6 +1288,7 @@ void testVerifiedTransactionRetainsFacts() {
         SshConfigFileHandler handler(tree.configPath().string());require(handler.loadConfig(),"verified snapshot");
         SshRuntimeOptions opts;opts.configPath=tree.configPath();opts.includeBasePath=tree.tree.root;opts.serviceUnits={"ssh.service"};
         SshRuntime runtime(opts,tree.executables(),tree.runner());SshConfigTransactionHooks hooks;
+        hooks.offlineOwnershipRelease=offline;
         int activations=0,restores=0;
         hooks.verifiedAdmission=[&](std::string&){return fault!="admission";};
         hooks.verifiedActivation=[&](const AtomicTargetState& installed,std::string&){
@@ -1301,6 +1302,11 @@ void testVerifiedTransactionRetainsFacts() {
             bool changed=false;return upsertSshManagedPolicyBlock(handler.lines(),"ssh_port","Port 2222",changed,error);
         },[&](std::string&){return fault!="postcondition";},"verified test");
         require(result.ok==(fault=="success"),fault+": wrong verified result");
+        if(offline) {
+            require(result.activation==SshRuntimeReconciliation::NotAttempted,"offline release claimed runtime activation");
+            require(result.message.find("verified SSH runtime observed")==std::string::npos && result.message.find("verified activation unproven")==std::string::npos,"offline failure claimed attempted runtime proof");
+            if(result.ok)require(result.message.find("runtime NOT activated")!=std::string::npos,"offline success omitted runtime boundary");
+        }
         require(restores==0&&tree.runtime()->reloadCalls==0,fault+": legacy compensation/reload invoked");
         requireSameSshRecord(before,diskRecords(tree).at(0));
         if(fault=="admission") {
@@ -1883,15 +1889,15 @@ void testPlatformApplyBoundary() {
     if(profile.id=="debian-12"||profile.id=="debian-13")
         require(profile.ssh.applyContract==Contract::DebianVerified,"Debian must use verified apply");
     else if(profile.id=="ubuntu-24.04"||profile.id=="ubuntu-26.04")
-        require(profile.ssh.applyContract==Contract::UnsupportedSocketActivation,"Ubuntu must not fall back to legacy");
+        require(profile.ssh.applyContract==Contract::UbuntuSocketVerified,"Ubuntu must not fall back to legacy");
     else if(profile.id=="alt-p11") require(profile.ssh.applyContract==Contract::Legacy,"ALT legacy contract changed");
     SshApplyTree tree; tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port","2222");
     JournalOverride guard(tree.journalPath());std::string error;
     require(DaemonMutationJournal::instance().tryGet(error)!=nullptr,error);
     const auto journal=readFile(tree.journalPath());
-    auto config=tree.platformConfig();config.applyContract=Contract::UnsupportedSocketActivation;
+    auto config=tree.platformConfig();config.applyContract=Contract::UbuntuSocketVerified;
     PolicyUnderTest<NET_ssh_port> policy(config,tree.executables());policy.setRunner(tree.runner());
-    require(!policy.apply(),"unsupported socket activation returned success");
+    require(!policy.apply(),"socket profile on unsupported test environment returned success");
     require(readFile(tree.configPath())=="Port 22\n"&&readFile(tree.journalPath())==journal&&
             tree.runtime()->tCalls==0&&tree.runtime()->reloadCalls==0,"unsupported platform mutated configuration/journal/runtime");
 }

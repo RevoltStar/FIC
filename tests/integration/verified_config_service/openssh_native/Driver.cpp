@@ -4,6 +4,7 @@
 #include "modules/net/ssh/policies/NET_ssh_pubkey_auth.h"
 #include "modules/net/ssh/policies/NET_ssh_max_auth_tries.h"
 #include "rollback/DaemonMutationJournal.h"
+#include "rollback/RollbackExecutor.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
 #include <fic/core/config/ModuleConfigFileHandler.h>
 #include "service/ssh/SshVerifiedActivationTestAccess.h"
@@ -89,6 +90,8 @@ int main(int argc, char** argv) {
         check(CommandHashStore::saveHash(systemctl, error), error);
         fs::path sshd; check(resolver.resolve(fic::platform::ExecutableId::Sshd, sshd, error), error);
         check(CommandHashStore::saveHash(sshd, error), error);
+        const bool ubuntu=profile.id=="ubuntu-24.04"||profile.id=="ubuntu-26.04";
+        if(ubuntu) {fs::path generator;check(resolver.resolve(fic::platform::ExecutableId::SshSocketGenerator,generator,error),error);check(CommandHashStore::saveHash(generator,error),error);}
         const auto input = J::parse(text(argv[2]));
         if (input.value("untrusted_sshd", false)) check(CommandHashStore::updateHashes({}, {sshd.string()}, error), error);
         ActivationRequest r; r.unit = "ssh.service";
@@ -107,7 +110,7 @@ int main(int argc, char** argv) {
             write(paths.configDir.string()+"/AUDIT.conf","log_level.status=ENABLE\nlog_level.value=ERROR\n");
             journalOwner.setOverridePath(work+"/module-state/journal.json");
             const auto observe=[&] {
-                try { return d::SystemdActivation("ssh.service",std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths).current(); }
+                try { return d::SystemdActivation("ssh.service",std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,ubuntu?d::ActivationProfile::UbuntuSshSocket:d::ActivationProfile::ActiveNotifyService).current(); }
                 catch(const d::Failure&) { d::ServiceState absent;absent.properties={{"MainPID","0"},{"InvocationID",""}};return absent; }
             };
             // Daemon normally initializes its journal before policy passes.
@@ -127,9 +130,14 @@ int main(int argc, char** argv) {
                 for(const auto& [name,value]:configured) policyConfig+=name+".status=ENABLE\n"+name+".value="+value+"\n";
                 write(paths.configDir.string()+"/NET.conf",policyConfig);
                 auto before=observe();
+                const auto socketProof=[&] {
+                    try {return ubuntu?fic::core::ContentDigest::sha256Hex(J(d::readSshSocketContract(std::chrono::steady_clock::now()+std::chrono::seconds(10))).dump()):std::string();}
+                    catch(const d::Failure&) {return std::string("unavailable");}
+                };
+                const auto socketBefore=socketProof();
                 const auto fault=operation.value("fault","");
                 auto hook=[&] {
-                    if(fault=="disable") ctl({"disable","ssh.service"});
+                    if(fault=="disable") ctl({"disable",ubuntu?"ssh.socket":"ssh.service"});
                     else if(fault=="foreign-input") write("/etc/ssh/sshd_config.d/99-raced.conf","LogLevel VERBOSE\n");
                     else if(fault=="main-cas") write("/etc/ssh/sshd_config",text("/etc/ssh/sshd_config")+"# foreign CAS edit\n");
                 };
@@ -143,8 +151,8 @@ int main(int argc, char** argv) {
 #undef MODULE_CASE
                 check(bool(policy),"unknown fixture policy");
                 setSshSaveOutcomeHookForTests([&](FileHandler::FileSaveOutcome& saved) {
-                    if(fault=="after-save-stop") ctl({"stop","ssh.service"});
-                    else if(fault=="after-save-disable") ctl({"disable","ssh.service"});
+                    if(fault=="after-save-stop") ctl({"stop",ubuntu?"ssh.socket":"ssh.service"});
+                    else if(fault=="after-save-disable") ctl({"disable",ubuntu?"ssh.socket":"ssh.service"});
                     else if(fault=="after-save-input") write("/etc/ssh/sshd_config.d/99-raced.conf","LogLevel VERBOSE\n");
                     else if(fault=="after-save-main") write("/etc/ssh/sshd_config",text("/etc/ssh/sshd_config")+"# foreign saved edit\n");
                     else if(fault=="durability") {saved.result=FileHandler::FileSaveResult::Failed; saved.durabilityConfirmed=false;}
@@ -156,14 +164,22 @@ int main(int argc, char** argv) {
                 });
                 const auto mainBefore=text("/etc/ssh/sshd_config");
                 const auto journalBefore=text(work+"/module-state/journal.json");
-                const bool applied=policy->apply();
+                bool applied;
+                std::string releaseMessage;
+                if(operation.value("rollback",false)) {
+                    if(operation.value("offline",false))ctl({"stop","ssh.service","ssh.socket"});
+                    const auto deps=fic::rollback::productionRollbackDeps(profile,resolver);
+                    const auto released=fic::rollback::rollbackPolicyBeforeDisable(policy->policyRef(),static_cast<Ssh*>(policy.get())->managedResource(),deps);
+                    applied=released.rollbackCompleted();releaseMessage=released.message;
+                    for(const auto& outcome:released.outcomes)releaseMessage+="; "+outcome.message;
+                } else applied=policy->apply();
                 setSshSaveOutcomeHookForTests({});
                 const auto after=observe();
                 auto* journal=journalOwner.tryGet(error);check(journal||journalFault,error);
                 J records=J::array();
                 if(journal) for(const auto& record:journal->records())records.push_back({{"policy",record.policy.policyName},{"status",int(record.status)}});
-                output["module"].push_back({{"policy",id},{"applied",applied},
-                    {"before_pid",before.at("MainPID")},{"after_pid",after.at("MainPID")},
+                output["module"].push_back({{"policy",id},{"applied",applied},{"release_message",releaseMessage},
+                    {"socket_before",socketBefore},{"socket_after",socketProof()},{"before_pid",before.at("MainPID")},{"after_pid",after.at("MainPID")},
                     {"before_invocation",before.at("InvocationID")},{"after_invocation",after.at("InvocationID")},
                     {"main_unchanged",mainBefore==text("/etc/ssh/sshd_config")},{"records",records},
                     {"journal_unusable",journal==nullptr},{"journal_unchanged",journalBefore==text(work+"/module-state/journal.json")},{"journal_sha",fic::core::ContentDigest::sha256Hex(text(work+"/module-state/journal.json"))}});
@@ -231,7 +247,7 @@ int main(int argc, char** argv) {
             pid_t stoppedService=-1;bool serviceTraced=false;
             const auto originalMain=text("/etc/ssh/sshd_config");
             if(fault.rfind("pending-",0)==0) {
-                stoppedService=std::stoi(d::SystemdActivation(r.unit,std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths).current().at("MainPID"));
+                stoppedService=std::stoi(d::SystemdActivation(r.unit,std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,ubuntu?d::ActivationProfile::UbuntuSshSocket:d::ActivationProfile::ActiveNotifyService).current().at("MainPID"));
                 // A plain SIGSTOP is not a barrier: systemd sends SIGCONT while
                 // stopping a unit. Hold a real ptrace event-stop instead.
                 check(stoppedService>1&&::ptrace(PTRACE_SEIZE,stoppedService,nullptr,nullptr)==0,"seize fixture-owned sshd");
@@ -244,7 +260,7 @@ int main(int argc, char** argv) {
                 }
                 check(observed==stoppedService&&WIFSTOPPED(status),"ptrace event-stop barrier");
                 ctl({"restart","--no-block","ssh.service"});
-                while(d::SystemdActivation(r.unit,deadline,r.paths).current().at("ActiveState")!="deactivating") {
+                while(d::SystemdActivation(r.unit,deadline,r.paths,ubuntu?d::ActivationProfile::UbuntuSshSocket:d::ActivationProfile::ActiveNotifyService).current().at("ActiveState")!="deactivating") {
                     check(std::chrono::steady_clock::now()<deadline,"pending restart barrier deadline");::sched_yield();
                 }
                 if(fault=="pending-timeout")r.timeout=std::chrono::milliseconds(500);
@@ -324,8 +340,11 @@ int main(int argc, char** argv) {
                         {"show", "ssh.service", "--property=MainPID,ActiveState,SubState,InvocationID"}, opts);
                     check(state.success(), "no-ready state collection"); output["blocked_service_state"] = state.standardOutput;
                 }
+                if(phase==d::TestPhase::RestartQueued&&fault=="foreign-socket-restart")ctl({"restart","ssh.socket"});
                 if (phase == d::TestPhase::RestartQueued && fault == "contract-after") ctl({"set-environment", "FIC_OPENSSH_TEST_CHANGE=after"});
                 if (phase == d::TestPhase::BeforeCleanup) {
+                    if(fault=="socket-disable")ctl({"disable","ssh.socket"});
+                    if(fault=="generated-drift")write("/run/systemd/generator/ssh.socket.d/addresses.conf",text("/run/systemd/generator/ssh.socket.d/addresses.conf")+"# foreign generated mutation\n");
                     if(fault=="ready-stop") ctl({"stop","ssh.service"});
                     if(fault=="ready-disable") ctl({"disable","ssh.service"});
                     if(fault=="ready-foreign-restart") ctl({"restart","ssh.service"});
@@ -357,7 +376,7 @@ int main(int argc, char** argv) {
                 else {
                     ssh::detail::AdapterTestHooks seam;
                     seam.beforeFinalConfirmation=[&] {
-                        if(fault=="final-disable")ctl({"disable","ssh.service"});
+                        if(fault=="final-disable")ctl({"disable",ubuntu?"ssh.socket":"ssh.service"});
                         if(fault=="final-restart")ctl({"restart","ssh.service"});
                     };
                     bool admissionObserved=false;

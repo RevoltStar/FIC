@@ -2,6 +2,7 @@
 #include "service/ssh/SshVerifiedInputClosure.h"
 #include "service/ssh/SshPersistentMetadata.h"
 #include "service/ssh/SshServiceAdmission.h"
+#include "service/ssh/UbuntuSshSocketFlow.h"
 #include "service/VerifiedConfigMountSupport.h"
 #include "service/VerifiedConfigSystemd.h"
 #include <fic/core/integrity/ContentDigest.h>
@@ -257,5 +258,11 @@ int main() {
     oversized.reference.timeout = std::chrono::seconds(10);
     oversized.reference.paths[0].kind = static_cast<ControlledPathKind>(99);
     require(!s::SshVerifiedActivationAdapter::activate(oversized).activationAttempted, "unknown object kind escaped validation"); ++checks;
+    for(const auto* endpoint:{"127.0.0.1:2222","0.0.0.0:22","[::1]:2222","[::]:22"}) {
+        require(d::UbuntuSshSocketFlow::parseEndpoint(endpoint)==endpoint,"literal socket endpoint changed");++checks;
+    }
+    require(d::UbuntuSshSocketFlow::parseEndpoint("[0:0:0:0:0:0:0:1]:2222")=="[::1]:2222","IPv6 canonicalization failed");++checks;
+    for(const auto* endpoint:{"localhost:22","[fe80::1%lo]:22","127.0.0.1:0","127.0.0.1:65536","127.0.0.1:22 rdomain 1","::1:22","[::1]22","127.0.0.1:-1"})
+        deny([&]{d::UbuntuSshSocketFlow::parseEndpoint(endpoint);});
     std::cout << "SSH verified adapter " << checks << " contract checks PASS\n";
 }

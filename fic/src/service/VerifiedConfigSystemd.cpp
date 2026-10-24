@@ -56,13 +56,16 @@ std::string ServiceState::at(const std::string& key) const {
     return it->second;
 }
 SystemdActivation::SystemdActivation(const std::string& unit, std::chrono::steady_clock::time_point deadline,
-                                     const std::vector<ControlledPath>& targets)
-    : unit_(unit), targets_(targets), deadline_(deadline) {
+                                     const std::vector<ControlledPath>& targets, ActivationProfile activationProfile)
+    : profile_(activationProfile), unit_(unit), targets_(targets), deadline_(deadline) {
     namespace_ = namespaceIdentity(::getpid());
     std::ifstream comm("/proc/1/comm"); std::string name; std::getline(comm, name);
     if (name != "systemd" || namespaceIdentity(1) != namespace_)
         throw Failure(ActivationStatus::UnsupportedConfiguration, "activator and system manager must share a mount namespace");
     const auto profile = fic::platform::makeBuildPlatformProfile();
+    if(profile_==ActivationProfile::UbuntuSshSocket && (unit_!="ssh.service" ||
+       (profile.id!="ubuntu-24.04"&&profile.id!="ubuntu-26.04")))
+        throw Failure(ActivationStatus::UnsupportedConfiguration,"closed Ubuntu SSH socket profile required");
     fic::platform::PlatformExecutableResolver resolver(profile.executables);
     std::filesystem::path executable; std::string error;
     if (!resolver.resolve(fic::platform::ExecutableId::Systemctl, executable, error) ||
@@ -104,7 +107,7 @@ void SystemdActivation::verifyConfiguration(const ServiceState& s) const {
     // replacement is itself unsupported. Initial unsupported setups fail preflight.
     if (!configuration_.empty()) for (const auto& [key, expected] : configuration_)
         if (!s.properties.count(key) || s.at(key) != expected) throw Failure(ActivationStatus::InterferenceDetected, "service configuration changed: " + key);
-    validateLaunchContract(s.properties, &targets_);
+    validateLaunchContract(s.properties, &targets_, profile_);
     if (s.at("Id") != unit_ || s.at("LoadState") != "loaded" || s.at("Type") != "notify" || s.at("NotifyAccess") != "main")
         throw Failure(ActivationStatus::UnsupportedConfiguration, "only loaded canonical notify/main service units are supported");
     for (const auto& p : noProperties) if (s.at(p) != "no")
@@ -114,12 +117,13 @@ void SystemdActivation::verifyConfiguration(const ServiceState& s) const {
 }
 ServiceState SystemdActivation::preflight() {
     auto s = query(remaining()); verifyConfiguration(s);
-    if (s.at("ActiveState") != "active" || s.at("SubState") != "running" || !s.at("Job").empty())
-        throw Failure(ActivationStatus::UnsupportedConfiguration, "service must already be active/running with no pending job");
-    processToken(s, namespace_);
+    const bool inactive=profile_==ActivationProfile::UbuntuSshSocket && s.at("ActiveState")=="inactive" && s.at("SubState")=="dead" && s.at("MainPID")=="0";
+    if ((!inactive && (s.at("ActiveState") != "active" || s.at("SubState") != "running")) || !s.at("Job").empty())
+        throw Failure(ActivationStatus::UnsupportedConfiguration, "service must be stable in supported activation profile");
+    if(!inactive) processToken(s, namespace_);
     originalInvocation_ = s.at("InvocationID");
-    if (originalInvocation_.size() != 32 || originalInvocation_ == std::string(32, '0') ||
-        !std::all_of(originalInvocation_.begin(), originalInvocation_.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }))
+    if (!inactive && (originalInvocation_.size() != 32 || originalInvocation_ == std::string(32, '0') ||
+        !std::all_of(originalInvocation_.begin(), originalInvocation_.end(), [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })))
         throw Failure(ActivationStatus::UnsupportedConfiguration, "service InvocationID is unavailable");
     configuration_ = s.properties;
     for (const auto& key : {"ActiveState", "SubState", "MainPID", "InvocationID", "Job", "Result"}) configuration_.erase(key);

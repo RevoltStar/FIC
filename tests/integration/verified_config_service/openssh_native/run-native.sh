@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ONLY disposable containers. No published ports, host binds or host namespaces.
 set -euo pipefail
-[[ $# == 2 ]] || { echo 'usage: run-native.sh IMAGE debian-12|debian-13' >&2; exit 2; }
+[[ $# == 2 ]] || { echo 'usage: run-native.sh IMAGE debian-12|debian-13|ubuntu-24.04|ubuntu-26.04' >&2; exit 2; }
 image=$1 platform=$2
-case "$platform" in debian-12|debian-13) ;; *) exit 2;; esac
+case "$platform" in debian-12|debian-13|ubuntu-24.04|ubuntu-26.04) ;; *) exit 2;; esac
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
 build="$repo/build-openssh-native/$platform"
 mkdir -p "$build/evidence"
@@ -52,4 +52,9 @@ docker exec "$name" timeout 60 sh -ec '
 '
 docker cp "$build/openssh_native_driver" "$name:/usr/local/bin/fic-openssh-driver"
 docker cp "$repo/tests/integration/verified_config_service/openssh_native/harness.py" "$name:/usr/local/bin/fic-openssh-harness.py"
-docker exec "$name" python3 /usr/local/bin/fic-openssh-harness.py
+if [[ "$platform" == ubuntu-* ]]; then
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/ubuntu_socket.py" "$name:/usr/local/bin/fic-ubuntu-socket.py"
+ docker exec "$name" python3 /usr/local/bin/fic-ubuntu-socket.py
+else
+ docker exec "$name" python3 /usr/local/bin/fic-openssh-harness.py
+fi

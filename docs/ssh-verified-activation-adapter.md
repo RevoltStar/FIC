@@ -3,7 +3,7 @@
 ## Назначение и trusted reference
 
 `fic/src/service/ssh/SshVerifiedActivationAdapter.h` — самостоятельный production
-компонент, вызываемый Debian 12/13 SSH policy apply. Сам adapter не пишет
+компонент, вызываемый Debian 12/13 и Ubuntu 24.04/26.04 SSH policy apply. Сам adapter не пишет
 persistent конфигурацию, не получает ownership и не выполняет rollback/compensation.
 `Ssh::apply()` отвечает за provenance, CAS/save и journal finalization.
 
@@ -43,8 +43,11 @@ manifest, лимиты generic activator и identifiers/значения выб�
 
 ## Поддерживаемый launch profile
 
-Только build profiles **Debian 12/13**, подтверждённые текущим `/etc/os-release`.
-Ubuntu и ALT дают Unsupported до capture/mount/restart; их units не изменяются.
+Build profiles **Debian 12/13 и Ubuntu 24.04/26.04**, подтверждённые `/etc/os-release`.
+Ниже описан Debian service profile. Ubuntu использует отдельный закрытый
+[socket profile](ubuntu-ssh-socket-activation-spec.md) того же engine, допускающий
+inactive service при persistently enabled/active socket и проверяющий listener/FD.
+ALT остаётся Unsupported в adapter; legacy policy lifecycle не меняется.
 Подготовка private boundaries не входит в adapter. На shared publication parent
 без безопасной границы generic engine продолжает отказывать.
 
@@ -307,8 +310,8 @@ real Debian gate проверяет фактический adapter/sshd, а не
 
 1. Один process-local `sshResourceMutex` сериализует apply и всю rollback/disable
    decision; отдельного SSH flock или нового journal schema нет.
-2. Ubuntu 24.04/26.04 strict policy path возвращает Unsupported без legacy
-   fallback. ALT p11 сохраняет legacy activation/compensation; общий mutex и
+2. Ubuntu 24.04/26.04 использует verified socket profile без legacy fallback.
+   ALT p11 сохраняет legacy activation/compensation; общий mutex и
    shared-file Prepared gate также защищают его SSH resource.
 3. Admission требует persistent `enabled` и доказанный ready runtime. Disabled,
    masked, static, enabled-runtime, failed и inactive без Job дают отказ до записи.
@@ -360,3 +363,23 @@ deadline. Виртуальный admission state matrix проверяет ос�
 
 Ubuntu socket activation: [отдельное ТЗ](ubuntu-ssh-socket-activation-spec.md).
 Это будущая работа, не часть Debian completion.
+
+## Ubuntu socket policy lifecycle
+
+Общий `Ssh::apply()` сохраняет journal/Prepared gate, CAS/durability и post-save
+no-compensation contract. `prepareRuntimeProbe()` после ownership/reference/admission
+проверяет/создаёт только отсутствующий stock `/run/sshd` и проверяет native endpoint
+boundary до записи. Это единственная дополнительная ephemeral подготовка, без
+service start и изменения administrative enablement.
+
+Внутренний `ActivationProfile::UbuntuSshSocket` и фиксированный activation callback
+доступны только canonical ssh.service на Ubuntu; публичный generic `activate()`
+по-прежнему требует active notify service без socket triggers. Ubuntu callback
+выполняется под тем же RO snapshot. Port changes требуют native daemon-reload и
+restart существующего active socket с kernel/FD proof; остальные изменения —
+refresh service либо normal local socket trigger. Snapshot/cleanup engine общий.
+
+Active Ubuntu rollback отказывает с сохранением ownership: legacy reload не может
+подтвердить восстановление listener. Offline service+socket допускают только
+ownership release, с проверками до/после CAS и явным `runtime NOT activated`.
+См. authoritative [матрицу, proof, ограничения и эксплуатационные эффекты](ubuntu-ssh-socket-activation-spec.md).

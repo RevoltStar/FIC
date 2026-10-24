@@ -14,6 +14,7 @@ add_executable(openssh_native_driver Driver.cpp
     ${FIC_ROOT}/fic/src/service/VerifiedConfigSystemd.cpp
     ${FIC_ROOT}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
     ${FIC_ROOT}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
+    ${FIC_ROOT}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp
     ${FIC_ROOT}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${FIC_ROOT}/fic/src/modules/net/ssh/SshManagedBlock.cpp
     ${FIC_ROOT}/fic/src/modules/net/ssh/SshConfigAudit.cpp

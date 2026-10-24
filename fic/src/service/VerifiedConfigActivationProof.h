@@ -4,9 +4,14 @@
 #include <functional>
 namespace fic::service::detail {
 // Internal proof extension, shared engine with public activate(). Callbacks
-// cannot substitute snapshots, restart, observation or cleanup. Any exception
-// fails the operation with ordinary cleanup. No persistent writes permitted.
+// published/ready callbacks validate only. The closed Ubuntu hook dispatches
+// fixed activation actions; none can substitute snapshot/observation/cleanup.
+// Exceptions fail the operation with ordinary cleanup. No policy-config writes.
 struct ActivationProof {
+    ActivationProfile profile = ActivationProfile::ActiveNotifyService;
+    // Closed Ubuntu SSH profile only. Runs under the SAME published snapshot;
+    // no permission to replace copy/mount/observation/cleanup machinery.
+    std::function<void(std::chrono::steady_clock::time_point)> sshSocketActivation;
     LaunchContract expectedConfiguration;
     std::map<std::string, Identity> sourceRoots;
     std::map<std::string, std::map<std::string, struct stat>> sourceAttributes;

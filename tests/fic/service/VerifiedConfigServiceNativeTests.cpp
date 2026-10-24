@@ -1121,9 +1121,9 @@ int main(int argc, char** argv) {
             const auto denied = fic::service::ssh::SshVerifiedActivationAdapter::activate(unsupported);
             require(!denied.success() && !denied.activationAttempted &&
                     denied.semantics == fic::service::ssh::ProofState::Unsupported &&
-                    denied.diagnostic == "SSH verified activation v1 supports Debian 12/13 only" && before == read("/proc/self/mountinfo"),
+                    !denied.diagnostic.empty() && before == read("/proc/self/mountinfo"),
                     "unsupported distro SSH adapter attempted activation");
-            pass("SSH adapter unsupported-profile negative before capture/mount/restart");
+            pass("SSH adapter unadmitted profile/fixture negative before capture/mount/restart");
         }
         unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); xattrCases(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
         mustCtl({"stop", unit});

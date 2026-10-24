@@ -17,6 +17,7 @@ namespace fic::platform {
 
 enum class ExecutableId {
     Sshd,
+    SshSocketGenerator,
     Systemctl,
     Loginctl,
     Visudo,
@@ -78,7 +79,7 @@ enum class SshPamServiceRouting {
     ConfigurablePamServiceName
 };
 
-enum class SshApplyContract { Legacy, DebianVerified, UnsupportedSocketActivation };
+enum class SshApplyContract { Legacy, DebianVerified, UbuntuSocketVerified };
 
 struct SshPlatformConfig {
     SshApplyContract applyContract = SshApplyContract::Legacy;

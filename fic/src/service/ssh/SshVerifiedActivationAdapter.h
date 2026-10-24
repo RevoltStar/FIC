@@ -33,6 +33,7 @@ public:
     // configuration is referenced, never enrolled as policy ownership.
     static SshVerifiedActivationRequest captureReference(
         const std::map<std::string,std::string>& policies,const std::string& expectedMainSha);
+    static void prepareRuntimeProbe(const SshVerifiedActivationRequest&);
     static SshVerifiedActivationResult activate(const SshVerifiedActivationRequest&);
 };
 } // namespace fic::service::ssh

@@ -6,6 +6,7 @@
 
 #include <fic/core/fs/AtomicFileWriter.h>
 
+#include "service/ssh/UbuntuSshSocketFlow.h"
 #include <algorithm>
 #include <utility>
 
@@ -23,6 +24,14 @@ SshConfigTransactionHooks makeHooks(const SshRollbackOptions& options) {
     SshConfigTransactionHooks hooks;
     hooks.beforeWrite = options.beforeWrite;
     hooks.beforeRestore = options.beforeRestore;
+    if(options.ubuntuSocket) {
+        const auto offline=[](std::string& error) {
+            try {fic::service::ssh::detail::UbuntuSshSocketFlow::requireOffline(std::chrono::steady_clock::now()+std::chrono::seconds(10));return true;}
+            catch(const std::exception& e) {error=e.what();return false;}
+        };
+        hooks.offlineOwnershipRelease=true;hooks.verifiedAdmission=offline;
+        hooks.verifiedActivation=[offline](const AtomicTargetState&,std::string& error) {return offline(error);};
+    }
     return hooks;
 }
 
@@ -100,6 +109,10 @@ SshRollbackResult undoSshManagedPolicyMutation(
         return result;
     }
 
+    if(options.ubuntuSocket) {
+        try {fic::service::ssh::detail::UbuntuSshSocketFlow::requireOffline(std::chrono::steady_clock::now()+std::chrono::seconds(10));}
+        catch(const std::exception& e) {result.message=e.what();return result;}
+    }
     SshConfigFileHandler handler(options.configPath.string());
     if (!handler.loadConfig()) {
         // Malformed FIC markers are a drifted FIC ownership state: classify
@@ -165,6 +178,7 @@ SshRollbackResult undoSshManagedPolicyMutation(
         }
     }
 
+    if(options.ubuntuSocket)fic::service::ssh::detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();
     if (!blockPresent && !wrappersPresent) {
         // Nothing FIC-owned remains for this policy: the mutation was never
         // applied or already factually rolled back (e.g. crash after the
@@ -198,6 +212,11 @@ SshRollbackResult undoSshManagedPolicyMutation(
                              "подтверждена; откат не подтверждён: " +
                              barrierError;
             return result;
+        }
+        if(options.ubuntuSocket) {
+            try {fic::service::ssh::detail::UbuntuSshSocketFlow::requireOffline(std::chrono::steady_clock::now()+std::chrono::seconds(10));}
+            catch(const std::exception& e) {result.nothingToDo=false;result.message=e.what();return result;}
+            result.message="offline ownership already released; runtime NOT activated";return result;
         }
         const SshActivationResult activation = runtime.activateIfRunning();
         if (!activation.ok) {

@@ -3108,6 +3108,7 @@ endif()
 set(FIC_SSH_VERIFIED_SOURCES
     ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
@@ -3301,10 +3302,12 @@ endif()
 get_property(FIC_LOCAL_TEST_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(ssh_caller IN LISTS FIC_LOCAL_TEST_TARGETS)
     get_target_property(ssh_sources ${ssh_caller} SOURCES)
-    if("${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/Ssh.cpp" IN_LIST ssh_sources)
+    if("${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/Ssh.cpp" IN_LIST ssh_sources OR
+       "${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp" IN_LIST ssh_sources)
         target_sources(${ssh_caller} PRIVATE ${FIC_VERIFIED_CONFIG_SOURCES}
             ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
-            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp)
+            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
+            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp)
         target_link_libraries(${ssh_caller} PRIVATE PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
     endif()
 endforeach()

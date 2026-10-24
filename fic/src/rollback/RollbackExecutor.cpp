@@ -1552,6 +1552,7 @@ RollbackExecutorDeps productionRollbackDeps(
     const fic::platform::SshPlatformConfig sshConfig = platform.ssh;
     deps.sshOptions = [sshConfig, &executables]() {
         SshRollbackOptions options;
+        options.ubuntuSocket=sshConfig.applyContract==fic::platform::SshApplyContract::UbuntuSocketVerified;
         options.configPath = sshConfig.configPath;
         options.includeBasePath = sshConfig.includeBasePath;
         options.serviceUnits = sshConfig.serviceUnits;

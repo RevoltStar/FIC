@@ -17,6 +17,7 @@
 // tests; an empty runner falls back to VerifiedProcessExecutor. The
 // beforeWrite / beforeRestore hooks are deterministic test seams.
 struct SshRollbackOptions {
+    bool ubuntuSocket = false;
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
     std::vector<std::string> serviceUnits;

@@ -1,0 +1,2538 @@
+{
+  "purpose": "Ubuntu SSH verified socket policy native acceptance, not full daemon/package/PAM/VM acceptance",
+  "audit_commit": "49ac50a47cf495f8291df6d11388e60a4f1763df",
+  "platforms": {
+    "ubuntu-24.04": {
+      "image_id": "sha256:86e281dc1bb3603ac8c1f1e7be27d2c99f3ba5520651b1d9b65a7081f810d7b6",
+      "environment": {
+        "os_release": "PRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n",
+        "kernel": "6.6.87.2-microsoft-standard-WSL2",
+        "packages": "openssh-server\t1:9.6p1-3ubuntu13.20\nsystemd\t255.4-1ubuntu8.18\n"
+      },
+      "report_sha256": "3c4c534b0125e387117dc54de2e1f2a74bd2e5f96b066d1feccdb97b4650b30f",
+      "runtime_proof": {
+        "before": [
+          {
+            "address": "127.0.0.1",
+            "port": 2222,
+            "inode": 3328766
+          },
+          {
+            "address": "::1",
+            "port": 2222,
+            "inode": 3323494
+          }
+        ],
+        "after": [
+          {
+            "address": "127.0.0.1",
+            "port": 2244,
+            "inode": 3338138
+          },
+          {
+            "address": "::1",
+            "port": 2244,
+            "inode": 3341230
+          }
+        ],
+        "manager_fd_inodes": [
+          3324859,
+          3324860,
+          3324861,
+          3324865,
+          3324866,
+          3324870,
+          3324910,
+          3324916,
+          3326835,
+          3326852,
+          3330569,
+          3330603,
+          3332607,
+          3332608,
+          3332623,
+          3332625,
+          3332627,
+          3336295,
+          3338138,
+          3341230,
+          3344620
+        ],
+        "sshd_fd_inodes": [
+          3338138,
+          3340099,
+          3341230
+        ],
+        "effective": {
+          "permitrootlogin": "no",
+          "pubkeyauthentication": "yes",
+          "usepam": "yes",
+          "maxauthtries": "3",
+          "port": "2244"
+        }
+      },
+      "native_groups": 51,
+      "result": "PASS",
+      "cases": [
+        {
+          "name": "five-real-policies-inactive-service-receipt",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_pubkey_auth",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_use_pam",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_max_auth_tries",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_pubkey_auth",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_use_pam",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_max_auth_tries",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_pubkey_auth",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_use_pam",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_max_auth_tries",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "Port-inet",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "Port-inet6",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "Port-wildcard",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "default-port22-no-generated-output",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "foreign-compliant-no-enrollment",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "recursive-Include-unrelated-Match",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "outside-empty",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "conditional-selected",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "conditional-Include",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "foreign-extra-Port",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-main-cas",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-foreign-input",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-disable",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-after-save-stop",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-after-save-disable",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-after-save-input",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-after-save-main",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-durability",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-unknown-writer",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-journal-commit",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": true,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "unresolved-Prepared",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "inactive-socket",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "disabled-socket",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "masked-socket",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "generator-mask",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "unsupported-ssh.service",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "unsupported-ssh.socket",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "rollback-active-refusal",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "rollback-active-ownership-retained",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 3
+                }
+              ],
+              "release_message": "Ubuntu active/pending socket rollback unsupported; ownership retained; Ubuntu active/pending socket rollback unsupported; ownership retained"
+            }
+          ]
+        },
+        {
+          "name": "rollback-offline-ownership-only",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 2
+                }
+              ],
+              "release_message": "Rollback выполнен для 1 mutation; FIC-владение политикой 'ssh_port' в sshd_config отозвано; offline ownership release; runtime NOT activated"
+            }
+          ]
+        },
+        {
+          "name": "adapter-ro-write",
+          "adapter_success": true,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-busy",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "NotProven",
+          "status": "CleanupFailed",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 1
+        },
+        {
+          "name": "adapter-original-write",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "NonCompliant",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-new-glob",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "NonCompliant",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-contract-before",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "Proven",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected",
+          "readinessConfirmed": false,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-contract-after",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "Proven",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected",
+          "readinessConfirmed": false,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-foreign-socket-restart",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "Proven",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected",
+          "readinessConfirmed": false,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-socket-disable",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Unsupported",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-generated-drift",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Unsupported",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-final-disable",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Unsupported",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-final-restart",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "foreign-listener-bind-failure",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "stale-listener-reconciled-from-native-inputs",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "symlink-manifest-refusal",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "adapter-pending-ready",
+          "adapter_success": true,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "admission_wait_observed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-pending-timeout",
+          "adapter_success": false,
+          "activation_invoked": false,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "NotProven",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration",
+          "readinessConfirmed": false,
+          "admission_wait_observed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-pending-failed",
+          "adapter_success": false,
+          "activation_invoked": false,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "NotProven",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration",
+          "readinessConfirmed": false,
+          "admission_wait_observed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "failed-socket-before-save",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "disabled-socket-manually-active-service",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "compatible-administrative-service-and-socket-dropins",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        }
+      ]
+    },
+    "ubuntu-26.04": {
+      "image_id": "sha256:734913b1cdd2617d6a6d32289b14e05a25e7a05249017877bda614cb2ffd1281",
+      "environment": {
+        "os_release": "PRETTY_NAME=\"Ubuntu 26.04.1 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"26.04\"\nVERSION=\"26.04.1 LTS (Resolute Raccoon)\"\nVERSION_CODENAME=resolute\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=resolute\nLOGO=ubuntu-logo\n",
+        "kernel": "6.6.87.2-microsoft-standard-WSL2",
+        "packages": "openssh-server\t1:10.2p1-2ubuntu3.8\nsystemd\t259.5-0ubuntu3.4\n"
+      },
+      "report_sha256": "b6585833a8d55c5860cb0a8c7d659744ec551035bad4a24cd9b31e175634db55",
+      "runtime_proof": {
+        "before": [
+          {
+            "address": "127.0.0.1",
+            "port": 2222,
+            "inode": 3331819
+          },
+          {
+            "address": "::1",
+            "port": 2222,
+            "inode": 3340374
+          }
+        ],
+        "after": [
+          {
+            "address": "127.0.0.1",
+            "port": 2244,
+            "inode": 3347858
+          },
+          {
+            "address": "::1",
+            "port": 2244,
+            "inode": 3343764
+          }
+        ],
+        "manager_fd_inodes": [
+          3328898,
+          3329005,
+          3331622,
+          3331719,
+          3331724,
+          3331725,
+          3331726,
+          3331745,
+          3334387,
+          3334388,
+          3334389,
+          3334390,
+          3334391,
+          3334392,
+          3334393,
+          3334394,
+          3334395,
+          3334396,
+          3334397,
+          3334407,
+          3334408,
+          3334409,
+          3334410,
+          3334411,
+          3334412,
+          3334413,
+          3334426,
+          3334431,
+          3337595,
+          3343764,
+          3347858,
+          3347861
+        ],
+        "sshd_fd_inodes": [
+          3343764,
+          3347858,
+          3351754
+        ],
+        "effective": {
+          "permitrootlogin": "no",
+          "pubkeyauthentication": "yes",
+          "usepam": "yes",
+          "maxauthtries": "3",
+          "port": "2244"
+        }
+      },
+      "native_groups": 51,
+      "result": "PASS",
+      "cases": [
+        {
+          "name": "five-real-policies-inactive-service-receipt",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_pubkey_auth",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_use_pam",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_max_auth_tries",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_pubkey_auth",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_use_pam",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_max_auth_tries",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_pubkey_auth",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_use_pam",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_max_auth_tries",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_pubkey_auth",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_max_auth_tries",
+                  "status": 1
+                },
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "Port-inet",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "Port-inet6",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "Port-wildcard",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "default-port22-no-generated-output",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "foreign-compliant-no-enrollment",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "recursive-Include-unrelated-Match",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "outside-empty",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "conditional-selected",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "conditional-Include",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "foreign-extra-Port",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-main-cas",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-foreign-input",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-disable",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-after-save-stop",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-after-save-disable",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-after-save-input",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-after-save-main",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-durability",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-unknown-writer",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "module-fault-journal-commit",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": true,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "unresolved-Prepared",
+          "operations": [
+            {
+              "policy": "ssh_use_pam",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            },
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_use_pam",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "inactive-socket",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "disabled-socket",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "masked-socket",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "generator-mask",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "unsupported-ssh.service",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "unsupported-ssh.socket",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "rollback-active-refusal",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "rollback-active-ownership-retained",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 3
+                }
+              ],
+              "release_message": "Ubuntu active/pending socket rollback unsupported; ownership retained; Ubuntu active/pending socket rollback unsupported; ownership retained"
+            }
+          ]
+        },
+        {
+          "name": "rollback-offline-ownership-only",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 2
+                }
+              ],
+              "release_message": "Rollback выполнен для 1 mutation; FIC-владение политикой 'ssh_port' в sshd_config отозвано; offline ownership release; runtime NOT activated"
+            }
+          ]
+        },
+        {
+          "name": "adapter-ro-write",
+          "adapter_success": true,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-busy",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "NotProven",
+          "status": "CleanupFailed",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 1
+        },
+        {
+          "name": "adapter-original-write",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "NonCompliant",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-new-glob",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "NonCompliant",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-contract-before",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "Proven",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected",
+          "readinessConfirmed": false,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-contract-after",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "Proven",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected",
+          "readinessConfirmed": false,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-foreign-socket-restart",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "Proven",
+          "status": "InterferenceDetected",
+          "primaryStatus": "InterferenceDetected",
+          "readinessConfirmed": false,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-socket-disable",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Unsupported",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-generated-drift",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Unsupported",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-final-disable",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Unsupported",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-final-restart",
+          "adapter_success": false,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "foreign-listener-bind-failure",
+          "operations": [
+            {
+              "policy": "ssh_port",
+              "applied": false,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_port",
+                  "status": 0
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "stale-listener-reconciled-from-native-inputs",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "symlink-manifest-refusal",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "adapter-pending-ready",
+          "adapter_success": true,
+          "activation_invoked": true,
+          "A": "Proven",
+          "C": "Proven",
+          "P": "Proven",
+          "status": "Success",
+          "primaryStatus": "Success",
+          "readinessConfirmed": true,
+          "admission_wait_observed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-pending-timeout",
+          "adapter_success": false,
+          "activation_invoked": false,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "NotProven",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration",
+          "readinessConfirmed": false,
+          "admission_wait_observed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "adapter-pending-failed",
+          "adapter_success": false,
+          "activation_invoked": false,
+          "A": "NotProven",
+          "C": "NotProven",
+          "P": "NotProven",
+          "status": "UnsupportedConfiguration",
+          "primaryStatus": "UnsupportedConfiguration",
+          "readinessConfirmed": false,
+          "admission_wait_observed": true,
+          "residual_count_before_admin_cleanup": 0
+        },
+        {
+          "name": "failed-socket-before-save",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "disabled-socket-manually-active-service",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": false,
+              "main_unchanged": true,
+              "journal_unusable": false,
+              "records": [],
+              "release_message": ""
+            }
+          ]
+        },
+        {
+          "name": "compatible-administrative-service-and-socket-dropins",
+          "operations": [
+            {
+              "policy": "ssh_root_login",
+              "applied": true,
+              "main_unchanged": false,
+              "journal_unusable": false,
+              "records": [
+                {
+                  "policy": "ssh_root_login",
+                  "status": 1
+                }
+              ],
+              "release_message": ""
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "regression": {
+    "debian12_full_build_ctest": {
+      "passed": 207,
+      "skipped": 4,
+      "total": 211
+    },
+    "generic": {
+      "debian-12": {
+        "passed": 201,
+        "skipped": 0
+      },
+      "debian-13": {
+        "passed": 201,
+        "skipped": 0
+      },
+      "ubuntu-24.04": {
+        "passed": 202,
+        "skipped": 0
+      },
+      "ubuntu-26.04": {
+        "passed": 202,
+        "skipped": 0
+      },
+      "alt-p11": {
+        "passed": 201,
+        "skipped": 1
+      }
+    },
+    "provenance": {
+      "debian12": {
+        "groups": 55,
+        "result": "PASS"
+      },
+      "debian13": {
+        "groups": 55,
+        "result": "PASS"
+      },
+      "ubuntu2404": {
+        "groups": 55,
+        "result": "PASS"
+      },
+      "ubuntu2604": {
+        "groups": 55,
+        "result": "PASS"
+      },
+      "alt-p11": {
+        "groups": 55,
+        "result": "PASS"
+      }
+    },
+    "debian_openssh": {
+      "debian-12": {
+        "cases": 30,
+        "adapter_cases": 59,
+        "module_cases": 24,
+        "result": "PASS"
+      },
+      "debian-13": {
+        "cases": 30,
+        "adapter_cases": 59,
+        "module_cases": 24,
+        "result": "PASS"
+      }
+    }
+  },
+  "limitations": [
+    "Docker containers share WSL2 kernel; independent VM/kernel matrix NOT_TESTED",
+    "Full daemon/IPC/package lifecycle/PAM login acceptance NOT_TESTED",
+    "Existing shared publication parents require administrator-provisioned private boundary",
+    "Active Ubuntu socket rollback safe-refuses; offline release requires positive stopped-state proof and claims no runtime activation",
+    "Existing owned-value REFRESH refuses; root ABA/post-SUCCESS administrator changes remain outside bounded proof",
+    "Earlier generic Ubuntu26 strict mount observer refused a transient namespace event; subsequent full run passed without production weakening"
+  ]
+}

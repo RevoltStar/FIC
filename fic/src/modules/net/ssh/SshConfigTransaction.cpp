@@ -126,17 +126,17 @@ SshConfigTransactionResult runSshConfigTransaction(
             if(!hooks.verifiedActivation) compensate(handler, runtime, hooks, before, result);
             return result;
         }
-        result.activation = SshRuntimeReconciliation::FailedOrUnknown;
+        result.activation = hooks.offlineOwnershipRelease?SshRuntimeReconciliation::NotAttempted:SshRuntimeReconciliation::FailedOrUnknown;
         if(hooks.verifiedActivation) {
             if(!hooks.verifiedActivation(*saved.installedTargetState,error)) {
-                result.message="persistent SSH configuration saved; verified activation unproven; provenance retained: "+error;
+                result.message=(hooks.offlineOwnershipRelease?"offline ownership release saved; stopped-state unproven; provenance retained: ":"persistent SSH configuration saved; verified activation unproven; provenance retained: ")+error;
                 return result;
             }
-            result.activation=SshRuntimeReconciliation::Verified;
+            result.activation=hooks.offlineOwnershipRelease?SshRuntimeReconciliation::NotAttempted:SshRuntimeReconciliation::Verified;
             if(!AtomicFileWriter::targetStateMatches(handler.filePath(),*saved.installedTargetState,&error)) {
-                result.message="verified SSH runtime observed; persistent main-file drift: "+error;return result;
+                result.message=(hooks.offlineOwnershipRelease?"offline ownership release observed; persistent main-file drift: ":"verified SSH runtime observed; persistent main-file drift: ")+error;return result;
             }
-            result.message=successMessage+"; verified runtime and persistent state confirmed";result.ok=true;return result;
+            result.message=successMessage+(hooks.offlineOwnershipRelease?"; offline ownership release; runtime NOT activated":"; verified runtime and persistent state confirmed");result.ok=true;return result;
         }
         const auto activation = runtime.activateIfRunning();
         if (!activation.ok) {

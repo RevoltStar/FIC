@@ -8,6 +8,7 @@
 #include <string>
 
 struct SshConfigTransactionHooks {
+    bool offlineOwnershipRelease = false;
     // Deterministic test seam invoked right before the conditional atomic
     // write (simulates concurrent external modification).
     std::function<void()> beforeWrite;
