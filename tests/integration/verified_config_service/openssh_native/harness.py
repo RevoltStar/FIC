@@ -381,6 +381,9 @@ def main():
             req = req or request()
             before = state(); data = drive(action, req); after = state()
             assert data['adapter_success'] == success, (name, data)
+            if name in ('disabled-active-no-activation','disabled-inactive-no-activation','enabled-inactive-no-pending-job'):
+                assert not data['activation_invoked'], (name,data)
+                assert request() == req, (name,'persistent fixture inputs changed during refusal')
             if restarted is not None:
                 assert (before['InvocationID'] != after['InvocationID']) == restarted, (name, data)
             if success or drift or unknown:
@@ -409,8 +412,37 @@ def main():
             result['adapter_cases'].append({'name': name, 'before': before, 'after': after, 'result': data})
             (OUT / 'results.json').write_text(json.dumps(result, indent=2))
             return data
+        adapter_reset()
+        run(['systemctl','disable','ssh.service'])
+        adapter_case('disabled-active-no-activation',restarted=False)
+        run(['systemctl','stop','ssh.service'])
+        adapter_case('disabled-inactive-no-activation',restarted=False)
+        run(['systemctl','enable','ssh.service'])
+        adapter_case('enabled-inactive-no-pending-job',restarted=False)
+        run(['systemctl','start','ssh.service'])
         adapter_reset(); adapter_case('all-five-empty-glob-public', success=True, restarted=True)
         adapter_case('repeat-same-reference', success=True, restarted=True)
+        adapter_reset('Match User backup\n X11Forwarding no\n')
+        adapter_case('unrelated-Match', success=True, restarted=True)
+        adapter_reset()
+        run(['ssh-keygen','-A'])
+        MAIN.write_text(MAIN.read_text().replace(f'HostKey {KEY}\n',''))
+        implicit = request()
+        for kind in ('rsa','ecdsa','ed25519'):
+            for suffix in ('','.pub'):
+                key = Path('/etc/ssh/ssh_host_'+kind+'_key'+suffix)
+                if not any(p['path']==str(key) for p in implicit['paths']):
+                    implicit['paths'].append({'path':str(key),'sha256':sha(key)})
+        adapter_case('implicit-Debian-HostKeys', req=implicit, success=True, restarted=True)
+        adapter_reset()
+        safe_dir=Path('/etc/systemd/system/ssh.service.d')
+        safe_dir.mkdir(exist_ok=True)
+        safe_file=safe_dir/'fic-compatible.conf'
+        safe_file.write_text('[Unit]\nDescription=Compatible SSH test\n[Service]\nCPUWeight=100\n')
+        run(['systemctl','daemon-reload'])
+        adapter_case('compatible-administrative-drop-in',success=True,restarted=True)
+        safe_file.unlink()
+        run(['systemctl','daemon-reload'])
         adapter_reset(); (DROP / '10-nested.conf').write_text(f'Include {DROP}/nested.inc\n')
         (DROP / 'nested.inc').write_text('MaxAuthTries 3\nPermitRootLogin no\n')
         adapter_case('nested-literal-Include', success=True, restarted=True)

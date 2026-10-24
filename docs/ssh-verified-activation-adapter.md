@@ -128,8 +128,11 @@ PermitEmptyPasswords, StrictModes, LoginGraceTime. Native sshd дополнит�
 не запрещают другую выбранную политику. Match exec/unknown criteria отклоняются.
 Это не доказательство всех Match contexts через несколько `-T -C` probes.
 
-Нужен explicit HostKey; каждый такой private key и companion `.pub` должен
-иметь reference coverage. Неявные defaults, HostKeyAgent, HostCertificate и
+Каждый explicit HostKey и companion `.pub` должен иметь reference coverage.
+При отсутствии HostKey поддержан полный штатный Debian default set: RSA, ECDSA
+и ed25519 по `/etc/ssh/ssh_host_{rsa,ecdsa,ed25519}_key`, вместе с `.pub`.
+Отсутствие любого reference этого набора отклоняется; metadata private keys не
+ослаблены. Набор подтверждён реальным sshd -T на Debian12/13. HostKeyAgent, HostCertificate и
 прочие неописанные launch/config dependencies v1 не принимает. Secret bytes
 не включаются в diagnostics/evidence. Private HostKey должен быть regular, UID 0,
 с mode ровно 0600 или 0400; group/other, special bits, symlink, xattr/ACL
@@ -295,9 +298,29 @@ real Debian gate проверяет фактический adapter/sshd, а не
 
 Первый classifier подэтап нового Debian SSH ТЗ: bounded Include topology и
 policy-specific conditional refusal. Production caller передаёт selected policies
-в closure validation. Это не завершённый Debian end-to-end: service admission,
-launch-profile adjustments, implicit HostKey coverage, reference builder, verified
-policy apply и no-op receipt ещё требуют реализации/проверки. M1 не изменяется.
+в closure validation. Это не завершённый Debian end-to-end: adapter profile/admission follow-up ниже покрывает defaults/drop-ins и отдельные
+service checks; reference builder, verified policy apply и no-op receipt ещё
+требуют реализации/проверки. M1 не изменяется.
 Native `boundary_syntax.py` в disposable Debian12/13 проверяет только настоящий
 OpenSSH syntax/context для Match, не restart/RO snapshot/apply. Источники и
 ownership из успешного classifier самостоятельно не выводятся.
+
+### Native Debian profile/admission follow-up
+
+Допускаются literal empty `SSHD_OPTS=`, `SSHD_OPTS=""`, `SSHD_OPTS=''`; остальные
+EnvironmentFile assignments по-прежнему Unsupported. Unit drop-ins только в
+`/etc/systemd/system/ssh.service.d/*.conf` и только Description в Unit/CPUWeight
+1..10000 в Service. Текст сверяется с existing source fingerprint до и после
+classification; continuation/unknown directives не разрешены. Фактические
+Exec/environment/mount/credential proofs всё равно обязательны. Это ограниченный
+allowlist, не универсальная поддержка systemd overrides.
+
+Typed UnitFileState включён в existing immutable observation. SSH adapter принимает
+только persistent `enabled`; disabled/masked/static/enabled-runtime не принимаются.
+Generic engine не требует enabled для других служб. Initial admission проверяется
+до capture config bytes, затем preflight повторяется. Для activating/auto-restart,
+deactivating/reloading и inactive с pending Job есть deadline-bounded ожидание;
+failed/inactive без Job не исправляются и не запускаются. После activation/cleanup
+дополнительно подтверждаются MainPID/InvocationID, readiness и неизменный launch.
+Эти adapter checks ещё не обеспечивают no-write gate существующего policy apply:
+production integration в Ssh.cpp остаётся обязательным следующим этапом.

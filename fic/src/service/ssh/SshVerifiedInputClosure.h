@@ -11,6 +11,7 @@ struct Closure {
     std::set<std::string> hostKeys;
 };
 Closure validateClosure(const ActivationRequest&, const InputBytes&, const std::map<std::string, std::string>& policies);
+void validateCompatibleDropIn(const std::string& bytes);
 void validateEmptyOptions(const std::string& bytes);
 void validateLaunchProfile(const std::map<std::string, std::string>& launch);
 void validatePolicies(const std::map<std::string, std::string>& policies);

@@ -1,12 +1,17 @@
 #include "service/ssh/SshVerifiedActivationAdapter.h"
 #include "service/ssh/SshVerifiedInputClosure.h"
 #include "service/ssh/SshPersistentMetadata.h"
+#include "service/ssh/SshServiceAdmission.h"
+#include <thread>
+#include <algorithm>
 #include "service/VerifiedConfigActivationProof.h"
+#include "service/VerifiedConfigLaunchContract.h"
 #include "modules/net/ssh/SshInputAuthority.h"
 #include "modules/net/ssh/SshRuntime.h"
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "platform/PlatformCompatibility.h"
 #include <fic/core/integrity/CommandHashStore.h>
+#include <fic/core/integrity/ContentDigest.h>
 #include <fic/core/process/VerifiedProcessExecutor.h>
 #include <nlohmann/json.hpp>
 #include <fcntl.h>
@@ -27,6 +32,7 @@ Json value(const d::LaunchContract& launch, const char* key) {
     return Json::parse(launch.at(std::string("launch.") + key)).at("value");
 }
 void validateLaunch(const d::LaunchContract& launch) {
+    if(value(launch,"UnitFileState")!="enabled") unsupported("SSH RuntimeNotReady: service must be persistently enabled");
     const Json command = Json::array({Json::array({"/usr/sbin/sshd", Json::array({"/usr/sbin/sshd", "-D", "$SSHD_OPTS"}), Json::array()})});
     const Json pre = Json::array({Json::array({"/usr/sbin/sshd", Json::array({"/usr/sbin/sshd", "-t"}), Json::array()})});
     if (value(launch, "ExecStartEx") != command || value(launch, "ExecStartPreEx") != pre ||
@@ -35,8 +41,27 @@ void validateLaunch(const d::LaunchContract& launch) {
         unsupported("SSH v1 requires stock Debian ExecStart/Pre and no extra execution hooks");
     if (value(launch, "EnvironmentFiles") != Json::array({Json::array({"/etc/default/ssh", true})}) ||
         !value(launch, "Environment").empty() || !value(launch, "PassEnvironment").empty() ||
-        !value(launch, "UnsetEnvironment").empty() || !value(launch, "DropInPaths").empty())
+        !value(launch, "UnsetEnvironment").empty())
         unsupported("SSH v1 launch environment/drop-ins unsupported");
+    const auto dropins = value(launch,"DropInPaths");
+    if(!dropins.is_array() || dropins.size()>64) unsupported("unsupported SSH drop-in list");
+    for(const auto& item:dropins) {
+        const auto name=item.get<std::string>();
+        const auto p=std::filesystem::path(name);
+        if(p.parent_path()!="/etc/systemd/system/ssh.service.d" || p.extension()!=".conf" ||
+           p.lexically_normal().string()!=name) unsupported("unsupported SSH drop-in path");
+        const auto expected=launch.find("launch.file:"+name);
+        if(expected==launch.end()) unsupported("SSH drop-in source proof missing");
+        auto file=d::openAbsolute(p,O_RDONLY);std::uint64_t budget=65536;
+        const auto tree=d::readTree(file.get(),ControlledPathKind::File,budget);
+        const auto& bytes=tree.files.at("");
+        if(Json::parse(expected->second).at("file").back()!=fic::core::ContentDigest::sha256Hex(bytes))
+            throw d::Failure(ActivationStatus::InterferenceDetected,"SSH drop-in source differs");
+        detail::validateCompatibleDropIn(bytes);
+        auto root=d::openAbsolute("/",O_PATH|O_DIRECTORY);budget=1024*1024;
+        if(d::fingerprintUnitSource(root.get(),name,budget)!=expected->second)
+            throw d::Failure(ActivationStatus::InterferenceDetected,"SSH drop-in changed during classification");
+    }
     if (value(launch, "User") != "" || value(launch, "Group") != "" || !value(launch, "SupplementaryGroups").empty())
         unsupported("SSH v1 requires stock root service credentials");
     const auto fragment = value(launch, "FragmentPath").get<std::string>();
@@ -108,9 +133,14 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
         const auto profile = fic::platform::makeBuildPlatformProfile(); std::string error;
         if ((profile.id != "debian-12" && profile.id != "debian-13") ||
             !fic::platform::validateHostCompatibility(profile, "/etc/os-release", error)) unsupported("SSH verified activation v1 supports Debian 12/13 only");
-        const auto observed = capture(request.reference); validateCaptured(request, observed);
         d::SystemdActivation service(request.reference.unit, deadline, request.reference.paths);
+        while(true) {
+            const auto state=service.current();detail::validateLaunchProfile(state.properties);
+            if(detail::classifyServiceAdmission(state.at("ActiveState"),state.at("SubState"),state.at("Job"))==detail::ServiceAdmission::Ready)break;
+            std::this_thread::sleep_for(std::min(service.remaining(),std::chrono::milliseconds(50)));
+        }
         auto launch = service.preflight(); detail::validateLaunchProfile(launch.properties);
+        const auto observed = capture(request.reference); validateCaptured(request, observed);
         fic::platform::PlatformExecutableResolver resolver(profile.executables);
         std::filesystem::path binary;
         if (!resolver.resolve(fic::platform::ExecutableId::Sshd, binary, error) || binary != "/usr/sbin/sshd" ||
@@ -146,6 +176,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
         for (const auto* key : {"ActiveState", "SubState", "MainPID", "InvocationID", "Job", "Result"}) proof.expectedConfiguration.erase(key);
         proof.sourceRoots = observed.roots; proof.sourceAttributes = observed.attributes;
         bool publishedProof = false, runtimeProof = false;
+        std::string promotedInvocation, promotedPid;
         proof.published = [&](auto) {
             validateCaptured(request, capture(request.reference, true)); semantics(); publishedProof = true;
         };
@@ -155,6 +186,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
             if (::stat(("/proc/" + ready.at("MainPID") + "/exe").c_str(), &actual) || ::fstat(executable.get(), &expected) ||
                 actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino)
                 throw d::Failure(ActivationStatus::InterferenceDetected, "ready service executable differs from verified SSH binary");
+            promotedInvocation=ready.at("InvocationID");promotedPid=ready.at("MainPID");
             runtimeProof = true;
         };
 #ifdef FIC_ACTIVATOR_TESTING
@@ -177,6 +209,10 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
             [&] { return capture(request.reference, false, true); },
             [&](const Capture& current) { validateCaptured(request, current); });
         if (result.activation.success() && result.inputs == ProofState::Proven && result.semantics == ProofState::Proven) {
+            const auto finalState=service.current();
+            service.confirm(finalState);
+            if(finalState.at("InvocationID")!=promotedInvocation || finalState.at("MainPID")!=promotedPid)
+                throw d::Failure(ActivationStatus::InterferenceDetected,"SSH runtime identity changed after activation/cleanup");
             result.status = result.persistent == ProofState::Proven ? SshActivationStatus::Success :
                 result.persistent == ProofState::NonCompliant ? SshActivationStatus::RuntimeActivatedButPersistentDrift : SshActivationStatus::ActivationFailed;
         }
@@ -196,6 +232,13 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& request
     return result;
 }
 } // namespace
+detail::ServiceAdmission detail::classifyServiceAdmission(const std::string& active,
+    const std::string& substate,const std::string& job) {
+    if(active=="active"&&substate=="running"&&job.empty())return ServiceAdmission::Ready;
+    if(active=="activating"||active=="deactivating"||active=="reloading"||
+       (active=="inactive"&&!job.empty()))return ServiceAdmission::Wait;
+    throw d::Failure(ActivationStatus::ReadinessUnconfirmed,"SSH RuntimeNotReady: inactive/failed/unsupported runtime; no configuration mutation");
+}
 void detail::validateLaunchProfile(const std::map<std::string, std::string>& launch) { validateLaunch(launch); }
 SshVerifiedActivationResult SshVerifiedActivationAdapter::activate(const SshVerifiedActivationRequest& r) { return perform(r); }
 #ifdef FIC_ACTIVATOR_TESTING

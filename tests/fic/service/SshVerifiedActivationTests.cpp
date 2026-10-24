@@ -1,6 +1,7 @@
 #include "service/ssh/SshVerifiedActivationAdapter.h"
 #include "service/ssh/SshVerifiedInputClosure.h"
 #include "service/ssh/SshPersistentMetadata.h"
+#include "service/ssh/SshServiceAdmission.h"
 #include "service/VerifiedConfigMountSupport.h"
 #include <fic/core/integrity/ContentDigest.h>
 #include <iostream>
@@ -44,6 +45,7 @@ int main() {
     put("ExecStartEx",J::array({J::array({"/usr/sbin/sshd",J::array({"/usr/sbin/sshd","-D","$SSHD_OPTS"}),J::array()})}));
     put("ExecStartPreEx",J::array({J::array({"/usr/sbin/sshd",J::array({"/usr/sbin/sshd","-t"}),J::array()})}));
     put("EnvironmentFiles",J::array({J::array({"/etc/default/ssh",true})}));
+    put("UnitFileState","enabled");
     put("User", ""); put("Group", "");
     put("FragmentPath","/lib/systemd/system/ssh.service"); launch["launch.ManagerEnvironment"] = "[]";
     d::validateLaunchProfile(launch); ++checks;
@@ -62,6 +64,20 @@ int main() {
     for (const auto* env : {"SSHD_OPTS=-p2223", "LD_PRELOAD=/bad", "LANG=en_US.UTF-8", "UNKNOWN=yes"}) {
         launch=goodLaunch; launch["launch.ManagerEnvironment"] = J::array({env}).dump(); deny([&] { d::validateLaunchProfile(launch); });
     }
+    for(const auto& bytes:{"[Unit]\nDescription=Local SSH description\n", "[Service]\nCPUWeight=100\n"}) {
+        d::validateCompatibleDropIn(bytes);++checks;
+    }
+    for(const auto& bytes:{"[Service]\nExecStart=/bad\n","[Unit]\nDescription=bad\\\nExecStart=/bad\n", "[Service]\nCPUWeight=0\n", "[Service]\nEnvironment=SSHD_OPTS=-f/bad\n"})
+        deny([&]{d::validateCompatibleDropIn(bytes);});
+    for(const auto* state:{"disabled","masked","static","enabled-runtime","indirect",""}) {
+        launch=goodLaunch;put("UnitFileState",state);deny([&]{d::validateLaunchProfile(launch);});
+    }
+    require(d::classifyServiceAdmission("active","running","")==d::ServiceAdmission::Ready,"ready service refused");++checks;
+    for(const auto* state:{"activating","deactivating","reloading"}) {
+        require(d::classifyServiceAdmission(state,"auto-restart","")==d::ServiceAdmission::Wait,"pending lifecycle refused");++checks;
+    }
+    require(d::classifyServiceAdmission("inactive","dead","123")==d::ServiceAdmission::Wait,"pending startup job refused");++checks;
+    for(const auto* state:{"inactive","failed","unknown"})deny([&]{d::classifyServiceAdmission(state,"dead","");});
     Fixture f;
     require(f.closure().negativeSetDirectories.count(dir), "empty glob negative set not protected"); ++checks;
     f.bytes[dir+"/10.conf"] = "Port 2222\nInclude " + dir + "/nested.inc\n";
@@ -89,6 +105,12 @@ int main() {
     Fixture external;external.bytes[mainFile]+="Include /opt/evil/*.conf\n";external.sync();
     external.reference.paths.push_back({"/opt/evil",ControlledPathKind::Directory,"",{}});
     deny([&]{external.closure();});
+    Fixture defaults;defaults.bytes[mainFile]="Include /etc/ssh/sshd_config.d/*.conf\nPermitRootLogin no\n";
+    for (const auto* key:{"/etc/ssh/ssh_host_rsa_key","/etc/ssh/ssh_host_ecdsa_key","/etc/ssh/ssh_host_ed25519_key"}) {
+        defaults.bytes[key]="private fixture";defaults.bytes[std::string(key)+".pub"]="public fixture";
+    }
+    defaults.sync();require(defaults.closure().hostKeys.size()==3,"implicit Debian HostKey coverage rejected");++checks;
+    defaults.bytes.erase("/etc/ssh/ssh_host_rsa_key.pub");defaults.sync();deny([&]{defaults.closure();});
     Fixture cycle; cycle.bytes[dir+"/cycle.conf"] = "Include " + mainFile + "\n"; cycle.sync(); deny([&] { cycle.closure(); });
     Fixture deep;
     deep.bytes[mainFile] += "Include " + dir + "/1.inc\n";
@@ -107,8 +129,8 @@ int main() {
     doubleSlash.bytes[mainFile] = "HostKey " + host + "\nInclude /etc/ssh//sshd_config.d/*.conf\n";
     doubleSlash.sync(); doubleSlash.reference.paths.back().path = "/etc/ssh//sshd_config.d";
     deny([&] { doubleSlash.closure(); });
-    for (const auto& env : {"SSHD_OPTS=-f /other\n", "SSHD_OPTS=-oUsePAM=no\n", "SSHD_OPTS=-p2223\n", "SSHD_OPTS=\"\"\n", "SSHD_OPTS=\nSSHD_OPTS=\n", "OTHER=\n", "# no assignment\n", "SSHD_OPTS=\r\n"}) deny([&] { d::validateEmptyOptions(env); });
-    for (const auto& env : {"SSHD_OPTS=\n", " # comment\n\tSSHD_OPTS=  \n\n"}) { d::validateEmptyOptions(env); ++checks; }
+    for (const auto& env : {"SSHD_OPTS=-f /other\n", "SSHD_OPTS=-oUsePAM=no\n", "SSHD_OPTS=-p2223\n", "SSHD_OPTS=\nSSHD_OPTS=\n", "OTHER=\n", "# no assignment\n", "SSHD_OPTS=\r\n"}) deny([&] { d::validateEmptyOptions(env); });
+    for (const auto& env : {"SSHD_OPTS=\"\"\n", "SSHD_OPTS=''\n", "SSHD_OPTS=\n", " # comment\n\tSSHD_OPTS=  \n\n"}) { d::validateEmptyOptions(env); ++checks; }
     d::validatePolicies({{"ssh_root_login","no"},{"ssh_pubkey_auth","yes"},{"ssh_use_pam","yes"},{"ssh_max_auth_tries","3"},{"ssh_port","2222"}}); ++checks;
     for (const auto& policies : {std::map<std::string,std::string>{}, {{"unknown","yes"}}, {{"ssh_port","65536"}}, {{"ssh_use_pam","ENABLE"}}, {{"ssh_use_pam","no"}}, {{"ssh_pubkey_auth","no"}}, {{"ssh_root_login","yes"}}, {{"ssh_max_auth_tries","6"}}, {{"ssh_port","22 23"}}}) deny([&] { d::validatePolicies(policies); });
     // Exact operation baseline: both map keys and metadata matter; atime does not.

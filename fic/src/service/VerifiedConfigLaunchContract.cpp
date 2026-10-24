@@ -17,7 +17,7 @@ using Json = nlohmann::json;
 using Message = std::unique_ptr<sd_bus_message, decltype(&sd_bus_message_unref)>;
 const std::vector<std::string> commands{
     "ExecConditionEx", "ExecStartPreEx", "ExecStartEx", "ExecStartPostEx", "ExecReloadEx", "ExecStopEx", "ExecStopPostEx"};
-const std::vector<std::string> unitProperties{"FragmentPath", "SourcePath", "DropInPaths", "NeedDaemonReload", "Transient", "TriggeredBy"};
+const std::vector<std::string> unitProperties{"UnitFileState", "FragmentPath", "SourcePath", "DropInPaths", "NeedDaemonReload", "Transient", "TriggeredBy"};
 const std::vector<std::string> serviceProperties{
     "PIDFile", "Restart", "ExitType", "RemainAfterExit", "FileDescriptorStoreMax", "NFileDescriptorStore",
     "Environment", "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment", "User", "Group", "SupplementaryGroups",

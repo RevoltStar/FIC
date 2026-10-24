@@ -118,8 +118,15 @@ int main(int argc, char** argv) {
             SshConfigAudit audit({"/etc/ssh/sshd_config", "/etc/ssh", 16, 256, true}); std::string identity;
             check(audit.sourceIdentity(identity, error), error); output["include_identity"] = identity;
         } else {
-            const auto launchBefore = d::readLaunchContract(r.unit, std::chrono::steady_clock::now() + std::chrono::seconds(10));
             const bool adapter = action.rfind("adapter", 0) == 0;
+            d::LaunchContract launchBefore;
+            try { launchBefore=d::readLaunchContract(r.unit,std::chrono::steady_clock::now()+std::chrono::seconds(10)); }
+            catch(const d::Failure& e) {
+                if(!adapter)throw;
+                // Inactive units can be garbage-collected. Instrumentation
+                // must not preempt the production adapter's own refusal.
+                output["pre_launch_probe_error"]=e.what();
+            }
             const std::string fault = action == "activate" || action == "adapter" ? "" : adapter ? action.substr(8) : action;
             d::Fd key(::open("/etc/ssh/ssh_host_ed25519_key", O_RDONLY|O_CLOEXEC));
             d::TestHooks hooks; d::Fd busy, original(::open("/etc/ssh/sshd_config", O_RDWR|O_CLOEXEC));

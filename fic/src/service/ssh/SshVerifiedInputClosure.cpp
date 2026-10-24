@@ -36,6 +36,24 @@ void validatePolicies(const std::map<std::string, std::string>& policies) {
         } else unsupported("SSH policy lacks an explicit adapter v1 contract");
     }
 }
+void validateCompatibleDropIn(const std::string& bytes) {
+    if (bytes.size()>65536 || bytes.find('\0')!=std::string::npos) unsupported("unsupported SSH drop-in size/content");
+    std::istringstream input(bytes);std::string line,section;
+    while(std::getline(input,line)) {
+        const auto first=line.find_first_not_of(" \t");
+        if(first==std::string::npos||line[first]=='#'||line[first]==';')continue;
+        line=line.substr(first,line.find_last_not_of(" \t")-first+1);
+        if(line=="[Unit]"||line=="[Service]"){section=line;continue;}
+        if(section=="[Unit]" && line.rfind("Description=",0)==0 &&
+           line.find_first_of("\\\r\n%$")==std::string::npos)continue;
+        if(section=="[Service]" && line.rfind("CPUWeight=",0)==0) {
+            const auto n=line.substr(10);
+            if(!n.empty()&&n.size()<=5&&n.find_first_not_of("0123456789")==std::string::npos&&
+               std::stoul(n)>=1&&std::stoul(n)<=10000)continue;
+        }
+        unsupported("SSH drop-in outside tested Description/CPUWeight allowlist");
+    }
+}
 void validateEmptyOptions(const std::string& bytes) {
     if (bytes.size() > 65536 || bytes.find('\0') != std::string::npos) unsupported("unsupported SSH EnvironmentFile");
     std::istringstream stream(bytes); std::string line; unsigned assignments = 0;
@@ -43,7 +61,8 @@ void validateEmptyOptions(const std::string& bytes) {
         const auto first = line.find_first_not_of(" \t");
         if (first == std::string::npos || line[first] == '#') continue;
         const auto last = line.find_last_not_of(" \t");
-        if (line.substr(first, last - first + 1) != "SSHD_OPTS=" || ++assignments != 1)
+        const auto assignment = line.substr(first, last-first+1);
+        if ((assignment != "SSHD_OPTS=" && assignment != "SSHD_OPTS=\"\"" && assignment != "SSHD_OPTS=''" ) || ++assignments != 1)
             unsupported("only one literal empty SSHD_OPTS assignment is supported");
     }
     if (assignments != 1) unsupported("explicit empty SSHD_OPTS required");
@@ -150,7 +169,15 @@ Closure validateClosure(const ActivationRequest& r, const InputBytes& bytes, con
         active.erase(name);
     };
     visit("/etc/ssh/sshd_config", 0);
-    if (result.hostKeys.empty()) unsupported("explicit referenced HostKey required; implicit defaults unsupported");
+    if (result.hostKeys.empty()) {
+        // Debian OpenSSH built-in defaults. Require coverage of the complete
+        // fixed set; do not infer ownership or silently omit a missing key.
+        for (const auto* key : {"/etc/ssh/ssh_host_rsa_key", "/etc/ssh/ssh_host_ecdsa_key", "/etc/ssh/ssh_host_ed25519_key"}) {
+            if (!bytes.count(key) || !bytes.count(std::string(key)+".pub"))
+                unsupported("Debian implicit HostKey defaults require complete trusted reference coverage");
+            result.hostKeys.insert(key);
+        }
+    }
     return result;
 }
 } // namespace fic::service::ssh::detail
