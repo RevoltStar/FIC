@@ -288,15 +288,15 @@ Where possible, a lock against modification is applied
 
 # Network settings
 [module:NET][policy:ssh_max_auth_tries]=Maximum number of authorization attempts
-[module:NET][policy:ssh_max_auth_tries][description]=Maximum number of authorization attempts
+[module:NET][policy:ssh_max_auth_tries][description]=Maximum number of authorization attempts On ALT p11, the stock SSH service must be enabled and running. FIC does not start a stopped service. Stop SSH before rollback; rollback does not start the service.
 [module:NET][policy:ssh_port]=Connection port
-[module:NET][policy:ssh_port][description]=Connection port
+[module:NET][policy:ssh_port][description]=Connection port On ALT p11, the stock SSH service must be enabled and running. FIC does not start a stopped service. Stop SSH before rollback; rollback does not start the service.
 [module:NET][policy:ssh_root_login]=Root login policy
-[module:NET][policy:ssh_root_login][description]=Root login policy
+[module:NET][policy:ssh_root_login][description]=Root login policy On ALT p11, the stock SSH service must be enabled and running. FIC does not start a stopped service. Stop SSH before rollback; rollback does not start the service.
 [module:NET][policy:ssh_pubkey_auth]=SSH public-key authentication
-[module:NET][policy:ssh_pubkey_auth][description]=Enforces the global PubkeyAuthentication yes value and rejects conditional Match overrides that disable public-key authentication. It does not disable password authentication.
+[module:NET][policy:ssh_pubkey_auth][description]=Enforces the global PubkeyAuthentication yes value and rejects conditional Match overrides that disable public-key authentication. It does not disable password authentication. On ALT p11, the stock SSH service must be enabled and running. FIC does not start a stopped service. Stop SSH before rollback; rollback does not start the service.
 [module:NET][policy:ssh_use_pam]=SSH PAM integration
-[module:NET][policy:ssh_use_pam][description]=Enables PAM in OpenSSH. Required for FIC IncidentAccessGate coverage of SSH logins, including public-key authentication.
+[module:NET][policy:ssh_use_pam][description]=Enables PAM in OpenSSH. Required for FIC IncidentAccessGate coverage of SSH logins, including public-key authentication. On ALT p11, the stock SSH service must be enabled and running. FIC does not start a stopped service. Stop SSH before rollback; rollback does not start the service.
 [module:NET][submodule:SshEdit][message:parameter_not_configured_part1]=SSH parameter is not configured for policy '
 [module:NET][submodule:SshEdit][message:parameter_not_configured_part2]='
 [module:NET][submodule:SshEdit][message:load_failed]=Failed to load sshd_config

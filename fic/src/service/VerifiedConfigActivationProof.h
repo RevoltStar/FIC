@@ -12,6 +12,8 @@ struct ActivationProof {
     // Closed Ubuntu SSH profile only. Runs under the SAME published snapshot;
     // no permission to replace copy/mount/observation/cleanup machinery.
     std::function<void(std::chrono::steady_clock::time_point)> sshSocketActivation;
+    // Closed ALT simple-service readiness; runs only inside the common bounded loop.
+    std::function<bool(const ServiceState&, std::chrono::steady_clock::time_point)> altSshReadiness;
     LaunchContract expectedConfiguration;
     std::map<std::string, Identity> sourceRoots;
     std::map<std::string, std::map<std::string, struct stat>> sourceAttributes;

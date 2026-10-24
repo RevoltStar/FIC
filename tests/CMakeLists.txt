@@ -3109,6 +3109,8 @@ set(FIC_SSH_VERIFIED_SOURCES
     ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshListenerProof.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/AltSshServiceFlow.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
@@ -3307,7 +3309,9 @@ foreach(ssh_caller IN LISTS FIC_LOCAL_TEST_TARGETS)
         target_sources(${ssh_caller} PRIVATE ${FIC_VERIFIED_CONFIG_SOURCES}
             ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
             ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
-            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp)
+            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp
+            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshListenerProof.cpp
+            ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/AltSshServiceFlow.cpp)
         target_link_libraries(${ssh_caller} PRIVATE PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
     endif()
 endforeach()

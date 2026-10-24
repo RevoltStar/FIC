@@ -17,6 +17,7 @@ namespace fic::platform {
 
 enum class ExecutableId {
     Sshd,
+    SshKeygen,
     SshSocketGenerator,
     Systemctl,
     Loginctl,
@@ -79,12 +80,13 @@ enum class SshPamServiceRouting {
     ConfigurablePamServiceName
 };
 
-enum class SshApplyContract { Legacy, DebianVerified, UbuntuSocketVerified };
+enum class SshApplyContract { Legacy, DebianVerified, UbuntuSocketVerified, AltVerified };
 
 struct SshPlatformConfig {
     SshApplyContract applyContract = SshApplyContract::Legacy;
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
+    std::filesystem::path verifiedIncludeDirectory;
     std::vector<std::string> serviceUnits;
     std::vector<std::string> socketUnits;
     // Stock package launch contract. ACTIVE rejects custom sshd arguments.

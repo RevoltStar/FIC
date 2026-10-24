@@ -7,6 +7,7 @@
 #include <fic/core/fs/AtomicFileWriter.h>
 
 #include "service/ssh/UbuntuSshSocketFlow.h"
+#include "service/ssh/AltSshServiceFlow.h"
 #include <algorithm>
 #include <utility>
 
@@ -20,13 +21,21 @@ SshRuntime makeRuntime(const SshRollbackOptions& options) {
     return SshRuntime(runtimeOptions, *options.executables, options.runner);
 }
 
+void requireOffline(const SshRollbackOptions& options) {
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(10);
+    switch(options.offlineRelease) {
+    case SshOfflineReleaseProfile::UbuntuSocket:fic::service::ssh::detail::UbuntuSshSocketFlow::requireOffline(deadline);return;
+    case SshOfflineReleaseProfile::AltService:fic::service::ssh::detail::AltSshServiceFlow::requireOffline(deadline);return;
+    default:throw std::runtime_error("unknown SSH offline release profile");
+    }
+}
 SshConfigTransactionHooks makeHooks(const SshRollbackOptions& options) {
     SshConfigTransactionHooks hooks;
     hooks.beforeWrite = options.beforeWrite;
     hooks.beforeRestore = options.beforeRestore;
-    if(options.ubuntuSocket) {
-        const auto offline=[](std::string& error) {
-            try {fic::service::ssh::detail::UbuntuSshSocketFlow::requireOffline(std::chrono::steady_clock::now()+std::chrono::seconds(10));return true;}
+    if(options.offlineRelease!=SshOfflineReleaseProfile::None) {
+        const auto offline=[options](std::string& error) {
+            try {requireOffline(options);return true;}
             catch(const std::exception& e) {error=e.what();return false;}
         };
         hooks.offlineOwnershipRelease=true;hooks.verifiedAdmission=offline;
@@ -109,8 +118,8 @@ SshRollbackResult undoSshManagedPolicyMutation(
         return result;
     }
 
-    if(options.ubuntuSocket) {
-        try {fic::service::ssh::detail::UbuntuSshSocketFlow::requireOffline(std::chrono::steady_clock::now()+std::chrono::seconds(10));}
+    if(options.offlineRelease!=SshOfflineReleaseProfile::None) {
+        try {requireOffline(options);}
         catch(const std::exception& e) {result.message=e.what();return result;}
     }
     SshConfigFileHandler handler(options.configPath.string());
@@ -178,7 +187,7 @@ SshRollbackResult undoSshManagedPolicyMutation(
         }
     }
 
-    if(options.ubuntuSocket)fic::service::ssh::detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();
+    if(options.offlineRelease==SshOfflineReleaseProfile::UbuntuSocket)fic::service::ssh::detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();
     if (!blockPresent && !wrappersPresent) {
         // Nothing FIC-owned remains for this policy: the mutation was never
         // applied or already factually rolled back (e.g. crash after the
@@ -213,8 +222,8 @@ SshRollbackResult undoSshManagedPolicyMutation(
                              barrierError;
             return result;
         }
-        if(options.ubuntuSocket) {
-            try {fic::service::ssh::detail::UbuntuSshSocketFlow::requireOffline(std::chrono::steady_clock::now()+std::chrono::seconds(10));}
+        if(options.offlineRelease!=SshOfflineReleaseProfile::None) {
+            try {requireOffline(options);}
             catch(const std::exception& e) {result.nothingToDo=false;result.message=e.what();return result;}
             result.message="offline ownership already released; runtime NOT activated";return result;
         }

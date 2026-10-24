@@ -207,6 +207,8 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         const auto profile=proof?proof->profile:ActivationProfile::ActiveNotifyService;
         if(proof && ((profile==ActivationProfile::UbuntuSshSocket)!=bool(proof->sshSocketActivation)))
             throw Failure(ActivationStatus::UnsupportedConfiguration,"incomplete closed SSH socket proof");
+        if(proof && ((profile==ActivationProfile::AltSshSimple)!=bool(proof->altSshReadiness)))
+            throw Failure(ActivationStatus::UnsupportedConfiguration,"incomplete closed ALT SSH readiness proof");
         service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths, profile);
         const auto launch = service->preflight();
         if (proof) {
@@ -316,7 +318,7 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         while (true) {
             if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace event during activation");
             auto state = service->current();
-            if (service->ready(state)) { service->confirm(state); ready = std::move(state); break; }
+            if (service->ready(state) && (!proof || !proof->altSshReadiness || proof->altSshReadiness(state,deadline))) { service->confirm(state); ready = std::move(state); break; }
             observer.changed(std::min<std::int64_t>(20, service->remaining().count()));
         }
         verifyPublished(); service->confirm(ready);
@@ -324,7 +326,7 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace event before commit");
         result.readinessConfirmed = true;
         result.status = result.primaryStatus = ActivationStatus::Success;
-        result.diagnostic = "notify readiness and pinned configuration confirmed within documented observation model";
+        result.diagnostic = profile==ActivationProfile::AltSshSimple ? "ALT SSH runtime/listener readiness and pinned inputs confirmed" : "notify readiness and pinned configuration confirmed within documented observation model";
     } catch (const Failure& e) {
         result.status = result.primaryStatus = e.status; result.diagnostic = e.what();
     } catch (const std::exception& e) {

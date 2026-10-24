@@ -28,7 +28,7 @@ struct SshVerifiedActivationResult {
 class SshVerifiedActivationAdapter {
 public:
     static std::map<std::string,std::string> serviceAdmission();
-    // Read-only Debian input capture. Caller MUST first prove journal/managed
+    // Read-only platform input capture. Caller MUST first prove journal/managed
     // ownership and supply the expected main-file digest. Foreign root-owned
     // configuration is referenced, never enrolled as policy ownership.
     static SshVerifiedActivationRequest captureReference(

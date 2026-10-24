@@ -25,5 +25,7 @@ target_sources(ssh_apply_rollback_tests PRIVATE
     ${FIC_SSH_TEST_ROOT}/fic/src/service/VerifiedConfigSystemd.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
-    ${FIC_SSH_TEST_ROOT}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp)
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/ssh/SshListenerProof.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/service/ssh/AltSshServiceFlow.cpp)
 target_link_libraries(ssh_apply_rollback_tests PRIVATE PkgConfig::SSH_PROVENANCE_SYSTEMD)

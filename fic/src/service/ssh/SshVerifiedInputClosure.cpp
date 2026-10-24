@@ -2,13 +2,14 @@
 #include "service/VerifiedConfigMountSupport.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
 #include "modules/net/ssh/SshManagedBlock.h"
+#include "platform/PlatformProfile.h"
 #include <algorithm>
 #include <fic/core/integrity/ContentDigest.h>
 #include <functional>
 #include <sstream>
 namespace fic::service::ssh::detail {
 namespace {
-[[noreturn]] void unsupported(const char* why) {
+[[noreturn]] void unsupported(const std::string& why) {
     throw fic::service::detail::Failure(ActivationStatus::UnsupportedConfiguration, why);
 }
 bool path(const std::string& name) {
@@ -17,6 +18,10 @@ bool path(const std::string& name) {
         name.back() != '/' && name.find_first_not_of("/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-+") == std::string::npos &&
         std::none_of(p.begin(), p.end(), [](const auto& c) { return c == ".." || c == "."; });
 }
+}
+InputProfile inputProfile() {
+    const auto profile=fic::platform::makeBuildPlatformProfile();const auto& ssh=profile.ssh;
+    return {ssh.serviceUnits.at(0),ssh.configPath.string(),ssh.includeBasePath.string(),ssh.verifiedIncludeDirectory.string(),ssh.optionFile.string(),ssh.optionVariable,profile.id=="alt-p11"};
 }
 void validatePolicies(const std::map<std::string, std::string>& policies) {
     if (policies.empty() || policies.size() > 5) unsupported("selected SSH policies required");
@@ -54,7 +59,7 @@ void validateCompatibleDropIn(const std::string& bytes) {
         unsupported("SSH drop-in outside tested Description/CPUWeight allowlist");
     }
 }
-void validateEmptyOptions(const std::string& bytes) {
+void validateEmptyOptions(const std::string& bytes, const std::string& variable) {
     if (bytes.size() > 65536 || bytes.find('\0') != std::string::npos) unsupported("unsupported SSH EnvironmentFile");
     std::istringstream stream(bytes); std::string line; unsigned assignments = 0;
     while (std::getline(stream, line)) {
@@ -62,15 +67,15 @@ void validateEmptyOptions(const std::string& bytes) {
         if (first == std::string::npos || line[first] == '#') continue;
         const auto last = line.find_last_not_of(" \t");
         const auto assignment = line.substr(first, last-first+1);
-        if ((assignment != "SSHD_OPTS=" && assignment != "SSHD_OPTS=\"\"" && assignment != "SSHD_OPTS=''" ) || ++assignments != 1)
-            unsupported("only one literal empty SSHD_OPTS assignment is supported");
+        if ((assignment != variable+"=" && assignment != variable+"=\"\"" && assignment != variable+"=''" ) || ++assignments != 1)
+            unsupported("only one literal empty "+variable+" assignment is supported");
     }
-    if (assignments != 1) unsupported("explicit empty SSHD_OPTS required");
+    if (assignments != 1) unsupported("explicit empty "+variable+" required");
 }
-static Closure classifyClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies, bool requireKeys) {
+static Closure classifyClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies, bool requireKeys, const InputProfile& profile) {
     validatePolicies(policies);
     fic::service::detail::validateRequest(r);
-    if (r.unit != "ssh.service") unsupported("only ssh.service is supported");
+    if (r.unit != profile.unit) unsupported("canonical platform SSH unit required");
     std::set<std::string> directories;
     for (const auto& p : r.paths) {
         if (!path(p.path.string())) unsupported("SSH reference path outside v1 grammar");
@@ -129,7 +134,7 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
                 unsupported("conditional assignment of selected SSH policy unsupported");
             const auto portPolicy=policies.find("ssh_port");
             if(portPolicy!=policies.end()) {
-                if(key=="port" && name!="/etc/ssh/sshd_config" &&
+                if(key=="port" && name!=profile.mainFile &&
                    (args.size()!=1 || args.front()!=portPolicy->second))
                     unsupported("foreign Include Port conflicts with selected SSH port; no mutation allowed");
                 if(key=="listenaddress" && args.size()==1) {
@@ -150,15 +155,15 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
             if (key != "include") continue;
             for (const auto& arg : args) {
                 std::filesystem::path resolved(arg);
-                if (resolved.is_relative()) resolved = std::filesystem::path("/etc/ssh") / resolved;
+                if (resolved.is_relative()) resolved = std::filesystem::path(profile.base) / resolved;
                 const auto include = resolved.string();
                 // Check the pattern itself BEFORE expansion, including empty
                 // glob sets and Includes textually inside any Match context.
-                const auto relative = resolved.lexically_relative("/etc/ssh/sshd_config.d");
+                const auto relative = resolved.lexically_relative(profile.fragments);
                 if (include != resolved.lexically_normal().string() || relative.empty() ||
                     relative.is_absolute() || relative.begin()->string() == ".." ||
-                    include.rfind("/etc/ssh/sshd_config.d/", 0) != 0)
-                    unsupported("Include outside supported Debian SSH configuration boundary");
+                    include.rfind(profile.fragments+"/", 0) != 0)
+                    unsupported("Include outside supported platform SSH configuration boundary");
                 const bool glob = include.size() > 6 && include.compare(include.size()-6, 6, "*.conf") == 0;
                 const auto parent = std::filesystem::path(include).parent_path().string();
                 if (glob) {
@@ -184,22 +189,22 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
         }
         active.erase(name);
     };
-    visit("/etc/ssh/sshd_config", 0);
-    if (result.hostKeys.empty()) {
-        // Debian OpenSSH built-in defaults. Require coverage of the complete
-        // fixed set; do not infer ownership or silently omit a missing key.
-        for (const auto* key : {"/etc/ssh/ssh_host_rsa_key", "/etc/ssh/ssh_host_ecdsa_key", "/etc/ssh/ssh_host_ed25519_key"}) {
-            result.hostKeys.insert(key);
+    visit(profile.mainFile, 0);
+    if (result.hostKeys.empty() || profile.alt) {
+        // Native default key set. ALT also needs every stock keygen -A target
+        // even with explicit HostKey: the vendor Pre hook must remain a no-op.
+        for (const auto* key : {"ssh_host_rsa_key", "ssh_host_ecdsa_key", "ssh_host_ed25519_key"}) {
+            result.hostKeys.insert((std::filesystem::path(profile.base)/key).string());
         }
     }
     if(requireKeys)for(const auto& key:result.hostKeys)
         if(!bytes.count(key)||!bytes.count(key+".pub"))unsupported("HostKey inputs require complete trusted reference coverage");
     return result;
 }
-Closure validateClosure(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies) {
-    return classifyClosure(r,bytes,policies,true);
+Closure validateClosure(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies,const InputProfile& profile) {
+    return classifyClosure(r,bytes,policies,true,profile);
 }
 std::set<std::string> discoverHostKeys(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies) {
-    return classifyClosure(r,bytes,policies,false).hostKeys;
+    return classifyClosure(r,bytes,policies,false,inputProfile()).hostKeys;
 }
 } // namespace fic::service::ssh::detail

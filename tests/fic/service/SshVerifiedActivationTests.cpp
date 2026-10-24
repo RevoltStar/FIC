@@ -32,7 +32,7 @@ struct Fixture {
         }
         reference.paths.push_back({dir, ControlledPathKind::Directory, "", manifest});
     }
-    auto closure(const std::map<std::string,std::string>& policies = {{"ssh_root_login","no"}}) { return d::validateClosure(reference, bytes, policies); }
+    auto closure(const std::map<std::string,std::string>& policies = {{"ssh_root_login","no"}}) { return d::validateClosure(reference, bytes, policies,{"ssh.service",mainFile,"/etc/ssh",dir,"/etc/default/ssh","SSHD_OPTS",false}); }
 };
 int main() {
     unsigned checks = 0;
@@ -40,6 +40,7 @@ int main() {
         bool refused = false; try { action(); } catch (const fic::service::detail::Failure&) { refused = true; }
         require(refused, "unsupported input accepted"); ++checks;
     };
+    const d::InputProfile debianInput{"ssh.service",mainFile,"/etc/ssh",dir,"/etc/default/ssh","SSHD_OPTS",false};
     using J = nlohmann::json;
     std::map<std::string,std::string> launch;
     auto put = [&](const char* name, const J& v) { launch[std::string("launch.")+name] = J{{"value",v}}.dump(); };
@@ -50,21 +51,21 @@ int main() {
     put("UnitFileState","enabled");
     put("User", ""); put("Group", "");
     put("FragmentPath","/lib/systemd/system/ssh.service"); launch["launch.ManagerEnvironment"] = "[]";
-    d::validateLaunchProfile(launch); ++checks;
+    d::validateLaunchProfile(launch,debianInput,false); ++checks;
     launch["launch.ManagerEnvironment"] = J::array({"LANG=C.UTF-8","PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"}).dump();
-    d::validateLaunchProfile(launch); ++checks;
+    d::validateLaunchProfile(launch,debianInput,false); ++checks;
     const auto goodLaunch = launch;
     for (const auto* name : {"ExecStartEx","ExecStartPreEx","ExecConditionEx","ExecStartPostEx","ExecStopEx","ExecStopPostEx","Environment","PassEnvironment","UnsetEnvironment","DropInPaths"}) {
-        launch = goodLaunch; put(name,J::array({"unsupported"})); deny([&] { d::validateLaunchProfile(launch); });
+        launch = goodLaunch; put(name,J::array({"unsupported"})); deny([&] { d::validateLaunchProfile(launch,debianInput,false); });
     }
-    launch=goodLaunch; put("EnvironmentFiles",J::array({J::array({"/etc/other.env",true})})); deny([&] { d::validateLaunchProfile(launch); });
+    launch=goodLaunch; put("EnvironmentFiles",J::array({J::array({"/etc/other.env",true})})); deny([&] { d::validateLaunchProfile(launch,debianInput,false); });
     for (const auto* name : {"User", "Group", "SupplementaryGroups"}) {
         launch=goodLaunch; put(name, name == std::string("SupplementaryGroups") ? J::array({"nobody"}) : J("nobody"));
-        deny([&] { d::validateLaunchProfile(launch); });
+        deny([&] { d::validateLaunchProfile(launch,debianInput,false); });
     }
-    launch=goodLaunch; put("FragmentPath","/etc/systemd/system/ssh.service"); deny([&] { d::validateLaunchProfile(launch); });
+    launch=goodLaunch; put("FragmentPath","/etc/systemd/system/ssh.service"); deny([&] { d::validateLaunchProfile(launch,debianInput,false); });
     for (const auto* env : {"SSHD_OPTS=-p2223", "LD_PRELOAD=/bad", "LANG=en_US.UTF-8", "UNKNOWN=yes"}) {
-        launch=goodLaunch; launch["launch.ManagerEnvironment"] = J::array({env}).dump(); deny([&] { d::validateLaunchProfile(launch); });
+        launch=goodLaunch; launch["launch.ManagerEnvironment"] = J::array({env}).dump(); deny([&] { d::validateLaunchProfile(launch,debianInput,false); });
     }
     for(const auto& bytes:{"[Unit]\nDescription=Local SSH description\n", "[Service]\nCPUWeight=100\n"}) {
         d::validateCompatibleDropIn(bytes);++checks;
@@ -72,7 +73,7 @@ int main() {
     for(const auto& bytes:{"[Service]\nExecStart=/bad\n","[Unit]\nDescription=bad\\\nExecStart=/bad\n", "[Service]\nCPUWeight=0\n", "[Service]\nEnvironment=SSHD_OPTS=-f/bad\n"})
         deny([&]{d::validateCompatibleDropIn(bytes);});
     for(const auto* state:{"disabled","masked","static","enabled-runtime","indirect",""}) {
-        launch=goodLaunch;put("UnitFileState",state);deny([&]{d::validateLaunchProfile(launch);});
+        launch=goodLaunch;put("UnitFileState",state);deny([&]{d::validateLaunchProfile(launch,debianInput,false);});
     }
     require(d::classifyServiceAdmission("active","running","")==d::ServiceAdmission::Ready,"ready service refused");++checks;
     for(const auto* state:{"activating","deactivating","reloading"}) {
@@ -101,7 +102,7 @@ int main() {
                         auto out=state("active");
                         if(finish=="disabled-final") out.properties["launch.UnitFileState"]=nlohmann::json({{"type","s"},{"value","disabled"}}).dump();
                         return out;
-                    },[&](const auto& out){d::validateLaunchProfile(out.properties);},[&] {
+                    },[&](const auto& out){d::validateLaunchProfile(out.properties,debianInput,false);},[&] {
                         if(++waits>=3)throw fic::service::detail::Failure(ActivationStatus::TimedOut,"virtual admission deadline");
                     });passed=true;
                 } catch(const fic::service::detail::Failure&) {}
@@ -247,6 +248,26 @@ int main() {
         for (const auto* v : {"1", id==std::string("ssh_port") ? "65535" : "5"}) {d::validatePolicies({{id,v}}); ++checks;}
         for (const auto* v : {"0","-1","+1","01","1x", id==std::string("ssh_port") ? "65536" : "6"}) deny([&]{d::validatePolicies({{id,v}});});
     }
+    for(const auto* bytes:{"EXTRAOPTIONS=\n","EXTRAOPTIONS=''\n","EXTRAOPTIONS=\"\"\n","# stock ALT environment\nEXTRAOPTIONS=\n"}) {
+        d::validateEmptyOptions(bytes,"EXTRAOPTIONS");++checks;
+    }
+    for(const auto* bytes:{"SSHD_OPTS=\n","EXTRAOPTIONS=-p2222\n","EXTRAOPTIONS=-f/other\n","EXTRAOPTIONS=-oUsePAM=no\n","EXTRAOPTIONS=\nEXTRAOPTIONS=\n","EXTRAOPTIONS=\nUNKNOWN=\n"})
+        deny([&]{d::validateEmptyOptions(bytes,"EXTRAOPTIONS");});
+    const auto profile=d::inputProfile();
+    if(profile.alt) {
+        require(profile.unit=="sshd.service" && profile.mainFile=="/etc/openssh/sshd_config" &&
+                profile.fragments=="/etc/openssh/sshd_config.local.d" && profile.environment=="/etc/sysconfig/sshd" && profile.optionVariable=="EXTRAOPTIONS",
+                "ALT input profile differs from native contract");++checks;
+        ActivationRequest alt;alt.unit=profile.unit;d::InputBytes bytes{{profile.mainFile,"Subsystem sftp /usr/lib/openssh/sftp-server\nAcceptEnv LANG LC_ALL\n"},{profile.environment,"EXTRAOPTIONS=\n"}};
+        for(const auto* key:{"rsa","ecdsa","ed25519"}) {
+            const auto path=profile.base+"/ssh_host_"+key+"_key";bytes[path]="private fixture";bytes[path+".pub"]="public fixture";
+        }
+        for(const auto& [path,value]:bytes)alt.paths.push_back({path,ControlledPathKind::File,sha(value),{}});
+        require(d::validateClosure(alt,bytes,{{"ssh_use_pam","yes"}},profile).hostKeys.size()==3,"ALT defaults/all keygen keys coverage lost");++checks;
+        auto missing=bytes;missing.erase(profile.base+"/ssh_host_rsa_key");deny([&]{d::validateClosure(alt,missing,{{"ssh_use_pam","yes"}},profile);});
+    } else require(profile.unit=="ssh.service" && profile.mainFile==mainFile && profile.fragments==dir &&
+            profile.environment=="/etc/default/ssh" && profile.optionVariable=="SSHD_OPTS" && !profile.alt,
+            "Debian/Ubuntu supported input profile changed");++checks;
     // Public adapter malformed references fail before any runtime activation.
     for (auto request : {s::SshVerifiedActivationRequest{}, s::SshVerifiedActivationRequest{f.reference,{{"unknown","yes"}}}}) {
         const auto result = s::SshVerifiedActivationAdapter::activate(request);

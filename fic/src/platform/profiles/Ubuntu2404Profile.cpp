@@ -86,6 +86,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.packageManager.transactionLocks = {"/var/lib/dpkg/lock-frontend", "/var/lib/dpkg/lock"};
     profile.ssh.configPath = "/etc/ssh/sshd_config";
     profile.ssh.includeBasePath = "/etc/ssh";
+    profile.ssh.verifiedIncludeDirectory = "/etc/ssh/sshd_config.d";
     profile.executables.entries.push_back({ExecutableId::SshSocketGenerator,{"/usr/lib/systemd/system-generators/sshd-socket-generator"}});
     profile.ssh.applyContract = SshApplyContract::UbuntuSocketVerified;
     profile.ssh.serviceUnits = {"ssh.service", "sshd.service"};

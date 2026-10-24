@@ -144,3 +144,24 @@ FDs, no-op, safe foreign inputs, fail-closed runtime/launch/config states, CAS/d
 unknown writer/journal failure/Prepared and active-refusal/offline ownership release.
 Adapter fault cases use existing deterministic engine checkpoints rather than timing races.
 The audit under `ssh-ubuntu-socket-research` remains separate evidence, not policy PASS.
+
+
+## ALT p11
+
+The same runner selects `alt_service.py` for `alt-p11`. It links the real five
+policy classes, journal and adapter; stock vendor `sshd.service` remains unchanged.
+Fixture provisioning initializes the stock keys by starting the vendor unit, then
+seeds executable trust only inside the guarded disposable container. Production
+requires all stock key pairs to exist safely; it does not initialize missing keys.
+The optional administrator Include tree is never created by production.
+
+```sh
+bash tests/integration/verified_config_service/openssh_native/run-native.sh fic-ssh-audit:alt-p11 alt-p11
+```
+
+The default `all` phase is the acceptance gate. Fixture-only
+`FIC_ALT_NATIVE_SCENARIO=rollback|activation` permits focused debugging; a partial
+phase PASS is not full acceptance. Production has no corresponding bypass.
+The runner also builds/runs portable pure adapter contract tests on each platform.
+ALT contract, image/package observations, readiness, rollback limitations and
+sanitized production evidence: [ALT p11](../../../../docs/alt-p11-ssh-verified-activation.md).

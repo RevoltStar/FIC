@@ -16,8 +16,9 @@
 // service units and the executable resolver. The runner hook exists for unit
 // tests; an empty runner falls back to VerifiedProcessExecutor. The
 // beforeWrite / beforeRestore hooks are deterministic test seams.
+enum class SshOfflineReleaseProfile { None, UbuntuSocket, AltService };
 struct SshRollbackOptions {
-    bool ubuntuSocket = false;
+    SshOfflineReleaseProfile offlineRelease = SshOfflineReleaseProfile::None;
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
     std::vector<std::string> serviceUnits;

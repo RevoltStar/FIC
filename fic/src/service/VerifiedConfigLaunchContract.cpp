@@ -19,7 +19,7 @@ const std::vector<std::string> commands{
     "ExecConditionEx", "ExecStartPreEx", "ExecStartEx", "ExecStartPostEx", "ExecReloadEx", "ExecStopEx", "ExecStopPostEx"};
 const std::vector<std::string> unitProperties{"StartLimitIntervalUSec", "StartLimitBurst", "UnitFileState", "FragmentPath", "SourcePath", "DropInPaths", "NeedDaemonReload", "Transient", "TriggeredBy"};
 const std::vector<std::string> serviceProperties{
-    "PIDFile", "Restart", "ExitType", "RemainAfterExit", "FileDescriptorStoreMax", "NFileDescriptorStore",
+    "PIDFile", "Restart", "KillMode", "ExitType", "RemainAfterExit", "FileDescriptorStoreMax", "NFileDescriptorStore",
     "Environment", "EnvironmentFiles", "PassEnvironment", "UnsetEnvironment", "User", "Group", "SupplementaryGroups",
     "DynamicUser", "PAMName", "WorkingDirectory", "UMask", "ExecSearchPath", "ExecPaths", "NoExecPaths",
     "RootDirectory", "RootImage", "RootHash", "RootHashPath", "RootHashSignature", "RootImageOptions",
@@ -215,7 +215,7 @@ std::string fingerprintUnitSource(int root, const std::string& name, std::uint64
         before.st_size, before.st_mtim.tv_sec, before.st_mtim.tv_nsec, before.st_ctim.tv_sec, before.st_ctim.tv_nsec,
         fic::core::ContentDigest::sha256Hex(bytes)})}}.dump();
 }
-static LaunchContract readContract(const std::string& unit, std::chrono::steady_clock::time_point deadline, bool socket) {
+static LaunchContract readContract(const std::string& unit, std::chrono::steady_clock::time_point deadline, bool socket, bool runtime=false) {
     sd_bus* rawBus = nullptr;
     if (sd_bus_new(&rawBus) < 0) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot allocate systemd connection");
     std::unique_ptr<sd_bus, decltype(&sd_bus_unref)> bus(rawBus, sd_bus_unref);
@@ -233,6 +233,9 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
     const char* object = nullptr; requireBus(sd_bus_message_read(reply.get(), "o", &object), "unit object");
     LaunchContract contract;
     readProperties(bus.get(), object, "org.freedesktop.systemd1.Unit", unitProperties, contract, deadline);
+    if(runtime) {
+        readProperties(bus.get(),object,"org.freedesktop.systemd1.Unit",{"Id","LoadState","ActiveState","SubState","Job"},contract,deadline);
+    }
     if(socket) {
         const std::vector<std::string> socketUnit{"Id","Names","LoadState","ActiveState","SubState","Job","InvocationID","Triggers"};
         readProperties(bus.get(),object,"org.freedesktop.systemd1.Unit",socketUnit,contract,deadline);
@@ -241,6 +244,7 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
         readProperties(bus.get(),object,"org.freedesktop.systemd1.Socket",properties,contract,deadline);
     } else {
         auto service = serviceProperties; service.insert(service.end(), commands.begin(), commands.end());
+        if(runtime)service.push_back("MainPID");
         readProperties(bus.get(), object, "org.freedesktop.systemd1.Service", service, contract, deadline);
     }
     timeout(bus.get(), deadline);
@@ -263,6 +267,9 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
 }
 LaunchContract readLaunchContract(const std::string& unit,std::chrono::steady_clock::time_point deadline) {
     return readContract(unit,deadline,false);
+}
+LaunchContract readAltSshRuntime(std::chrono::steady_clock::time_point deadline) {
+    return readContract("sshd.service",deadline,false,true);
 }
 LaunchContract readSshSocketContract(std::chrono::steady_clock::time_point deadline) {
     return readContract("ssh.socket",deadline,true);

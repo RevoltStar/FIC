@@ -91,10 +91,16 @@ int main(int argc, char** argv) {
         fs::path sshd; check(resolver.resolve(fic::platform::ExecutableId::Sshd, sshd, error), error);
         check(CommandHashStore::saveHash(sshd, error), error);
         const bool ubuntu=profile.id=="ubuntu-24.04"||profile.id=="ubuntu-26.04";
+        const bool alt=profile.id=="alt-p11";
+        const auto mainPath=profile.ssh.configPath.string(),basePath=profile.ssh.includeBasePath.string(),includeDirectory=profile.ssh.verifiedIncludeDirectory.string(),envPath=profile.ssh.optionFile.string();
+        const auto serviceUnit=profile.ssh.serviceUnits.at(0);
+        const auto activationProfile=ubuntu?d::ActivationProfile::UbuntuSshSocket:alt?d::ActivationProfile::AltSshSimple:d::ActivationProfile::ActiveNotifyService;
+        if(alt) {fs::path keygen;check(resolver.resolve(fic::platform::ExecutableId::SshKeygen,keygen,error),error);check(CommandHashStore::saveHash(keygen,error),error);}
         if(ubuntu) {fs::path generator;check(resolver.resolve(fic::platform::ExecutableId::SshSocketGenerator,generator,error),error);check(CommandHashStore::saveHash(generator,error),error);}
         const auto input = J::parse(text(argv[2]));
+        if(alt&&input.value("untrusted_keygen",false))check(CommandHashStore::updateHashes({}, {"/usr/bin/ssh-keygen"},error),error);
         if (input.value("untrusted_sshd", false)) check(CommandHashStore::updateHashes({}, {sshd.string()}, error), error);
-        ActivationRequest r; r.unit = "ssh.service";
+        ActivationRequest r; r.unit = serviceUnit;
         r.timeout = std::chrono::milliseconds(input.value("timeout_ms", 10000));
         for (const auto& p : input.at("paths")) {
             ControlledPath c; c.path = p.at("path").get<std::string>();
@@ -110,7 +116,7 @@ int main(int argc, char** argv) {
             write(paths.configDir.string()+"/AUDIT.conf","log_level.status=ENABLE\nlog_level.value=ERROR\n");
             journalOwner.setOverridePath(work+"/module-state/journal.json");
             const auto observe=[&] {
-                try { return d::SystemdActivation("ssh.service",std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,ubuntu?d::ActivationProfile::UbuntuSshSocket:d::ActivationProfile::ActiveNotifyService).current(); }
+                try { return d::SystemdActivation(serviceUnit,std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,activationProfile).current(); }
                 catch(const d::Failure&) { d::ServiceState absent;absent.properties={{"MainPID","0"},{"InvocationID",""}};return absent; }
             };
             // Daemon normally initializes its journal before policy passes.
@@ -120,8 +126,8 @@ int main(int argc, char** argv) {
             output["module"]=J::array();
             for(const auto& operation:input.at("operations")) {
                 const auto beforeAction=operation.value("before","");
-                if(beforeAction=="restart") ctl({"restart","ssh.service"});
-                if(beforeAction=="main-comment") write("/etc/ssh/sshd_config",text("/etc/ssh/sshd_config")+"# administrative annotation\n");
+                if(beforeAction=="restart") ctl({"restart",serviceUnit});
+                if(beforeAction=="main-comment") write(mainPath,text(mainPath)+"# administrative annotation\n");
                 const auto id=operation.at("policy").get<std::string>();
                 const auto desired=operation.at("value").get<std::string>();
                 std::map<std::string,std::string> configured;
@@ -137,9 +143,9 @@ int main(int argc, char** argv) {
                 const auto socketBefore=socketProof();
                 const auto fault=operation.value("fault","");
                 auto hook=[&] {
-                    if(fault=="disable") ctl({"disable",ubuntu?"ssh.socket":"ssh.service"});
-                    else if(fault=="foreign-input") write("/etc/ssh/sshd_config.d/99-raced.conf","LogLevel VERBOSE\n");
-                    else if(fault=="main-cas") write("/etc/ssh/sshd_config",text("/etc/ssh/sshd_config")+"# foreign CAS edit\n");
+                    if(fault=="disable") ctl({"disable",ubuntu?"ssh.socket":serviceUnit});
+                    else if(fault=="foreign-input") write((includeDirectory+"/99-raced.conf"),"LogLevel VERBOSE\n");
+                    else if(fault=="main-cas") write(mainPath,text(mainPath)+"# foreign CAS edit\n");
                 };
                 std::unique_ptr<Policy> policy;
 #define MODULE_CASE(name, type) if(id==name) policy=std::make_unique<ModulePolicy<type>>(profile.ssh,resolver,hook)
@@ -151,10 +157,10 @@ int main(int argc, char** argv) {
 #undef MODULE_CASE
                 check(bool(policy),"unknown fixture policy");
                 setSshSaveOutcomeHookForTests([&](FileHandler::FileSaveOutcome& saved) {
-                    if(fault=="after-save-stop") ctl({"stop",ubuntu?"ssh.socket":"ssh.service"});
-                    else if(fault=="after-save-disable") ctl({"disable",ubuntu?"ssh.socket":"ssh.service"});
-                    else if(fault=="after-save-input") write("/etc/ssh/sshd_config.d/99-raced.conf","LogLevel VERBOSE\n");
-                    else if(fault=="after-save-main") write("/etc/ssh/sshd_config",text("/etc/ssh/sshd_config")+"# foreign saved edit\n");
+                    if(fault=="after-save-stop") ctl({"stop",ubuntu?"ssh.socket":serviceUnit});
+                    else if(fault=="after-save-disable") ctl({"disable",ubuntu?"ssh.socket":serviceUnit});
+                    else if(fault=="after-save-input") write((includeDirectory+"/99-raced.conf"),"LogLevel VERBOSE\n");
+                    else if(fault=="after-save-main") write(mainPath,text(mainPath)+"# foreign saved edit\n");
                     else if(fault=="durability") {saved.result=FileHandler::FileSaveResult::Failed; saved.durabilityConfirmed=false;}
                     else if(fault=="unknown-writer") throw std::runtime_error("fixture lost writer observation");
                     else if(fault=="journal-commit") {
@@ -162,12 +168,12 @@ int main(int argc, char** argv) {
                         AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& target){return target!=work+"/module-state/journal.json";});
                     }
                 });
-                const auto mainBefore=text("/etc/ssh/sshd_config");
+                const auto mainBefore=text(mainPath);
                 const auto journalBefore=text(work+"/module-state/journal.json");
                 bool applied;
                 std::string releaseMessage;
                 if(operation.value("rollback",false)) {
-                    if(operation.value("offline",false))ctl({"stop","ssh.service","ssh.socket"});
+                    if(operation.value("offline",false)) {if(ubuntu)ctl({"stop",serviceUnit,"ssh.socket"});else ctl({"stop",serviceUnit});}
                     const auto deps=fic::rollback::productionRollbackDeps(profile,resolver);
                     const auto released=fic::rollback::rollbackPolicyBeforeDisable(policy->policyRef(),static_cast<Ssh*>(policy.get())->managedResource(),deps);
                     applied=released.rollbackCompleted();releaseMessage=released.message;
@@ -181,7 +187,7 @@ int main(int argc, char** argv) {
                 output["module"].push_back({{"policy",id},{"applied",applied},{"release_message",releaseMessage},
                     {"socket_before",socketBefore},{"socket_after",socketProof()},{"before_pid",before.at("MainPID")},{"after_pid",after.at("MainPID")},
                     {"before_invocation",before.at("InvocationID")},{"after_invocation",after.at("InvocationID")},
-                    {"main_unchanged",mainBefore==text("/etc/ssh/sshd_config")},{"records",records},
+                    {"main_unchanged",mainBefore==text(mainPath)},{"records",records},
                     {"journal_unusable",journal==nullptr},{"journal_unchanged",journalBefore==text(work+"/module-state/journal.json")},{"journal_sha",fic::core::ContentDigest::sha256Hex(text(work+"/module-state/journal.json"))}});
             }
             AtomicFileWriter::setDirectoryFsyncHookForTests({});
@@ -191,7 +197,7 @@ int main(int argc, char** argv) {
             for (unsigned round = 0; round < 10 && !leftovers().empty(); ++round) {
                 auto mounts = leftovers();
                 for (auto it = mounts.rbegin(); it != mounts.rend(); ++it) {
-                    check(it->target.rfind("/etc/ssh/", 0) == 0 || it->target == "/etc/default/ssh" ||
+                    check(it->target.rfind((basePath+"/"), 0) == 0 || it->target == envPath ||
                           it->target.rfind("/run/fic/verified-config-activator/", 0) == 0, "unexpected residual target");
                     ::umount(it->target.c_str());
                 }
@@ -200,7 +206,7 @@ int main(int argc, char** argv) {
         } else if(action=="capture-reference") {
             output["reference_capture_succeeded"]=false;
             std::string expected;
-            for(const auto& p:r.paths)if(p.path=="/etc/ssh/sshd_config")expected=p.sha256;
+            for(const auto& p:r.paths)if(p.path==mainPath)expected=p.sha256;
             const auto policies=input.value("policies",std::map<std::string,std::string>{{"ssh_root_login","no"},{"ssh_pubkey_auth","yes"},{"ssh_use_pam","yes"},{"ssh_max_auth_tries","3"},{"ssh_port","2222"}});
             const auto admitted=fic::service::ssh::SshVerifiedActivationAdapter::serviceAdmission();
             const auto request=fic::service::ssh::SshVerifiedActivationAdapter::captureReference(policies,expected);
@@ -215,7 +221,7 @@ int main(int argc, char** argv) {
             const auto launch = d::readLaunchContract(r.unit, std::chrono::steady_clock::now() + std::chrono::seconds(10));
             for (const auto& key : {"FragmentPath", "DropInPaths", "EnvironmentFiles", "ExecStartEx", "ExecStartPreEx", "ExecStartPostEx", "TriggeredBy"})
                 output[key] = J::parse(launch.at("launch." + std::string(key)));
-            d::SystemdActivation service(r.unit, std::chrono::steady_clock::now() + r.timeout, r.paths);
+            d::SystemdActivation service(r.unit, std::chrono::steady_clock::now() + r.timeout, r.paths,activationProfile);
             auto state = service.preflight();
             output["status"] = "SUPPORTED";
             for (const auto& key : {"Type", "NotifyAccess", "MainPID", "InvocationID", "ActiveState", "SubState", "Job"}) output[key] = state.at(key);
@@ -231,7 +237,7 @@ int main(int argc, char** argv) {
                 catch (const d::Failure& e) { throw d::Failure(e.status, p.path.string() + ": " + e.what()); }
             }
             d::requireSafePublicationParent("/run/fic/verified-config-activator/future", true, ActivationStatus::UnsupportedConfiguration);
-            SshConfigAudit audit({"/etc/ssh/sshd_config", "/etc/ssh", 16, 256, true}); std::string identity;
+            SshConfigAudit audit({mainPath, basePath, 16, 256, true}); std::string identity;
             check(audit.sourceIdentity(identity, error), error); output["include_identity"] = identity;
         } else {
             const bool adapter = action.rfind("adapter", 0) == 0;
@@ -245,9 +251,9 @@ int main(int argc, char** argv) {
             }
             const std::string fault = action == "activate" || action == "adapter" ? "" : adapter ? action.substr(8) : action;
             pid_t stoppedService=-1;bool serviceTraced=false;
-            const auto originalMain=text("/etc/ssh/sshd_config");
+            const auto originalMain=text(mainPath);
             if(fault.rfind("pending-",0)==0) {
-                stoppedService=std::stoi(d::SystemdActivation(r.unit,std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,ubuntu?d::ActivationProfile::UbuntuSshSocket:d::ActivationProfile::ActiveNotifyService).current().at("MainPID"));
+                stoppedService=std::stoi(d::SystemdActivation(r.unit,std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,activationProfile).current().at("MainPID"));
                 // A plain SIGSTOP is not a barrier: systemd sends SIGCONT while
                 // stopping a unit. Hold a real ptrace event-stop instead.
                 check(stoppedService>1&&::ptrace(PTRACE_SEIZE,stoppedService,nullptr,nullptr)==0,"seize fixture-owned sshd");
@@ -259,22 +265,22 @@ int main(int argc, char** argv) {
                     check(std::chrono::steady_clock::now()<deadline,"ptrace event-stop deadline");::sched_yield();
                 }
                 check(observed==stoppedService&&WIFSTOPPED(status),"ptrace event-stop barrier");
-                ctl({"restart","--no-block","ssh.service"});
-                while(d::SystemdActivation(r.unit,deadline,r.paths,ubuntu?d::ActivationProfile::UbuntuSshSocket:d::ActivationProfile::ActiveNotifyService).current().at("ActiveState")!="deactivating") {
+                ctl({"restart","--no-block",serviceUnit});
+                while(d::SystemdActivation(r.unit,deadline,r.paths,activationProfile).current().at("ActiveState")!="deactivating") {
                     check(std::chrono::steady_clock::now()<deadline,"pending restart barrier deadline");::sched_yield();
                 }
                 if(fault=="pending-timeout")r.timeout=std::chrono::milliseconds(500);
             }
-            d::Fd key(::open("/etc/ssh/ssh_host_ed25519_key", O_RDONLY|O_CLOEXEC));
-            d::TestHooks hooks; d::Fd busy, original(::open("/etc/ssh/sshd_config", O_RDWR|O_CLOEXEC));
-            const auto globDirectory = input.value("glob_dir", "/etc/ssh/sshd_config.d");
+            d::Fd key(::open((basePath+"/ssh_host_ed25519_key").c_str(), O_RDONLY|O_CLOEXEC));
+            d::TestHooks hooks; d::Fd busy, original(::open(mainPath.c_str(), O_RDWR|O_CLOEXEC));
+            const auto globDirectory = input.value("glob_dir", includeDirectory);
             d::Fd directory(::open(globDirectory.c_str(), O_RDONLY|O_DIRECTORY|O_CLOEXEC));
             pid_t blocked = -1; bool foreign = false; d::Fd fifoReady;
             output["checkpoints"] = J::array();
             hooks.checkpoint = [&](d::TestPhase phase, const std::string& snapshot) {
                 if (phase == d::TestPhase::SnapshotReadOnly && fault == "inode") {
-                    fs::rename("/etc/ssh/sshd_config", "/etc/ssh/.fic-native-old");
-                    write("/etc/ssh/sshd_config", text("/etc/ssh/.fic-native-old"));
+                    fs::rename(mainPath, (basePath+"/.fic-native-old"));
+                    write(mainPath, text((basePath+"/.fic-native-old")));
                 }
                 if (phase == d::TestPhase::Watching) {
                     J evidence = J::array();
@@ -311,12 +317,12 @@ int main(int argc, char** argv) {
                         check(f && ::write(f.get(), bytes.data(), bytes.size()) == ssize_t(bytes.size()), "original directory FD write");
                     }
                     if (fault == "ro-write") {
-                        d::Fd f(::open("/etc/ssh/sshd_config", O_WRONLY|O_CLOEXEC));
+                        d::Fd f(::open(mainPath.c_str(), O_WRONLY|O_CLOEXEC));
                         check(!f && errno == EROFS, "RO write unexpectedly allowed"); output["write_errno"] = "EROFS";
                     }
                     if (fault == "aba") {
-                        check(::mount((work + "/mutation.conf").c_str(), "/etc/ssh/sshd_config", nullptr, MS_BIND, nullptr) == 0, "mount ABA bind");
-                        check(::umount("/etc/ssh/sshd_config") == 0, "mount ABA unmount");
+                        check(::mount((work + "/mutation.conf").c_str(), mainPath.c_str(), nullptr, MS_BIND, nullptr) == 0, "mount ABA bind");
+                        check(::umount(mainPath.c_str()) == 0, "mount ABA unmount");
                     }
                     if (fault == "contract-before") ctl({"set-environment", "FIC_OPENSSH_TEST_CHANGE=before"});
                     if (fault == "crash") ::kill(::getpid(), SIGKILL);
@@ -337,17 +343,30 @@ int main(int argc, char** argv) {
                     output["fifo_reader_connected"] = true;
                     ProcessOptions opts; opts.timeout = std::chrono::seconds(3); opts.clearEnvironment = true;
                     auto state = ProcessExecutor::execute("/usr/bin/systemctl",
-                        {"show", "ssh.service", "--property=MainPID,ActiveState,SubState,InvocationID"}, opts);
+                        {"show", serviceUnit, "--property=MainPID,ActiveState,SubState,InvocationID"}, opts);
                     check(state.success(), "no-ready state collection"); output["blocked_service_state"] = state.standardOutput;
+                }
+                if(alt&&phase==d::TestPhase::RestartQueued&&fault=="alt-no-ready") {
+                    const auto limit=std::chrono::steady_clock::now()+std::chrono::seconds(5);
+                    do {
+                        const auto current=d::SystemdActivation(serviceUnit,limit,r.paths,activationProfile).current();
+                        stoppedService=std::stoi(current.at("MainPID"));
+                        if(stoppedService>1)break;
+                        check(std::chrono::steady_clock::now()<limit,"new ALT MainPID barrier deadline");::sched_yield();
+                    } while(true);
+                    check(::ptrace(PTRACE_SEIZE,stoppedService,nullptr,nullptr)==0,"seize new ALT sshd");serviceTraced=true;
+                    check(::ptrace(PTRACE_INTERRUPT,stoppedService,nullptr,nullptr)==0,"stop new ALT sshd before protocol probe");
+                    int status=0;check(::waitpid(stoppedService,&status,__WALL)==stoppedService&&WIFSTOPPED(status),"new ALT readiness ptrace event");
+                    output["readiness_barrier_observed"]=true;
                 }
                 if(phase==d::TestPhase::RestartQueued&&fault=="foreign-socket-restart")ctl({"restart","ssh.socket"});
                 if (phase == d::TestPhase::RestartQueued && fault == "contract-after") ctl({"set-environment", "FIC_OPENSSH_TEST_CHANGE=after"});
                 if (phase == d::TestPhase::BeforeCleanup) {
                     if(fault=="socket-disable")ctl({"disable","ssh.socket"});
                     if(fault=="generated-drift")write("/run/systemd/generator/ssh.socket.d/addresses.conf",text("/run/systemd/generator/ssh.socket.d/addresses.conf")+"# foreign generated mutation\n");
-                    if(fault=="ready-stop") ctl({"stop","ssh.service"});
-                    if(fault=="ready-disable") ctl({"disable","ssh.service"});
-                    if(fault=="ready-foreign-restart") ctl({"restart","ssh.service"});
+                    if(fault=="ready-stop") ctl({"stop",serviceUnit});
+                    if(fault=="ready-disable") ctl({"disable",serviceUnit});
+                    if(fault=="ready-foreign-restart") ctl({"restart",serviceUnit});
                     if (fault == "key-mode" || fault == "config-mode" || fault == "config-uid" || fault == "config-gid" ||
                         fault == "directory-mode" || fault == "included-inode" || fault == "key-xattr") {
                         ProcessOptions opts; opts.timeout = std::chrono::seconds(5); opts.clearEnvironment = true;
@@ -356,9 +375,9 @@ int main(int argc, char** argv) {
                               !probe.standardOutput.empty(), "protected real SSH handshake");
                         output["protected_handshake_confirmed"] = true;
                     }
-                    if (fault == "busy") busy = d::openAbsolute("/etc/ssh/sshd_config", O_RDONLY);
+                    if (fault == "busy") busy = d::openAbsolute(mainPath, O_RDONLY);
                     if (fault == "foreign") {
-                        check(::mount((work + "/mutation.conf").c_str(), "/etc/ssh/sshd_config", nullptr, MS_BIND, nullptr) == 0, "foreign overlay"); foreign = true;
+                        check(::mount((work + "/mutation.conf").c_str(), mainPath.c_str(), nullptr, MS_BIND, nullptr) == 0, "foreign overlay"); foreign = true;
                     }
                 }
             };
@@ -376,14 +395,14 @@ int main(int argc, char** argv) {
                 else {
                     ssh::detail::AdapterTestHooks seam;
                     seam.beforeFinalConfirmation=[&] {
-                        if(fault=="final-disable")ctl({"disable",ubuntu?"ssh.socket":"ssh.service"});
-                        if(fault=="final-restart")ctl({"restart","ssh.service"});
+                        if(fault=="final-disable")ctl({"disable",ubuntu?"ssh.socket":serviceUnit});
+                        if(fault=="final-restart")ctl({"restart",serviceUnit});
                     };
                     bool admissionObserved=false;
                     seam.admissionWait=[&] {
                         if(stoppedService>1&&!admissionObserved) {
                             admissionObserved=true;output["admission_wait_observed"]=true;
-                            if(fault=="pending-failed")write("/etc/ssh/sshd_config","InvalidFicDirective yes\n");
+                            if(fault=="pending-failed")write(mainPath,"InvalidFicDirective yes\n");
                             if(fault!="pending-timeout") {
                                 check(::ptrace(PTRACE_DETACH,stoppedService,nullptr,reinterpret_cast<void*>(static_cast<intptr_t>(SIGTERM)))==0,"release native admission barrier");
                                 serviceTraced=false;
@@ -391,12 +410,12 @@ int main(int argc, char** argv) {
                         }
                     }; seam.activation = hooks;
                     seam.beforeActivation = [&] {
-                        if (fault == "source-before") write("/etc/ssh/sshd_config", text(work + "/mutation.conf"));
+                        if (fault == "source-before") write(mainPath, text(work + "/mutation.conf"));
                         if (fault == "source-inode-before") {
-                            fs::rename("/etc/ssh/sshd_config", "/etc/ssh/.fic-native-old");
-                            write("/etc/ssh/sshd_config", text("/etc/ssh/.fic-native-old"));
+                            fs::rename(mainPath, (basePath+"/.fic-native-old"));
+                            write(mainPath, text((basePath+"/.fic-native-old")));
                         }
-                        if (fault == "source-mode-before") check(::chmod("/etc/ssh/sshd_config", 0600) == 0, "source mode race");
+                        if (fault == "source-mode-before") check(::chmod(mainPath.c_str(), 0600) == 0, "source mode race");
                         if (fault == "glob-before") write(globDirectory + "/00-new.conf", "MaxAuthTries 1\n");
                         if (fault == "directory-before") {
                             check(fs::is_empty(globDirectory) && fs::remove(globDirectory), "replace empty original directory");
@@ -422,8 +441,8 @@ int main(int argc, char** argv) {
                     check(::ptrace(PTRACE_DETACH,stoppedService,nullptr,reinterpret_cast<void*>(static_cast<intptr_t>(SIGTERM)))==0,"release timed-out fixture barrier");
                     serviceTraced=false;
                 }
-                if(fault!="pending-ready")ctl({"stop","ssh.service"});
-                if(fault=="pending-failed")write("/etc/ssh/sshd_config",originalMain);
+                if(fault!="pending-ready")ctl({"stop",serviceUnit});
+                if(fault=="pending-failed")write(mainPath,originalMain);
             }
             output["status"] = activationStatusName(result.status); output["primaryStatus"] = activationStatusName(result.primaryStatus);
             output["readinessConfirmed"] = result.readinessConfirmed; output["diagnostic"] = result.diagnostic;
@@ -435,8 +454,8 @@ int main(int argc, char** argv) {
             output["launch_contract_sha256"] = fic::core::ContentDigest::sha256Hex(J(launchBefore).dump());
             output["residual_count_before_admin_cleanup"] = leftovers().size();
             if (blocked > 0) { ::kill(blocked, SIGKILL); ::waitpid(blocked, nullptr, 0); }
-            if (foreign) { output["foreign_preserved"] = text("/etc/ssh/sshd_config") == text(work + "/mutation.conf"); check(::umount("/etc/ssh/sshd_config") == 0, "fixture foreign cleanup"); }
-            if (fault == "inode" || fault == "source-inode-before") fs::remove("/etc/ssh/.fic-native-old");
+            if (foreign) { output["foreign_preserved"] = text(mainPath) == text(work + "/mutation.conf"); check(::umount(mainPath.c_str()) == 0, "fixture foreign cleanup"); }
+            if (fault == "inode" || fault == "source-inode-before") fs::remove((basePath+"/.fic-native-old"));
             // busy closes after result capture; explicit cleanup is a separate command.
         }
     } catch (const d::Failure& e) { output["status"] = activationStatusName(e.status); output["diagnostic"] = e.what(); }

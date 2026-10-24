@@ -1354,7 +1354,7 @@ M1/fence/package lifecycle не менялись. Native module runner вызы�
 policy/journal/runtime компоненты в disposable systemd/OpenSSH контейнере, не
 синтезируя Installed и не выдавая этот gate за полный daemon/package end-to-end.
 Ubuntu socket activation реализована отдельным bounded profile (см. следующий раздел).
-Следующий профиль — ALT p11, затем installed all-distribution acceptance.
+ALT p11 также реализован (см. ниже); далее installed all-distribution acceptance.
 
 
 ## Ubuntu verified socket integration
@@ -1372,3 +1372,24 @@ Offline rollback использует те же conditional transaction hooks с
 неизвестного/installed эффекта ownership/provenance сохраняются, blind compensation
 не добавлена. Схема, native matrix, эксплуатационный эффект смены Port и пределы
 root ABA: [Ubuntu socket contract](ubuntu-ssh-socket-activation-spec.md).
+
+
+## ALT p11 verified service integration
+
+ALT выбирает `AltVerified`; исторические упоминания ALT LegacyReload выше больше
+не описывают текущий apply/rollback. Закрытый `AltSshSimple` профиль сохраняет vendor
+simple/none unit и использует тот же RO engine с обязательным bounded readiness
+predicate: новая process/invocation/executable identity, exact native endpoint set,
+sshd-owned kernel listeners, отсутствие старых controlled inodes, local SSH banner.
+Ubuntu generator/socket/FD-inheritance flow на ALT не вызывается.
+
+Strict enabled/ready admission предшествует CAS. Stock EXTRAOPTIONS и HostKey defaults
+подтверждены native, чужие inputs не становятся FIC-owned. Факт save и unresolved
+Prepared сохраняются при неизвестном post-save эффекте; schema, CAS, shared mutex,
+R1/R1b/R5 и запрет unsafe owned REFRESH не меняются. Receipt включает ALT listeners
+и keygen identity. Active rollback safe-refuses до write; offline loaded stopped
+service proof допускает conditional ownership-only release с runtime NotAttempted.
+Нет legacy reload fallback или новой компенсации. M1/packaging не меняются.
+
+Authoritative contract, state matrix, native evidence и deployment/TOCTOU bounds:
+[ALT p11 verified activation](alt-p11-ssh-verified-activation.md).

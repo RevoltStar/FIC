@@ -5,11 +5,12 @@
 #include <functional>
 #endif
 namespace fic::service::detail {
-enum class ActivationProfile { ActiveNotifyService, UbuntuSshSocket };
+enum class ActivationProfile { ActiveNotifyService, UbuntuSshSocket, AltSshSimple };
 // Typed, canonical launch-only values; no mutable Exec* runtime status fields.
 using LaunchContract = std::map<std::string, std::string>;
 LaunchContract readLaunchContract(const std::string& unit,
                                  std::chrono::steady_clock::time_point deadline);
+LaunchContract readAltSshRuntime(std::chrono::steady_clock::time_point deadline);
 LaunchContract readSshSocketContract(std::chrono::steady_clock::time_point deadline);
 // Internal descriptor-rooted unit-source reader; production always supplies pinned /.
 // Alternate roots exercise the same trust checks in isolated native fixtures.

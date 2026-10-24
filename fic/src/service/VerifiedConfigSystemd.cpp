@@ -66,6 +66,8 @@ SystemdActivation::SystemdActivation(const std::string& unit, std::chrono::stead
     if(profile_==ActivationProfile::UbuntuSshSocket && (unit_!="ssh.service" ||
        (profile.id!="ubuntu-24.04"&&profile.id!="ubuntu-26.04")))
         throw Failure(ActivationStatus::UnsupportedConfiguration,"closed Ubuntu SSH socket profile required");
+    if(profile_==ActivationProfile::AltSshSimple && (unit_!="sshd.service" || profile.id!="alt-p11"))
+        throw Failure(ActivationStatus::UnsupportedConfiguration,"closed ALT SSH simple profile required");
     fic::platform::PlatformExecutableResolver resolver(profile.executables);
     std::filesystem::path executable; std::string error;
     if (!resolver.resolve(fic::platform::ExecutableId::Systemctl, executable, error) ||
@@ -108,8 +110,9 @@ void SystemdActivation::verifyConfiguration(const ServiceState& s) const {
     if (!configuration_.empty()) for (const auto& [key, expected] : configuration_)
         if (!s.properties.count(key) || s.at(key) != expected) throw Failure(ActivationStatus::InterferenceDetected, "service configuration changed: " + key);
     validateLaunchContract(s.properties, &targets_, profile_);
-    if (s.at("Id") != unit_ || s.at("LoadState") != "loaded" || s.at("Type") != "notify" || s.at("NotifyAccess") != "main")
-        throw Failure(ActivationStatus::UnsupportedConfiguration, "only loaded canonical notify/main service units are supported");
+    const bool kind=profile_==ActivationProfile::AltSshSimple ? s.at("Type")=="simple"&&s.at("NotifyAccess")=="none" : s.at("Type")=="notify"&&s.at("NotifyAccess")=="main";
+    if (s.at("Id") != unit_ || s.at("LoadState") != "loaded" || !kind)
+        throw Failure(ActivationStatus::UnsupportedConfiguration, profile_==ActivationProfile::AltSshSimple ? "only canonical ALT simple/none SSH service is supported" : "only loaded canonical notify/main service units are supported");
     for (const auto& p : noProperties) if (s.at(p) != "no")
         throw Failure(ActivationStatus::UnsupportedConfiguration, "unsupported service mount sandbox: " + p);
     for (const auto& p : emptyProperties) if (!s.at(p).empty())
@@ -149,7 +152,7 @@ bool SystemdActivation::ready(const ServiceState& s) const {
            !s.at("InvocationID").empty() && s.at("InvocationID") != originalInvocation_ && s.at("MainPID") != "0";
 }
 void SystemdActivation::confirm(const ServiceState& s) const {
-    if (!ready(s)) throw Failure(ActivationStatus::ReadinessUnconfirmed, "notify readiness not established");
+    if (!ready(s)) throw Failure(ActivationStatus::ReadinessUnconfirmed, profile_==ActivationProfile::AltSshSimple ? "ALT SSH service readiness not established" : "notify readiness not established");
     const auto process = processToken(s, namespace_);
     auto again = current();
     if (!ready(again) || again.at("InvocationID") != s.at("InvocationID") || processToken(again, namespace_) != process)

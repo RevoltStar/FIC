@@ -3,6 +3,8 @@
 #include "service/ssh/SshPersistentMetadata.h"
 #include "service/ssh/SshServiceAdmission.h"
 #include "service/ssh/UbuntuSshSocketFlow.h"
+#include "service/ssh/AltSshServiceFlow.h"
+#include "service/ssh/SshListenerProof.h"
 #include <memory>
 #include <thread>
 #include <mutex>
@@ -38,20 +40,25 @@ bool ubuntuSocket() {
     const auto id=fic::platform::makeBuildPlatformProfile().id;
     return id=="ubuntu-24.04"||id=="ubuntu-26.04";
 }
-d::ActivationProfile activationProfile() {return ubuntuSocket()?d::ActivationProfile::UbuntuSshSocket:d::ActivationProfile::ActiveNotifyService;}
-bool supportedProfile(const std::string& id) {return id=="debian-12"||id=="debian-13"||id=="ubuntu-24.04"||id=="ubuntu-26.04";}
-void validateLaunch(const d::LaunchContract& launch) {
-    if(ubuntuSocket()) {
+bool altService() {return fic::platform::makeBuildPlatformProfile().id=="alt-p11";}
+d::ActivationProfile activationProfile() {return ubuntuSocket()?d::ActivationProfile::UbuntuSshSocket:altService()?d::ActivationProfile::AltSshSimple:d::ActivationProfile::ActiveNotifyService;}
+bool supportedProfile(const std::string& id) {return id=="debian-12"||id=="debian-13"||id=="ubuntu-24.04"||id=="ubuntu-26.04"||id=="alt-p11";}
+void validateLaunch(const d::LaunchContract& launch, const detail::InputProfile& input=detail::inputProfile(), bool socketProfile=ubuntuSocket()) {
+    if(socketProfile) {
         const auto state=value(launch,"UnitFileState");
         if(state!="enabled"&&state!="disabled"&&state!="indirect") unsupported("Ubuntu SSH service enablement unsupported");
     } else if(value(launch,"UnitFileState")!="enabled") unsupported("SSH RuntimeNotReady: service must be persistently enabled");
-    const Json command = Json::array({Json::array({"/usr/sbin/sshd", Json::array({"/usr/sbin/sshd", "-D", "$SSHD_OPTS"}), Json::array()})});
-    const Json pre = Json::array({Json::array({"/usr/sbin/sshd", Json::array({"/usr/sbin/sshd", "-t"}), Json::array()})});
+    const Json command = Json::array({Json::array({"/usr/sbin/sshd", Json::array({"/usr/sbin/sshd", "-D", "$"+input.optionVariable}), Json::array()})});
+    Json pre = Json::array({Json::array({"/usr/sbin/sshd", Json::array({"/usr/sbin/sshd", "-t"}), Json::array()})});
+    if(input.alt) {
+        pre.insert(pre.begin(),Json::array({"/usr/bin/ssh-keygen",Json::array({"/usr/bin/ssh-keygen","-A"}),Json::array()}));
+        if(value(launch,"Restart")!="always"||value(launch,"KillMode")!="process")unsupported("ALT stock restart/kill profile required");
+    }
     if (value(launch, "ExecStartEx") != command || value(launch, "ExecStartPreEx") != pre ||
         !value(launch, "ExecConditionEx").empty() || !value(launch, "ExecStartPostEx").empty() ||
         !value(launch, "ExecStopEx").empty() || !value(launch, "ExecStopPostEx").empty())
-        unsupported("SSH v1 requires stock Debian ExecStart/Pre and no extra execution hooks");
-    if (value(launch, "EnvironmentFiles") != Json::array({Json::array({"/etc/default/ssh", true})}) ||
+        unsupported("SSH v1 requires stock platform ExecStart/Pre and no extra execution hooks");
+    if (value(launch, "EnvironmentFiles") != Json::array({Json::array({input.environment, !input.alt})}) ||
         !value(launch, "Environment").empty() || !value(launch, "PassEnvironment").empty() ||
         !value(launch, "UnsetEnvironment").empty())
         unsupported("SSH v1 launch environment/drop-ins unsupported");
@@ -60,7 +67,7 @@ void validateLaunch(const d::LaunchContract& launch) {
     for(const auto& item:dropins) {
         const auto name=item.get<std::string>();
         const auto p=std::filesystem::path(name);
-        if(p.parent_path()!="/etc/systemd/system/ssh.service.d" || p.extension()!=".conf" ||
+        if(p.parent_path()!=("/etc/systemd/system/"+input.unit+".d") || p.extension()!=".conf" ||
            p.lexically_normal().string()!=name) unsupported("unsupported SSH drop-in path");
         const auto expected=launch.find("launch.file:"+name);
         if(expected==launch.end()) unsupported("SSH drop-in source proof missing");
@@ -77,8 +84,8 @@ void validateLaunch(const d::LaunchContract& launch) {
     if (value(launch, "User") != "" || value(launch, "Group") != "" || !value(launch, "SupplementaryGroups").empty())
         unsupported("SSH v1 requires stock root service credentials");
     const auto fragment = value(launch, "FragmentPath").get<std::string>();
-    if (fragment != "/usr/lib/systemd/system/ssh.service" && fragment != "/lib/systemd/system/ssh.service")
-        unsupported("SSH v1 requires vendor ssh.service");
+    if (fragment != "/usr/lib/systemd/system/"+input.unit && fragment != "/lib/systemd/system/"+input.unit)
+        unsupported("SSH v1 requires canonical vendor service");
     // No blanket acceptance of inherited environment. In particular loader,
     // allocator, locale collation and SSH option overrides cannot pass here.
     for (const auto& entry : Json::parse(launch.at("launch.ManagerEnvironment"))) {
@@ -109,7 +116,8 @@ d::ServiceState admit(d::SystemdActivation& service
     while(true) {
         const auto state=service.current();validateLaunch(state.properties);
         const bool inactive=ubuntuSocket()&&state.at("ActiveState")=="inactive"&&state.at("SubState")=="dead"&&state.at("MainPID")=="0"&&state.at("Job").empty();
-        if(inactive||detail::classifyServiceAdmission(state.at("ActiveState"),state.at("SubState"),state.at("Job"))==detail::ServiceAdmission::Ready) break;
+        const bool ready=inactive||detail::classifyServiceAdmission(state.at("ActiveState"),state.at("SubState"),state.at("Job"))==detail::ServiceAdmission::Ready;
+        if(ready&&(!altService()||detail::AltSshServiceFlow::initiallyReady(state))) break;
 #ifdef FIC_ACTIVATOR_TESTING
         if(waiting) waiting();
 #endif
@@ -179,9 +187,10 @@ void validateCaptured(const SshVerifiedActivationRequest& request, const Capture
             if (closure.hostKeys.count(path)) detail::requireSafePrivateHostKey(st);
         }
     }
-    const auto env = observed.bytes.find("/etc/default/ssh");
+    const auto input=detail::inputProfile();
+    const auto env = observed.bytes.find(input.environment);
     if (env == observed.bytes.end()) unsupported("explicit EnvironmentFile reference required");
-    detail::validateEmptyOptions(env->second);
+    detail::validateEmptyOptions(env->second,input.optionVariable);
 }
 // One bounded process-local receipt; it grants no persistent ownership and is
 // discarded on any detected interference/failure. No cache survives daemon restart.
@@ -229,7 +238,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
         const auto deadline = std::chrono::steady_clock::now() + request.reference.timeout;
         const auto profile = fic::platform::makeBuildPlatformProfile(); std::string error;
         if (!supportedProfile(profile.id) ||
-            !fic::platform::validateHostCompatibility(profile, "/etc/os-release", error)) unsupported("SSH verified activation v1 supports Debian12/13 or Ubuntu24/26 only");
+            !fic::platform::validateHostCompatibility(profile, "/etc/os-release", error)) unsupported("SSH verified activation v1 supports Debian12/13, Ubuntu24/26 or ALT p11 only");
         d::SystemdActivation service(request.reference.unit, deadline, request.reference.paths,activationProfile());
         std::unique_ptr<detail::UbuntuSshSocketFlow> socket;
         if(ubuntuSocket())socket=std::make_unique<detail::UbuntuSshSocketFlow>(deadline);
@@ -238,7 +247,9 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
             , tests ? tests->admissionWait : std::function<void()>{}
 #endif
         );
-        const auto combined=[&](const d::ServiceState& state) {return socket?socket->combined(state):state.properties;};
+        std::unique_ptr<detail::AltSshServiceFlow> alt;
+        if(altService())alt=std::make_unique<detail::AltSshServiceFlow>(launch,deadline);
+        const auto combined=[&](const d::ServiceState& state) {return socket?socket->combined(state):alt?detail::AltSshServiceFlow::combined(state,deadline):state.properties;};
         const auto admittedLaunch=combined(launch);
         if(!request.expectedService.empty()&&request.expectedService!=admittedLaunch)
             throw d::Failure(ActivationStatus::InterferenceDetected,"SSH service differs from caller admission proof");
@@ -289,7 +300,8 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
             if (!d::sameObject(d::identity(current.get()), binaryIdentity) || !CommandHashStore::verifyHash(binary, error))
                 throw d::Failure(ActivationStatus::InterferenceDetected, "SSH executable changed");
         };
-        SshRuntimeOptions options; options.configPath = "/etc/ssh/sshd_config"; options.includeBasePath = "/etc/ssh";
+        const auto input=detail::inputProfile();
+        SshRuntimeOptions options; options.configPath = input.mainFile; options.includeBasePath = input.base;
         options.requireTrustedInputs = true; options.useLaunchArguments = true;
         SshRuntime runtime(options, resolver, [&](const std::string& path, const std::vector<std::string>& args, const ProcessOptions& original) {
             auto bounded = original; bounded.timeout = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
@@ -309,9 +321,11 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
             checkBinary();
         };
         if(socket) {detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();detail::UbuntuSshSocketFlow::effectiveEndpoints(runtime);}
+        if(alt)detail::listener::effectiveEndpoints(runtime);
         semantics();
         d::ActivationProof proof;
         proof.profile=activationProfile();
+        if(alt)proof.altSshReadiness=[&](const auto& state,auto limit) {return alt->readyCandidate(state,limit);};
         if(socket)proof.sshSocketActivation=[&](auto) {socket->activate(runtime,service,launch);};
         proof.expectedConfiguration = launch.properties;
         for (const auto* key : {"ActiveState", "SubState", "MainPID", "InvocationID", "Job", "Result"}) proof.expectedConfiguration.erase(key);
@@ -331,6 +345,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
                         provenPolicies[id]=expected;
                 } catch(const d::Failure&) { /* Optional selections cannot fail this policy. */ }
             }
+            if(alt)alt->published(runtime);
             checkBinary(); publishedProof = true;
         };
         proof.ready = [&](const d::ServiceState& ready, auto) {
@@ -341,6 +356,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
                 throw d::Failure(ActivationStatus::InterferenceDetected, "ready service executable differs from verified SSH binary");
             promotedInvocation=ready.at("InvocationID");promotedPid=ready.at("MainPID");
             if(socket)socket->ready(ready);
+            if(alt)alt->ready(ready);
             runtimeProof = true;
         };
 #ifdef FIC_ACTIVATOR_TESTING
@@ -381,6 +397,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
             if(receiptState.at("InvocationID")!=promotedInvocation||receiptState.at("MainPID")!=promotedPid)
                 throw d::Failure(ActivationStatus::InterferenceDetected,"runtime changed before receipt publication");
             if(socket)socket->confirm(receiptState);
+            if(alt)alt->confirm(receiptState);
             if(receiptEligible) runtimeReceipt={receiptKey,combined(receiptState),provenPolicies};
         }
         if (std::chrono::steady_clock::now() >= deadline) {
@@ -412,38 +429,41 @@ detail::ServiceAdmission detail::classifyServiceAdmission(const std::string& act
        (active=="inactive"&&!job.empty()))return ServiceAdmission::Wait;
     throw d::Failure(ActivationStatus::ReadinessUnconfirmed,"SSH RuntimeNotReady: inactive/failed/unsupported runtime; no configuration mutation");
 }
-void detail::validateLaunchProfile(const std::map<std::string, std::string>& launch) { validateLaunch(launch); }
+void detail::validateLaunchProfile(const std::map<std::string, std::string>& launch,const detail::InputProfile& profile,bool socketProfile) { validateLaunch(launch,profile,socketProfile); }
 std::map<std::string,std::string> SshVerifiedActivationAdapter::serviceAdmission() {
     const std::lock_guard<std::mutex> receiptLock(receiptMutex);
     const auto profile=fic::platform::makeBuildPlatformProfile();std::string error;
     if(::geteuid()!=0||!supportedProfile(profile.id)||
-       !fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))unsupported("SSH admission supports root on Debian12/13 or Ubuntu24/26 only");
+       !fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))unsupported("SSH admission supports root on Debian12/13, Ubuntu24/26 or ALT p11 only");
     // The generic environment contract requires a real reference, even for
     // readonly admission. Do not satisfy it with a placeholder digest.
-    if(!fic::ssh::trustedSshInput("/etc/default/ssh",false,false,error))unsupported("untrusted SSH EnvironmentFile");
-    auto env=d::openAbsolute("/etc/default/ssh",O_RDONLY);std::uint64_t budget=65536;
+    const auto input=detail::inputProfile();
+    if(!fic::ssh::trustedSshInput(input.environment,false,false,error))unsupported("untrusted SSH EnvironmentFile");
+    auto env=d::openAbsolute(input.environment,O_RDONLY);std::uint64_t budget=65536;
     const auto tree=d::readTree(env.get(),ControlledPathKind::File,budget);
-    const auto& content=tree.files.at("");detail::validateEmptyOptions(content);
-    std::vector<ControlledPath> targets{{"/etc/default/ssh",ControlledPathKind::File,fic::core::ContentDigest::sha256Hex(content),{}}};
+    const auto& content=tree.files.at("");detail::validateEmptyOptions(content,input.optionVariable);
+    std::vector<ControlledPath> targets{{input.environment,ControlledPathKind::File,fic::core::ContentDigest::sha256Hex(content),{}}};
     const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);
-    d::SystemdActivation service("ssh.service",deadline,targets,activationProfile());
+    d::SystemdActivation service(input.unit,deadline,targets,activationProfile());
     const auto ready=admit(service);awaitRestartBudget(service,ready,false);
     if(ubuntuSocket())return detail::UbuntuSshSocketFlow(deadline).combined(ready);
+    if(altService())return detail::AltSshServiceFlow::combined(ready,deadline);
     return ready.properties;
 }
 void SshVerifiedActivationAdapter::prepareRuntimeProbe(const SshVerifiedActivationRequest& request) {
-    if(!ubuntuSocket())return;
-    if(request.expectedService!=serviceAdmission())throw d::Failure(ActivationStatus::InterferenceDetected,"Ubuntu launch changed before runtime probe");
+    if(!ubuntuSocket()&&!altService())return;
+    if(request.expectedService!=serviceAdmission())throw d::Failure(ActivationStatus::InterferenceDetected,"SSH launch changed before runtime probe");
     const auto observed=capture(request.reference);validateCaptured(request,observed);
-    if(request.observedMetadata!=metadataIdentities(observed))throw d::Failure(ActivationStatus::InterferenceDetected,"Ubuntu inputs changed before runtime probe");
+    if(request.observedMetadata!=metadataIdentities(observed))throw d::Failure(ActivationStatus::InterferenceDetected,"SSH inputs changed before runtime probe");
     std::string error;if(!CommandHashStore::verifyHash("/usr/sbin/sshd",error))unsupported("SSH executable trust unproven");
-    detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();
+    if(ubuntuSocket())detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();
     const auto profile=fic::platform::makeBuildPlatformProfile();
     fic::platform::PlatformExecutableResolver resolver(profile.executables);
-    SshRuntimeOptions options;options.configPath="/etc/ssh/sshd_config";options.includeBasePath="/etc/ssh";
+    const auto input=detail::inputProfile();
+    SshRuntimeOptions options;options.configPath=input.mainFile;options.includeBasePath=input.base;
     options.requireTrustedInputs=true;options.useLaunchArguments=true;
     SshRuntime runtime(options,resolver);
-    detail::UbuntuSshSocketFlow::effectiveEndpoints(runtime);
+    detail::listener::effectiveEndpoints(runtime);
 }
 SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     const std::map<std::string,std::string>& policies,const std::string& expectedMainSha) {
@@ -453,8 +473,8 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     const auto profile=fic::platform::makeBuildPlatformProfile();std::string error;
     if(!supportedProfile(profile.id)||
        !fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))
-        unsupported("trusted SSH reference supports Debian12/13 or Ubuntu24/26 only");
-    SshVerifiedActivationRequest out;out.policies=policies;out.reference.unit="ssh.service";
+        unsupported("trusted SSH reference supports Debian12/13, Ubuntu24/26 or ALT p11 only");
+    SshVerifiedActivationRequest out;out.policies=policies;out.reference.unit=detail::inputProfile().unit;
     out.reference.timeout=std::chrono::seconds(60);
     detail::InputBytes bytes;detail::PersistentMetadata initial;
     std::uint64_t budget=out.reference.maxSnapshotBytes;
@@ -475,11 +495,14 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
         }
         out.reference.paths.push_back(std::move(input));
     };
-    add("/etc/ssh/sshd_config",ControlledPathKind::File);
-    if(fic::core::ContentDigest::sha256Hex(bytes.at("/etc/ssh/sshd_config"))!=expectedMainSha)
+    const auto input=detail::inputProfile();
+    add(input.mainFile,ControlledPathKind::File);
+    if(fic::core::ContentDigest::sha256Hex(bytes.at(input.mainFile))!=expectedMainSha)
         throw d::Failure(ActivationStatus::ChecksumMismatch,"main SSH source differs from caller-authorized state");
-    add("/etc/ssh/sshd_config.d",ControlledPathKind::Directory);
-    add("/etc/default/ssh",ControlledPathKind::File);
+    struct stat fragments{};
+    if(::lstat(input.fragments.c_str(),&fragments)==0) add(input.fragments,ControlledPathKind::Directory);
+    else if(errno!=ENOENT||!input.alt) unsupported("SSH fragment directory unavailable");
+    add(input.environment,ControlledPathKind::File);
     const auto keys=detail::discoverHostKeys(out.reference,bytes,policies);
     for(const auto& key:keys) {add(key,ControlledPathKind::File);add(key+".pub",ControlledPathKind::File);}
     // Re-read through the actual adapter's metadata/manifest checks. A changed

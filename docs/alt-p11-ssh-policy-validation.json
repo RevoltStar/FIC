@@ -1,0 +1,831 @@
+{
+  "date": "2026-10-24",
+  "scope": "Real policy classes + journal + adapter in disposable systemd PID1 containers; not installed daemon/IPC/package/PAM-login acceptance",
+  "base": "f625f285c67681693703946df33725baa0d05420",
+  "audit_commit": "1471349573f3ff8cfab0aa0cc9382ec02a345e15",
+  "alt": {
+    "result": "PASS",
+    "pass_groups": 64,
+    "fail": 0,
+    "skip": 0,
+    "phase": "all",
+    "image": "sha256:1da25ea4959352bc9aa4d070beba18eb990673f3d5a261a06e659c5ddfdd1661",
+    "environment": {
+      "packages": "openssh-server-9.6p1-alt7.x86_64\nsystemd-258.9-alt1.x86_64\n",
+      "kernel": "6.6.87.2-microsoft-standard-WSL2",
+      "unit": {
+        "Id": "sshd.service",
+        "ActiveState": "active",
+        "SubState": "running",
+        "UnitFileState": "enabled",
+        "Job": "",
+        "InvocationID": "0aa409c9402140f087effc1e5cafa54a",
+        "MainPID": "250"
+      }
+    },
+    "raw_report_sha256": "60652e93ce8ccf402bfa8459ae6c8b465debf8b794005592dde1dd51ef5d9c2d",
+    "runtime_proof": {
+      "old": [
+        {
+          "address": "127.0.0.1",
+          "port": 2222,
+          "inode": 4667243
+        },
+        {
+          "address": "::1",
+          "port": 2222,
+          "inode": 4665126
+        }
+      ],
+      "new": [
+        {
+          "address": "127.0.0.1",
+          "port": 2244,
+          "inode": 4685813
+        },
+        {
+          "address": "::1",
+          "port": 2244,
+          "inode": 4685811
+        }
+      ],
+      "mainpid": "2281",
+      "sshd_fd_inodes": [
+        4685807,
+        4685811,
+        4685813
+      ],
+      "pid1_fd_inodes": [
+        4634366,
+        4634367,
+        4634368,
+        4634369,
+        4634370,
+        4634371,
+        4634372,
+        4634373,
+        4634377,
+        4634391,
+        4634398,
+        4634401,
+        4634404,
+        4634405,
+        4634406,
+        4634409,
+        4634410,
+        4634411,
+        4634412,
+        4634413,
+        4634414,
+        4634415,
+        4634483,
+        4635514,
+        4635516,
+        4639660,
+        4639661,
+        4639666,
+        4640661,
+        4643301,
+        4643302,
+        4643303,
+        4643478,
+        4645955,
+        4646156,
+        4646158,
+        4646160,
+        4646164,
+        4646170,
+        4646174,
+        4647951,
+        4647952,
+        4650233,
+        4693369
+      ]
+    },
+    "cases": [
+      {
+        "name": "public-generic-rejects-stock-simple",
+        "assertions": "PASS",
+        "status": "UnsupportedConfiguration",
+        "readinessConfirmed": false,
+        "primaryStatus": "UnsupportedConfiguration"
+      },
+      {
+        "name": "stock-config-five-policies-and-receipt",
+        "assertions": "PASS",
+        "policy_operations": 15,
+        "applied": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "name": "fresh-five-policies-and-receipt",
+        "assertions": "PASS",
+        "policy_operations": 15,
+        "applied": [
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "name": "Port-inet",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          true
+        ]
+      },
+      {
+        "name": "Port-inet6",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          true
+        ]
+      },
+      {
+        "name": "foreign-compliant-no-enrollment",
+        "assertions": "PASS",
+        "policy_operations": 2,
+        "applied": [
+          true,
+          true
+        ]
+      },
+      {
+        "name": "receipt-invalidated-restart",
+        "assertions": "PASS",
+        "policy_operations": 3,
+        "applied": [
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "name": "receipt-invalidated-main-comment",
+        "assertions": "PASS",
+        "policy_operations": 3,
+        "applied": [
+          true,
+          true,
+          true
+        ]
+      },
+      {
+        "name": "recursive-Include-and-unrelated-Match",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          true
+        ]
+      },
+      {
+        "name": "external-empty-glob",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "systemd-external-symlink",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "conditional-selected",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-Include-symlink",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-Include-recursion",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-Include-Port",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-Include-ListenAddress",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsafe-environment-EXTRAOPTIONS=-p2266",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsafe-environment-EXTRAOPTIONS=-oUsePAM=no",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsafe-environment-EXTRAOPTIONS=-f/other",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsafe-environment-EXTRAOPTIONS=\nOTHER=1",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "disabled-active",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "enabled-inactive",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "failed",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "masked",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "missing-env",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "missing-key",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsafe-key",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-dropin-ExecStart=\nExecStart=/usr/sbin/sshd -D -f /other",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-dropin-ExecStart=\nExecStart=/usr/sbin/sshd -D -oUsePAM=no",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-dropin-ExecStart=\nExecStart=/usr/sbin/sshd -D -p2277",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-dropin-Environment=EXTRAOPTIONS=-p2277",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unsupported-dropin-Type=notify",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "compatible-administrative-dropin",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          true
+        ]
+      },
+      {
+        "name": "module-fault-main-cas",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-foreign-input",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-disable",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-after-save-stop",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-after-save-disable",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-after-save-input",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-after-save-main",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-durability",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-unknown-writer",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "module-fault-journal-commit",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "unresolved-Prepared",
+        "assertions": "PASS",
+        "policy_operations": 2,
+        "applied": [
+          false,
+          false
+        ]
+      },
+      {
+        "name": "rollback-owned-apply",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          true
+        ]
+      },
+      {
+        "name": "active-rollback-refusal",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "offline-ownership-only-release",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          true
+        ]
+      },
+      {
+        "name": "adapter-ro-write",
+        "assertions": "PASS",
+        "adapter_success": true,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "Proven",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-busy",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "CleanupFailed",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "NotProven",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-original-write",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "NonCompliant",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-new-glob",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "NonCompliant",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-contract-before",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "InterferenceDetected",
+        "A": "NotProven",
+        "C": "NotProven",
+        "P": "Proven",
+        "readinessConfirmed": false,
+        "primaryStatus": "InterferenceDetected"
+      },
+      {
+        "name": "adapter-contract-after",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "InterferenceDetected",
+        "A": "NotProven",
+        "C": "NotProven",
+        "P": "Proven",
+        "readinessConfirmed": false,
+        "primaryStatus": "InterferenceDetected"
+      },
+      {
+        "name": "adapter-ready-stop",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "Proven",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-ready-disable",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "Proven",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-ready-foreign-restart",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "Proven",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-final-disable",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "Proven",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-final-restart",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "Proven",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success"
+      },
+      {
+        "name": "adapter-alt-no-ready",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "TimedOut",
+        "A": "NotProven",
+        "C": "NotProven",
+        "P": "NotProven",
+        "readinessConfirmed": false,
+        "primaryStatus": "TimedOut",
+        "readiness_barrier_observed": true
+      },
+      {
+        "name": "adapter-pending-ready",
+        "assertions": "PASS",
+        "adapter_success": true,
+        "status": "Success",
+        "A": "Proven",
+        "C": "Proven",
+        "P": "Proven",
+        "readinessConfirmed": true,
+        "primaryStatus": "Success",
+        "admission_wait_observed": true
+      },
+      {
+        "name": "adapter-pending-timeout",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "UnsupportedConfiguration",
+        "A": "NotProven",
+        "C": "NotProven",
+        "P": "NotProven",
+        "readinessConfirmed": false,
+        "primaryStatus": "UnsupportedConfiguration",
+        "admission_wait_observed": true
+      },
+      {
+        "name": "adapter-pending-failed",
+        "assertions": "PASS",
+        "adapter_success": false,
+        "status": "UnsupportedConfiguration",
+        "A": "NotProven",
+        "C": "NotProven",
+        "P": "NotProven",
+        "readinessConfirmed": false,
+        "primaryStatus": "UnsupportedConfiguration",
+        "admission_wait_observed": true
+      },
+      {
+        "name": "foreign-listener-bind-failure",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      },
+      {
+        "name": "untrusted-keygen-before-save",
+        "assertions": "PASS",
+        "policy_operations": 1,
+        "applied": [
+          false
+        ]
+      }
+    ]
+  },
+  "openssh_regressions": {
+    "debian-12": {
+      "passed_groups": {
+        "cases": 30,
+        "adapter_cases": 59,
+        "module_cases": 24
+      },
+      "fail": 0,
+      "skip": 0,
+      "report_sha256": "5911f32d6e0b6732eaa8730ce610b57e601dbf33cb42dec0ea292c4626764fb1",
+      "image": "sha256:8bfd868d192ac076aa62bd985829ab6289b6c5b88079cb569cb1d903013cb72c"
+    },
+    "debian-13": {
+      "passed_groups": {
+        "cases": 30,
+        "adapter_cases": 59,
+        "module_cases": 24
+      },
+      "fail": 0,
+      "skip": 0,
+      "report_sha256": "99cd6fd355d2974da2a34f19bfa43bffd4d4d4925b600a6918d83379e87e1328",
+      "image": "sha256:6e20048bc0a8cf200d08abb088ae8a05d7a658661b37d6e2c729a89dcb12aa28"
+    },
+    "ubuntu-24.04": {
+      "passed_groups": {
+        "socket_policy_groups": 51
+      },
+      "fail": 0,
+      "skip": 0,
+      "report_sha256": "73f7e7f9414a38bc2279154a87ee90d50b341825c6eba7d5e7c58de1329004a1",
+      "image": "sha256:86e281dc1bb3603ac8c1f1e7be27d2c99f3ba5520651b1d9b65a7081f810d7b6"
+    },
+    "ubuntu-26.04": {
+      "passed_groups": {
+        "socket_policy_groups": 51
+      },
+      "fail": 0,
+      "skip": 0,
+      "report_sha256": "45be7b55e6f503e7816fe5171d524dd64e85e7615daf5dee5da1d378209d35d3",
+      "image": "sha256:734913b1cdd2617d6a6d32289b14e05a25e7a05249017877bda614cb2ffd1281"
+    }
+  },
+  "generic_activator_native": {
+    "alt-p11": {
+      "pass": 201,
+      "fail": 0,
+      "skip": 1,
+      "skip_reasons": [
+        "stock lower-layer empty SSH Include copy-up fixture unavailable"
+      ]
+    },
+    "debian12": {
+      "pass": 201,
+      "fail": 0,
+      "skip": 0,
+      "skip_reasons": []
+    },
+    "debian13": {
+      "pass": 201,
+      "fail": 0,
+      "skip": 0,
+      "skip_reasons": []
+    },
+    "ubuntu2404": {
+      "pass": 202,
+      "fail": 0,
+      "skip": 0,
+      "skip_reasons": []
+    },
+    "ubuntu2604": {
+      "pass": 202,
+      "fail": 0,
+      "skip": 0,
+      "skip_reasons": []
+    }
+  },
+  "ssh_provenance": {
+    "alt-p11": {
+      "groups_pass": 55,
+      "real_openssh_additional_pass": 0,
+      "fail": 0,
+      "skip": 0
+    },
+    "debian12": {
+      "groups_pass": 55,
+      "real_openssh_additional_pass": 3,
+      "fail": 0,
+      "skip": 0
+    },
+    "debian13": {
+      "groups_pass": 55,
+      "real_openssh_additional_pass": 3,
+      "fail": 0,
+      "skip": 0
+    },
+    "ubuntu2404": {
+      "groups_pass": 55,
+      "real_openssh_additional_pass": 0,
+      "fail": 0,
+      "skip": 0
+    },
+    "ubuntu2604": {
+      "groups_pass": 55,
+      "real_openssh_additional_pass": 0,
+      "fail": 0,
+      "skip": 0
+    }
+  },
+  "debian12_full": {
+    "configure": "PASS",
+    "build": "PASS",
+    "ctest_pass": 208,
+    "ctest_fail": 0,
+    "ctest_skip": 4,
+    "skip_reasons": {
+      "verified_config_service_native_tests": "Compile container lacks disposable privileged PID1 context; separately run on all five platforms",
+      "package_pam_hooks_native": "Opt-in native package/PAM fixture not enabled in this full-build container",
+      "legacy_predepends_admission_reproduction": "Opt-in legacy DEB reproduction outside SSH task",
+      "legacy_rpm_admission_reproduction": "Opt-in legacy RPM reproduction outside SSH task"
+    }
+  },
+  "limitations": [
+    "Shared WSL2 kernel, no independent VM/kernel validation",
+    "No installed full FIC daemon/IPC/package or PAM/login acceptance",
+    "Private publication boundaries provisioned by fixture only; production deployment is separate",
+    "Root ABA/post-last-check privileged actions not prevented",
+    "Active ALT rollback refuses before write; offline ownership release does not activate runtime",
+    "Existing unsafe owned-value REFRESH refusal remains"
+  ]
+}

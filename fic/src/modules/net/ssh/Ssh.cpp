@@ -125,7 +125,8 @@ Ssh::Ssh(fic::platform::SshPlatformConfig platformConfig,
 
 SshRollbackOptions Ssh::makeRollbackOptions() const {
     SshRollbackOptions options;
-    options.ubuntuSocket=platformConfig_.applyContract==fic::platform::SshApplyContract::UbuntuSocketVerified;
+    options.offlineRelease=platformConfig_.applyContract==fic::platform::SshApplyContract::AltVerified?SshOfflineReleaseProfile::AltService:
+            platformConfig_.applyContract==fic::platform::SshApplyContract::UbuntuSocketVerified?SshOfflineReleaseProfile::UbuntuSocket:SshOfflineReleaseProfile::None;
     options.configPath = platformConfig_.configPath;
     options.includeBasePath = platformConfig_.includeBasePath;
     options.serviceUnits = platformConfig_.serviceUnits;

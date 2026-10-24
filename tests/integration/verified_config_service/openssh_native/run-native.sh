@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ONLY disposable containers. No published ports, host binds or host namespaces.
 set -euo pipefail
-[[ $# == 2 ]] || { echo 'usage: run-native.sh IMAGE debian-12|debian-13|ubuntu-24.04|ubuntu-26.04' >&2; exit 2; }
+[[ $# == 2 ]] || { echo 'usage: run-native.sh IMAGE debian-12|debian-13|ubuntu-24.04|ubuntu-26.04|alt-p11' >&2; exit 2; }
 image=$1 platform=$2
-case "$platform" in debian-12|debian-13|ubuntu-24.04|ubuntu-26.04) ;; *) exit 2;; esac
+case "$platform" in debian-12|debian-13|ubuntu-24.04|ubuntu-26.04|alt-p11) ;; *) exit 2;; esac
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
 build="$repo/build-openssh-native/$platform"
 mkdir -p "$build/evidence"
 docker run --rm --network none -v "$repo:/src:ro" -v "$build:/build" "$image" \
- sh -ec 'cmake -S /src/tests/integration/verified_config_service/openssh_native -B /build -DFIC_TARGET_PLATFORM="$1"; cmake --build /build --target openssh_native_driver -j2' sh "$platform"
+ sh -ec 'cmake -S /src/tests/integration/verified_config_service/openssh_native -B /build -DFIC_TARGET_PLATFORM="$1"; cmake --build /build --target openssh_native_driver ssh_verified_activation_tests -j2; ctest --test-dir /build -R ssh_verified_activation_tests --output-on-failure' sh "$platform"
 # The unprivileged runner may not inspect root PID1's namespace; its own
 # namespace is the one Docker must NOT reuse (no --pid/--network/--mount host).
 host_mnt=$(stat -Lc '%d:%i' /proc/self/ns/mnt)
@@ -55,6 +55,9 @@ docker cp "$repo/tests/integration/verified_config_service/openssh_native/harnes
 if [[ "$platform" == ubuntu-* ]]; then
  docker cp "$repo/tests/integration/verified_config_service/openssh_native/ubuntu_socket.py" "$name:/usr/local/bin/fic-ubuntu-socket.py"
  docker exec "$name" python3 /usr/local/bin/fic-ubuntu-socket.py
+elif [[ "$platform" == alt-p11 ]]; then
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/alt_service.py" "$name:/usr/local/bin/fic-alt-service.py"
+ docker exec "$name" python3 /usr/local/bin/fic-alt-service.py "${FIC_ALT_NATIVE_SCENARIO:-all}"
 else
  docker exec "$name" python3 /usr/local/bin/fic-openssh-harness.py
 fi

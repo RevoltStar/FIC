@@ -1890,7 +1890,7 @@ void testPlatformApplyBoundary() {
         require(profile.ssh.applyContract==Contract::DebianVerified,"Debian must use verified apply");
     else if(profile.id=="ubuntu-24.04"||profile.id=="ubuntu-26.04")
         require(profile.ssh.applyContract==Contract::UbuntuSocketVerified,"Ubuntu must not fall back to legacy");
-    else if(profile.id=="alt-p11") require(profile.ssh.applyContract==Contract::Legacy,"ALT legacy contract changed");
+    else if(profile.id=="alt-p11") require(profile.ssh.applyContract==Contract::AltVerified,"ALT must use verified simple-service apply");
     SshApplyTree tree; tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port","2222");
     JournalOverride guard(tree.journalPath());std::string error;
     require(DaemonMutationJournal::instance().tryGet(error)!=nullptr,error);

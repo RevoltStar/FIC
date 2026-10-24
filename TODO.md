@@ -289,5 +289,7 @@ pam_pwhistory (впрочем, как и pam_pwquality) имеют не очен
 - Ubuntu 24.04/26.04: bounded verified socket profile реализован поверх общего engine;
   [контракт и native acceptance](docs/ubuntu-ssh-socket-activation-spec.md).
   Native acceptance:51 groups PASS на каждой Ubuntu; regression/ограничения — `docs/HANDOFF.md`.
-- Следующий этап — ALT p11 SSH verified activation, затем общее тестирование
-  установленного FIC на всех поддерживаемых дистрибутивах. M1 остаётся заморожен.
+- ALT p11: bounded stock simple-service verified profile реализован;
+  [контракт и native acceptance](docs/alt-p11-ssh-verified-activation.md).
+- Следующий этап — общее тестирование установленного FIC на Debian 12/13,
+  Ubuntu 24.04/26.04 и ALT p11 на виртуальных машинах. M1 остаётся заморожен.

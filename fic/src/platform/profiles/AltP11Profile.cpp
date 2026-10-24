@@ -93,8 +93,11 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.packageManager.kind = PackageManagerKind::Rpm;
     profile.packageManager.queryCandidates = {"/bin/rpm", "/usr/bin/rpm"};
     profile.packageManager.transactionLocks = {"/var/lib/rpm/.rpm.lock"};
+    profile.executables.entries.push_back({ExecutableId::SshKeygen,{"/usr/bin/ssh-keygen"}});
+    profile.ssh.applyContract=SshApplyContract::AltVerified;
     profile.ssh.configPath = "/etc/openssh/sshd_config";
     profile.ssh.includeBasePath = "/etc/openssh";
+    profile.ssh.verifiedIncludeDirectory = "/etc/openssh/sshd_config.local.d";
     profile.ssh.serviceUnits = {"sshd.service"};
     profile.ssh.socketUnits = {"sshd.socket"};
     profile.ssh.optionVariable = "EXTRAOPTIONS";

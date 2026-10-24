@@ -3,7 +3,7 @@
 ## Назначение и trusted reference
 
 `fic/src/service/ssh/SshVerifiedActivationAdapter.h` — самостоятельный production
-компонент, вызываемый Debian 12/13 и Ubuntu 24.04/26.04 SSH policy apply. Сам adapter не пишет
+компонент, вызываемый Debian 12/13, Ubuntu 24.04/26.04 и ALT p11 SSH policy apply. Сам adapter не пишет
 persistent конфигурацию, не получает ownership и не выполняет rollback/compensation.
 `Ssh::apply()` отвечает за provenance, CAS/save и journal finalization.
 
@@ -43,11 +43,14 @@ manifest, лимиты generic activator и identifiers/значения выб�
 
 ## Поддерживаемый launch profile
 
-Build profiles **Debian 12/13 и Ubuntu 24.04/26.04**, подтверждённые `/etc/os-release`.
+Build profiles **Debian 12/13, Ubuntu 24.04/26.04 и ALT p11**, подтверждённые `/etc/os-release`.
 Ниже описан Debian service profile. Ubuntu использует отдельный закрытый
 [socket profile](ubuntu-ssh-socket-activation-spec.md) того же engine, допускающий
 inactive service при persistently enabled/active socket и проверяющий listener/FD.
-ALT остаётся Unsupported в adapter; legacy policy lifecycle не меняется.
+ALT использует закрытый AltSshSimple profile в том же engine: stock simple/none,
+sshd-owned listeners и local protocol readiness; [точный ALT contract](alt-p11-ssh-verified-activation.md).
+Следующие Debian-specific paths/argv не переносятся на ALT. Active ALT rollback
+консервативно отказывает; доказанный offline release не заявляет runtime activation.
 Подготовка private boundaries не входит в adapter. На shared publication parent
 без безопасной границы generic engine продолжает отказывать.
 
