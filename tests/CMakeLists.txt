@@ -3317,3 +3317,9 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME ubuntu_ssh_socket_research_guard
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/ssh-ubuntu-socket-research/research.py --self-test)
 endif()
+
+# Read-only guard test; actual ALT audit runs only in an explicit disposable PID1 container.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME alt_p11_ssh_research_guard
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/ssh-alt-p11-research/research.py --self-test)
+endif()

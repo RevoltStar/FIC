@@ -1,29 +1,28 @@
 # Current working state
 
 ## Current base
-* main. Task parent `548286e4d556dd32fc919223ccfb8bfae39a7ee4`; audit A `49ac50a47cf495f8291df6d11388e60a4f1763df`. B finalized on this base, exact title `feat(ssh): implement verified Ubuntu socket activation`. No push.
+* main, parent `f625f285c67681693703946df33725baa0d05420` (Ubuntu verified complete). No push.
 
 ## Current task
-* Ubuntu24/26 SSH verified socket activation complete. Exactly A audit + B implementation. Next direction: ALT p11 verified SSH, then installed all-distribution acceptance. M1 remains frozen.
+* Attachment9b40fb0b: ALT p11 SSH verified activation, exactly A audit + B production. A native audit complete; commit `test(ssh): establish ALT p11 native activation contract`, then autonomously B. Do not stop at checkpoint/A.
 
 ## Accepted architecture / invariants
-* Authoritative contract: docs/ubuntu-ssh-socket-activation-spec.md. Same RO engine/CAS/journal/mutex/Prepared/A-B-C-P; no package/schema/M1 changes or new engine/watcher.
-* Closed Ubuntu profile: enabled active socket + inactive/active service, fixed local trigger/activation; default generic/Debian active/no-triggers contract unchanged. No product enable/start/unmask/reset-failed.
-* One port, <=16 local literal endpoints; trusted generator, typed loaded/native output, actual kernel inode and PID1→sshd FD inheritance; old controlled listener gone. Receipt pins inputs/socket/generator/runtime identity.
-* Missing stock /run/sshd may be created after admission/ownership/closure; unsafe existing object never repaired. Active rollback refuses. Positive offline service+socket proof permits ownership-only release, runtime NotAttempted even on failed/drifted proof; unknown/unloaded manager state refuses.
+* Authoritative docs/alt-p11-ssh-verified-activation.md. Native stock ALT Type=simple/NotifyAccess=none, sshd.service, root foreground -D $EXTRAOPTIONS, required /etc/sysconfig/sshd. Pre: ssh-keygen -A then sshd -t. No socket units/triggers; own listeners, not Ubuntu FD inheritance.
+* Same generic RO engine, closed ALT readiness predicate (new inv/PID/exe, exact native kernel listeners/old inode absence + SSH banner); bounded loops, no sd_notify/new engine/watcher. Debian/Ubuntu default contracts unchanged. No M1/packaging/schema changes.
+* Stock /etc/openssh/sshd_config has no Include; systemd places external symlink in unowned sshd_config.d, unused by stock main. Do NOT auto-capture/create that .d. Optional existing administrator tree sshd_config.local.d confirmed native; FIC never creates/includes it automatically. Main/env/all3 stock HostKey pairs required, -A under RO must be no-op. Missing/unsafe key refuses before save.
+* Strict enabled/ready apply admission; no fallback/hidden enable/start/unmask/reset-failed. Existing mutex/Prepared/CAS/durable save/provenance/receipt retained. Active rollback may conservatively refuse; proven offline ownership-only release must not claim runtime activation.
 
 ## Completed / changed areas
-* service internal typed socket/profile hook + ssh/UbuntuSshSocketFlow; adapter/reference/receipt/budget; Ubuntu platform dispatch/generator trust catalog; common Ssh transaction/rollback options/wiring.
-* Real native policy driver/harness and runner/CMake lists, endpoint/transaction regression tests, authoritative SSH docs/TODO. Sanitized final proof: docs/ubuntu-ssh-socket-policy-validation.json (no private key/config/reference bytes).
+* tests/integration/ssh-alt-p11-research: guarded runner/research/28-case sanitized evidence, README. docs ALT contract and root CTest safe guard only. Production unchanged in A.
+* Native actual ALT openssh-server/common9.6p1-alt7, systemd258.9-alt1; image sha256:1da25ea4959352bc9aa4d070beba18eb990673f3d5a261a06e659c5ddfdd1661. RPM main/env/unit verify clean. No host SSH/PAM/network touched.
+* Native defaults UsePAM=yes, Pubkey=yes, root without-password (existing normalizer), tries6/Port22, RSA/ECDSA/ED25519 defaults under /etc/openssh. Binary uses libpam_userpass; RPM source/changelog captured, no full source audit claim.
+* Native restarts/new inode identity, all5 values, -T/-C, Include recursion/relative base, selected Match, EXTRAOPTIONS f/o/p, RO source-vs-oldFD persistent change, enabled/inactive/disabled/failed/masked, ptrace pending and auto-restart observed. Stock keys absent before first unit start cause -T/-t failure; stock Pre -A initializes them.
 
 ## Validation
-* Ubuntu24/26 final real five-policy+socket matrix51 groups PASS each. Versions/image IDs/kernel/listener/FD facts and every scenario in evidence. Runtime Docker no host binds/ports/network except loopback; host SSH/PAM untouched.
-* Debian12/13 OpenSSH native30 generic+59 adapter+24 module groups PASS each.
-* Generic native D12/D13:201 PASS each; Ubuntu24/26:202 PASS each; ALT:201 PASS/1 SKIP. Earlier Ubuntu26 strict observer namespace-event refusal resolved by repeat, without weakening checks.
-* tests/integration/ssh-provenance/run-native.sh debian12 debian13 ubuntu2404 ubuntu2604 alt-p11:55 groups each PASS after final offline diagnostic/effect fault matrix.
-* Full Docker Debian12 configure/build + QT_QPA_PLATFORM=offscreen ctest:207 PASS/4 SKIP,211 total. Final logs build-env-full-debian12/ubuntu-final-{build,ctest}.log. Generic native run separately; skipped package research/PAM gates unrelated.
-* Shell/Python syntax and git diff --check PASS. Full native reports build-openssh-native/<platform>/evidence; commands in runner README/spec.
+* bash tests/integration/ssh-alt-p11-research/run-native.sh fic-ssh-audit:alt-p11:28 cases PASS; report build-alt-ssh-research/alt-p11/report.json and journal/container.json. Guard --self-test PASS; bash -n PASS; git diff --check PASS. Root CTest alt_p11_ssh_research_guard PASS (Docker D12 configure + targeted CTest).
+* Shared WSL2 kernel6.6.87.2, no independent VM/kernel or full installed FIC/PAM-login acceptance.
 
-## Remaining / boundaries
-* No implementation blocker or unfinished Ubuntu task item. ALT and full installed daemon/IPC/package/PAM-login/VM acceptance are separate follow-ups, not claimed here.
-* Common WSL2 kernel6.6.87.2; no independent VM/kernel matrix. Shared publication parents need pre-provisioned private boundaries. Root ABA/post-SUCCESS admin changes, existing strict owned-value REFRESH refusal and active socket rollback refusal remain bounds.
+## Remaining / next
+* Commit A after guard CTest, then implement B per authoritative plan. Narrow simple-profile engine readiness; parameterize paths/env/optional admin tree/default keys; shared listener helper reused from Ubuntu; ALT dispatch/no legacy fallback; receipt/listener proof; offline release profile/active refusal.
+* Native real policy ALT cases including stock config without manual simplification, then all5 generic/provenance, D12/13 module+adapter, U24/26 socket51 regressions, full D12 build/CTest. Add/update related unit/CI; final evidence/docs/TODO/HANDOFF; commit B `feat(ssh): implement verified ALT p11 activation`. No push, exactly2 commits if no objective blocker.
+* Existing private mount-boundary deployment, root ABA, strict owned-value REFRESH refusal stay bounds. Do not begin another hardening phase after ALT; next task installed VM/all-distro acceptance.
