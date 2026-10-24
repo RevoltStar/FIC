@@ -1,36 +1,31 @@
 # Current working state
 
 ## Current base
-* `main`; production integration `b978f2c07475d6ef6ec5e8613b5239f6052def67`; final native/docs completion follows in HEAD (`git log -1`). Earlier profile/admission `9869ae5`, boundary `534a0ad`, original task base `d8bc274`. No push.
+* main, Ubuntu task parent548286e4d556dd32fc919223ccfb8bfae39a7ee4. No push.
 
 ## Current task
-* Debian SSH attachment `da117094-3d53-47b9-ae43-ed5a943d3347` completed within its accepted module/systemd/OpenSSH boundary. No unfinished Debian implementation. Ubuntu socket activation is a separate future task, not started.
+* Attachment0632096f-d7d8-4bd3-a9bf-c6408faf409b: Ubuntu24/26 verified SSH socket activation. Exactly two commits A audit, B implementation. A contains only fixtures/docs/CI guard; B must follow autonomously, no checkpoint-only stop.
 
-## Accepted architecture / invariants
-* Debian12/13 strict verified policy apply; Ubuntu24/26 Unsupported without fallback. ALT legacy activation/compensation retained; common SSH mutex/Prepared gate protects apply/disable across policies.
-* Desired values, root-trusted foreign references and journal ownership remain separate. Main expected SHA is pinned to CAS snapshot/installed receipt. No schema, M1/fence/package changes, ownership adoption, blind restore or automatic Prepared recovery. Strict owned-value REFRESH explicitly refuses before undo/write.
-* Existing generic engine performs RO snapshot/restart/READY/cleanup; shared read-only publication preflight runs before persistent mutation. Shared parents still require separately prepared private boundaries.
-* Single bounded in-memory receipt binds boot/unit/full launch/inputs+metadata/executable identity+digest/PID/invocation/proven values. Optional enabled values enter only after independent proof on same protected snapshot; optional failures do not gate selected policy.
-* Stock start-limit-hit was reproduced and fixed by bounded own restart budget, without reset/changing limits. Age unknown initial window, then rolling attempts; interval0 or <=30s/burst1..1024, production admission/reference60s. External privileged restart/ABA remains outside atomic guarantees.
+## Accepted bounded contract
+* docs/ubuntu-ssh-socket-activation-spec.md records native observations and concrete B sequence/map. Existing Debian engine/CAS/ownership/mutex/Prepared/A-B-C-P/receipt reused. M1/package/schema/global coordinator/new snapshot engine forbidden.
+* Normal socket enabled+active/service disabled+inactive supported by protected normal loopback trigger. Service-only/disabled socket fails, no enable/start/unmask/reset-failed by product.
+* Generator, loaded Listen and actual listener are distinct; daemon-reload alone leaves old kernel sockets. PID1 socket inode must be inherited by actual sshd; IPv4/v6 exact full set, no stale controlled listener.
+* Native -T/-t fail255 without /run/sshd on both OS. B may prepare only missing stock root:root0755 runtime directory after positive unit/closure/ownership checks; never repair/adopt unsafe existing object. No secret-key test workaround or hidden service start.
+* One effective port, <=16 locally triggerable literal endpoints; safe Description/CPUWeight service overrides, Description socket; native output/loaded/kernel proofs, negative Include closure unchanged. Unknown generator masks/overrides refuse.
+* Narrow internal Ubuntu-specific engine profile/hook may accept inactive service+exact ssh.socket trigger; public generic/default/Debian guarantees unchanged. Ubuntu hook performs no copy/mount, all snapshot/observer/cleanup stays in same engine.
+* Active socket rollback may safe-refuse before unproven release activation; offline service+socket allow ownership-only release with repeated checks/no runtime claim. No schema/large recovery redesign.
 
-## Completed / changed areas
-* Real Ssh::apply integration, reference builder/caller proofs, verified transaction callbacks, saved/unknown provenance, shared mutex and cross-policy Prepared disable gate, platform dispatch and build dependencies.
-* Native module runner uses actual five policy classes/journal/sshd/systemd, without fake Installed or daemon startup bypass. Real pending lifecycle uses test-only ptrace barrier; late confirmation exceptions cannot retain provisional Success. Native Unknown and NonCompliant diagnostics are distinct.
-* Authoritative contract: docs/ssh-verified-activation-adapter.md; validation/reproduction: docs/ssh-debian-verified-policy-validation.md. Future Ubuntu task: docs/ubuntu-ssh-socket-activation-spec.md (also TODO).
+## Completed
+* Native audit scripts tests/integration/ssh-ubuntu-socket-research and condensed sanitized evidence.21 scenarios PASS each: versions/API, normal inactive/active, inherited inode, Port caches/reload/restart under held connection, AF_INET/6/default outputs, nested Include, protected input vs old-FD persistent mutation, stale loaded after cleanup, inactive/failed/disabled socket, absent runtime dir.
+* Ubuntu24 openssh1:9.6p1-3ubuntu13.20/systemd255.4-1ubuntu8.18; Ubuntu26 openssh1:10.2p1-2ubuntu3.8/systemd259.5-0ubuntu3.4. Common WSL2 kernel6.6.87.2. No host SSH/PAM touched.
+* Guard self-test PASS; shell syntax PASS; root CMake adds opt-in-free safe guard CTest. Production unchanged at A.
 
-## Validation
-* Final native Debian12/13: each 30 generic experiments +59 adapter cases +24 module groups PASS, exit0; new PID/invocation/listener/no-op, pending ready/failure/deadline, late runtime/enablement, unsupported launch and post-save/journal faults. Vendor unit bytes unchanged/restored sshd -t.
-* Final full D12 build/CTest: 206 PASS/4 expected SKIP, 210 total, 174.47s, exit0; singleton/maintenance native opts enabled. Skips documented in validation report.
-* Standalone provenance all five profiles: 55 PASS/0 FAIL each; Debian adds3 real OpenSSH semantics probes each.
-* Generic native Ubuntu24/26:202 PASS each; ALT:201 PASS/1 known stock empty-Include overlay fixture SKIP.
-* Production symbol scan: SSH save-outcome/adapter test entrypoints absent. git diff --check PASS; final harness self-test PASS.
-* Detailed ignored logs: build-m1-evidence/ssh-release-{native-debian12,native-debian13,final-full-debian12}.log, ssh-integrated-provenance-matrix.log, ssh-integrated-generic-*.log; sanitized native evidence under build-openssh-native/debian-{12,13}/evidence.
-
-## Boundaries / next work
-* No full daemon/IPC/package/M1/PAM login or other kernel/VM/hardware proof. Module gate explicitly allowed by task. Containers share kernel6.6.87.2 WSL2. This does not claim continuous enforcement or arbitrary privileged ABA protection.
-* REFRESH/semantic Prepared recovery and wrapper-body fingerprint follow-up remain explicit known boundaries, not hidden compensation. Ubuntu implementation requires a new task; ALT not declared verified.
-* M1 remains frozen/incomplete at original task base; AGENTS §17 and maintenance design docs unchanged. Do not resume M1 automatically.
+## Next
+* Commit A exact title test(ssh): establish Ubuntu socket activation native contract, then implement B exact title feat(ssh): implement verified Ubuntu socket activation. Must not stop after A. Audit PASS is not production completion.
+* Implement platform mode/generator trust catalog, typed socket reader and narrow internal hook, Ubuntu lifecycle/inode proofs/rate budget/receipt, Ssh integration and offline release. Then native classes/matrix + Debian/provenance/generic/full D12 gates; docs/TODO/HANDOFF final completion. No extra commits or push.
+* Generic socket Exec commands use legacy a(sasbttttuii) arrays, require empty; service still uses Ex forms. Listen a(ss) retains all endpoints (systemctl show repeats Listen lines).
+* Generated normal file /run/systemd/generator/ssh.socket.d/addresses.conf; default any/wildcard22 has no output. RO native generator/PID1 sees protected2288 despite persistent2299 via oldFD; cleanup does not invalidate manager cache.
 
 ## Environment
-* Docker fic-ssh-audit:{debian12,debian13,ubuntu2404,ubuntu2604,alt-p11}; native runtime systemd PID1/private namespaces/no host binds/network/ports. Host SSH/PAM untouched.
-* build-env-full-debian12 one writer, /src RO, /build root during run/1000 afterwards, DAC overrides dropped, QT_QPA_PLATFORM=offscreen, native singleton/maintenance opts. No relink during CTest.
+* Docker fic-ssh-audit:{ubuntu2404,ubuntu2604,debian12,debian13,alt-p11}. Runtime no host binds/network/ports, private namespaces/PID1. Audit runner exports build-ubuntu-socket-research/<row>/report.json/container.json/journal; fixture keys remain inside disposable image.
+* M1 remains frozen. Module/native test runner allowed; no fake Installed/full daemon/PAM/VM claims.

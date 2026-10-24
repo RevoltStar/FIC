@@ -3308,3 +3308,9 @@ foreach(ssh_caller IN LISTS FIC_LOCAL_TEST_TARGETS)
         target_link_libraries(${ssh_caller} PRIVATE PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
     endif()
 endforeach()
+
+# Guard only; native audit requires an explicitly disposable systemd container.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME ubuntu_ssh_socket_research_guard
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/ssh-ubuntu-socket-research/research.py --self-test)
+endif()
