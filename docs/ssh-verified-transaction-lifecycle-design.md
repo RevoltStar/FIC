@@ -2,7 +2,9 @@
 
 ## 1. Executive summary
 
-**Статус: проект целевого lifecycle; реализованы Stage 1 (§22) и Stage 2 (§23).** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
+**Статус: проект расширенного lifecycle; Stage 1/2 и bounded Debian integration
+описаны в §22/23 и последнем разделе. Проектные durable restart intent/REFRESH
+не реализованы текущим schema 2 и не заявляются как готовые.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
 Production, API, journal schema и поведение политик этим документом не изменяются.
 
 Рекомендация: отдельный **SSH transaction coordinator** (вариант B), переиспользующий
@@ -1321,12 +1323,34 @@ SSH runtime/apply-rollback, MutationJournal, RollbackExecutor. Лог
 Shell syntax checks и `git diff --check` PASS; production fic не содержит test-only
 save-outcome setter по symbol scan. Ни host SSH, ни systemd service не изменялись.
 
-## Debian supported-boundary follow-up (in progress)
+## Debian supported-boundary integration
 
-Новое ТЗ `da117094-3d53-47b9-ae43-ed5a943d3347` ограничивает supported launch и
-Include/config authority штатным Debian12/13; M1 заморожен, Ubuntu socket activation
-остаётся отдельной будущей задачей. Первый implemented classifier substage описан
-в `ssh-verified-activation-adapter.md`: Includes только `.d`, selected-policy Match
-refusal. Старые выводы о blanket Match refusal относятся к аудированной v1 базе.
-Service admission, production verified integration и полная native matrix пока
-не подтверждены; прежние проектные разделы не являются completion claim.
+ТЗ `da117094-3d53-47b9-ae43-ed5a943d3347` реализует ограниченный lifecycle поверх
+существующего schema 2. Это не полная реализация всех предложений ранних разделов.
+Authoritative supported profile, service matrix, restart budget, reference builder,
+receipt и failure semantics: [SSH adapter](ssh-verified-activation-adapter.md#debian-policy-lifecycle).
+
+Фактический путь: shared SSH mutex → configured value + enabled/ready admission →
+shared-resource Prepared gate + ownership proof → bounded reference → compliance/
+plan → Prepared → повторный admission/foreign-input proof → CAS/durability →
+installed-state identity → verified adapter (RO publication, selected native semantics,
+READY нового sshd, cleanup, P) → повторная installed identity → journal commit.
+
+Compliant foreign inputs не enroll-ятся; актуальный receipt позволяет no-op без
+restart. Новый daemon process получает новый runtime proof. При уже owned state
+проверяется настоящий native compliance; no-change не заменяет проверку Stage 2.
+Applied ownership drift, orphan markers и любой shared-file Prepared fail-closed.
+Rollback/disable остаётся ownership release и не требует enabled/ready apply admission,
+но не обходит shared-file Prepared gate и выполняется под тем же resource mutex.
+
+Нет автоматической compensation в strict post-save path. Сохраняются actual effect
+facts и Prepared; при неопределённой записи journal сам journal fail-closed. Старый
+ALT path сохраняет R1/R1b facts и существующую условную compensation. Безопасный
+REFRESH schema 2 не поддерживает: strict изменение уже owned value отказывает до
+undo/write/reprepare. R3 wrapper-body fingerprints и полноценное semantic recovery
+остаются ограничениями, не маскируются «успешной интеграцией».
+
+M1/fence/package lifecycle не менялись. Native module runner вызывает реальные
+policy/journal/runtime компоненты в disposable systemd/OpenSSH контейнере, не
+синтезируя Installed и не выдавая этот gate за полный daemon/package end-to-end.
+Ubuntu socket activation остаётся отдельной задачей после финальных Debian gates.

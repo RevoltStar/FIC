@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Disposable real-OpenSSH experiments; no product integration or shell emulation."""
+"""Disposable real-OpenSSH adapter/module experiments; no host SSH or shell emulation."""
 import glob
 import ctypes
 import hashlib
@@ -26,7 +26,7 @@ DRIVER = '/usr/local/bin/fic-openssh-driver'
 def run(args, check=True, timeout=20):
     p = subprocess.run(args, text=True, capture_output=True, timeout=timeout)
     if check and p.returncode:
-        raise RuntimeError(f'{args[0]} failed: {p.stderr[:1000]}')
+        raise RuntimeError(f'{args[0]} failed: {p.stderr[:1000]} {p.stdout[-4000:]}')
     return p
 
 
@@ -114,10 +114,11 @@ def request(include_dir=True):
 def drive(action, req, allow_crash=False):
     p = WORK / 'request.json'
     p.write_text(json.dumps(req))
-    process = run([DRIVER, action, str(p)], check=not allow_crash, timeout=35)
+    process = run([DRIVER, action, str(p)], check=not allow_crash, timeout=150 if action == 'module' else 35)
     if allow_crash and process.returncode == -9:
         return {'status': 'SIGKILL', 'readinessConfirmed': False}
-    data = json.loads(process.stdout)
+    data = json.loads(process.stdout.splitlines()[-1])
+    if action == 'module': data['policy_log'] = '\n'.join(process.stdout.splitlines()[:-1])[-8000:]
     assert 'harness_error' not in data, data
     return data
 
@@ -380,6 +381,7 @@ def main():
         def adapter_case(name, action='adapter', req=None, success=False, drift=False, restarted=None, unknown=False):
             req = req or request()
             before = state(); data = drive(action, req); after = state()
+            assert 'adapter_success' in data, (name,data)
             assert data['adapter_success'] == success, (name, data)
             if name in ('disabled-active-no-activation','disabled-inactive-no-activation','enabled-inactive-no-pending-job'):
                 assert not data['activation_invoked'], (name,data)
@@ -420,7 +422,31 @@ def main():
         run(['systemctl','enable','ssh.service'])
         adapter_case('enabled-inactive-no-pending-job',restarted=False)
         run(['systemctl','start','ssh.service'])
+        adapter_reset()
+        data=adapter_case('pending-native-ready',action='adapter-pending-ready',success=True)
+        assert data['admission_wait_observed'],data
+        for fault in ('pending-timeout','pending-failed'):
+            adapter_reset();data=adapter_case(fault,action='adapter-'+fault)
+            assert data['admission_wait_observed'] and not data['activation_invoked'],data
         adapter_reset(); adapter_case('all-five-empty-glob-public', success=True, restarted=True)
+        adapter_reset()
+        captured=drive('capture-reference',request())
+        assert captured['reference_capture_succeeded'], captured
+
+        service_bad=json.loads(json.dumps(captured['reference']))
+        service_bad['expected_service']['MainPID']='0'
+        adapter_case('stale-caller-service-proof',req=service_bad,restarted=False)
+        metadata_bad=json.loads(json.dumps(captured['reference']))
+        metadata_bad['observed_metadata'][str(MAIN)]='0'*64
+        adapter_case('stale-caller-metadata-proof',req=metadata_bad,restarted=False)
+        adapter_case('production-reference-builder',req=captured['reference'],success=True,restarted=True)
+        bad=request()
+        for p in bad['paths']:
+            if p['path']==str(MAIN): p['sha256']='0'*64
+        assert not drive('capture-reference',bad)['reference_capture_succeeded']
+        adapter_reset('Include /opt/evil/*.conf\n')
+        assert not drive('capture-reference',request())['reference_capture_succeeded']
+        adapter_reset()
         adapter_case('repeat-same-reference', success=True, restarted=True)
         adapter_reset('Match User backup\n X11Forwarding no\n')
         adapter_case('unrelated-Match', success=True, restarted=True)
@@ -454,13 +480,25 @@ def main():
                             ('unsupported-Match','Match all\n PermitRootLogin yes\n'),
                             ('multiple-Port','Port 2223\n'), ('ListenAddress-other-port','ListenAddress 127.0.0.1:2223\n'),
                             ('unsupported-syntax','UnknownFicDirective yes\n')]:
-            adapter_reset(extra); adapter_case(name, restarted=False)
+            adapter_reset(extra); refused=adapter_case(name, restarted=False)
+            if name=='multiple-Port':
+                assert refused['C']=='NonCompliant' and refused['adapter_diagnostic'].startswith('NonCompliant:'),refused
+        adapter_reset('PermitRootLogin invalid-value\n')
+        unknown=adapter_case('native-syntax-proof-unknown',restarted=False)
+        assert unknown['C']=='NotProven' and unknown['adapter_diagnostic'].startswith('Unknown:'),unknown
         adapter_reset(); adapter_case('unguarded-new-glob', req=request(False), restarted=False)
         adapter_reset(); adapter_case('guarded-new-glob', action='adapter-new-glob', drift=True, restarted=True)
         adapter_reset(); adapter_case('original-write', action='adapter-original-write', drift=True, restarted=True)
         for fault, restart in [('contract-before',False), ('contract-after',True), ('contract-preflight',False), ('source-before',False), ('source-inode-before',False), ('source-mode-before',False), ('glob-before',False), ('directory-before',False)]:
             adapter_reset(); raced = adapter_case(fault, action='adapter-'+fault, restarted=restart)
             assert raced['activation_invoked'] and raced['status'] in ('InterferenceDetected', 'ChecksumMismatch'), (fault, raced)
+        for fault in ('ready-stop','ready-disable','ready-foreign-restart','final-disable','final-restart'):
+            adapter_reset()
+            data=adapter_case(fault,action='adapter-'+fault)
+            assert not data['adapter_success'] and data['readinessConfirmed'],data
+            assert data['A']==data['C']=='Proven' and data['P']=='Proven',data
+            run(['systemctl','stop','ssh.service'],check=False)
+            run(['systemctl','enable','ssh.service'])
         adapter_reset(); data = adapter_case('cleanup-EBUSY', action='adapter-busy', restarted=True)
         assert data['status'] == 'CleanupFailed' and data['primaryStatus'] == 'Success'
         drive('cleanup', request())
@@ -496,6 +534,108 @@ def main():
         adapter_reset(); KEY.chmod(0o400)
         adapter_case('metadata-key-0400-public-0644', success=True, restarted=True)
         adapter_reset()
+        # This section calls the real Ssh::apply, journal and policy classes,
+        # without daemon startup or synthetic M1 lifecycle state.
+        result['module_cases'] = []
+        def module_reset():
+            adapter_reset()
+            MAIN.write_text(config())
+            shutil.rmtree(WORK / 'module-state', ignore_errors=True)
+        def module_case(name, operations):
+            req=request(); req['operations']=operations
+            data=drive('module',req)
+            result['module_cases'].append({'name':name,'result':data})
+            (OUT / 'results.json').write_text(json.dumps(result,indent=2))
+            return data['module']
+        selected=[{'policy':p,'value':v} for p,v in (
+            ('ssh_root_login','no'),('ssh_use_pam','yes'),('ssh_pubkey_auth','yes'),
+            ('ssh_max_auth_tries','3'),('ssh_port','2244'))]
+        module_reset()
+        rows=module_case('real-policy-apply-and-receipt',selected*3)
+        assert all(row['applied'] for row in rows), rows
+        assert rows[0]['main_unchanged'] and not rows[0]['records'], rows[0]
+        assert rows[0]['before_invocation']!=rows[0]['after_invocation'], rows[0]
+        assert all(row['before_invocation']==row['after_invocation'] for row in rows[-5:]), rows
+        assert all(row['main_unchanged'] for row in rows[-5:]), rows
+        assert 'FIC_VERIFIED' in handshake(2244)
+        listeners=run(['ss','-lntp']).stdout
+        assert any('127.0.0.1:2244' in line and f'pid={rows[-1]["after_pid"]},' in line for line in listeners.splitlines()), listeners
+        assert len(rows[-1]['records'])==4, rows[-1]
+        for change in ('restart','main-comment'):
+            module_reset()
+            rows=module_case('receipt-invalidated-'+change,[
+                {'policy':'ssh_root_login','value':'no'},
+                {'policy':'ssh_root_login','value':'no'},
+                {'policy':'ssh_root_login','value':'no','before':change},
+                {'policy':'ssh_root_login','value':'no'}])
+            assert all(row['applied'] for row in rows),rows
+            assert rows[1]['before_invocation']==rows[1]['after_invocation'],rows
+            assert rows[2]['before_invocation']!=rows[2]['after_invocation'],rows
+            assert rows[3]['before_invocation']==rows[3]['after_invocation'],rows
+        for name, mutate in (
+            ('disabled-active',lambda:run(['systemctl','disable','ssh.service'])),
+            ('enabled-inactive',lambda:run(['systemctl','stop','ssh.service'])),
+            ('external-empty-Include',lambda:MAIN.write_text(config(extra='Include /opt/evil/*.conf\n'))),
+            ('conditional-policy',lambda:MAIN.write_text(config(extra='Match User root\n PermitRootLogin yes\n'))),
+            ('orphan-markers',lambda:MAIN.write_text('#@FIC_SSH_BLOCK_BEGIN version=1@\n#@FIC_POLICY_BEGIN name=ssh_root_login@\nPermitRootLogin no\n#@FIC_POLICY_END name=ssh_root_login@\n#@FIC_SSH_BLOCK_END@\n'+config()))):
+            module_reset(); mutate()
+            row=module_case(name,[{'policy':'ssh_root_login','value':'no'}])[0]
+            assert not row['applied'] and row['main_unchanged'] and row['journal_unchanged'] and not row['records'], row
+            assert row['before_invocation']==row['after_invocation'],row
+            run(['systemctl','stop','ssh.service'],check=False)
+            run(['systemctl','enable','ssh.service'])
+        module_reset()
+        (DROP / '10-foreign-port.conf').write_text('Port 2223\n')
+        row=module_case('foreign-included-Port',[{'policy':'ssh_port','value':'2244'}])[0]
+        assert not row['applied'] and row['main_unchanged'] and row['journal_unchanged'],row
+        assert row['before_invocation']==row['after_invocation'],row
+        for fault in ('disable','foreign-input','main-cas'):
+            module_reset()
+            row=module_case('pre-CAS-'+fault,[{'policy':'ssh_use_pam','value':'yes','fault':fault}])[0]
+            assert not row['applied'] and not row['records'],row
+            assert row['before_invocation']==row['after_invocation'],row
+            if fault!='main-cas': assert row['main_unchanged'],row
+            run(['systemctl','stop','ssh.service'],check=False)
+            run(['systemctl','enable','ssh.service'])
+        for fault in ('after-save-stop','after-save-disable','after-save-input','after-save-main','durability','unknown-writer'):
+            module_reset()
+            rows=module_case(fault,[{'policy':'ssh_use_pam','value':'yes','fault':fault},
+                                   {'policy':'ssh_root_login','value':'no'}])
+            assert not rows[0]['applied'] and not rows[0]['main_unchanged'] and len(rows[0]['records'])==1,rows
+            assert not rows[1]['applied'] and rows[1]['main_unchanged'] and rows[1]['records']==rows[0]['records'],rows
+            # No restore of historical bytes after saved/uncertain effect.
+            assert 'UsePAM yes' in MAIN.read_text(),fault
+            if fault=='after-save-main': assert '# foreign saved edit' in MAIN.read_text()
+            run(['systemctl','stop','ssh.service'],check=False)
+            run(['systemctl','enable','ssh.service'])
+        module_reset()
+        rows=module_case('journal-commit-failure',[
+            {'policy':'ssh_use_pam','value':'yes','fault':'journal-commit'},
+            {'policy':'ssh_root_login','value':'no'}])
+        assert not rows[0]['applied'] and not rows[0]['main_unchanged'] and rows[0]['journal_unusable'],rows
+        assert rows[0]['before_invocation']!=rows[0]['after_invocation'],rows
+        assert not rows[1]['applied'] and rows[1]['main_unchanged'] and rows[1]['journal_unusable'],rows
+        assert rows[0]['journal_sha']==rows[1]['journal_sha'],rows
+        assert rows[1]['before_invocation']==rows[1]['after_invocation'],rows
+        launch_override=Path('/etc/systemd/system/ssh.service.d/95-fic-negative.conf')
+        for name,content in (
+            ('ExecStart-f','[Service]\nExecStart=\nExecStart=/usr/sbin/sshd -D -f /run/foreign.conf\n'),
+            ('ExecStart-o','[Service]\nExecStart=\nExecStart=/usr/sbin/sshd -D -oUsePAM=no\n'),
+            ('ExecStartPre','[Service]\nExecStartPre=/usr/bin/true\n'),
+            ('EnvironmentFile','[Service]\nEnvironmentFile=/run/foreign-env\n'),
+            ('PrivateMounts','[Service]\nPrivateMounts=yes\n')):
+            module_reset()
+            launch_override.parent.mkdir(exist_ok=True)
+            launch_override.write_text(content)
+            run(['systemctl','daemon-reload'])
+            try:
+                row=module_case('unsupported-launch-'+name,[{'policy':'ssh_root_login','value':'no'}])[0]
+                assert not row['applied'] and row['main_unchanged'] and row['journal_unchanged'],row
+                assert row['before_invocation']==row['after_invocation'],row
+            finally:
+                launch_override.unlink()
+                run(['systemctl','daemon-reload'])
+        module_reset()
         result['final_mounts'] = drive('cleanup', request())
         result['unit_bytes_unchanged'] = all(sha(p) == h for p, h in original_units.items())
         assert result['unit_bytes_unchanged']
@@ -503,6 +643,7 @@ def main():
                                  'Match at authenticated connection NOT_TESTED', 'shared-root provisioning BLOCKED_BY_MOUNT_TOPOLOGY',
                                  'A/B for caller-declared inputs do not imply C', 'late /proc cmdline not initial argv evidence']
     finally:
+        (OUT / 'module-service-journal.log').write_text(run(['journalctl','-u','ssh.service','-n','100','--no-pager'],check=False).stdout)
         run(['systemctl', 'stop', 'ssh.service'], check=False)
         run(['systemctl', 'unset-environment', 'FIC_OPENSSH_TEST_CHANGE'], check=False)
         drive('cleanup', {'paths': []})

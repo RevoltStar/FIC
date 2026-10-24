@@ -3,8 +3,9 @@
 ## Назначение и trusted reference
 
 `fic/src/service/ssh/SshVerifiedActivationAdapter.h` — самостоятельный production
-компонент, пока **не вызываемый SSH-политиками**. Он не пишет конфигурацию,
-не получает ownership и не выполняет apply/rollback/compensation.
+компонент, вызываемый Debian 12/13 SSH policy apply. Сам adapter не пишет
+persistent конфигурацию, не получает ownership и не выполняет rollback/compensation.
+`Ssh::apply()` отвечает за provenance, CAS/save и journal finalization.
 
 ```cpp
 using namespace fic::service;
@@ -25,12 +26,15 @@ Adapter сверяет наблюдаемые байты с ними; не вы�
 сверки не является enrollment. В native harness reference формируется из
 заранее заданной synthetic fixture — только test provisioning.
 
-Trusted reference, observed state и FIC ownership различаются. Наличие SHA или
-даже успешный result не доказывает ownership. Будущее подключение должно
-передавать references из SSH transaction/backend после durability и проверки
-его действующего provenance/CAS; оно потребует отдельной задачи, а не нового
-журнала в adapter. Существующий `DaemonMutationJournal`, managed blocks,
-`SshConfigTransaction` и `SshRollback` не изменены.
+Trusted reference, observed state и FIC ownership различаются. `captureReference()`
+читает root-controlled штатные источники через descriptors, проверяет supplied SHA
+основного файла из CAS snapshot, exact manifests и metadata повторным capture.
+Это operation-local reference чужих доверенных входов, а не enrollment их как
+желаемых policy values или ownership. Желаемое значение приходит из policy config;
+ownership доказывается отдельно managed blocks и `DaemonMutationJournal` **до**
+построения reference. После save разрешается изменение только основного файла,
+закреплённое installed-state receipt; все чужие inputs сохраняют прежние SHA/metadata.
+Полный publication environment preflight выполняется read-only до Prepared/save.
 
 Проверяются полный набор путей, canonical lowercase SHA, дубликаты/пересечения,
 manifest, лимиты generic activator и identifiers/значения выбранных политик.
@@ -50,7 +54,7 @@ loaded values и unit-source fingerprints. В v1 дополнительно тр
 
 * `ssh.service`, active/running, notify/main, без pending job и socket triggers;
 * vendor FragmentPath `/lib/systemd/system/ssh.service` либо
-  `/usr/lib/systemd/system/ssh.service`, без DropInPaths;
+  `/usr/lib/systemd/system/ssh.service`; ограниченные drop-ins описаны ниже;
 * exact argv `ExecStart=/usr/sbin/sshd -D $SSHD_OPTS`, без execution flags;
 * exact `ExecStartPre=/usr/sbin/sshd -t`, без flags;
 * пустые ExecCondition/StartPost/Stop/StopPost, Environment/PassEnvironment/
@@ -61,9 +65,12 @@ loaded values и unit-source fingerprints. В v1 дополнительно тр
 * root-controlled sshd, разрешённый `PlatformExecutableResolver`, с заранее
   доверенным hash в `CommandHashStore`. Adapter сам hash не enroll-ит.
 
-Профиль строже произвольной Debian-конфигурации: локальные drop-ins, дополнительные
-hooks/envfiles/options и override unit не поддерживаются даже если выглядят
-безопасными. ExecReload не вызывается; обычного reload/restart fallback нет.
+Профиль строже произвольной Debian-конфигурации. Допустимы только drop-ins
+`/etc/systemd/system/ssh.service.d/*.conf` с `[Unit] Description=` и
+`[Service] CPUWeight=1..10000`. Их содержимое связано с unit-source fingerprints;
+continuations, substitutions и неизвестные директивы отклоняются. Дополнительные
+hooks/envfiles/options и override unit Unsupported. ExecReload не вызывается;
+обычного reload/restart fallback нет.
 Initial argv не извлекается из изменяемого process title `/proc/PID/cmdline`.
 
 Manager.Environment не разрешается произвольно. Допустимы только отдельные
@@ -84,8 +91,9 @@ Manager.Environment не разрешается произвольно. Допу
 
 Поддерживается ровно один assignment `SSHD_OPTS=` с необязательными leading и
 trailing spaces/tabs, пустые строки и полнострочные `#` comments. До 64 KiB.
-Никаких других assignments, duplicate assignments, quoting, continuation, CR,
-NUL или дополнительных аргументов. Даже `SSHD_OPTS=""` пока Unsupported.
+Пустые `SSHD_OPTS=""` и `SSHD_OPTS=''` также разрешены. Никаких других
+assignments, duplicate assignments, непустого quoting, continuation, CR,
+NUL или дополнительных аргументов.
 Это сознательный classifier небольшого языка, не копия systemd env parser.
 `-f`, `-o`, `-p` и неизвестные opts отклоняются **до restart**.
 
@@ -264,8 +272,9 @@ OpenSSH может перечитывать persistent inputs после сня�
 
 ## Security review: границы доказательства
 
-* Current config никогда не становится reference автоматически; никакого journal
-  enrollment/managed block/compensation write нет.
+* Наблюдаемые foreign inputs становятся bounded reference только после trust,
+  ownership и snapshot checks caller; это не желаемые policy values или ownership.
+  Adapter не делает enrollment/managed block/compensation writes.
 * CLI config path/options, скрытые env assignments, новые envfiles/drop-ins и
   изменённый loaded launch contract не дают verified-policy Success.
 * Include graph и negative namespaces защищены exact directory snapshot; symlinks,
@@ -294,33 +303,60 @@ OpenSSH может перечитывать persistent inputs после сня�
 Набор unit проверяет reference, closure/limits, env/profile и malformed requests;
 real Debian gate проверяет фактический adapter/sshd, а не mock restart.
 
-## Debian boundary follow-up — незавершённая интеграция
+## Debian policy lifecycle
 
-Первый classifier подэтап нового Debian SSH ТЗ: bounded Include topology и
-policy-specific conditional refusal. Production caller передаёт selected policies
-в closure validation. Это не завершённый Debian end-to-end: adapter profile/admission follow-up ниже покрывает defaults/drop-ins и отдельные
-service checks; reference builder, verified policy apply и no-op receipt ещё
-требуют реализации/проверки. M1 не изменяется.
-Native `boundary_syntax.py` в disposable Debian12/13 проверяет только настоящий
-OpenSSH syntax/context для Match, не restart/RO snapshot/apply. Источники и
-ownership из успешного classifier самостоятельно не выводятся.
+1. Один process-local `sshResourceMutex` сериализует apply и всю rollback/disable
+   decision; отдельного SSH flock или нового journal schema нет.
+2. Ubuntu 24.04/26.04 strict policy path возвращает Unsupported без legacy
+   fallback. ALT p11 сохраняет legacy activation/compensation; общий mutex и
+   shared-file Prepared gate также защищают его SSH resource.
+3. Admission требует persistent `enabled` и доказанный ready runtime. Disabled,
+   masked, static, enabled-runtime, failed и inactive без Job дают отказ до записи.
+   Activating/auto-restart, deactivating/reloading и inactive с pending Job могут
+   ожидаться только до deadline. FIC не enable/start/unmask/reset-failed SSH.
+4. Перед первым restart процесс консервативно выжидает прежнее неизвестное окно
+   systemd StartLimitIntervalUSec; затем учитывает свои попытки в rolling budget
+   StartLimitBurst. Ожидание происходит до записи и повторяется перед активацией.
+   Поддержан interval 0 (лимит отключён) либо <=30s и burst 1..1024; большие/неясные
+   лимиты Unsupported. Production admission/reference имеют 60s budget.
+   Unit и лимиты не меняются. Чужие privileged restart вне контрольных точек
+   не сериализуются этим локальным ledger.
+5. Любой Prepared для того же main SSH resource блокирует apply и disable другой
+   SSH-политики. Нет автоматического восстановления Prepared. Изменение уже
+   owned value/REFRESH пока явно отвергается без rollback старого состояния.
+6. У уже compliant foreign configuration не появляется ownership. При отсутствии
+   актуального receipt всё равно нужен verified restart. Durable save проходит
+   через существующий CAS; затем adapter доказывает A/B/C, cleanup и P, а caller
+   повторно сверяет installed main identity перед journal commit.
+7. Ошибка после installed/unknown write не восстанавливает historical bytes:
+   provenance остаётся Prepared либо journal становится недоступен до доказанного
+   recovery при неопределённой durability journal. Ответ apply — failure с
+   отдельным указанием saved/runtime/provenance. Даже успешный restart не скрывает
+   CleanupFailed, persistent drift или journal commit failure.
+8. Единственный bounded in-memory receipt связан с boot, canonical unit, полным
+   launch, PID/InvocationID/executable identity+digest, input manifests/metadata и
+   доказанными policy values. Повторный apply сверяет receipt, trusted executable,
+   текущее process exe, inputs и admission; при совпадении restart не нужен.
+   Другие включённые значения из доверенного NET.conf могут войти в receipt
+   только после независимой проверки на том же опубликованном RO snapshot.
+   Несоответствие или Unsupported дополнительной политики не влияет на выбранную.
+   Изменение inputs/runtime/launch инвалидирует reuse. Receipt не переживает
+   restart демона и не заменяет journal/ownership.
 
-### Native Debian profile/admission follow-up
+Это моментные доказательства с повторными проверками, а не непрерывный enforcement
+или атомарная защита от произвольного privileged ABA. Readiness означает READY
+ожидаемого процесса на проверенном snapshot; PAM login и будущие соединения после
+cleanup требуют собственных гарантий. Подготовка private mount boundaries на
+shared-root хосте остаётся deployment-задачей, adapter их не создаёт.
 
-Допускаются literal empty `SSHD_OPTS=`, `SSHD_OPTS=""`, `SSHD_OPTS=''`; остальные
-EnvironmentFile assignments по-прежнему Unsupported. Unit drop-ins только в
-`/etc/systemd/system/ssh.service.d/*.conf` и только Description в Unit/CPUWeight
-1..10000 в Service. Текст сверяется с existing source fingerprint до и после
-classification; continuation/unknown directives не разрешены. Фактические
-Exec/environment/mount/credential proofs всё равно обязательны. Это ограниченный
-allowlist, не универсальная поддержка systemd overrides.
+Финальный native gate Debian12/13: на каждом по 30 generic experiments,
+59 adapter cases и 24 module case groups. Реальные five-policy apply/listener,
+repeated no-op, post-save/journal faults, launch refusal и late runtime proof
+отказы проверены через systemd PID1/sshd. Pending restart управляется test-only
+ptrace barrier с наблюдением настоящего deactivating state: success, failure,
+deadline. Виртуальный admission state matrix проверяет остальные переходы.
+Повторяемые команды и версии: [validation](ssh-debian-verified-policy-validation.md).
+Старый linked native report описывает самостоятельный adapter.
 
-Typed UnitFileState включён в existing immutable observation. SSH adapter принимает
-только persistent `enabled`; disabled/masked/static/enabled-runtime не принимаются.
-Generic engine не требует enabled для других служб. Initial admission проверяется
-до capture config bytes, затем preflight повторяется. Для activating/auto-restart,
-deactivating/reloading и inactive с pending Job есть deadline-bounded ожидание;
-failed/inactive без Job не исправляются и не запускаются. После activation/cleanup
-дополнительно подтверждаются MainPID/InvocationID, readiness и неизменный launch.
-Эти adapter checks ещё не обеспечивают no-write gate существующего policy apply:
-production integration в Ssh.cpp остаётся обязательным следующим этапом.
+Ubuntu socket activation: [отдельное ТЗ](ubuntu-ssh-socket-activation-spec.md).
+Это будущая работа, не часть Debian completion.

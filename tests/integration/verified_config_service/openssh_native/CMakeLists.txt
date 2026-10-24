@@ -3,6 +3,7 @@ project(fic_openssh_native LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_subdirectory(.. component EXCLUDE_FROM_ALL)
+find_package(Threads REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(OPENSSH_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 get_filename_component(FIC_ROOT "../../../.." ABSOLUTE)
@@ -17,6 +18,17 @@ add_executable(openssh_native_driver Driver.cpp
     ${FIC_ROOT}/fic/src/modules/net/ssh/SshManagedBlock.cpp
     ${FIC_ROOT}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${FIC_ROOT}/fic/src/modules/net/ssh/SshConfigSyntax.cpp)
-target_compile_definitions(openssh_native_driver PRIVATE FIC_ACTIVATOR_TESTING=1)
+target_compile_definitions(openssh_native_driver PRIVATE FIC_ACTIVATOR_TESTING=1 FIC_SSH_TRANSACTION_TESTING=1)
 target_include_directories(openssh_native_driver PRIVATE ${FIC_ROOT}/fic/src)
 target_link_libraries(openssh_native_driver PRIVATE fic-core fic-platform PkgConfig::OPENSSH_SYSTEMD)
+
+# Real production module entrypoint, sharing the provenance suite's source list.
+include(${FIC_ROOT}/tests/fic/modules/net/ssh/SshApplyRollbackSources.cmake)
+list(REMOVE_ITEM FIC_SSH_APPLY_ROLLBACK_SOURCES
+    ${FIC_ROOT}/tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp)
+get_target_property(ssh_driver_sources openssh_native_driver SOURCES)
+list(APPEND ssh_driver_sources ${FIC_SSH_APPLY_ROLLBACK_SOURCES}
+    ${FIC_ROOT}/fic/src/modules/dac/sudo/SudoersAuthenticationTransaction.cpp)
+list(REMOVE_DUPLICATES ssh_driver_sources)
+set_property(TARGET openssh_native_driver PROPERTY SOURCES ${ssh_driver_sources})
+target_link_libraries(openssh_native_driver PRIVATE fic-policy Threads::Threads)

@@ -283,3 +283,9 @@ auth requisite pam_faillock.so preauth silent audit deny=5 unlock_time=300
 FIC-prelogin то отображается, то нет. То грузится QT, то только текстовый fallback (причина выявлена: ВМ использует для рисования графики процессор из-за чего 15 секунд не хватало)
 
 pam_pwhistory (впрочем, как и pam_pwquality) имеют не очень удачную семантику. Для политик истории/сложности паролей нужно сделать соответствующие политики (enable_password_quiality и enable_password_history) обязательными со следующей семантикой "Указанный механизм подключен и эффективен ВНЕ зависимости от того, является ли он FIC-managed" (сторонний механизм НЕ должен считать, что является FIC-managed; при rollback удаляем ТОЛЬКО FIC-managed блок)
+
+## Ubuntu SSH socket activation
+
+- Отдельная задача **Ubuntu SSH socket activation — verified end-to-end integration**:
+  [ТЗ](docs/ubuntu-ssh-socket-activation-spec.md). До её реализации Ubuntu 24.04/26.04
+  остаются Unsupported в новом strict SSH policy path, без legacy fallback.

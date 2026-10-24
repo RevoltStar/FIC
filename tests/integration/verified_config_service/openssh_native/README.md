@@ -1,8 +1,8 @@
 # Real OpenSSH native validation
 
 Disposable native validation, including the independent production SSH adapter.
-No SSH policy integration, host SSH operations, policy apply,
-rollback or unit edits. Run from the repository root, using **trusted disposable
+Includes real Debian SSH policy apply/journal/receipt scenarios in the disposable
+container. No host SSH operations, host policy apply, host rollback or vendor unit edits. Run from the repository root, using **trusted disposable
 systemd images**. Docker must support privileged containers and private cgroups.
 The test stops/restarts **container** `ssh.service`; management is `docker exec`.
 
@@ -109,3 +109,18 @@ The result JSON stores adapter_cases separately, with A/B/C/P, actual old/new
 process identity and socket-to-new-MainPID attestation. Five positives, two
 runtime-success/persistent-drift cases and strict preflight/runtime/cleanup
 negatives are required by the collector. See docs/ssh-verified-activation-adapter.md.
+
+## Production module path
+
+`module_cases` in exported results call the five actual policy classes and
+`Ssh::apply()` with a real isolated MutationJournal and trusted fixture policy
+config. They verify fresh writes/ownership, foreign compliant no-enrollment,
+new PID/invocation/listener, repeated receipt no-op, stale receipt invalidation,
+pre-CAS refusals and post-save uncertainty/provenance. A deterministic test-only
+save observation hook injects writer/durability/runtime/journal faults; the
+production binary contains no such hook. Real systemd start limits are preserved;
+the production bounded restart budget avoids consuming the stock burst.
+
+This is module end-to-end evidence, not complete daemon/package/M1 admission,
+PAM login or a cross-kernel/VM proof. Generic/adapter experiments retain their
+own independent results. Only sanitized diagnostics/results are exported.
