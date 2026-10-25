@@ -1,5 +1,6 @@
 #include "modules/net/ssh/SshRuntime.h"
 #include "modules/net/ssh/SshConfigAudit.h"
+#include "modules/net/ssh/SshPolicySemantics.h"
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
@@ -82,52 +83,15 @@ bool explicitListenPort(const std::string& value, int& port) {
     return parseDecimal(portText, port);
 }
 
-int permitRootLoginRank(std::string value) {
-    value = lowerCopy(trimCopy(std::move(value)));
-    if (value == "no") {
-        return 0;
-    }
-    if (value == "forced-commands-only") {
-        return 1;
-    }
-    if (value == "prohibit-password" || value == "without-password") {
-        return 2;
-    }
-    if (value == "yes") {
-        return 3;
-    }
-    return -1;
-}
-
 bool scalarValueMatches(const std::string& parameter,
                         const std::string& actual,
                         const std::string& expected) {
     if (lowerCopy(parameter) == "permitrootlogin") {
-        const int actualRank = permitRootLoginRank(actual);
-        const int expectedRank = permitRootLoginRank(expected);
+        const int actualRank = sshRootLoginRank(actual);
+        const int expectedRank = sshRootLoginRank(expected);
         return actualRank >= 0 &&
                expectedRank >= 0 &&
                actualRank == expectedRank;
-    }
-    return lowerCopy(trimCopy(actual)) == lowerCopy(trimCopy(expected));
-}
-
-bool conditionalValueIsSafe(const std::string& parameter,
-                            const std::string& actual,
-                            const std::string& expected) {
-    const std::string normalizedParameter = lowerCopy(parameter);
-    if (normalizedParameter == "permitrootlogin") {
-        const int actualRank = permitRootLoginRank(actual);
-        const int expectedRank = permitRootLoginRank(expected);
-        return actualRank >= 0 && expectedRank >= 0 && actualRank <= expectedRank;
-    }
-    if (normalizedParameter == "maxauthtries") {
-        int actualValue = 0;
-        int expectedValue = 0;
-        return parseDecimal(actual, actualValue) &&
-               parseDecimal(expected, expectedValue) &&
-               actualValue > 0 &&
-               actualValue <= expectedValue;
     }
     return lowerCopy(trimCopy(actual)) == lowerCopy(trimCopy(expected));
 }
@@ -239,7 +203,7 @@ SshComplianceResult SshRuntime::auditConditionalOverrides(
     }
 
     for (const SshConditionalOccurrence& occurrence : occurrences) {
-        if (!conditionalValueIsSafe(parameter, occurrence.value, expectedValue)) {
+        if (!sshConditionalValueIsSafe(parameter, occurrence.value, expectedValue)) {
             error = "conditional SSH override for " + parameter + " at " +
                     occurrence.path.string() + ":" + std::to_string(occurrence.line) +
                     " under Match " +

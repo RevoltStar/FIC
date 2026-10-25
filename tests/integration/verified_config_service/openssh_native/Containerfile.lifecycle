@@ -1,0 +1,11 @@
+# Derivative of a native build image; OpenSSH/systemd packages are test-only.
+ARG BASE_IMAGE=debian:12
+FROM ${BASE_IMAGE}
+COPY runtime-init.sh /usr/local/sbin/fic-test-runtime-init
+RUN if command -v rpm >/dev/null 2>&1; then \
+        apt-get update && apt-get install -y ctest && apt-get clean; \
+    fi
+RUN chmod 755 /usr/local/sbin/fic-test-runtime-init && \
+    mkdir -p /etc/systemd/system && \
+    ln -sf /dev/null /etc/systemd/system/systemd-udev-trigger.service
+CMD ["/usr/local/sbin/fic-test-runtime-init"]

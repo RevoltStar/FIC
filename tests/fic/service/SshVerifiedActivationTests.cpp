@@ -1,5 +1,6 @@
 #include "service/ssh/SshVerifiedActivationAdapter.h"
 #include "service/ssh/SshVerifiedInputClosure.h"
+#include "modules/net/ssh/SshPolicySemantics.h"
 #include "service/ssh/SshPersistentMetadata.h"
 #include "service/ssh/SshServiceAdmission.h"
 #include "service/ssh/UbuntuSshSocketFlow.h"
@@ -126,6 +127,30 @@ int main() {
         require(budget.availableAt(initial+window*2,std::chrono::microseconds(0),1)==initial+window*2,"disabled rate limit waited");
         checks+=6;
     }
+    for(const auto& row:std::vector<std::tuple<std::string,std::string,std::string,bool>>{
+        {"MaxAuthTries","2","3",true},{"MaxAuthTries","3","3",true},{"MaxAuthTries","4","3",false},
+        {"MaxAuthTries","0","3",false},{"MaxAuthTries","2 junk","3",false},
+        {"PermitRootLogin","no","prohibit-password",true},{"PermitRootLogin","forced-commands-only","prohibit-password",true},
+        {"PermitRootLogin","without-password","prohibit-password",true},{"PermitRootLogin","yes","no",false},
+        {"PermitRootLogin","prohibit-password","forced-commands-only",false},
+        {"PubkeyAuthentication","yes","yes",true},{"PubkeyAuthentication","no","yes",false},
+        {"UsePAM","yes","yes",false},{"Port","2222","2222",false}}) {
+        const auto& [key,actual,expected,safe]=row;
+        require(sshConditionalValueIsSafe(key,actual,expected)==safe,"shared Match order changed");++checks;
+    }
+    for(const auto& text:{"Match User root exec /bad\n", "Match all User root\n", "Match User\n"}) {
+        Fixture bad;bad.bytes[mainFile]+=text;bad.sync();deny([&]{bad.closure();});
+    }
+    Fixture conditionalStricter;
+    conditionalStricter.bytes[mainFile]+="MaxAuthTries 3\nMatch User root\nMaxAuthTries 2\nPermitRootLogin no\n";
+    conditionalStricter.sync();conditionalStricter.closure({{"ssh_max_auth_tries","3"},{"ssh_root_login","prohibit-password"}});++checks;
+    conditionalStricter.bytes[mainFile]+="MaxAuthTries 4\n";conditionalStricter.sync();deny([&]{conditionalStricter.closure({{"ssh_max_auth_tries","3"}});});
+    // Child Match must not leak back into its caller or the next glob member.
+    Fixture scoped;scoped.bytes[dir+"/10.conf"]="Include "+dir+"/nested.inc\nMaxAuthTries 4\n";
+    scoped.bytes[dir+"/nested.inc"]="Match User root\nMaxAuthTries 2\n";
+    scoped.sync();scoped.closure({{"ssh_max_auth_tries","3"}});++checks;
+    scoped.bytes[mainFile]+="Match User root\nInclude "+dir+"/10.conf\n";scoped.sync();
+    deny([&]{scoped.closure({{"ssh_max_auth_tries","3"}});});
     Fixture f;
     require(f.closure().negativeSetDirectories.count(dir), "empty glob negative set not protected"); ++checks;
     f.bytes[dir+"/10.conf"] = "Port 2222\nInclude " + dir + "/nested.inc\n";

@@ -135,12 +135,23 @@ MaxAuthTries, Port, ListenAddress, AddressFamily, HostKey, PidFile, LogLevel,
 VersionAddendum, PermitTTY, PasswordAuthentication, KbdInteractiveAuthentication,
 PrintMotd, X11Forwarding, AcceptEnv, Subsystem, AuthorizedKeysFile, UseDNS,
 PermitEmptyPasswords, StrictModes, LoginGraceTime. Native sshd дополнительно
-проверяет их значения/арность. Неизвестные directives отклоняются. Match с первым
-критерием all/User/Group/Address/LocalAddress/LocalPort/Host классифицируется
-консервативно: любой subsequent conditional assignment выбранной директивы
-отклоняется; контекст разделяется с Include. Посторонние директивы внутри Match
-не запрещают другую выбранную политику. Match exec/unknown criteria отклоняются.
-Это не доказательство всех Match contexts через несколько `-T -C` probes.
+проверяет их значения/арность. Неизвестные directives отклоняются.
+Общий `SshPolicySemantics` используется runtime audit и closure classifier:
+глобальное выбранное значение проверяется точно; условный MaxAuthTries должен
+быть положительным и не больше эталона; PermitRootLogin допускает только равный
+или более строгий режим (no < forced-commands-only < prohibit-password, включая
+without-password); PubkeyAuthentication=yes допускает только yes. Port и UsePAM
+в Match не допускаются. Само значение/контекст дополнительно подтверждает native
+sshd -t/-T; таблица не заменяет OpenSSH parser.
+
+Поддерживаются только Match all отдельно либо пары User/Group/Address/
+LocalAddress/LocalPort/Host + pattern; проверяются все criteria, не только первое.
+Unknown/exec/malformed criteria fail-closed. Include наследует текущий Match
+контекст, но изменения Match внутри child-файла не выходят в caller или соседний
+файл glob: это подтверждено native OpenSSH. Trusted paths, exact manifests,
+negative sets, recursion/line/byte bounds не расширяются. Это не попытка доказать
+все Match contexts перебором нескольких -T -C probes: каждая выбранная условная
+директива независимо ограничена общим порядком строгости.
 
 Каждый explicit HostKey и companion `.pub` должен иметь reference coverage.
 При отсутствии HostKey поддержан полный штатный Debian default set: RSA, ECDSA
@@ -285,7 +296,7 @@ OpenSSH может перечитывать persistent inputs после сня�
   изменённый loaded launch contract не дают verified-policy Success.
 * Include graph и negative namespaces защищены exact directory snapshot; symlinks,
   неподдерживаемые пути и mount changes дают отказ, а не обход closure.
-* Conditional assignments выбранных директив исключены; Include проверяется независимо от Match. Unknown/NonCompliant не повышаются до Proven.
+* Conditional assignments выбранных директив допускаются только по общему порядку строгости; Include boundaries проверяются независимо от Match. Unknown/NonCompliant не повышаются до Proven.
 * `-T` повторяется на RO inputs до restart; runtime proof дополнен новым READY
   процессом с ожидаемым executable. Ошибки не скрывают B или cleanup failure.
 * После READY оригинал может измениться через старый FD. Runtime факт сохраняется,

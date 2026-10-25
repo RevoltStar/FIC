@@ -1,6 +1,7 @@
 #include "service/ssh/SshVerifiedInputClosure.h"
 #include "service/VerifiedConfigMountSupport.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
+#include "modules/net/ssh/SshPolicySemantics.h"
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "platform/PlatformProfile.h"
 #include <algorithm>
@@ -96,16 +97,15 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
     }
     Closure result; std::set<std::string> active;
     std::size_t visits = 0, lines = 0;
-    bool conditional = false; // Include parsing shares OpenSSH textual Match context.
-    std::set<std::string> selected;
-    for (const auto& [id, value] : policies) selected.insert(normalizeSshKeyword(sshPolicyDirectiveKeyword(id)));
+    std::map<std::string,std::string> selected;
+    for (const auto& [id, value] : policies) selected.emplace(normalizeSshKeyword(sshPolicyDirectiveKeyword(id)),value);
     const std::set<std::string> supported{
         "permitrootlogin", "pubkeyauthentication", "usepam", "maxauthtries", "port",
         "match", "include", "listenaddress", "addressfamily", "hostkey", "pidfile", "loglevel",
         "versionaddendum", "permittty", "passwordauthentication", "kbdinteractiveauthentication",
         "printmotd", "x11forwarding", "acceptenv", "subsystem", "authorizedkeysfile",
         "usedns", "permitemptypasswords", "strictmodes", "logingracetime"};
-    std::function<void(const std::string&, unsigned)> visit = [&](const std::string& name, unsigned depth) {
+    std::function<void(const std::string&, unsigned, bool)> visit = [&](const std::string& name, unsigned depth, bool conditional) {
         if (depth > 16 || ++visits > 256 || !active.insert(name).second) unsupported("SSH Include recursion/depth/visit bound exceeded");
         const auto found = bytes.find(name);
         if (found == bytes.end()) unsupported("uncovered SSH configuration input");
@@ -126,12 +126,13 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
             if (!supported.count(key)) unsupported("unsupported SSH directive or Match context");
             const auto& args = parsed.directive.arguments;
             if (key == "match") {
-                const std::set<std::string> criteria{"all","user","group","address","localaddress","localport","host"};
-                if (!criteria.count(normalizeSshKeyword(args.front()))) unsupported("unsupported SSH Match criterion");
+                std::string error;
+                if (!sshSupportedMatch(args,error)) unsupported(error);
                 conditional = true; continue;
             }
-            if (conditional && selected.count(key))
-                unsupported("conditional assignment of selected SSH policy unsupported");
+            if (conditional && selected.count(key) &&
+                (args.size()!=1 || !sshConditionalValueIsSafe(key,args.front(),selected.at(key))))
+                unsupported("conditional SSH policy value is weaker, invalid or global-only");
             const auto portPolicy=policies.find("ssh_port");
             if(portPolicy!=policies.end()) {
                 if(key=="port" && name!=profile.mainFile &&
@@ -175,11 +176,11 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
                         auto file = std::filesystem::path(candidate);
                         const auto base = file.filename().string();
                         if (file.parent_path() == parent && !base.empty() && base[0] != '.' &&
-                            base.size() >= 5 && base.compare(base.size()-5, 5, ".conf") == 0) visit(candidate, depth+1);
+                            base.size() >= 5 && base.compare(base.size()-5, 5, ".conf") == 0) visit(candidate, depth+1, conditional);
                     }
                 } else {
                     if (!path(include)) unsupported("Include path outside literal absolute grammar");
-                    if (bytes.count(include)) visit(include, depth+1);
+                    if (bytes.count(include)) visit(include, depth+1, conditional);
                     else {
                         if (!directories.count(parent)) unsupported("absent literal Include requires protected exact parent");
                         result.negativeSetDirectories.insert(parent);
@@ -189,7 +190,7 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
         }
         active.erase(name);
     };
-    visit(profile.mainFile, 0);
+    visit(profile.mainFile, 0, false);
     if (result.hostKeys.empty() || profile.alt) {
         // Native default key set. ALT also needs every stock keygen -A target
         // even with explicit HostKey: the vendor Pre hook must remain a no-op.

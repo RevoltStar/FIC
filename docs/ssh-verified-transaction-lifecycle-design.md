@@ -1393,3 +1393,24 @@ service proof допускает conditional ownership-only release с runtime N
 
 Authoritative contract, state matrix, native evidence и deployment/TOCTOU bounds:
 [ALT p11 verified activation](alt-p11-ssh-verified-activation.md).
+
+
+## Current implementation follow-up: shared Match semantics
+
+`SshPolicySemantics.h` is the single conditional-value order and bounded Match
+criteria grammar consumed by runtime audit and immutable closure classification.
+Selected global values remain exact. Safe conditional restrictions no longer
+cause a contradictory adapter Unsupported. Include context is copied into a
+child and restored on return; native OpenSSH confirmed this boundary. The
+native Match-only runner exercises real sshd -t/-T and verified activation in
+isolated systemd images; no legacy reload acceptance substitutes for readiness.
+REFRESH/active release remain the next two implementation commits of the
+current task, with the existing Prepared gate retained.
+
+Accepted compatibility boundary for the next journal contract: ID-only legacy
+wrappers cannot safely acquire historical fingerprints from current bytes and
+must block REFRESH. Legacy wrapper-free owners may refresh. Same-value apply
+and legacy release retain their old permission contract. That contract proves
+wrapper ID/structure, not historical body immutability: a structurally valid
+body edit preserving ID cannot be distinguished. New wrappers must capture
+body fingerprints at creation; no migration/adoption of legacy bodies.

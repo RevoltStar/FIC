@@ -20,4 +20,5 @@ res.log
 !packaging/lib/gui-runtime-manifest.py
 !packaging/lib/corresponding-source.py
 !tests/integration/package-lifecycle/*.py
+!tests/integration/verified_config_service/openssh_native/match_cases.py
 **/__pycache__/

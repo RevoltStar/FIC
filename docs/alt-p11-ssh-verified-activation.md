@@ -66,8 +66,9 @@ ALT — `/etc/openssh`, не `/etc/ssh`. Empty glob требует сущест�
 relative base/defaults проверены установленным бинарником.
 
 Переиспользуются bounded parser/negative set/manifest/symlink/traversal/Match checks.
-Не влияющий на selected policy Match допускается; conditional selected assignment
-отвергается. Дополнительный штатный Subsystem/AcceptEnv уже укладывается в существующую
+Match для selected policy допускается только по общему порядку строгости
+[SshPolicySemantics](ssh-verified-activation-adapter.md); global-only directives,
+ослабление и unsupported criteria отклоняются. Дополнительный штатный Subsystem/AcceptEnv уже укладывается в существующую
 allowlist. Неизвестные initialization inputs/commands автоматически не принимаются.
 
 ## Supported state matrix

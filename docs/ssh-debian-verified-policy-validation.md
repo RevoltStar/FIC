@@ -38,7 +38,7 @@ Immutable image IDs:
 * Receipt инвалидируется после административного restart или изменения main input.
   Другие enabled values входят в receipt только после proof на том же RO snapshot.
 * Stock defaults/HostKeys, Include negative set/вложенные Include, unrelated Match,
-  ограниченные Description/CPUWeight drop-ins. Relevant Match/external Include,
+  ограниченные Description/CPUWeight drop-ins. Weakening/unsupported Match и external Include,
   symlink/invalid inputs и лишний foreign Port не дают false SUCCESS.
 * Disabled-active, disabled-inactive, enabled-inactive-no-Job. На настоящем pending
   restart ptrace event-stop удерживает fixture-owned старый sshd; admission реально

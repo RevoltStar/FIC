@@ -1,29 +1,29 @@
 # Current workspace
 
 ## Current base
-* Branch main; base 5a16b7ddfdf75f50bc9262225bdb0e9a90304ef9. One follow-up completion commit requested; no push.
+* main; base a8205ea74949bdbdca39f2a86381dcfa6f387db9. New task requires exactly three sequential commits, no push.
 
 ## Current task
-* Fix false bulk-uninstall NOTHING_TO_RELEASE/SUCCESS for empty SYSCTL artifacts and orphan state left after recorded owner release.
+* Attachment167ac2e3: complete SSH lifecycle. Commit1 Match semantics; commit2 crash-consistent verified REFRESH; commit3 verified active release + disable/uninstall/native remote administration. Continue to completion; stage1 is not task completion.
 
 ## Accepted architecture / invariants
-* Existing package lifecycle, daemon.lock, ownership/CAS, journal/witness and dependency contracts unchanged. No adoption, automatic orphan deletion, recovery engine, migration or provider installation. Ordinary apply/disable unchanged.
-* Assignment count is not physical artifact absence. Bulk SYSCTL no-owner preflight rejects any existing managed file, including empty/header-only; final read-only SSH/SUDO/SYSCTL sweep reuses UnrecordedResourceInspection after all recorded release attempts. Active failures keep original errors/records.
+* Existing verified closure/launch/executable/RO snapshots/mount boundaries/CAS/durability/listener-FD proofs stay strict. Only distro /etc/ssh or ALT /etc/openssh boundaries; no external Include or automatic directory/provider/service enablement. No Prepared auto-recovery.
+* User explicitly chose legacy compatibility boundary: ID-only wrappers block REFRESH; never infer historical fingerprints from current bodies. Wrapper-free legacy ownership may refresh; unchanged compliant apply must not fail just for legacy format. New wrappers capture fingerprints at creation. Legacy release remains ID/structure-based (cannot detect valid body edits preserving ID); document/regression-test, do not silently change it.
 
-## Completed / changed areas
-* UninstallRollback.cpp uses strict SYSCTL no-owner proof to avoid false per-policy no-ops, then final domain proofs with phase FINAL_PHYSICAL_PROOF and summary final_physical_failed. A final orphan blocks overall ok even if per-owner release succeeded. Remnant active records preserve original failure; no false success/proof generated for them.
-* UnrecordedResourceInspection.{h,cpp}: uninstall-only phase, strict artifact existence check, shared final domain sweep, same resource locks/readers/bounded inventories/current+historical paths/markers/staging. No second ownership engine. Existing default disable inspection remains unchanged.
-* Unit regressions cover missing/empty/header/parameter/invalid SYSCTL files, last-owner deletion, SSH recorded A+structured orphan B, SUDO recorded A+detached wrapper B, SYSCTL recorded A+unknown B, preserved bytes/journal identities, explicit repair/retry and valid last SSH/SUDO container release.
-* Native fixture adds typed SYSCTL Applied A+unrecorded B. Real rollback_all retires A, preserves B, fails final proof; explicit orphan repair permits retry. No journal reset/record retirement shortcut in fixture. Test foreign sysctl baseline equals readonly runtime and is verified unchanged/restored; active rollback still refuses a dangling foreign loader graph.
-* Docs: package-lifecycle{,-validation}.md, native README and evidence/final-physical-*.json. Historical optional-provider evidence preserved; new RED uses actual 5a16b7d packages.
+## Completed (first commit)
+* Shared SshPolicySemantics conditional order and full bounded Match criteria grammar; global selected values stay exact. Runtime/audit/closure use common mechanism. Closure copies Match context into each Include; restores caller/sibling context on return (native OpenSSH confirmed).
+* Unit table + native match_cases.py uses actual sshd -t/-T and real verified engine. Source-list linkage for UnrecordedResourceInspection in shared SSH test source list corrected (base omitted it). Production non-SSH policy behavior preserved, including exact PAMServiceName verifier.
+* Native test images add readonly sys/proc-sys and mask coldplug, not SSH vendor units. ALT test-only ctest package required. Match runner reads typed StartLimitIntervalUSec and waits per independent fixture; never resets/weakens limits.
+* Docs common/ALT/Debian/design and evidence/match-lifecycle.json updated.
 
 ## Validation
-* Matching affected production builds and 5 focused CTest PASS on Debian12/13 Ubuntu24/26; final rollback_executor_tests rebuilt after last valid-SSH-container regression. Four other direct test consumers build and CTest PASS on Ubuntu24.
-* Four expanded real native APT gates PASS on final DEBs: optional programs absent, all 5 ELF resolve/readiness, empty/header per-policy+final refusal, mixed SYSCTL recorded release/orphan preservation, repair/retry, remove/purge and retained-active refusal. Additional four ordinary remove-from-INSTALLED/purge gates PASS, without prior manual prepare/rollback.
-* Native RED with old 5a16b7d packages reproduces false ok=true for empty managed SYSCTL. Initial mixed native fixtures correctly failed on a dangling 99-sysctl.conf; test-only foreign baseline supplies valid loader graph without kernel writes. This was not a product regression or a relaxed proof.
-* Shell/Python syntax and git diff --check PASS. Raw logs: build-final-release-proof/; unique native results: build-package-lifecycle/native-fic-final-proof-runtime:*. Evidence records hashes of source, archives, ELF, commands/logs and images.
+* Debian12 fic and SSH runtime/verified adapter/apply-rollback/rollback executor targets built, 4/4 focused CTest PASS.
+* Final native Match matrix: 12/12 cases PASS on Debian12/13 Ubuntu24/26 ALT p11. Safe nested/stricter/synonym inputs activate; weak/global-only/external/unknown grammar refuse. Native runtime reports actual A/C/P, readiness/cleanup, syntax and selected -T-C values; host SSH bytes unchanged.
+* Python/shell syntax and git diff --check PASS. Raw build-ssh-lifecycle/match-final-*.log; build-openssh-native/<platform>/evidence/match-results.json. No full build/CTest yet (required on Debian12 at final completion).
 
-## Remaining boundaries
-* No task blocker. Native mixed A/B is SYSCTL; SSH/SUDO mixed cases use production backends plus deterministic command fixtures in CTest. Test-seeded journal records do not prove native provider apply.
-* Targeted gates replace full upgrade/abort/override/PAM-detach repetition: package scripts/dependencies/lifecycle did not change. No full project CTest, ALT native run, live SSH, real-user PAM or hardware enforcement claim. Runtime /sys and /proc/sys readonly; existing privileged external writer/cooperative-locking boundary unchanged.
-* Docker authorized; disposable runtime containers removed, images/build caches retained. No host security mutations; unrelated volumes untouched.
+## Remaining / next actions
+* Implement commit2 and commit3; no production REFRESH/active release changes yet. Journal currently schema2, apply refuses value changes/reprepare; Ubuntu/ALT release requires offline, Debian release still legacy reload.
+* Read /tmp/fic-ssh-refresh-design.md for investigated integration points/implementation plan (provisional design, not completed code). Prefer minimal schema3 typed previous/target transition in existing SSH undo payload with durable phase/effect/runtime facts; keep old appliedValue until verified atomic finalization. Read schema2 without adopting legacy wrapper bodies. Validate/gate direct mutators, preserve Prepared on uncertain effects, safe no-effect abort preserves old permission.
+* Commit3 needs native pre-CAS validation of resulting planned image and all remaining enabled policies, typed ConfigurationRelease (empty selections allowed only there), verified active/offline distinction, durable pending-disable intent so config save/reload failures cannot resurrect released ownership. Coordinate PolicyDisableFlow/RollbackExecutor generic status updates. Do not add automatic Prepared recovery.
+* Required final native five-platform apply/refresh/disable/active rollback/session continuity + package gates, fault/crash/journal regressions and full Debian12 build/CTest. Current stage1 evidence is not those guarantees.
+* Docker authorized. Images fic-ssh-lifecycle-native:{debian12,debian13,ubuntu2404,ubuntu2604,alt-p11}; ALT base fic-ssh-lifecycle-build:alt-p11. Existing 4 DEB build images/caches remain. Native runner profile caches build-openssh-native/<platform>. DOCKER_CONFIG=/tmp/fic-package-docker-config avoids unavailable credential helper. No host SSH changes.

@@ -20,6 +20,7 @@ set(FIC_SSH_APPLY_ROLLBACK_SOURCES
     ${FIC_SSH_TEST_ROOT}/fic/src/rollback/DaemonMutationJournal.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/rollback/ScopeTransition.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/rollback/RollbackExecutor.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/rollback/UnrecordedResourceInspection.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/dac/sudo/SudoProviderCapabilities.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp

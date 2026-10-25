@@ -52,7 +52,10 @@ docker exec "$name" timeout 60 sh -ec '
 '
 docker cp "$build/openssh_native_driver" "$name:/usr/local/bin/fic-openssh-driver"
 docker cp "$repo/tests/integration/verified_config_service/openssh_native/harness.py" "$name:/usr/local/bin/fic-openssh-harness.py"
-if [[ "$platform" == ubuntu-* ]]; then
+if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == match ]]; then
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/match_cases.py" "$name:/usr/local/bin/fic-ssh-match.py"
+ docker exec "$name" python3 /usr/local/bin/fic-ssh-match.py "$platform"
+elif [[ "$platform" == ubuntu-* ]]; then
  docker cp "$repo/tests/integration/verified_config_service/openssh_native/ubuntu_socket.py" "$name:/usr/local/bin/fic-ubuntu-socket.py"
  docker exec "$name" python3 /usr/local/bin/fic-ubuntu-socket.py
 elif [[ "$platform" == alt-p11 ]]; then

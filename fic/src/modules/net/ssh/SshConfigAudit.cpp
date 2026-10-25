@@ -1,5 +1,6 @@
 #include "modules/net/ssh/SshConfigAudit.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
+#include "modules/net/ssh/SshPolicySemantics.h"
 #include "modules/net/ssh/SshInputAuthority.h"
 
 #include <fic/core/fs/TrustedFileReader.h>
@@ -115,9 +116,8 @@ bool auditConfigFile(const std::filesystem::path& path,
         const std::string directive =
             normalizeSshKeyword(parsed.directive.keyword);
         if (directive == "match") {
-            if (parsed.directive.arguments.empty()) {
-                error = path.string() + ":" + std::to_string(lineNumber) +
-                        ": empty Match condition";
+            if (!sshSupportedMatch(parsed.directive.arguments,error)) {
+                error = path.string() + ":" + std::to_string(lineNumber) + ": " + error;
                 return false;
             }
             matchCondition = joinSshArguments(parsed.directive.arguments);
