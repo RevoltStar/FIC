@@ -36,6 +36,9 @@ not have PASS results and were not reused as successful evidence.
 
 ### Follow-up: DEB runtime dependencies
 
+The initial single-Ubuntu proof below was extended by the final four-platform
+follow-up described after it. Historical build-image gates remain distinct.
+
 The original runtime images also contained build/devel libraries, so the matrix
 above did not prove completeness of `Depends`. A subsequent minimal-image check
 found missing Qt Core in the main DEB: failed `dpkg-shlibdeps` analysis had silently
@@ -58,6 +61,70 @@ executables passed `ldd` without missing libraries, packages reached
 passed. This follow-up is Ubuntu 24.04 evidence, not a repeat of the five-distro
 matrix. Raw build/test/native logs are in `/tmp/fic-readiness-diag/build-fixed-debs.log`
 and `/tmp/fic-deb-depends-native/` on the validation machine.
+
+### Final minimal DEB runtime matrix
+
+Production PAM classification is `621910c`; the accompanying validation commit
+also adds the missing non-ELF uninstall prerequisites `sudo`, `procps` and
+`openssh-server` to fic Depends. Native binaries were rebuilt on each matching
+distro; final archives were repackaged with that exact production builder.
+Archive/ELF/builder digests, exact versioned Depends, separate build/runtime image
+IDs and commands are committed in the evidence files below.
+
+| Runtime | Install / configured / readiness | All packaged ELF | Remove / purge / dpkg audit |
+| --- | --- | --- | --- |
+| Debian 12 | PASS | 5/5, no unresolved libraries | PASS |
+| Debian 13 | PASS | 5/5, no unresolved libraries | PASS |
+| Ubuntu 24.04 | PASS | 5/5, no unresolved libraries | PASS |
+| Ubuntu 26.04 | PASS | 5/5, no unresolved libraries | PASS |
+
+The five ELF files are fic, fic-cli, fic-dick, fic-package-infrastructure and
+pam_fic_access.so. Main/remove also leaves the dependency helper available;
+its ldd and physical prove-remove pass before final purge. Packages reach
+install ok installed and dpkg audit is empty; no half-configured result is
+counted as PASS. The final detach-retry gate was repeated successfully with
+these final archives in minimal Ubuntu24, without build/devel dependencies.
+
+Direct library dependencies are libc6/libgcc-s1/libstdc++6; fic also requires
+GLib2, Qt6 Core, OpenSSL3 and libsystemd0; fic-dick (including the infrastructure
+helper's combined analysis) requires SQLite3 and OpenSSL3. Debian12 uses
+libglib2.0-0/libqt6core6/libssl3; the other three use the t64 package names.
+Qt minimum versions are 6.4.0, 6.8.2, 6.4.0 and 6.10.2 respectively. The PAM
+runtime/modules dependencies supply the PAM library closure. Tool/data
+dependencies include udev/systemd/util-linux for fic-dick, and libnotify-bin,
+util-linux, nftables, libpam-runtime/libpam-modules/libpam-pwquality plus
+sudo/procps/openssh-server for fic. CLI requires its native C++ runtime and exact
+fic version. Full per-platform version constraints and every ldd line are in
+`evidence/followup-runtime-{debian12,debian13,ubuntu2404,ubuntu2604}.json`.
+
+Two genuine findings preceded these PASS runs:
+
+* Harness: installing udev only after boot and readonly sysfs caused native
+  ConditionPathIsReadWrite to skip udevd. FIC correctly rejected reload and
+  readiness. The separate runtime fixture now boots native udev with readonly
+  /sys and /proc/sys, coldplug masked and test-only udev condition overrides.
+  No product unit/check/timeout was weakened; hardware enforcement is not tested.
+* Packaging: without the three tool/data providers, ordinary removal failed on
+  missing sudoers, sshd_config and Debian12's dangling 99-sysctl.conf symlink.
+  The fix declares the required providers, preserving rollback contracts.
+  OpenSSH package installation/activation follows distro package behavior; the
+  gate explicitly stops SSH before release. A regression against the previous
+  package builder fails on the missing sudo dependency; the fixed builder passes.
+
+Initial failures and native diagnostics are retained in
+`evidence/followup-runtime-initial-findings.json`; they are not PASS evidence.
+Reproduction uses prepare-runtime-deb.sh and minimal_runtime_native.py as
+described in the native README. Runtime images start from clean distro bases,
+preinstall only systemd/udev/dbus/Python/CA boot and harness prerequisites, and
+prefetch actual Depends without installing FIC or Qt. Actual APT install uses
+that cache with runtime networking disabled. All listed build/devel packages
+and Qt Core are asserted absent before installation.
+
+Nine affected CTest passed on each of the four build platforms; after the final
+provider fix, five related tests per platform passed again, alongside native
+gates, Python compilation, shell syntax/static checks and git diff --check.
+This is targeted validation, not a new full project CTest run. Log hashes/image
+identities are in `evidence/followup-validation.json`.
 
 ## Proven scenarios and limits
 

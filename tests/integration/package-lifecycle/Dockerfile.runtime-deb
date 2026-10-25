@@ -1,0 +1,24 @@
+ARG BASE=debian:12
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+# Harness/boot only. Product libraries and utilities must come from DEB Depends.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    systemd systemd-sysv udev dbus python3 ca-certificates && rm -rf /var/lib/apt/lists/*
+# Test fixture only: keep sysfs read-only even during boot, never coldplug the
+# shared kernel's devices. Allow native udev control/inventory on readonly sysfs.
+RUN mkdir -p /etc/systemd/system/sysinit.target.wants /etc/systemd/system/sockets.target.wants && \
+    ln -s /dev/null /etc/systemd/system/systemd-udev-trigger.service && \
+    for unit in systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket; do \
+        mkdir -p /etc/systemd/system/$unit.d; \
+        printf '[Unit]\nConditionPathIsReadWrite=\n' > /etc/systemd/system/$unit.d/readonly-test.conf; \
+    done && \
+    ln -s /lib/systemd/system/systemd-udevd.service /etc/systemd/system/sysinit.target.wants/systemd-udevd.service && \
+    ln -s /lib/systemd/system/systemd-udevd-control.socket /etc/systemd/system/sockets.target.wants/systemd-udevd-control.socket && \
+    ln -s /lib/systemd/system/systemd-udevd-kernel.socket /etc/systemd/system/sockets.target.wants/systemd-udevd-kernel.socket
+COPY --chmod=0755 runtime-init.sh /usr/local/sbin/fic-test-runtime-init
+COPY debs/ /var/tmp/fic-packages/
+# Prepare an offline dependency closure without running any FIC scriptlet.
+RUN mkdir -p /var/tmp/fic-dependency-cache/partial && apt-get update && \
+    apt-get -o Dir::Cache::archives=/var/tmp/fic-dependency-cache \
+        --download-only --no-install-recommends -y install /var/tmp/fic-packages/*.deb
+CMD ["/usr/local/sbin/fic-test-runtime-init"]

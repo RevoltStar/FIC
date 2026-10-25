@@ -1,0 +1,38 @@
+{
+  "debian12": {
+    "result": "PASS",
+    "elf_count": 5,
+    "build_image": "sha256:421563e252d75774bf381e6f74e28733e3769cf9169b8fdb25222a6d128946a3",
+    "runtime_image": "sha256:75cf79c5c11af91af5dcf1300ad1a0e5a2a103a752b147851b4151107b3ccf27",
+    "configure_build_ctest_log_sha256": "bb6eba50228c223c2b11a3abcc465785583c0dfd0b08a4e724eb591d053cd51b",
+    "final_repack_ctest_sha256": "ab535a868218abe388959bd0699a05fb61823ac4ecf4922b912256fd308a7411",
+    "final_support_regression_sha256": "1069e4a49de3540b642f66ffe1449bbfe099fe212cf8c994a33e8c04014b2dd0"
+  },
+  "debian13": {
+    "result": "PASS",
+    "elf_count": 5,
+    "build_image": "sha256:acf31f5fafeb46247e38b16c7fb3e7cd20bf3d158a6029446813092f13d3cfad",
+    "runtime_image": "sha256:937ec1c9765c871dc3cd57ac39ac499d9360cdc2a69c924d85c47f01da54b7ee",
+    "configure_build_ctest_log_sha256": "5ec998311c312022f8a1a14c4465ad57e76125b449165761f50926eaf8b6888b",
+    "final_repack_ctest_sha256": "e805ce9a6dabf158d075c062d7bc92c0aeb6cf4b641de2679eb9db5da1b4cf35",
+    "final_support_regression_sha256": "f9c1c38578d0fd04b0e27eea6b54ddc59be09a23b349ac8b2b3358955fc97780"
+  },
+  "ubuntu2404": {
+    "result": "PASS",
+    "elf_count": 5,
+    "build_image": "sha256:6f7b74bdc7e2811ff16240134a6dbbb47f48118792d9c54a28df4596695d2c6d",
+    "runtime_image": "sha256:77c53095b1ab9a5b86ef7b8f2b4530d2f4312929c1498f6e1b899104d3948f86",
+    "configure_build_ctest_log_sha256": "14809f297808b024237e9a9b51b689a24181e6471eb2e4f259a07b3e795cf68a",
+    "final_repack_ctest_sha256": "5f81cdb7696f8f5a7c97a2d9de0477ba0eb160c5a30e000e9317b16e1e7ebbf0",
+    "final_support_regression_sha256": "316488a04a1909c1622afd330c6966c28525810251ef0f737e4050b88ea46e3c"
+  },
+  "ubuntu2604": {
+    "result": "PASS",
+    "elf_count": 5,
+    "build_image": "sha256:73cb2d7e926c9fe511f41c9ee4b7aec4d24fe753b6336cbdbfd2b5f1356eca02",
+    "runtime_image": "sha256:497fc3cc1eb3678ddfe7b2dbd87465975d37ea5ac64b4d63799554bdb20c40d8",
+    "configure_build_ctest_log_sha256": "84edb6e146fcf7a3d704e9e7ade1903739d1e49ab4292febf07831e7dad6a610",
+    "final_repack_ctest_sha256": "914abfeca4447a06bad23eb5195c497f40ae8d25d59a1cd6e3dd5338ab06acc7",
+    "final_support_regression_sha256": "d93410b22dd0c7ad9a0882f2208bc5977c42d90dbd3494214ce426fb81361508"
+  }
+}

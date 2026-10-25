@@ -3,7 +3,7 @@
 # Uses the actual production staging/control/script generators, not dummy DEBs.
 set -euo pipefail
 [[ $# == 2 ]] || { echo 'usage: build-deb.sh PLATFORM PRODUCT_VERSION' >&2; exit 2; }
-export FIC_PACKAGING_TARGET_PLATFORM=$1 BUILD_ROOT=/build DIST_DIR=/build/lifecycle-packages
+export FIC_PACKAGING_TARGET_PLATFORM=$1 BUILD_ROOT=/build DIST_DIR=${DIST_DIR:-/build/lifecycle-packages}
 version=$2
 cmake -S /src -B /build -DFIC_TARGET_PLATFORM="$1" -DFIC_PRODUCT_VERSION="$version" \
     -DFIC_BUILD_COMMIT=unknown -DFIC_RELEASE_TAG=none -DFIC_RELEASE_BUILD=OFF

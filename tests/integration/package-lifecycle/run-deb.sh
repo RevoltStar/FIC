@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # No runtime host mounts, ports or host namespaces; actual DEBs are copied in.
 set -euo pipefail
-[[ $# == 2 || $# == 3 ]] || { echo 'usage: run-deb.sh IMAGE PACKAGE_DIRECTORY [deb_native.py|purge_failure_native.py|detach_retry_native.py]' >&2; exit 2; }
+[[ $# == 2 || $# == 3 ]] || { echo 'usage: run-deb.sh IMAGE PACKAGE_DIRECTORY [deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py]' >&2; exit 2; }
 driver=${3:-deb_native.py}
-case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py) ;; *) exit 2 ;; esac
+case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py) ;; *) exit 2 ;; esac
 image=$1 packages=$(realpath "$2")
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 name="fic-deb-lifecycle-$$"

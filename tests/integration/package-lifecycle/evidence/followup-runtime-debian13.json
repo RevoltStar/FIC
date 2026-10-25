@@ -1,0 +1,506 @@
+{
+  "result": {
+    "status": "PASS",
+    "scope": "minimal final DEB Depends install/all ELF/readiness/remove/purge",
+    "os_release": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+    "archives_sha256": {
+      "fic_0.1.1_debian13_amd64.deb": "87b993e45890bd617d822642c7d5573578b4dae419cfe50f77182de4d0abd6b8",
+      "fic-cli_0.1.1_debian13_amd64.deb": "7c409ac66838d0da5c5236aaa34baa52f897d1a2e26df3eec6c0bf02c954e345",
+      "fic-dick_0.1.1_debian13_amd64.deb": "1b215a05f59f318c3019a2ec3643e49f3a6832fcf955add76c7c5430c596bda0"
+    },
+    "depends": {
+      "fic": "libc6 (>= 2.38), libgcc-s1 (>= 3.0), libglib2.0-0t64 (>= 2.12.0), libqt6core6t64 (>= 6.8.2), libssl3t64 (>= 3.0.0), libstdc++6 (>= 13.1), libsystemd0 (>= 240), fic-dick (= 0.1.1), libnotify-bin, util-linux, nftables, libpam-runtime, libpam-modules, libpam-pwquality, sudo, procps, openssh-server",
+      "fic-cli": "libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1), fic (= 0.1.1)",
+      "fic-dick": "libc6 (>= 2.38), libgcc-s1 (>= 3.0), libsqlite3-0 (>= 3.5.9), libssl3t64 (>= 3.0.0), libstdc++6 (>= 13.1), udev, systemd, util-linux"
+    },
+    "elfs": {
+      "/lib/x86_64-linux-gnu/security/pam_fic_access.so": {
+        "package": "fic",
+        "sha256": "79de5d4f046a03c4101242c5bc55a3ac549081c75d0974d076baa92b6691d550",
+        "ldd": "\tlinux-vdso.so.1 (0x00007fff5a8aa000)\n\tlibpam.so.0 => /lib/x86_64-linux-gnu/libpam.so.0 (0x000078945a4c4000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000078945a25e000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000078945a231000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000078945a03d000)\n\tlibaudit.so.1 => /lib/x86_64-linux-gnu/libaudit.so.1 (0x0000789459fff000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000789459f0f000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000078945a6b4000)\n\tlibcap-ng.so.0 => /lib/x86_64-linux-gnu/libcap-ng.so.0 (0x0000789459f07000)\n"
+      },
+      "/opt/fic/bin/fic": {
+        "package": "fic",
+        "sha256": "039dc663a08b01763914b28f902cc9c95ab4429fafeb98aa702d9264a7b73a6b",
+        "ldd": "\tlinux-vdso.so.1 (0x00007ffd357ed000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007d8a32a7c000)\n\tlibQt6Core.so.6 => /lib/x86_64-linux-gnu/libQt6Core.so.6 (0x00007d8a324a3000)\n\tlibsystemd.so.0 => /lib/x86_64-linux-gnu/libsystemd.so.0 (0x00007d8a3238d000)\n\tlibglib-2.0.so.0 => /lib/x86_64-linux-gnu/libglib-2.0.so.0 (0x00007d8a32234000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007d8a31fcc000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007d8a31f9f000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007d8a31dab000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007d8a33abd000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007d8a31d8b000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x00007d8a31cc1000)\n\tlibicui18n.so.76 => /lib/x86_64-linux-gnu/libicui18n.so.76 (0x00007d8a31925000)\n\tlibicuuc.so.76 => /lib/x86_64-linux-gnu/libicuuc.so.76 (0x00007d8a31700000)\n\tlibdouble-conversion.so.3 => /lib/x86_64-linux-gnu/libdouble-conversion.so.3 (0x00007d8a316ea000)\n\tlibb2.so.1 => /lib/x86_64-linux-gnu/libb2.so.1 (0x00007d8a316cb000)\n\tlibpcre2-16.so.0 => /lib/x86_64-linux-gnu/libpcre2-16.so.0 (0x00007d8a3162b000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007d8a3153b000)\n\tlibcap.so.2 => /lib/x86_64-linux-gnu/libcap.so.2 (0x00007d8a3152d000)\n\tlibatomic.so.1 => /lib/x86_64-linux-gnu/libatomic.so.1 (0x00007d8a31523000)\n\tlibpcre2-8.so.0 => /lib/x86_64-linux-gnu/libpcre2-8.so.0 (0x00007d8a31474000)\n\tlibicudata.so.76 => /lib/x86_64-linux-gnu/libicudata.so.76 (0x00007d8a2f60f000)\n\tlibgomp.so.1 => /lib/x86_64-linux-gnu/libgomp.so.1 (0x00007d8a2f5ba000)\n"
+      },
+      "/opt/fic/bin/fic-cli": {
+        "package": "fic-cli",
+        "sha256": "e27225641802a093044f98d9461d9fab2ea3a7ef38c37568733d1ab82f1196d9",
+        "ldd": "\tlinux-vdso.so.1 (0x00007fff750af000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000075c58e147000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000075c58e11a000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000075c58df26000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000075c58de36000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000075c58e437000)\n"
+      },
+      "/opt/fic/bin/fic-dick": {
+        "package": "fic-dick",
+        "sha256": "75685cc7e429ca3b33e6fd2b279d1ff6ce1e9b1f95f0e02bbe9bfe04952ff17e",
+        "ldd": "\tlinux-vdso.so.1 (0x00007ffd64b75000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x000070ce458b4000)\n\tlibsqlite3.so.0 => /lib/x86_64-linux-gnu/libsqlite3.so.0 (0x000070ce45734000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000070ce454ce000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000070ce454a1000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000070ce452ab000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000070ce4609b000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x000070ce4528b000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x000070ce451c1000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000070ce450d1000)\n"
+      },
+      "/opt/fic/bin/fic-package-infrastructure": {
+        "package": "fic-dick",
+        "sha256": "11b3ddddcf077bc79466d63b9348cab9014efdb0d8a2af9adff8813ea2a0919b",
+        "ldd": "\tlinux-vdso.so.1 (0x00007fffdb11c000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x0000749b9b787000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000749b9b521000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000749b9b4f4000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000749b9b300000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x0000749b9b2de000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x0000749b9b214000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000749b9b124000)\n\t/lib64/ld-linux-x86-64.so.2 (0x0000749b9befa000)\n"
+      }
+    }
+  },
+  "source_base": "621910c3712860bcc1f38a6707ad1d9926442fec",
+  "raw_evidence": "/home/admsys/FIC/build-package-lifecycle/native-fic-followup-runtime:debian13-20261025T115514Z-53545",
+  "raw_commands_sha256": "527af23b5cedc2e888fe7da5a0736e52b8bf44d9f9cfb351c3b33af9686a783c",
+  "isolation": {
+    "image": "sha256:937ec1c9765c871dc3cd57ac39ac499d9360cdc2a69c924d85c47f01da54b7ee",
+    "image_tag": "fic-followup-runtime:debian13",
+    "binds": null,
+    "network": "none",
+    "cgroupns": "private",
+    "mounts": [],
+    "pid_mode": "",
+    "ipc_mode": "private",
+    "ports": {},
+    "privileged": true
+  },
+  "events": [
+    {
+      "command": [
+        "systemctl",
+        "is-active",
+        "systemd-udevd.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "45df5ad5e0ecfa54d3226343e0e6857337494ba6e32f189d1174070665d8c659",
+      "output_excerpt": "active\n"
+    },
+    {
+      "command": [
+        "systemctl",
+        "is-enabled",
+        "systemd-udev-trigger.service"
+      ],
+      "exit_code": 1,
+      "output_sha256": "71692b9801e6e1a49440510df456ae0704544147099c51ef95a7278bc46d27f0",
+      "output_excerpt": "masked\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "cmake"
+      ],
+      "exit_code": 1,
+      "output_sha256": "d5d6e94caf014a50c86fd1b0f027ec46770bcd2a1ba90862cee18ec4878a302f",
+      "output_excerpt": "dpkg-query: no packages found matching cmake\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "make"
+      ],
+      "exit_code": 1,
+      "output_sha256": "49266ab8c334d7b2ba0dd4a90d7a6516c664ac897b139fe72e620593dbe99f75",
+      "output_excerpt": "dpkg-query: no packages found matching make\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "gcc"
+      ],
+      "exit_code": 1,
+      "output_sha256": "de0bd5c3bd7dafa9bbb116698edb0e4b08f99ce7baaa73d1ede2edc58da18421",
+      "output_excerpt": "dpkg-query: no packages found matching gcc\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "g++"
+      ],
+      "exit_code": 1,
+      "output_sha256": "65b7f7d49af981da45557cc82ecd1b42336bc115f41efca05a7643b3e094d035",
+      "output_excerpt": "dpkg-query: no packages found matching g++\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "qt6-base-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "bfc58a679662dd0dbfd473f124d0dccaa4f01a2c5a391240ba5cc0dcc4128813",
+      "output_excerpt": "dpkg-query: no packages found matching qt6-base-dev\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "qtbase5-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "d64d626904f083e423e403f3ae07a97e795e76419608baa95a4bbaf45ed9202a",
+      "output_excerpt": "dpkg-query: no packages found matching qtbase5-dev\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libssl-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "b94991199d865813fd019c15d79ce39816f7246b04498283c59ceb02633c1ab4",
+      "output_excerpt": "dpkg-query: no packages found matching libssl-dev\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libsystemd-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "51d74027b39e750b8717725bb42f3663babb3a4a0d2843308244d0f764ee48a1",
+      "output_excerpt": "dpkg-query: no packages found matching libsystemd-dev\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libglib2.0-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "7e1020424b9063590e234601c0cd136fdb60cd6ae98afe1af2be34ad3ec66a43",
+      "output_excerpt": "dpkg-query: no packages found matching libglib2.0-dev\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libpam0g-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "0b096af79e8bc42744a47cf5791b9fe582ac6f1cff89ebaf8b072ec97952bdf6",
+      "output_excerpt": "dpkg-query: no packages found matching libpam0g-dev\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libsqlite3-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "96041bdeb947096e3cd26f88ad33b380ebb067036a76feebfdb540e60a1edb0a",
+      "output_excerpt": "dpkg-query: no packages found matching libsqlite3-dev\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "nlohmann-json3-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "5f24fe4f84fe3b85614909503917fe8686428b240e181ea503bb70478e6873a0",
+      "output_excerpt": "dpkg-query: no packages found matching nlohmann-json3-dev\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "dpkg-dev"
+      ],
+      "exit_code": 0,
+      "output_sha256": "33dcf4f6bba7c86bbe1e76c22f7f25cf617d9d9064b4da11324253735b0e69df",
+      "output_excerpt": "unknown ok not-installed"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "pkg-config"
+      ],
+      "exit_code": 1,
+      "output_sha256": "566a0e1f42dde57b321a3c63bfbbcd90e499d43936a97e38252433b64065536f",
+      "output_excerpt": "dpkg-query: no packages found matching pkg-config\n"
+    },
+    {
+      "command": [
+        "dpkg-deb",
+        "-f",
+        "/var/tmp/fic-packages/fic_0.1.1_debian13_amd64.deb",
+        "Depends"
+      ],
+      "exit_code": 0,
+      "output_sha256": "7ccacb70a511d4dc3fb41e0ec23db4e25a349aa9752f38e74f9c554214526de8",
+      "output_excerpt": "libc6 (>= 2.38), libgcc-s1 (>= 3.0), libglib2.0-0t64 (>= 2.12.0), libqt6core6t64 (>= 6.8.2), libssl3t64 (>= 3.0.0), libstdc++6 (>= 13.1), libsystemd0 (>= 240), fic-dick (= 0.1.1), libnotify-bin, util-linux, nftables, libpam-runtime, libpam-modules, libpam-pwquality, sudo, procps, openssh-server\n"
+    },
+    {
+      "command": [
+        "dpkg-deb",
+        "-f",
+        "/var/tmp/fic-packages/fic-cli_0.1.1_debian13_amd64.deb",
+        "Depends"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e8f4622192ac67fd7d33c9b569b1a9471b019f173b2b886fbd0b53b41d10f636",
+      "output_excerpt": "libc6 (>= 2.38), libgcc-s1 (>= 3.0), libstdc++6 (>= 13.1), fic (= 0.1.1)\n"
+    },
+    {
+      "command": [
+        "dpkg-deb",
+        "-f",
+        "/var/tmp/fic-packages/fic-dick_0.1.1_debian13_amd64.deb",
+        "Depends"
+      ],
+      "exit_code": 0,
+      "output_sha256": "0db8029ab80a9faee9837397df53a8fd431eeb814ccbf6a4d0b41d2eb42456d0",
+      "output_excerpt": "libc6 (>= 2.38), libgcc-s1 (>= 3.0), libsqlite3-0 (>= 3.5.9), libssl3t64 (>= 3.0.0), libstdc++6 (>= 13.1), udev, systemd, util-linux\n"
+    },
+    {
+      "command": [
+        "apt-get",
+        "-o",
+        "Dir::Cache::archives=/var/tmp/fic-dependency-cache",
+        "install",
+        "--no-install-recommends",
+        "-y",
+        "/var/tmp/fic-packages/fic_0.1.1_debian13_amd64.deb",
+        "/var/tmp/fic-packages/fic-cli_0.1.1_debian13_amd64.deb",
+        "/var/tmp/fic-packages/fic-dick_0.1.1_debian13_amd64.deb"
+      ],
+      "exit_code": 0,
+      "output_sha256": "abb016fc7b3830cf64dc7aded96afc6190347cc5a43d3db0415edbf52f5f71cc",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following additional packages will be installed:\n  adduser libatomic1 libb2-1 libcbor0.10 libcom-err2 libcrack2 libdeflate0\n  libdouble-conversion3 libedit2 libfido2-1 libgdk-pixbuf-2.0-0\n  libgdk-pixbuf2.0-common libglib2.0-0t64 libgomp1 libgssapi-krb5-2 libicu76\n  libjansson4 libjbig0 libjpeg62-turbo libk5crypto3 libkeyutils1 libkrb5-3\n  libkrb5support0 liblerc4 libmnl0 libnftables1 libnftnl11 libnotify-bin\n  libnotify4 libpam-pwquality libpcre2-16-0 libpng16-16t64 libproc2-0\n  libpwquality-common libpwqual\n...\nygen.service' \u2192 '/usr/lib/systemd/system/sshd-keygen.service'.\nCreated symlink '/etc/systemd/system/sshd.service.wants/sshd-keygen.service' \u2192 '/usr/lib/systemd/system/sshd-keygen.service'.\nCreated symlink '/etc/systemd/system/sshd@.service.wants/sshd-keygen.service' \u2192 '/usr/lib/systemd/system/sshd-keygen.service'.\nCreated symlink '/etc/systemd/system/ssh.socket.wants/sshd-keygen.service' \u2192 '/usr/lib/systemd/system/sshd-keygen.service'.\n/usr/sbin/policy-rc.d returned 101, not running 'start sshd-keygen.service'\nSetting up fic (0.1.1) ...\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state proven UNLOCKED\ndevice database schema is initialized: 2\npackage trust sync completed: updated=12, unavailable=7\nmanaged password slots are provisioned\nsafe to attach\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic.service' \u2192 '/usr/lib/systemd/system/fic.service'.\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic-device.service' \u2192 '/usr/lib/systemd/system/fic-device.service'.\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic-notify.service' \u2192 '/usr/lib/systemd/system/fic-notify.service'.\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\nSetting up fic-cli (0.1.1) ...\nProcessing triggers for libc-bin (2.41-12+deb13u4) ...\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c30fa76196bbdd6ec8c51db046fc2a8d20331bc0983cdce281b2244ca84de5cb",
+      "output_excerpt": "install ok installed"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "fic-cli"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c30fa76196bbdd6ec8c51db046fc2a8d20331bc0983cdce281b2244ca84de5cb",
+      "output_excerpt": "install ok installed"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c30fa76196bbdd6ec8c51db046fc2a8d20331bc0983cdce281b2244ca84de5cb",
+      "output_excerpt": "install ok installed"
+    },
+    {
+      "command": [
+        "dpkg",
+        "--audit"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-L",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "afb57da573deead51ed8612fbccb8eb9dce1ad59f48a2ccaa20236917e4bdda0",
+      "output_excerpt": "/.\n/etc\n/etc/pam.d\n/etc/pam.d/fic-faillock-account\n/etc/pam.d/fic-faillock-authfail\n/etc/pam.d/fic-faillock-authsucc\n/etc/pam.d/fic-faillock-preauth\n/etc/pam.d/fic-password-history\n/etc/pam.d/fic-password-history-initial\n/etc/pam.d/fic-password-quality\n/lib\n/lib/systemd\n/lib/systemd/system\n/lib/systemd/system/fic-notify.service\n/lib/systemd/system/fic.service\n/lib/systemd/system/fic_get_device_udev_info.service\n/lib/x86_64-linux-gnu\n/lib/x86_64-linux-gnu/security\n/lib/x86_64-linux-gnu/security/pam_fic_access.so\n/opt\n/opt/fic\n/opt/fic/bin\n/opt/fic/bin/fic\n/opt/fic/bin/fic-notify-dispatcher\n/opt/fic/bin/fic-udevadm-trigger\n/opt/fic/db\n/opt/fic/db/PCI_CLASS_ru.txt\n/opt/fic/db/USB_CLASS_ru.txt\n/opt/fic/image\n/opt/fic/image/FIC.jpg\n/opt/fic/lang\n/opt/fic/lang/en.lang\n/opt/fic/lang/ru.lang\n/opt/fic/log\n/opt/fic/notify\n/opt/fic/share\n/opt/fic/share/default-config\n/opt/fic/share/default-config/AUDIT.conf\n/opt/fic/share/default-config/DAC.conf\n/opt/fic/share/default-config/DC.conf\n/opt/fic/share/default-config/FIREWALL.conf\n/opt/fic/share/default-config/GLOBAL.conf\n/opt/fic/share/default-config/IDENTITY_ACCESS.conf\n/opt/fic/share/default-config/NET.conf\n/opt/fic/share/default-config/OSS.conf\n/opt/fic/share/default-config/SYSCTL.conf\n/usr\n/usr/lib\n/usr/lib/tmpfiles.d\n/usr/lib/tmpfiles.d/fic.conf\n/usr/share\n/usr/share/pam-configs\n/usr/share/pam-configs/fic-faillock-authfail\n/usr/share/pam-configs/fic-faillock-authsucc\n/usr/share/pam-configs/fic-faillock-hook-account\n/usr/share/pam-configs/fic-faillock-hook-authfail\n/usr/share/pam-configs/fic-faillock-hook-authsucc\n/usr/share/pam-configs/fic-faillock-hook-preauth\n/usr/share/pam-configs/fic-faillock-notify\n/usr/share/pam-configs/fic-faillock-preauth-required\n/usr/share/pam-configs/fic-incident-access\n/usr/share/pam-configs/fic-password-history-hook\n/usr/share/pam-configs/fic-password-history-initial-hook\n/usr/share/pam-configs/fic-password-quality-hook\n/usr/share/pam-configs/fic-pwhistory\n/usr/share/pam-configs/fic-pwquality\n"
+    },
+    {
+      "command": [
+        "ldd",
+        "/lib/x86_64-linux-gnu/security/pam_fic_access.so"
+      ],
+      "exit_code": 0,
+      "output_sha256": "483ea5f3948ce8277be35e0de5651b56fba0a5c01cc9233aa3f56c133fd85df3",
+      "output_excerpt": "\tlinux-vdso.so.1 (0x00007fff5a8aa000)\n\tlibpam.so.0 => /lib/x86_64-linux-gnu/libpam.so.0 (0x000078945a4c4000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000078945a25e000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000078945a231000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000078945a03d000)\n\tlibaudit.so.1 => /lib/x86_64-linux-gnu/libaudit.so.1 (0x0000789459fff000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000789459f0f000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000078945a6b4000)\n\tlibcap-ng.so.0 => /lib/x86_64-linux-gnu/libcap-ng.so.0 (0x0000789459f07000)\n"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "60c734c6aad4cf74cd9af6e5b5f9bd2f6e344917c77b04d3a71d4145116689db",
+      "output_excerpt": "\tlinux-vdso.so.1 (0x00007ffd357ed000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007d8a32a7c000)\n\tlibQt6Core.so.6 => /lib/x86_64-linux-gnu/libQt6Core.so.6 (0x00007d8a324a3000)\n\tlibsystemd.so.0 => /lib/x86_64-linux-gnu/libsystemd.so.0 (0x00007d8a3238d000)\n\tlibglib-2.0.so.0 => /lib/x86_64-linux-gnu/libglib-2.0.so.0 (0x00007d8a32234000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007d8a31fcc000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007d8a31f9f000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007d8a31dab000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007d8a33abd000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007d8a31d8b000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x00007d8a31cc1000)\n\tlibicui18n.so.76 => /lib/x86_64-linux-gnu/libicui18n.so.76 (0x00007d8a31925000)\n\tlibicuuc.so.76 => /lib/x86_64-linux-gnu/libicuuc.so.76 (0x00007d8a31700000)\n\tlibdouble-conversion.so.3 => /lib/x86_64-linux-gnu/libdouble-conversion.so.3 (0x00007d8a316ea000)\n\tlibb2.so.1 => /lib/x86_64-linux-gnu/libb2.so.1 (0x00007d8a316cb000)\n\tlibpcre2-16.so.0 => /lib/x86_64-linux-gnu/libpcre2-16.so.0 (0x00007d8a3162b000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007d8a3153b000)\n\tlibcap.so.2 => /lib/x86_64-linux-gnu/libcap.so.2 (0x00007d8a3152d000)\n\tlibatomic.so.1 => /lib/x86_64-linux-gnu/libatomic.so.1 (0x00007d8a31523000)\n\tlibpcre2-8.so.0 => /lib/x86_64-linux-gnu/libpcre2-8.so.0 (0x00007d8a31474000)\n\tlibicudata.so.76 => /lib/x86_64-linux-gnu/libicudata.so.76 (0x00007d8a2f60f000)\n\tlibgomp.so.1 => /lib/x86_64-linux-gnu/libgomp.so.1 (0x00007d8a2f5ba000)\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-L",
+        "fic-cli"
+      ],
+      "exit_code": 0,
+      "output_sha256": "af594b69db00733b59ccbe0e0352e393d7295f652082f41645eeb6443509c1d3",
+      "output_excerpt": "/.\n/opt\n/opt/fic\n/opt/fic/bin\n/opt/fic/bin/fic-cli\n/usr\n/usr/share\n/usr/share/bash-completion\n/usr/share/bash-completion/completions\n/usr/share/bash-completion/completions/fic-cli\n"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic-cli"
+      ],
+      "exit_code": 0,
+      "output_sha256": "a468c12bb30d921ab725e83b76713d58728616b1a5879ab5d48bb8e5ef773b5d",
+      "output_excerpt": "\tlinux-vdso.so.1 (0x00007fff750af000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000075c58e147000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000075c58e11a000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000075c58df26000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000075c58de36000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000075c58e437000)\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-L",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "981d9ea47b96a376c65457461e0a225eac8c0f0c7767bdac0b64db41ba914227",
+      "output_excerpt": "/.\n/etc\n/etc/udev\n/etc/udev/rules.d\n/etc/udev/rules.d/99-fic-devices.rules\n/lib\n/lib/systemd\n/lib/systemd/system\n/lib/systemd/system/fic-device.service\n/lib/systemd/system/fic_get_device_info.service\n/opt\n/opt/fic\n/opt/fic/bin\n/opt/fic/bin/fic-dick\n/opt/fic/bin/fic-package-infrastructure\n"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "43ed8f39e3f0aa9afbe8be3762503b2173366df6dac7e5e1f6258bb3c59e8d29",
+      "output_excerpt": "\tlinux-vdso.so.1 (0x00007ffd64b75000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x000070ce458b4000)\n\tlibsqlite3.so.0 => /lib/x86_64-linux-gnu/libsqlite3.so.0 (0x000070ce45734000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000070ce454ce000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000070ce454a1000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000070ce452ab000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000070ce4609b000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x000070ce4528b000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x000070ce451c1000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000070ce450d1000)\n"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic-package-infrastructure"
+      ],
+      "exit_code": 0,
+      "output_sha256": "37d3ff7fb7c15ba65d0f3c1210e6a7d07c320cf30cd8c2a5ee2520bb12e4529f",
+      "output_excerpt": "\tlinux-vdso.so.1 (0x00007fffdb11c000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x0000749b9b787000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000749b9b521000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000749b9b4f4000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000749b9b300000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x0000749b9b2de000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x0000749b9b214000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000749b9b124000)\n\t/lib64/ld-linux-x86-64.so.2 (0x0000749b9befa000)\n"
+    },
+    {
+      "command": [
+        "systemctl",
+        "is-active",
+        "fic.service",
+        "fic-device.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "54233fea09439225592caba48eaef86204f35acbd98a0a8b8672f03f9ddc8cce",
+      "output_excerpt": "active\nactive\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "status"
+      ],
+      "exit_code": 0,
+      "output_sha256": "9f3b5d3a971c325e0462d3bfa7d954584ce776a1a72284e69c99e5b93248ab92",
+      "output_excerpt": "fic daemon is running\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-dick",
+        "wait-daemon",
+        "30"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "ssh.service",
+        "ssh.socket",
+        "sshd.service",
+        "sshd.socket"
+      ],
+      "exit_code": 5,
+      "output_sha256": "f20fae4d145a643fb821828bbf6e5027f297ba2c0d19e07c5bf10e01e412161e",
+      "output_excerpt": "Failed to stop sshd.socket: Unit sshd.socket not loaded.\n"
+    },
+    {
+      "command": [
+        "apt-get",
+        "remove",
+        "-y",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "58371e973c8e34e5e47d63a19707ef090bf3749f1b8894d14d237a8e595bd684",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages were automatically installed and are no longer required:\n  libatomic1 libb2-1 libcbor0.10 libcom-err2 libcrack2 libdeflate0\n  libdouble-conversion3 libedit2 libfido2-1 libgdk-pixbuf-2.0-0\n  libgdk-pixbuf2.0-common libglib2.0-0t64 libgomp1 libgssapi-krb5-2 libicu76\n  libjansson4 libjbig0 libjpeg62-turbo libk5crypto3 libkeyutils1 libkrb5-3\n  libkrb5support0 liblerc4 libmnl0 libnftables1 libnftnl11 libnotify-bin\n  libnotify4 libpam-pwquality libpcre2-16-0 libpng16-16t64 libproc2-0\n  libpwquali\n...\nn records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"SYSCTL:network_kernel_protection:tcp_synack_retries\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"SYSCTL:network_kernel_protection:tcp_synack_retries\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nREMOVED: writers absent and PAM detached; policy configuration and journal retained\nRemoved '/etc/systemd/system/multi-user.target.wants/fic-device.service'.\nRemoved '/etc/systemd/system/multi-user.target.wants/fic.service'.\nRemoved '/etc/systemd/system/multi-user.target.wants/fic-notify.service'.\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-package-infrastructure",
+        "prove-remove"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic-package-infrastructure"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2ed778a339d8fe68a3b83d7fcba0554cf1efc340008cf97f33bcbc1b0e704af5",
+      "output_excerpt": "\tlinux-vdso.so.1 (0x00007ffc7afd4000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x0000734f4caed000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000734f4c887000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000734f4c85a000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000734f4c666000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x0000734f4c644000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x0000734f4c57a000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000734f4c48a000)\n\t/lib64/ld-linux-x86-64.so.2 (0x0000734f4d260000)\n"
+    },
+    {
+      "command": [
+        "apt-get",
+        "purge",
+        "-y",
+        "fic",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "6b8a17f7f3d9647995c52731379da02e159adc69e9cb6c9f3e5cb6b28ce7d73a",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages were automatically installed and are no longer required:\n  libatomic1 libb2-1 libcbor0.10 libcom-err2 libcrack2 libdeflate0\n  libdouble-conversion3 libedit2 libfido2-1 libgdk-pixbuf-2.0-0\n  libgdk-pixbuf2.0-common libglib2.0-0t64 libgomp1 libgssapi-krb5-2 libicu76\n  libjansson4 libjbig0 libjpeg62-turbo libk5crypto3 libkeyutils1 libkrb5-3\n  libkrb5support0 liblerc4 libmnl0 libnftables1 libnftnl11 libnotify-bin\n  libnotify4 libpam-pwquality libpcre2-16-0 libpng16-16t64 libproc2-0\n  libpwquali\n...\ning database ... 70%\n(Reading database ... 75%\n(Reading database ... 80%\n(Reading database ... 85%\n(Reading database ... 90%\n(Reading database ... 95%\n(Reading database ... 100%\n(Reading database ... 8889 files and directories currently installed.)\nRemoving fic-dick (0.1.1) ...\n(Reading database ... \n(Reading database ... 5%\n(Reading database ... 10%\n(Reading database ... 15%\n(Reading database ... 20%\n(Reading database ... 25%\n(Reading database ... 30%\n(Reading database ... 35%\n(Reading database ... 40%\n(Reading database ... 45%\n(Reading database ... 50%\n(Reading database ... 55%\n(Reading database ... 60%\n(Reading database ... 65%\n(Reading database ... 70%\n(Reading database ... 75%\n(Reading database ... 80%\n(Reading database ... 85%\n(Reading database ... 90%\n(Reading database ... 95%\n(Reading database ... 100%\n(Reading database ... 8883 files and directories currently installed.)\nPurging configuration files for fic (0.1.1) ...\nFIC purge: deleting configuration and MutationJournal/witness; remaining OS policy settings are not adopted on reinstall\ndpkg: warning: while removing fic, directory '/opt/fic/log' not empty so not removed\ndpkg: warning: while removing fic, directory '/lib/x86_64-linux-gnu/security' not empty so not removed\nPurging configuration files for fic-dick (0.1.1) ...\ndpkg: warning: while removing fic-dick, directory '/lib/systemd/system' not empty so not removed\n"
+    },
+    {
+      "command": [
+        "dpkg",
+        "--audit"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    }
+  ],
+  "build_image": {
+    "id": "sha256:acf31f5fafeb46247e38b16c7fb3e7cd20bf3d158a6029446813092f13d3cfad",
+    "tags": [
+      "fic-followup-build:debian13"
+    ]
+  },
+  "production_builder_sha256": "7ceec0b61ca14624725c7ce6b4b688235b7bb45b39548a35beb8d9673d1f4899",
+  "runtime_fixture_sha256": {
+    "tests/integration/package-lifecycle/Dockerfile.runtime-deb": "0605184c8a4778e462faec5cd2b68d36f50a1e9fc2ad3796b106b794e82a9019",
+    "tests/integration/package-lifecycle/runtime-init.sh": "3b6435a721c642a4e7fc94847ac41a9dfa5bc83e1a6384608671c0c1a631ffe5",
+    "tests/integration/package-lifecycle/minimal_runtime_native.py": "6f1653317fcf7147cf8af426183fb325e9bacd1427f4d54248b47746bcc66552"
+  }
+}

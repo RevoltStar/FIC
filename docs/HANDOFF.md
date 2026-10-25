@@ -1,29 +1,27 @@
 # Current workspace
 
 ## Current base
-* Branch main, base ab0f47e (strict DEB dependency analysis). Original lifecycle 752354c, historical native gates 50e0d04. No push.
+* Branch main. A: 621910c (PAM domain classification and native retry). B is the accompanying final DEB runtime/provider validation commit. Earlier bases: ab0f47e strict dependency discovery; 752354c lifecycle; 50e0d04 historical rich-image gates. No push.
 
 ## Current task
-* Attachment68cebd90: fix silent PAM password-domain skip, prove real infrastructure detach retry, then final minimal DEB runtime gates on Debian12/13 and Ubuntu24/26. Accepted lifecycle architecture remains unchanged. Two commits A/B requested.
+* Attachment68cebd90 follow-up completed: silent skip fixed; real before/partial infrastructure detach retry proved; final real DEBs install/remove/purge in minimal Debian12/13 and Ubuntu24/26. No next development stage authorized.
 
 ## Accepted architecture / invariants
-* AGENTS17/docs/package-lifecycle.md: four durable states, daemon-only policy release, infrastructure-only helper, shared daemon.lock, ownership/CAS/journal contract unchanged. No M1/runtime/finalizer/automatic restart/cancel/orphan adoption.
-* Domain applicability is explicit Supported/NotApplicable/Error. Only resolved native ALT passwdqc/static + pwhistory/TCB excludes C2; capability/scope/topology errors fail PAM_PASSWORD in JSON.
-* Native experiments only in disposable private PID1/cgroup/mount/network Docker containers, no host binds/ports/network, per-mount readonly sysfs. Podman absent. Build containers may bind repository readonly and their own caches.
+* AGENTS17/docs/package-lifecycle.md unchanged: four states, daemon-owned policy release, infrastructure-only helper, daemon.lock, ownership/CAS/journal guarantees. No M1/runtime/finalizer/cancel/automatic restart/adoption.
+* Supported/NotApplicable/Error: only resolved native ALT passwdqc/static + pwhistory/TCB excludes C2. Missing capability/scope or unexpected topology is a FAILED PAM_PASSWORD JSON outcome.
+* DEB needs actual ELF dependencies plus sudo/procps/openssh-server for existing uninstall inspections. OpenSSH installation/activation follows distro rules; SSH release restrictions unchanged.
 
-## Completed
-* A source fix + new package_release_support_tests; all old false causes inspected (native ALT vs missing capability, unavailable/empty scope, unsupported/mixed topology), plus one-success-masks-other-error case.
-* 9 affected CTest PASS on Ubuntu24 and Debian12; new regression rejects original supports code with bool→enum adaptation (real behavioral RED), current code GREEN. Affected production targets and actual DEBs built.
-* New detach_retry_native.py through real APT/prerm PASS: stop-time filesystem obstruction before detach, then partial common-auth detach before account failure. Physical proof rejects even updater exit0; main payload/referenced module retained, UNINSTALLING persists, config unchanged, active records released. Restricted systemd restart interval1 suppresses startup/periodic apply; repeated rollback and ordinary remove/purge succeed. No production retry fix/manual PAM reattachment needed.
-* Manual recovery procedure, validation docs, compact native evidence committed with A. Raw evidence path is in evidence/followup-detach-retry-ubuntu2404.json. Raw build logs: build-package-followup/.
+## Completed / changed areas
+* A daemon support classification, explicit JSON failure, unit/RED-GREEN and detach_retry_native.py. Real prerm failures after rollback/stop preserve UNINSTALLING/main payload/referenced PAM module; partial auth detach is real. Explicit obstruction repair + restricted interval1 restart/idempotent rollback and normal remove/purge pass, without restoring resources/config values. Manual commands are in docs/package-lifecycle.md.
+* B declares missing non-ELF providers, updates dependency regression and supplies separate minimal runtime Dockerfile/init/preparation/driver. Runtime fixture uses readonly /sys and /proc/sys BEFORE PID1, masks coldplug, allows native udev control/inventory via test-only condition overrides. No production unit is changed; this does not validate hardware enforcement.
+* All four final runtime gates PASS: APT actual Depends, no preinstalled Qt/devel, all 5 shipped ELF ldd, installed statuses/audit, both daemons, CLI/readiness, main remove, surviving helper proof, purge. Final retry rerun PASS in minimal Ubuntu24 on final archives.
+* Docs and compact evidence: docs/package-lifecycle-validation.md and tests/integration/package-lifecycle/evidence/followup-*.json. Archive/builder/ELF hashes, independent image identities, actual outputs/failures included. Native README gives reproduction commands.
 
-## Changed areas
-* daemon PackageReleaseResources/PackageReleaseSupport/UninstallRollback; support test/CTest; native detach runner/driver; lifecycle docs/evidence.
-* B-only uncommitted harness files: Dockerfile.runtime-deb and minimal_runtime_native.py (do not include them in A).
+## Validation
+* Native affected builds + 9 related CTest PASS on Debian12, Debian13, Ubuntu24, Ubuntu26; final packaging fix repack + 5 related CTest PASS per platform. Support regression rejects original logic (bool→enum adaptation only), fixed code GREEN; provider regression rejects previous Depends, fixed code GREEN.
+* Four real minimal APT install/readiness/remove/purge gates and final detach retry PASS. Bash/Python syntax/related static checks and git diff --check PASS. No new full project build/CTest claim.
+* Raw logs/evidence: build-package-followup/, build-package-lifecycle/native-* referenced by committed evidence. Current DEBs: build-env-full-debian12/followup-packages and build-recovery-policy/{debian13,ubuntu2404,ubuntu2604}/followup-packages.
 
-## Remaining
-* B: final minimal runtime gates on all four DEB distributions; actual Depends/helper/all packaged ELF/dpkg audit/readiness/remove/purge, evidence and documentation. No matrix PASS yet.
-* Ubuntu24 and Debian12 current-tree packages: build-recovery-policy/ubuntu2404/followup-packages and build-env-full-debian12/followup-packages. Build images fic-deb-depends-build:ubuntu2404 and fic-followup-build:debian12; Debian13 image build in progress. Other caches build-recovery-policy/{debian13,ubuntu2604} survive.
-* Runtime images must start from distro base, never build image; only boot/harness prerequisites preinstalled. Dockerfile.runtime-deb prefetches dependency closure without running FIC, actual APT install must run under PID1 with network none. No --no-download for local archives (APT blocks local file copying too).
-* Earlier readiness-timeout cause remains unproved; injected sync delay showed sensitivity. Do not optimize/relax30s readiness in this task. No real-user PAM/physical devices/graphical/SSH continuity claims.
-* Auto permission review once timed out on Debian13 image build; allowed single retry started. Earlier quota failure executed nothing. Do not bypass approval.
+## Remaining boundaries
+* No unresolved blocker for this follow-up. Initial udev-condition failures were a harness defect; missing sudo/SSH/sysctl prerequisites were packaging defects and fixed. Old three readiness-timeout root cause remains unproved; 30s limit untouched. No real-user PAM authentication, physical devices, graphical boot, live SSH continuity or physical reboot claim.
+* Podman absent, Docker used by existing user authorization. Disposable runtime containers are removed by runner; build/runtime images/caches retained for reproduction. Preserve unrelated six volumes. DOCKER_CONFIG=/tmp/fic-package-docker-config avoids missing Windows credential helper.

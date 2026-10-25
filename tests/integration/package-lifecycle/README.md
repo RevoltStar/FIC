@@ -79,3 +79,38 @@ payload and referenced PAM libraries. Explicit administrator removal of the
 obstruction, restricted systemd restart with interval1, idempotent rollback and
 ordinary package remove/purge must succeed without changing desired config or
 recreating released resources. The drop-in is never installed in production.
+
+## Minimal DEB runtime gates
+
+Build current packages separately on each native build image/cache. An explicit
+output directory avoids mixing historical test archives with current packages:
+
+```sh
+# Inside the corresponding BUILD image, /src:ro and /build:rw:
+DIST_DIR=/build/followup-packages bash /src/tests/integration/package-lifecycle/build-deb.sh debian-12 0.1.1
+# On the test controller:
+bash tests/integration/package-lifecycle/prepare-runtime-deb.sh debian:12 BUILD/followup-packages fic-followup-runtime:debian12
+bash tests/integration/package-lifecycle/run-deb.sh fic-followup-runtime:debian12 BUILD/followup-packages minimal_runtime_native.py
+```
+
+Repeat with Debian13/debian:13, Ubuntu24/ubuntu:24.04 and Ubuntu26/ubuntu:26.04,
+using the matching platform argument and build cache. `prepare-runtime-deb.sh`
+starts from the distro base, installs only boot/harness prerequisites and
+downloads (without installing) the actual DEBs' dependency closure. It never
+inherits a build image or preinstalls Qt/devel libraries. Actual APT install runs
+under systemd PID1 with networking disabled and consumes that cache. Do not use
+APT --no-download for local DEBs: it also prevents copying the local archives.
+
+The fixture makes /sys and /proc/sys read-only before PID1, masks coldplug and
+clears the native udev units' ConditionPathIsReadWrite only in the disposable
+image. This allows real udev control/reload/inventory without writable sysfs;
+it is not evidence of hardware enforcement. udev must be available at boot:
+installing it only after the readonly remount makes systemd skip it and causes
+a harness-induced device-daemon failure. No production unit is changed.
+
+The driver rejects build/devel packages or preinstalled Qt, records all actual
+Depends and archive digests, checks every packaged ELF (including PAM/helper),
+dpkg status/audit, both daemon services, CLI/readiness, main remove, surviving
+helper proof and final purge. The SSH stop is an explicit test-administrator
+action preserving existing release restrictions. Success is written only after
+the final checks. On failure, diagnostics.json retains native unit/journal facts.

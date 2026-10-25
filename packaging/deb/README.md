@@ -11,6 +11,12 @@ Debian source-package контексте. Ошибка анализа или п�
 Runtime-проверки установки должны включать образ без заранее установленных
 build/devel-зависимостей, чтобы они не скрывали ошибки `Depends`.
 
+`fic` также требует `sudo`, `procps` и `openssh-server`: существующие uninstall
+backends проверяют их конфигурацию даже без активных journal records. Эти
+зависимости нельзя вывести из ELF. Установка `openssh-server` и активация его
+служб следуют правилам пакета дистрибутива; ограничения release для работающего
+SSH описаны в [package lifecycle](../../docs/package-lifecycle.md).
+
 This packaging flow builds five distribution-specific Debian-format packages:
 
 - `fic-dick`

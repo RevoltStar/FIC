@@ -1,0 +1,82 @@
+{
+  "findings": [
+    {
+      "platform": "debian12",
+      "kind": "PACKAGING_RUNTIME_PREREQUISITES",
+      "raw_evidence": "/home/admsys/FIC/build-package-lifecycle/native-fic-followup-runtime:debian12-20261025T114314Z-50031",
+      "summary": {
+        "blocked": 1,
+        "failed": 40,
+        "groups": 89,
+        "released": 48
+      },
+      "failed_details": {
+        "Shared SUDO global ownership is not proven: could not open /etc/sudoers: No such file or directory": 1,
+        "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c sudoers: \u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0439 sudoers-\u0444\u0430\u0439\u043b \u043d\u0435 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442: /etc/sudoers": 4,
+        "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c sshd_config: /etc/ssh/sshd_config": 5,
+        "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u043d\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u044e sysctl: \u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c symlink sysctl-\u0444\u0430\u0439\u043b\u0430 /etc/sysctl.d/99-sysctl.conf: No such file or directory": 29
+      }
+    },
+    {
+      "platform": "ubuntu2404",
+      "kind": "PACKAGING_RUNTIME_PREREQUISITES",
+      "raw_evidence": "/home/admsys/FIC/build-package-lifecycle/native-fic-followup-runtime:ubuntu2404-20261025T114319Z-50139",
+      "summary": {
+        "blocked": 1,
+        "failed": 11,
+        "groups": 89,
+        "released": 77
+      },
+      "failed_details": {
+        "Shared SUDO global ownership is not proven: could not open /etc/sudoers: No such file or directory": 1,
+        "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c sudoers: \u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0439 sudoers-\u0444\u0430\u0439\u043b \u043d\u0435 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442: /etc/sudoers": 4,
+        "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c sshd_config: /etc/ssh/sshd_config": 5
+      }
+    },
+    {
+      "kind": "HARNESS_UDEV_BOOT_CONDITION",
+      "raw_evidence": "/home/admsys/FIC/build-package-lifecycle/native-fic-followup-runtime:debian12-20261025T113729Z-48408",
+      "diagnostics": [
+        {
+          "command": [
+            "systemctl",
+            "show",
+            "fic.service",
+            "fic-device.service",
+            "systemd-udevd.service",
+            "-p",
+            "Id",
+            "-p",
+            "ActiveState",
+            "-p",
+            "SubState",
+            "-p",
+            "Result",
+            "-p",
+            "ConditionResult"
+          ],
+          "exit_code": 0,
+          "output": "Result=success\nId=fic.service\nActiveState=active\nSubState=running\nConditionResult=yes\n\nResult=exit-code\nId=fic-device.service\nActiveState=failed\nSubState=failed\nConditionResult=yes\n\nResult=success\nId=systemd-udevd.service\nActiveState=inactive\nSubState=dead\nConditionResult=no\n"
+        },
+        {
+          "command": [
+            "journalctl",
+            "-u",
+            "fic.service",
+            "-u",
+            "fic-device.service",
+            "-u",
+            "systemd-udevd.service",
+            "-n",
+            "120",
+            "--no-pager"
+          ],
+          "exit_code": 0,
+          "output": "Oct 25 11:37:40 1f41d56aeba6 systemd[1]: Starting fic.service - FIC policy daemon...\nOct 25 11:37:40 1f41d56aeba6 fic[851]: [2026-10-25 11:37:40.179 +0000] [ERROR] untrusted SSH EnvironmentFile\nOct 25 11:37:40 1f41d56aeba6 fic[851]: {\"component\":\"fic\",\"event\":\"policy_apply_pass\",\"reason\":\"startup\",\"result\":{\"desktop_global_configuration\":true,\"desktop_policy_application\":true,\"device_error\":\"connect(/run/fic/fic-device.sock) failed: No such file or directory\",\"device_reconciliation\":false,\"display_manager_configuration\":true,\"display_manager_live_runtime\":\"NOT_VERIFIED\",\"firewall_reconciliation\":true,\"incident_severity\":\"UNLOCKED\",\"ok\":false,\"registry_reload\":true},\"summary\":{\"applied\":5,\"disabled\":102,\"failed\":1,\"not_found\":0,\"total\":108},\"timestamp\":\"2026-10-25 11:37:40.223 +0000\"}\nOct 25 11:37:40 1f41d56aeba6 fic[851]: fic daemon startup policy apply completed with errors; daemon will continue running\nOct 25 11:37:40 1f41d56aeba6 fic[851]: fic daemon started, socket=/run/fic/fic.sock, interval=1800s, target-platform=debian-12\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: Started fic.service - FIC policy daemon.\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: Started fic-device.service - FIC device control daemon.\nOct 25 11:37:40 1f41d56aeba6 fic-dick[873]: [2026-10-25 11:37:40.361 +0000] [ERROR] device policy activation failed: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:40 1f41d56aeba6 fic-dick[873]: ; previous rules restored\nOct 25 11:37:40 1f41d56aeba6 fic-dick[873]: failed to activate device policy: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:40 1f41d56aeba6 fic-dick[873]: ; previous rules restored\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: fic-device.service: Main process exited, code=exited, status=1/FAILURE\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: fic-device.service: Failed with result 'exit-code'.\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: fic-device.service: Scheduled restart job, restart counter is at 1.\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: Stopped fic-device.service - FIC device control daemon.\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: Started fic-device.service - FIC device control daemon.\nOct 25 11:37:40 1f41d56aeba6 fic-dick[882]: [2026-10-25 11:37:40.796 +0000] [ERROR] device policy activation failed: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:40 1f41d56aeba6 fic-dick[882]: ; previous rules restored\nOct 25 11:37:40 1f41d56aeba6 fic-dick[882]: failed to activate device policy: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:40 1f41d56aeba6 fic-dick[882]: ; previous rules restored\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: fic-device.service: Main process exited, code=exited, status=1/FAILURE\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: fic-device.service: Failed with result 'exit-code'.\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: fic-device.service: Scheduled restart job, restart counter is at 2.\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: Stopped fic-device.service - FIC device control daemon.\nOct 25 11:37:40 1f41d56aeba6 systemd[1]: Started fic-device.service - FIC device control daemon.\nOct 25 11:37:41 1f41d56aeba6 fic-dick[889]: [2026-10-25 11:37:41.027 +0000] [ERROR] device policy activation failed: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:41 1f41d56aeba6 fic-dick[889]: ; previous rules restored\nOct 25 11:37:41 1f41d56aeba6 fic-dick[889]: failed to activate device policy: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:41 1f41d56aeba6 fic-dick[889]: ; previous rules restored\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Main process exited, code=exited, status=1/FAILURE\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Failed with result 'exit-code'.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Scheduled restart job, restart counter is at 3.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: Stopped fic-device.service - FIC device control daemon.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: Started fic-device.service - FIC device control daemon.\nOct 25 11:37:41 1f41d56aeba6 fic-dick[896]: [2026-10-25 11:37:41.275 +0000] [ERROR] device policy activation failed: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:41 1f41d56aeba6 fic-dick[896]: ; previous rules restored\nOct 25 11:37:41 1f41d56aeba6 fic-dick[896]: failed to activate device policy: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:41 1f41d56aeba6 fic-dick[896]: ; previous rules restored\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Main process exited, code=exited, status=1/FAILURE\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Failed with result 'exit-code'.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Scheduled restart job, restart counter is at 4.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: Stopped fic-device.service - FIC device control daemon.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: Started fic-device.service - FIC device control daemon.\nOct 25 11:37:41 1f41d56aeba6 fic-dick[903]: [2026-10-25 11:37:41.524 +0000] [ERROR] device policy activation failed: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:41 1f41d56aeba6 fic-dick[903]: ; previous rules restored\nOct 25 11:37:41 1f41d56aeba6 fic-dick[903]: failed to activate device policy: udev reload failed:  Failed to send reload request: No such file or directory\nOct 25 11:37:41 1f41d56aeba6 fic-dick[903]: ; previous rules restored\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Main process exited, code=exited, status=1/FAILURE\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Failed with result 'exit-code'.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Scheduled restart job, restart counter is at 5.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: Stopped fic-device.service - FIC device control daemon.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Start request repeated too quickly.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: fic-device.service: Failed with result 'exit-code'.\nOct 25 11:37:41 1f41d56aeba6 systemd[1]: Failed to start fic-device.service - FIC device control daemon.\n"
+        }
+      ]
+    }
+  ],
+  "fix": "Declare sudo/procps/openssh-server; bootstrap native udev with readonly sysfs before PID1, mask coldplug, keep proc/sys readonly",
+  "dependency_regression_red": "Build resources: jobs=1, detected=12 CPU/13527 MiB available, memory budget=11479 MiB.\nDEB dependency test failed: missing uninstall runtime provider: sudo\n"
+}

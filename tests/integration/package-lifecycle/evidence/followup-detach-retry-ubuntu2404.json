@@ -3,8 +3,8 @@
     "status": "PASS",
     "scope": "real prerm before/partial PAM detach failures, restricted restart/idempotent rollback, safe remove/purge retry"
   },
-  "raw_evidence": "/home/admsys/FIC/build-package-lifecycle/native-fic-deb-depends-build:ubuntu2404-20261025T112227Z-44128",
-  "raw_commands_sha256": "7b1459e9efbcb044be35b407a606f58e3e5be7b9c4e0232ee8bb67299c5eed00",
+  "raw_evidence": "/home/admsys/FIC/build-package-lifecycle/native-fic-followup-runtime:ubuntu2404-20261025T115807Z-54653",
+  "raw_commands_sha256": "03a558b3771c21c37dd81986840f391cc920032ad1fd19600132695fed3fe242",
   "events": [
     {
       "command": [
@@ -35,13 +35,15 @@
         "ssh.service",
         "ssh.socket"
       ],
-      "exit_code": 0,
-      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "output_excerpt": ""
+      "exit_code": 5,
+      "output_sha256": "4da2a414f351802ff30a95a65aed68720cfa91080239bc5f441c31dc99201aaa",
+      "output_excerpt": "Failed to stop ssh.service: Unit ssh.service not loaded.\nFailed to stop ssh.socket: Unit ssh.socket not loaded.\n"
     },
     {
       "command": [
         "apt-get",
+        "-o",
+        "Dir::Cache::archives=/var/tmp/fic-dependency-cache",
         "install",
         "--no-install-recommends",
         "-y",
@@ -50,8 +52,19 @@
         "/var/tmp/fic-packages/fic-cli_0.1.1_ubuntu2404_amd64.deb"
       ],
       "exit_code": 0,
-      "output_sha256": "80513c4bc063d2afe69348130dced5314bf96de0ab0e77a8626096c2695e6a87",
-      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nRecommended packages:\n  fic-session-agent\nThe following NEW packages will be installed:\n  fic fic-cli fic-dick\n0 upgraded, 3 newly installed, 0 to remove and 0 not upgraded.\nNeed to get 0 B/7167 kB of archives.\nAfter this operation, 33.2 MB of additional disk space will be used.\nGet:1 /var/tmp/fic-packages/fic-dick_0.1.1_ubuntu2404_amd64.deb fic-dick amd64 0.1.1 [1337 kB]\nGet:2 /var/tmp/fic-packages/fic_0.1.1_ubuntu2404_amd64.deb fic amd64 0.1.1 [5611 kB]\nGet:3 /var/tmp/fic-packages/fic-cli_0.1.1_ubuntu2404_amd64\n...\n) ...\nSelecting previously unselected package fic-cli.\nPreparing to unpack .../fic-cli_0.1.1_ubuntu2404_amd64.deb ...\nUnpacking fic-cli (0.1.1) ...\nSetting up fic-dick (0.1.1) ...\nSetting up fic (0.1.1) ...\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state proven UNLOCKED\ndevice database schema is initialized: 2\npackage trust sync completed: updated=14, unavailable=6\nmanaged password slots are provisioned\nsafe to attach\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic.service \u2192 /usr/lib/systemd/system/fic.service.\n\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic-device.service \u2192 /usr/lib/systemd/system/fic-device.service.\n\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic-notify.service \u2192 /usr/lib/systemd/system/fic-notify.service.\n\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\nSetting up fic-cli (0.1.1) ...\n"
+      "output_sha256": "880dd34f5348d80a318f303707da4b5af16b24caa91258658f648eedb5ce87f9",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following additional packages will be installed:\n  libb2-1 libbsd0 libcbor0.10 libcrack2 libdeflate0 libdouble-conversion3\n  libedit2 libfido2-1 libgdk-pixbuf-2.0-0 libgdk-pixbuf2.0-common\n  libglib2.0-0t64 libgomp1 libgssapi-krb5-2 libicu74 libjansson4 libjbig0\n  libjpeg-turbo8 libjpeg8 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0\n  liblerc4 libmnl0 libnftables1 libnftnl11 libnotify-bin libnotify4\n  libpam-pwquality libpcre2-16-0 libpng16-16t64 libpwquality-common\n  libpwquality1 libqt6core6t64 libsha\n...\nuires/ssh.socket \u2192 /usr/lib/systemd/system/ssh.socket.\n\n/usr/sbin/policy-rc.d returned 101, not running 'restart ssh.socket'\nSetting up fic (0.1.1) ...\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state proven UNLOCKED\ndevice database schema is initialized: 2\npackage trust sync completed: updated=13, unavailable=7\nmanaged password slots are provisioned\nsafe to attach\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic.service \u2192 /usr/lib/systemd/system/fic.service.\n\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic-device.service \u2192 /usr/lib/systemd/system/fic-device.service.\n\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic-notify.service \u2192 /usr/lib/systemd/system/fic-notify.service.\n\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\nSetting up fic-cli (0.1.1) ...\nProcessing triggers for libc-bin (2.39-0ubuntu8.9) ...\n"
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "ssh.service",
+        "ssh.socket"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
     },
     {
       "command": [
@@ -272,8 +285,8 @@
         "fic"
       ],
       "exit_code": 100,
-      "output_sha256": "230ddfcc9a1494438334b4668d00709651428ca7fffeb081229e496660f27492",
-      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages will be REMOVED:\n  fic fic-cli\n0 upgraded, 0 newly installed, 2 to remove and 0 not upgraded.\nAfter this operation, 26.9 MB disk space will be freed.\n(Reading database ... \n(Reading database ... 5%\n(Reading database ... 10%\n(Reading database ... 15%\n(Reading database ... 20%\n(Reading database ... 25%\n(Reading database ... 30%\n(Reading database ... 35%\n(Reading database ... 40%\n(Reading database ... 45%\n(Reading database ... 50%\n(Reading database ... 55%\n(Reading database ... 60%\n(Reading da\n...\nup_disable\",\n      \"status\": \"success\"\n    },\n    {\n      \"message\": \"Released the last global Defaults owner and shared SUDO artifacts\",\n      \"mutation_id\": 5,\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"resource\": \"exempt_group\",\n      \"status\": \"success\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nFIC package lifecycle refused: FIC PAM package hooks remain selected/attached after removal\ndpkg: error processing package fic (--remove):\n installed fic package pre-removal script subprocess returned error exit status 1\ndpkg: too many errors, stopping\nFIC: package operation aborted; lifecycle fence retained; no restart/apply\nErrors were encountered while processing:\n fic\nProcessing was halted because there were too many errors.\nE: Sub-process /usr/bin/dpkg returned an error code (1)\n"
+      "output_sha256": "a33a80d4cd9bae21b8403921e4565b14f9763fad2a60558827604ac824539e9c",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages were automatically installed and are no longer required:\n  libb2-1 libbsd0 libcbor0.10 libcrack2 libdeflate0 libdouble-conversion3\n  libedit2 libfido2-1 libgdk-pixbuf-2.0-0 libgdk-pixbuf2.0-common\n  libglib2.0-0t64 libgomp1 libgssapi-krb5-2 libicu74 libjansson4 libjbig0\n  libjpeg-turbo8 libjpeg8 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0\n  liblerc4 libmnl0 libnftables1 libnftnl11 libnotify-bin libnotify4\n  libpam-pwquality libpcre2-16-0 libpng16-16t64 libpwquality-common\n  libpwqua\n...\nup_disable\",\n      \"status\": \"success\"\n    },\n    {\n      \"message\": \"Released the last global Defaults owner and shared SUDO artifacts\",\n      \"mutation_id\": 5,\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"resource\": \"exempt_group\",\n      \"status\": \"success\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nFIC package lifecycle refused: FIC PAM package hooks remain selected/attached after removal\ndpkg: error processing package fic (--remove):\n installed fic package pre-removal script subprocess returned error exit status 1\ndpkg: too many errors, stopping\nFIC: package operation aborted; lifecycle fence retained; no restart/apply\nErrors were encountered while processing:\n fic\nProcessing was halted because there were too many errors.\nE: Sub-process /usr/bin/dpkg returned an error code (1)\n"
     },
     {
       "command": [
@@ -328,16 +341,16 @@
         "/etc/pam.d/common-account": "00edde310c1e99f00d85c26e751d61795e8efafcccf757430bb1384cd694a3c2",
         "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
         "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
         "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158",
         "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
         "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
         "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
-        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
-        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
-        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521"
       },
       "selection": {
         "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
@@ -352,7 +365,7 @@
         "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
       },
       "active": [],
-      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+      "journal": "85e407659cd060692170ce60046a347a17861aa40e92900c2f6c4f758aaae7df"
     },
     {
       "command": [
@@ -517,16 +530,16 @@
         "/etc/pam.d/common-account": "00edde310c1e99f00d85c26e751d61795e8efafcccf757430bb1384cd694a3c2",
         "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
         "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
         "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158",
         "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
         "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
         "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
-        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
-        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
-        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521"
       },
       "selection": {
         "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
@@ -541,7 +554,7 @@
         "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
       },
       "active": [],
-      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+      "journal": "85e407659cd060692170ce60046a347a17861aa40e92900c2f6c4f758aaae7df"
     },
     {
       "command": [
@@ -560,8 +573,8 @@
         "fic"
       ],
       "exit_code": 100,
-      "output_sha256": "db061e9262c9c541fdb6c0c2bd93f9545c8d86a71808129294e6fb3f07dd4c18",
-      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages will be REMOVED:\n  fic\n0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.\nAfter this operation, 25.6 MB disk space will be freed.\n(Reading database ... \n(Reading database ... 5%\n(Reading database ... 10%\n(Reading database ... 15%\n(Reading database ... 20%\n(Reading database ... 25%\n(Reading database ... 30%\n(Reading database ... 35%\n(Reading database ... 40%\n(Reading database ... 45%\n(Reading database ... 50%\n(Reading database ... 55%\n(Reading database ... 60%\n(Reading database .\n...\nL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nFIC package lifecycle refused: FIC PAM package hooks remain selected/attached after removal\ndpkg: error processing package fic (--remove):\n installed fic package pre-removal script subprocess returned error exit status 1\ndpkg: too many errors, stopping\nFIC: package operation aborted; lifecycle fence retained; no restart/apply\nErrors were encountered while processing:\n fic\nProcessing was halted because there were too many errors.\nE: Sub-process /usr/bin/dpkg returned an error code (1)\n"
+      "output_sha256": "0441f1002bab541465f47c41cd564d7a05d764f5cfe3d3fac87d2315cf5aeb20",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages were automatically installed and are no longer required:\n  libb2-1 libbsd0 libcbor0.10 libcrack2 libdeflate0 libdouble-conversion3\n  libedit2 libfido2-1 libgdk-pixbuf-2.0-0 libgdk-pixbuf2.0-common\n  libglib2.0-0t64 libgomp1 libgssapi-krb5-2 libicu74 libjansson4 libjbig0\n  libjpeg-turbo8 libjpeg8 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0\n  liblerc4 libmnl0 libnftables1 libnftnl11 libnotify-bin libnotify4\n  libpam-pwquality libpcre2-16-0 libpng16-16t64 libpwquality-common\n  libpwqua\n...\nL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nFIC package lifecycle refused: FIC PAM package hooks remain selected/attached after removal\ndpkg: error processing package fic (--remove):\n installed fic package pre-removal script subprocess returned error exit status 1\ndpkg: too many errors, stopping\nFIC: package operation aborted; lifecycle fence retained; no restart/apply\nErrors were encountered while processing:\n fic\nProcessing was halted because there were too many errors.\nE: Sub-process /usr/bin/dpkg returned an error code (1)\n"
     },
     {
       "command": [
@@ -616,16 +629,16 @@
         "/etc/pam.d/common-account": "00edde310c1e99f00d85c26e751d61795e8efafcccf757430bb1384cd694a3c2",
         "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
         "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
         "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158",
         "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
         "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
         "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
-        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
-        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
-        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521"
       },
       "selection": {
         "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
@@ -640,7 +653,7 @@
         "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
       },
       "active": [],
-      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+      "journal": "85e407659cd060692170ce60046a347a17861aa40e92900c2f6c4f758aaae7df"
     },
     {
       "command": [
@@ -805,16 +818,16 @@
         "/etc/pam.d/common-account": "00edde310c1e99f00d85c26e751d61795e8efafcccf757430bb1384cd694a3c2",
         "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
         "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
         "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158",
         "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
         "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
         "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
-        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
-        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
-        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521"
       },
       "selection": {
         "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
@@ -829,7 +842,7 @@
         "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
       },
       "active": [],
-      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+      "journal": "85e407659cd060692170ce60046a347a17861aa40e92900c2f6c4f758aaae7df"
     },
     {
       "command": [
@@ -839,8 +852,8 @@
         "fic"
       ],
       "exit_code": 0,
-      "output_sha256": "a70b346c0039d24125953659376389807cebb5f9b0d00e25e2187ce076a17ad1",
-      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages will be REMOVED:\n  fic\n0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.\nAfter this operation, 25.6 MB disk space will be freed.\n(Reading database ... \n(Reading database ... 5%\n(Reading database ... 10%\n(Reading database ... 15%\n(Reading database ... 20%\n(Reading database ... 25%\n(Reading database ... 30%\n(Reading database ... 35%\n(Reading database ... 40%\n(Reading database ... 45%\n(Reading database ... 50%\n(Reading database ... 55%\n(Reading database ... 60%\n(Reading database .\n...\n \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nREMOVED: writers absent and PAM detached; policy configuration and journal retained\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic-device.service\".\n\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic.service\".\n\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic-notify.service\".\n\n"
+      "output_sha256": "754ddb33ee52c7396f31e2e8d7cacc95b000d993f2e90afb03e0f9cee5d0ae05",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages were automatically installed and are no longer required:\n  libb2-1 libbsd0 libcbor0.10 libcrack2 libdeflate0 libdouble-conversion3\n  libedit2 libfido2-1 libgdk-pixbuf-2.0-0 libgdk-pixbuf2.0-common\n  libglib2.0-0t64 libgomp1 libgssapi-krb5-2 libicu74 libjansson4 libjbig0\n  libjpeg-turbo8 libjpeg8 libk5crypto3 libkeyutils1 libkrb5-3 libkrb5support0\n  liblerc4 libmnl0 libnftables1 libnftnl11 libnotify-bin libnotify4\n  libpam-pwquality libpcre2-16-0 libpng16-16t64 libpwquality-common\n  libpwqua\n...\n \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nREMOVED: writers absent and PAM detached; policy configuration and journal retained\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic-device.service\".\n\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic.service\".\n\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic-notify.service\".\n\n"
     },
     {
       "snapshot": "retry-removed",
@@ -873,16 +886,16 @@
         "/etc/pam.d/common-account": "aa8a63d72e79399b6c51ebe4e9f828c954145a799eb4b8f3224724f51cbb9fac",
         "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
         "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
         "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158",
         "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
         "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
         "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
         "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
-        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
-        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
-        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521"
       },
       "selection": {
         "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
@@ -897,7 +910,7 @@
         "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
       },
       "active": [],
-      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+      "journal": "85e407659cd060692170ce60046a347a17861aa40e92900c2f6c4f758aaae7df"
     },
     {
       "command": [
@@ -908,10 +921,12 @@
         "fic-dick"
       ],
       "exit_code": 0,
-      "output_sha256": "5dd635d073ee3774c7d7d3ec8d001f6ecb96c919ef4b4021374f06545505d9bc",
-      "output_excerpt": "(Reading database ... 26812 files and directories currently installed.)\nPurging configuration files for fic (0.1.1) ...\nFIC purge: deleting configuration and MutationJournal/witness; remaining OS policy settings are not adopted on reinstall\ndpkg: warning: while removing fic, directory '/opt/fic/log' not empty so not removed\ndpkg: warning: while removing fic, directory '/lib/x86_64-linux-gnu/security' not empty so not removed\ndpkg: warning: ignoring request to remove fic-cli which isn't installed\nRemoving fic-dick (0.1.1) ...\nPurging configuration files for fic-dick (0.1.1) ...\ndpkg: warning: while removing fic-dick, directory '/opt/fic' not empty so not removed\ndpkg: warning: while removing fic-dick, directory '/lib/systemd/system' not empty so not removed\n"
+      "output_sha256": "df4d598dbc4f25d9f2bfa13075d07a1eaa267dbed68a0d756563177e441f73d7",
+      "output_excerpt": "(Reading database ... 8052 files and directories currently installed.)\nPurging configuration files for fic (0.1.1) ...\nFIC purge: deleting configuration and MutationJournal/witness; remaining OS policy settings are not adopted on reinstall\ndpkg: warning: while removing fic, directory '/opt/fic/log' not empty so not removed\ndpkg: warning: while removing fic, directory '/lib/x86_64-linux-gnu/security' not empty so not removed\ndpkg: warning: ignoring request to remove fic-cli which isn't installed\nRemoving fic-dick (0.1.1) ...\nPurging configuration files for fic-dick (0.1.1) ...\ndpkg: warning: while removing fic-dick, directory '/opt/fic' not empty so not removed\ndpkg: warning: while removing fic-dick, directory '/lib/systemd/system' not empty so not removed\n"
     }
   ],
-  "classification_regression_log": "[  0%] Built target fic-platform\n[100%] Built target fic-core\n[100%] Built target fic-policy\n[100%] Building CXX object tests/CMakeFiles/package_release_support_tests.dir/fic/daemon/PackageReleaseSupportTests.cpp.o\n[100%] Linking CXX executable package_release_support_tests\n[100%] Built target package_release_support_tests\nInternal ctest changing into directory: /build\nTest project /build\n    Start 205: package_release_support_tests\n1/1 Test #205: package_release_support_tests ....   Passed    0.00 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   0.01 sec\npassword release support misclassified\nRED PASS: original supports() classification is rejected by regression\n",
-  "unit_log_excerpt": " /build\nTest project /build\n    Start   5: prelogin_package_lifecycle_tests\n1/9 Test   #5: prelogin_package_lifecycle_tests .....   Passed    0.11 sec\n    Start   9: platform_profile_static_checks\n2/9 Test   #9: platform_profile_static_checks .......   Passed    0.52 sec\n    Start  10: pam_packaging_static_checks\n3/9 Test  #10: pam_packaging_static_checks ..........   Passed    0.04 sec\n    Start  51: deb_binary_depends_tests\n4/9 Test  #51: deb_binary_depends_tests .............   Passed    0.24 sec\n    Start  84: pam_provider_package_release_tests\n5/9 Test  #84: pam_provider_package_release_tests ...   Passed    0.61 sec\n    Start 142: pam_password_package_release_tests\n6/9 Test #142: pam_password_package_release_tests ...   Passed    0.70 sec\n    Start 202: uninstall_lifecycle_tests\n7/9 Test #202: uninstall_lifecycle_tests ............   Passed    0.01 sec\n    Start 204: uninstall_release_order_tests\n8/9 Test #204: uninstall_release_order_tests ........   Passed    0.00 sec\n    Start 205: package_release_support_tests\n9/9 Test #205: package_release_support_tests ........   Passed    0.00 sec\n\n100% tests passed, 0 tests failed out of 9\n\nLabel Time Summary:\nstatic    =   0.80 sec*proc (3 tests)\n\nTotal Test time (real) =   2.25 sec\n"
+  "classification_regression_log": "-- FIC target platform: ubuntu-24.04\n-- Configuring done (0.5s)\n-- Generating done (0.6s)\n-- Build files have been written to: /build\n[  0%] Built target fic-platform\n[100%] Built target fic-core\n[100%] Built target fic-policy\n[100%] Building CXX object tests/CMakeFiles/package_release_support_tests.dir/fic/daemon/PackageReleaseSupportTests.cpp.o\n[100%] Linking CXX executable package_release_support_tests\n[100%] Built target package_release_support_tests\nInternal ctest changing into directory: /build\nTest project /build\n    Start 205: package_release_support_tests\n1/1 Test #205: package_release_support_tests ....   Passed    0.00 sec\n\n100% tests passed, 0 tests failed out of 1\n\nLabel Time Summary:\nunit    =   0.00 sec*proc (1 test)\n\nTotal Test time (real) =   0.01 sec\npassword release support misclassified: expected=2 actual=1 detail=FIC package password release requires a pam-auth-update password topology; this platform does not provide one\nRED PASS: original supports() classification is rejected by regression\n",
+  "unit_log_excerpt": " /build\nTest project /build\n    Start   5: prelogin_package_lifecycle_tests\n1/9 Test   #5: prelogin_package_lifecycle_tests .....   Passed    0.11 sec\n    Start   9: platform_profile_static_checks\n2/9 Test   #9: platform_profile_static_checks .......   Passed    0.52 sec\n    Start  10: pam_packaging_static_checks\n3/9 Test  #10: pam_packaging_static_checks ..........   Passed    0.04 sec\n    Start  51: deb_binary_depends_tests\n4/9 Test  #51: deb_binary_depends_tests .............   Passed    0.24 sec\n    Start  84: pam_provider_package_release_tests\n5/9 Test  #84: pam_provider_package_release_tests ...   Passed    0.61 sec\n    Start 142: pam_password_package_release_tests\n6/9 Test #142: pam_password_package_release_tests ...   Passed    0.70 sec\n    Start 202: uninstall_lifecycle_tests\n7/9 Test #202: uninstall_lifecycle_tests ............   Passed    0.01 sec\n    Start 204: uninstall_release_order_tests\n8/9 Test #204: uninstall_release_order_tests ........   Passed    0.00 sec\n    Start 205: package_release_support_tests\n9/9 Test #205: package_release_support_tests ........   Passed    0.00 sec\n\n100% tests passed, 0 tests failed out of 9\n\nLabel Time Summary:\nstatic    =   0.80 sec*proc (3 tests)\n\nTotal Test time (real) =   2.25 sec\n",
+  "final_package_note": "Repeated with final runtime-provider Depends in minimal Ubuntu24 runtime, not the build image",
+  "regression_original_source_commit": "ab0f47ee6a31e9c592c4347be02afa032bcf5174"
 }

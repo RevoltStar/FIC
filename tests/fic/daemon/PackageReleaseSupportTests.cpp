@@ -15,7 +15,8 @@ void check(const PlatformProfile& p,PackageReleaseSupport expected,const char* d
     fic::core::FicProductPaths paths;
     std::string error="stale";
     const auto result=PackageReleaseResources(p,paths).supports(PackageReleaseDomain::PamPassword,error);
-    require(result==expected,"password release support misclassified");
+    if(result!=expected)throw std::runtime_error("password release support misclassified: expected="+
+        std::to_string(static_cast<int>(expected))+" actual="+std::to_string(static_cast<int>(result))+" detail="+error);
     if(detail)require(error.find(detail)!=std::string::npos,"capability error detail was lost");
     if(expected==PackageReleaseSupport::Supported)require(error.empty(),"supported domain retained stale error");
     else require(!error.empty(),"unsupported/error domain lost its diagnostic");
@@ -35,6 +36,10 @@ int main(){try{
     auto& h=capability(alt,PamCapability::PasswordHistory);
     h.provider=PamProviderKind::PamPwhistory;h.topology=PamTopologyStrategyKind::AltTcbManaged;
     check(alt,PackageReleaseSupport::NotApplicable);
+    // Both resolutions fail: the original bool API returned false here and
+    // uninstall silently treated it exactly like the legitimate ALT case.
+    auto unavailable=au;unavailable.pam.scopes.clear();
+    check(unavailable,PackageReleaseSupport::Error,"unavailable");
     for(auto which:{PamCapability::PasswordQuality,PamCapability::PasswordHistory}) {
         auto missing=au;
         auto& caps=missing.pam.capabilities;
@@ -44,8 +49,6 @@ int main(){try{
         const auto scope=capability(empty,which).scope;
         for(auto& s:empty.pam.scopes)if(s.scope==scope)s.services.clear();
         check(empty,PackageReleaseSupport::Error,"empty scope");
-        auto unavailable=au;unavailable.pam.scopes.clear();
-        check(unavailable,PackageReleaseSupport::Error,"unavailable");
     }
     auto unknown=alt;unknown.id="debian-12";
     check(unknown,PackageReleaseSupport::Error,"requires both");

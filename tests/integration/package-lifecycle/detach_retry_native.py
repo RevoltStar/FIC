@@ -70,7 +70,11 @@ packages=[]
 for name in ('fic-dick','fic','fic-cli'):
     found=list(Path('/var/tmp/fic-packages').glob(name+'_*.deb'));assert len(found)==1,found
     packages.append(str(found[0]))
-run(['apt-get','install','--no-install-recommends','-y',*packages])
+install=['apt-get']
+if Path('/var/tmp/fic-dependency-cache').is_dir():
+    install+=['-o','Dir::Cache::archives=/var/tmp/fic-dependency-cache']
+run([*install,'install','--no-install-recommends','-y',*packages])
+run(['systemctl','stop','ssh.service','ssh.socket'],False)
 state=Path('/var/lib/fic-lifecycle/status')
 assert state.read_text()=='INSTALLED\n'
 for module,policies in [('IDENTITY_ACCESS',('password_max_age_days','password_min_age_days',

@@ -2,7 +2,7 @@
 set -euo pipefail
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 test_root="$(mktemp -d /tmp/fic-deb-depends-test.XXXXXX)"
-export STAGING_BASE="$test_root/staging" BUILD_ROOT="$test_root/build" BUILD_JOBS=1
+export STAGING_BASE="$test_root/staging" BUILD_ROOT="$test_root/build" DIST_DIR="$test_root/dist" BUILD_JOBS=1
 mkdir -p "$STAGING_BASE"
 source "$repo/packaging/deb/build-fic-debian12-deb.sh" 0.1.1
 trap 'rm -rf "$test_root"' EXIT
@@ -60,7 +60,7 @@ if compgen -G "$STAGING_BASE/binary-shlibdeps-*" >/dev/null; then fail 'analysis
 
 # Failure must reach package builders even in a conditional command
 # substitution (where Bash errexit does not protect nested commands).
-init_package_root() { mkdir -p "$test_root/package-$1"; printf '%s' "$test_root/package-$1"; }
+init_package_root() { mkdir -p "$test_root/package-$1/DEBIAN"; printf '%s' "$test_root/package-$1"; }
 install_cmake_component() {
     local root="$3"
     mkdir -p "$root/opt/fic/bin" "$root/usr/libexec/fic" "$root/usr/share/bash-completion/completions"
@@ -70,7 +70,7 @@ install_cmake_component() {
 }
 install_fic_pam_profiles() { :; }
 install_fic_pam_slots() { :; }
-write_control_file() { touch "$test_root/control-written"; }
+write_control_file() { printf '%s' "$3" > "$test_root/control-written"; }
 build_deb_package() { touch "$test_root/published"; }
 mkdir -p "$FIC_BUILD_DIR"
 touch "$FIC_BUILD_DIR/fic-package-infrastructure"
@@ -85,5 +85,14 @@ analysis_case=helper_failure
 for builder in build_fic_dick_package build_fic_session_agent_package; do
     if result="$("$builder" 2>"$test_root/error")"; then fail "$builder ignored helper analysis failure"; fi
     [ ! -e "$test_root/control-written" ] && [ ! -e "$test_root/published" ] || fail "$builder staged incomplete helper dependencies"
+done
+write_fic_pam_preinst() { :; }
+write_platform_trust_triggers() { :; }
+write_system_integration_symlink_postinst() { :; }
+write_system_integration_symlink_prerm() { :; }
+analysis_case=success
+build_fic_package >/dev/null || fail 'valid package dependency metadata rejected'
+for provider in sudo procps openssh-server; do
+    grep -Eq "(^|, )$provider(,|$)" "$test_root/control-written" || fail "missing uninstall runtime provider: $provider"
 done
 echo 'DEB binary dependency tests passed'
