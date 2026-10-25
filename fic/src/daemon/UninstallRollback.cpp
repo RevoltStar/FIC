@@ -153,8 +153,20 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
                 if(name=="PAM") {
                     if(platform.id=="alt-p11")node.ok=releaseDomain(PackageReleaseDomain::AltHistoryTopology)&&releaseDomain(PackageReleaseDomain::AltFaillockTopology);
                     if(node.ok)node.ok=releaseDomain(PackageReleaseDomain::PamProvider);
-                    std::string unsupported;
-                    if(node.ok&&resources.supports(PackageReleaseDomain::PamPassword,unsupported))node.ok=releaseDomain(PackageReleaseDomain::PamPassword);
+                    if(node.ok) {
+                        switch(resources.supports(PackageReleaseDomain::PamPassword,error)) {
+                        case PackageReleaseSupport::Supported:
+                            node.ok=releaseDomain(PackageReleaseDomain::PamPassword);
+                            break;
+                        case PackageReleaseSupport::NotApplicable:
+                            results.push_back({{"domain","PAM_PASSWORD"},{"status","NOT_APPLICABLE"},{"message",error}});
+                            break;
+                        case PackageReleaseSupport::Error:
+                            node.ok=false;
+                            results.push_back({{"domain","PAM_PASSWORD"},{"status","FAILED"},{"message",error}});
+                            break;
+                        }
+                    }
                 }
                 if(node.ok)for(const auto& ref:node.policies) {
                     const auto enrollment=effectiveRollbackEnrollment(ref,deps);

@@ -3240,6 +3240,12 @@ set_tests_properties(uninstall_override_tests PROPERTIES SKIP_RETURN_CODE 77 TIM
 add_executable(uninstall_release_order_tests fic/daemon/UninstallReleaseOrderTests.cpp)
 target_include_directories(uninstall_release_order_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 add_test(NAME uninstall_release_order_tests COMMAND uninstall_release_order_tests)
+add_executable(package_release_support_tests fic/daemon/PackageReleaseSupportTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageReleaseSupport.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp)
+target_link_libraries(package_release_support_tests PRIVATE fic-platform fic-core fic-policy)
+add_test(NAME package_release_support_tests COMMAND package_release_support_tests)
+set_tests_properties(package_release_support_tests PROPERTIES LABELS "unit")
 add_executable(package_state_store_tests fic/daemon/PackageStateStoreTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageStateStore.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)

@@ -61,6 +61,36 @@ and `/tmp/fic-deb-depends-native/` on the validation machine.
 
 ## Proven scenarios and limits
 
+### Follow-up: password-domain classification and detach retry
+
+`PackageReleaseResources::supports(PamPassword)` formerly returned false for
+both the legitimate native ALT topology and unresolved capabilities/scopes;
+it could also hide one failed resolution behind the other successful one.
+The explicit Supported/NotApplicable/Error result now prevents that omission:
+only the resolved native ALT pair excludes C2; resolution/topology errors
+produce a FAILED PAM_PASSWORD JSON result and fail the PAM resource group.
+
+Nine affected CTest passed on Ubuntu24 and Debian12, including the new support
+regression, uninstall lifecycle/order and both provider/password release suites.
+The new regression was linked against the original supports implementation
+(only bool→enum return adaptation): it failed with support misclassified; the
+current implementation passed. This is behavioral RED/GREEN, not a compile-only
+failure due to the changed return type.
+
+The real Ubuntu24 detach-retry gate passed two actual prerm failures injected
+after successful policy rollback and daemon stop: a directory at
+`/var/lib/pam/auth.new`, then at `account.new`. The latter left common-auth
+physically detached while common-account and the incident gate remained.
+Native pam-auth-update can exit0 despite failed writes; independent physical
+proof correctly refused removal. The main package stayed installed, referenced
+libraries stayed present, UNINSTALLING/config/journal provenance remained.
+After explicit removal of each obstruction, a real systemd restricted restart
+with interval1 and repeated rollback passed without reapplying released policy
+resources or altering desired config. Normal APT remove and dpkg purge then
+passed. No production retry change or manual PAM reattachment was needed.
+See [committed evidence](../tests/integration/package-lifecycle/evidence/followup-detach-retry-ubuntu2404.json)
+and the [manual retry procedure](package-lifecycle.md#manual-retry-after-infrastructure-detach-failure).
+
 All five actual package gates enable/apply shared login.defs and Sudo policies,
 then release them without changing desired ENABLE/values. Debian/Ubuntu also use
 active C2 quality/history, lockout and provider ownership. ALT uses native

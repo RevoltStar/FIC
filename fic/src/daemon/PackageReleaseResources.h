@@ -7,6 +7,7 @@
 #include <fic/core/runtime/FicRuntimePaths.h>
 namespace fic::daemon {
 enum class PackageReleaseDomain { DisplayManager, Desktop, PamProvider, PamPassword, AltHistoryTopology, AltFaillockTopology };
+enum class PackageReleaseSupport { Supported, NotApplicable, Error };
 struct PackageResourceReleaseReport {
     fic::identity::pam::PamProviderPackageRelease::Report provider;
     fic::identity::pam::PamPasswordPackageRelease::Report password;
@@ -20,7 +21,9 @@ public:
     PackageReleaseResources(const fic::platform::PlatformProfile& platform,
         const fic::core::FicProductPaths& paths)
         : platform_(platform),paths_(paths),executables_(platform.executables) {}
-    bool supports(PackageReleaseDomain,std::string& error) const;
+    // NotApplicable requires a known native platform topology. Error is never
+    // permission to omit a release; detail is retained in the uninstall report.
+    PackageReleaseSupport supports(PackageReleaseDomain,std::string& detail) const;
     bool preflight(PackageReleaseDomain,fic::rollback::MutationJournal&,
         PackageResourceReleaseReport&,std::string& error) const;
     bool proveReleased(PackageReleaseDomain,fic::rollback::MutationJournal&,std::string& error) const;

@@ -31,6 +31,7 @@ bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/lifecycle-packag
 bash tests/integration/package-lifecycle/run-rpm.sh ALT_IMAGE BUILD/lifecycle-packages
 bash tests/integration/package-lifecycle/run-restricted.sh IMAGE BUILD/fic/fic
 bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/lifecycle-packages purge_failure_native.py
+bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/followup-packages detach_retry_native.py
 ```
 
 Each package run exports unique `build-package-lifecycle/native-*` evidence:
@@ -67,3 +68,14 @@ authentication, graphical boot or live SSH session continuity. Existing backend
 unit/fault-injection suites cover those release algorithms separately; do not
 label those checks package-manager E2E. Runtime images deliberately stop SSH
 before the gates, preserving the existing Ubuntu/ALT release boundary.
+
+The detach-retry gate uses current real DEBs and creates an actual filesystem
+obstruction via a test-only fic.service ExecStopPost: an empty directory at
+`/var/lib/pam/auth.new`, then `/var/lib/pam/account.new`. Native pam-auth-update
+cannot write its saved configuration; the latter fault occurs after updating
+common-auth. The helper's physical proof must reject even if the updater exits0.
+Both failures occur after ownership rollback and stop, retaining UNINSTALLING,
+payload and referenced PAM libraries. Explicit administrator removal of the
+obstruction, restricted systemd restart with interval1, idempotent rollback and
+ordinary package remove/purge must succeed without changing desired config or
+recreating released resources. The drop-in is never installed in production.

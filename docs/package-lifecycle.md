@@ -88,6 +88,42 @@ uses `error_code=ROLLBACK_STATE_UNPROVEN`; individual failures retain a detailed
 report and are distinct from that global refusal. Existing GUI/CLI mutations
 receive the daemon's explicit uninstall error instead of an implicit save/apply.
 
+Password-domain applicability is explicit: Debian/Ubuntu require both resolved
+password capabilities with pam-auth-update topology. A missing capability,
+unavailable/empty service scope or unexpected topology fails the PAM group and
+is retained as a `PAM_PASSWORD` / `FAILED` JSON result. Only the resolved native
+ALT p11 passwdqc/static + pwhistory/TCB pair makes the C2 domain
+`NOT_APPLICABLE`; its native release backends still run.
+
+### Manual retry after infrastructure detach failure
+
+A failed prerm may already have released policy ownership, stopped the daemon
+and partially detached PAM. It retains `UNINSTALLING`, main payload, journal and
+desired policy configuration. APT may already have removed dependent clients.
+There is no automatic restart or return to `INSTALLED`. Successful updater exit
+does not replace physical PAM-reference proof; referenced libraries remain.
+
+After diagnosing and repairing the filesystem/infrastructure obstruction as
+administrator, with the main FIC payload and trustworthy journal/witness still
+present, retry using the restrictive state already established:
+
+```sh
+test "$(sudo cat /var/lib/fic-lifecycle/status)" = UNINSTALLING
+# Repair the actual diagnosed obstruction; never edit status to INSTALLED,
+# recreate released policy resources or clear ownership records.
+sudo systemctl start fic.service
+sudo apt-get remove fic
+# Optional subsequent purge, after successful remove:
+sudo apt-get purge fic fic-dick
+```
+
+Startup reads the durable fence and remains restricted: no startup/periodic
+apply or incident reconciliation. The real prerm repeats prepare/rollback via
+daemon IPC, proves stopped writers again and retries physical detach. This does
+not require a remaining fic-cli executable. If journal/PAM evidence cannot be
+proved, removal still fails closed and requires repair of the specific fault.
+In the tested partial-detach case no manual PAM reattachment was necessary.
+
 
 ## Uninstall override and data retention
 

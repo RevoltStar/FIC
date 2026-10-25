@@ -1,0 +1,917 @@
+{
+  "result": {
+    "status": "PASS",
+    "scope": "real prerm before/partial PAM detach failures, restricted restart/idempotent rollback, safe remove/purge retry"
+  },
+  "raw_evidence": "/home/admsys/FIC/build-package-lifecycle/native-fic-deb-depends-build:ubuntu2404-20261025T112227Z-44128",
+  "raw_commands_sha256": "7b1459e9efbcb044be35b407a606f58e3e5be7b9c4e0232ee8bb67299c5eed00",
+  "events": [
+    {
+      "command": [
+        "mount",
+        "--rbind",
+        "/sys",
+        "/sys"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "mount",
+        "-o",
+        "remount,bind,ro",
+        "/sys"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "ssh.service",
+        "ssh.socket"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "apt-get",
+        "install",
+        "--no-install-recommends",
+        "-y",
+        "/var/tmp/fic-packages/fic-dick_0.1.1_ubuntu2404_amd64.deb",
+        "/var/tmp/fic-packages/fic_0.1.1_ubuntu2404_amd64.deb",
+        "/var/tmp/fic-packages/fic-cli_0.1.1_ubuntu2404_amd64.deb"
+      ],
+      "exit_code": 0,
+      "output_sha256": "80513c4bc063d2afe69348130dced5314bf96de0ab0e77a8626096c2695e6a87",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nRecommended packages:\n  fic-session-agent\nThe following NEW packages will be installed:\n  fic fic-cli fic-dick\n0 upgraded, 3 newly installed, 0 to remove and 0 not upgraded.\nNeed to get 0 B/7167 kB of archives.\nAfter this operation, 33.2 MB of additional disk space will be used.\nGet:1 /var/tmp/fic-packages/fic-dick_0.1.1_ubuntu2404_amd64.deb fic-dick amd64 0.1.1 [1337 kB]\nGet:2 /var/tmp/fic-packages/fic_0.1.1_ubuntu2404_amd64.deb fic amd64 0.1.1 [5611 kB]\nGet:3 /var/tmp/fic-packages/fic-cli_0.1.1_ubuntu2404_amd64\n...\n) ...\nSelecting previously unselected package fic-cli.\nPreparing to unpack .../fic-cli_0.1.1_ubuntu2404_amd64.deb ...\nUnpacking fic-cli (0.1.1) ...\nSetting up fic-dick (0.1.1) ...\nSetting up fic (0.1.1) ...\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state proven UNLOCKED\ndevice database schema is initialized: 2\npackage trust sync completed: updated=14, unavailable=6\nmanaged password slots are provisioned\nsafe to attach\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic.service \u2192 /usr/lib/systemd/system/fic.service.\n\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic-device.service \u2192 /usr/lib/systemd/system/fic-device.service.\n\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic-notify.service \u2192 /usr/lib/systemd/system/fic-notify.service.\n\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\nSetting up fic-cli (0.1.1) ...\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "password_max_age_days"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "password_max_age_days"
+      ],
+      "exit_code": 0,
+      "output_sha256": "788a8a7333fe9bc0a8c6a737903aa378549c5ac22c9e6fa28dab781ab6799d54",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PASSWORD_AGING:password_max_age_days applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "password_min_age_days"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "password_min_age_days"
+      ],
+      "exit_code": 0,
+      "output_sha256": "15ddf6d2d170bccb36a2b4c56be8fe62d8c28b54b05e741ca4bce6aaf5bc23ed",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PASSWORD_AGING:password_min_age_days applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "enable_password_quality"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "enable_password_quality"
+      ],
+      "exit_code": 0,
+      "output_sha256": "54a74d174f944c76a7c2ba5b5d0e7ba8e9497968b70783803d4e1c1c4f029d7e",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PAM:enable_password_quality applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "enable_password_history"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "enable_password_history"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c10b7e966fc14b4c83edf39484dc1a8f1cc89c9d09a704729fa5f43c150006a2",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PAM:enable_password_history applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "password_min_length"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "password_min_length"
+      ],
+      "exit_code": 0,
+      "output_sha256": "1efde0cbe69e800f881643040958c16cfdcc9f003aed753641be94d3167ed272",
+      "output_excerpt": "policy applied\nsummary: total=2, applied=2, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PAM:enable_password_quality applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\nIDENTITY_ACCESS:PAM:password_min_length applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "DAC",
+        "sudo_disable_scoped_defaults"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "DAC",
+        "sudo_disable_scoped_defaults"
+      ],
+      "exit_code": 0,
+      "output_sha256": "acb6a75725da3fbf96e205bc748f3481d269144022eed9276700f9c6aa82fdf0",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nDAC:SudoEdit:sudo_disable_scoped_defaults applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "DAC",
+        "sudo_exempt_group_disable"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "DAC",
+        "sudo_exempt_group_disable"
+      ],
+      "exit_code": 0,
+      "output_sha256": "7c25a4c5ea5bc2b35bebf916bea17ac80ab5f2ac8ffabdd8567d184d8d208df2",
+      "output_excerpt": "policy applied\nsummary: total=2, applied=2, failed=0, disabled=0, not_found=0\nDAC:SudoEdit:sudo_disable_scoped_defaults applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\nDAC:SudoEdit:sudo_exempt_group_disable applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "DAC",
+        "sudo_env_reset"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "DAC",
+        "sudo_env_reset"
+      ],
+      "exit_code": 0,
+      "output_sha256": "59c11241cafcab3e41d068c1e5adadcd1fea4ef1593b9985b024b5d395980b0c",
+      "output_excerpt": "policy applied\nsummary: total=2, applied=2, failed=0, disabled=0, not_found=0\nDAC:SudoEdit:sudo_disable_scoped_defaults applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\nDAC:SudoEdit:sudo_env_reset applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-L",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e756fd395be8112821aa6824e7100a93625710661d5ac52726b6d2f67b808b98",
+      "output_excerpt": "/.\n/etc\n/etc/pam.d\n/etc/pam.d/fic-faillock-account\n/etc/pam.d/fic-faillock-authfail\n/etc/pam.d/fic-faillock-authsucc\n/etc/pam.d/fic-faillock-preauth\n/etc/pam.d/fic-password-history\n/etc/pam.d/fic-password-history-initial\n/etc/pam.d/fic-password-quality\n/lib\ndiverted by base-files to: /lib.usr-is-merged\n/lib/systemd\n/lib/systemd/system\n/lib/systemd/system/fic-notify.service\n/lib/systemd/system/fic.service\n/lib/systemd/system/fic_get_device_udev_info.service\n/lib/x86_64-linux-gnu\n/lib/x86_64-linux-gnu/security\n/lib/x86_64-linux-gnu/security/pam_fic_access.so\n/opt\n/opt/fic\n/opt/fic/bin\n/opt/fic/b\n...\nhare/default-config/FIREWALL.conf\n/opt/fic/share/default-config/GLOBAL.conf\n/opt/fic/share/default-config/IDENTITY_ACCESS.conf\n/opt/fic/share/default-config/NET.conf\n/opt/fic/share/default-config/OSS.conf\n/opt/fic/share/default-config/SYSCTL.conf\n/usr\n/usr/lib\n/usr/lib/tmpfiles.d\n/usr/lib/tmpfiles.d/fic.conf\n/usr/share\n/usr/share/pam-configs\n/usr/share/pam-configs/fic-faillock-authfail\n/usr/share/pam-configs/fic-faillock-authsucc\n/usr/share/pam-configs/fic-faillock-hook-account\n/usr/share/pam-configs/fic-faillock-hook-authfail\n/usr/share/pam-configs/fic-faillock-hook-authsucc\n/usr/share/pam-configs/fic-faillock-hook-preauth\n/usr/share/pam-configs/fic-faillock-notify\n/usr/share/pam-configs/fic-faillock-preauth-required\n/usr/share/pam-configs/fic-incident-access\n/usr/share/pam-configs/fic-password-history-hook\n/usr/share/pam-configs/fic-password-history-initial-hook\n/usr/share/pam-configs/fic-password-quality-hook\n/usr/share/pam-configs/fic-pwhistory\n/usr/share/pam-configs/fic-pwquality\n"
+    },
+    {
+      "command": [
+        "systemctl",
+        "daemon-reload"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "apt-get",
+        "remove",
+        "-y",
+        "fic"
+      ],
+      "exit_code": 100,
+      "output_sha256": "230ddfcc9a1494438334b4668d00709651428ca7fffeb081229e496660f27492",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages will be REMOVED:\n  fic fic-cli\n0 upgraded, 0 newly installed, 2 to remove and 0 not upgraded.\nAfter this operation, 26.9 MB disk space will be freed.\n(Reading database ... \n(Reading database ... 5%\n(Reading database ... 10%\n(Reading database ... 15%\n(Reading database ... 20%\n(Reading database ... 25%\n(Reading database ... 30%\n(Reading database ... 35%\n(Reading database ... 40%\n(Reading database ... 45%\n(Reading database ... 50%\n(Reading database ... 55%\n(Reading database ... 60%\n(Reading da\n...\nup_disable\",\n      \"status\": \"success\"\n    },\n    {\n      \"message\": \"Released the last global Defaults owner and shared SUDO artifacts\",\n      \"mutation_id\": 5,\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"resource\": \"exempt_group\",\n      \"status\": \"success\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nFIC package lifecycle refused: FIC PAM package hooks remain selected/attached after removal\ndpkg: error processing package fic (--remove):\n installed fic package pre-removal script subprocess returned error exit status 1\ndpkg: too many errors, stopping\nFIC: package operation aborted; lifecycle fence retained; no restart/apply\nErrors were encountered while processing:\n fic\nProcessing was halted because there were too many errors.\nE: Sub-process /usr/bin/dpkg returned an error code (1)\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c30fa76196bbdd6ec8c51db046fc2a8d20331bc0983cdce281b2244ca84de5cb",
+      "output_excerpt": "install ok installed"
+    },
+    {
+      "command": [
+        "systemctl",
+        "is-active",
+        "--quiet",
+        "fic.service"
+      ],
+      "exit_code": 3,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "snapshot": "before-detach-failed-real-prerm",
+      "lifecycle": "UNINSTALLING\n",
+      "config": {
+        "/opt/fic/config/GLOBAL.conf": "c974e28f79b0069b0c0a49df20c9303927a600f196b3a528898188b1bae2b369",
+        "/opt/fic/config/FIREWALL.conf": "baef7dc7a5888a77e4ddae0613544201569503a8d0486106950ec6dff772276c",
+        "/opt/fic/config/DAC.conf": "c6df9755c2d8bafa214888d3324ed27b84c39ced619be5cb2ab7e5e16d490bc0",
+        "/opt/fic/config/OSS.conf": "e13726945a5d9e7d137ec390ebde29ebb80d2e1e54818520e0e21418beec823d",
+        "/opt/fic/config/DC.conf": "c9cb053a8c6b88f82d841e8c3f82a8cee70f9946ac9646eb15a7613e702eeca8",
+        "/opt/fic/config/SYSCTL.conf": "e5168294c0a29e4f1db2d7b5aaaf7f6f6bb92db31a52f516733a2c02e7b618af",
+        "/opt/fic/config/NET.conf": "bb4a6b8e55b980b5b958503f324ea5016b5d3b031785b2ffab44ed6c5bb52a0e",
+        "/opt/fic/config/AUDIT.conf": "32d1c5973e6279f56045f26429159390e5839d0dd6e5f983be89fca657ca9a17",
+        "/opt/fic/config/IDENTITY_ACCESS.conf": "a6ef6114184af2946adadfa51505b86fbee64052dcdf58b9af0a6082fb452415"
+      },
+      "pam": {
+        "/etc/pam.d/su": "fda16622dc6198eae5d6ae522bb820b7b68dbf2e73899295c4cac9744f7c7904",
+        "/etc/pam.d/runuser-l": "be9329a8b26e3cfd4af879fe60900f646f8188f3fbe491688f23d4d8b491c5b1",
+        "/etc/pam.d/chsh": "0101e7e589ce40435c5a8709888225400a78ab6be86dfc5fef86ee23ba5338ad",
+        "/etc/pam.d/common-session-noninteractive": "1bd1ef2b6241fc8b3c97bbaf57e5c6038c96c275e30c62ebee6eec15701e2e07",
+        "/etc/pam.d/common-session": "bb18da0d0c0be4b993d97d30cb473c7a81d47f1f0ca29bf3f0fa51cdee83b03f",
+        "/etc/pam.d/runuser": "2d430cb6628248953568010427d663f3305856f3cb055955c2239bea226c5280",
+        "/etc/pam.d/login": "089abccf4956b607e4b2d13f455a15eec5f6636ce0be287d54b08f8a429668a4",
+        "/etc/pam.d/chfn": "d66a095a330d7e20d0bbb56a4cb28a4b1bfc92e8a5a5e9bfc3d0a51c5e3d7170",
+        "/etc/pam.d/common-auth": "9c1ed395c2a67b699dfe01a5cdd06e02f3303a81bd79c73b4f5af131476a964e",
+        "/etc/pam.d/su-l": "4d10241676e97e5e8d8935e5c8e8f6cb2f871afb881059715f155909be9ebd77",
+        "/etc/pam.d/chpasswd": "f3f96229e82bf41a7fd3ec12e697b3465235d96bb1e44c39ba91157425a36082",
+        "/etc/pam.d/other": "d13078e71d3351ef7f63a7265ddb50b710a2598b9febc78810fbb0130a02695a",
+        "/etc/pam.d/newusers": "26e75ce7c9066801b8db380ff9d8ba58a5e8cf2de5fb38ffd1db5ba62c85acef",
+        "/etc/pam.d/common-account": "00edde310c1e99f00d85c26e751d61795e8efafcccf757430bb1384cd694a3c2",
+        "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
+        "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
+        "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
+        "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+      },
+      "selection": {
+        "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
+        "/var/lib/pam/seen": "8e31252b037d018a655ae4bdc8fccfce24dd33e257ea72832885f4b2686bd744",
+        "/var/lib/pam/auth": "3234a74627ae768ace3d6b3ba88c0d3f9803aa43ccb88d511eebb60c595bec15",
+        "/var/lib/pam/account": "20d3d34f0d0123d24bef79a5173320e333ed751d93319a1827341e477b30b4d1",
+        "/var/lib/pam/password": "801dabc5fcbd4415cac78fb35cbf7934a4dfb36a984e0e255e629a5ded164386",
+        "/var/lib/pam/session-noninteractive": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1"
+      },
+      "resources": {
+        "/etc/login.defs": "26091fa084e8b4184c22cd877baae611427832fa5c03b668649c3bb168d8f1e2",
+        "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
+      },
+      "active": [],
+      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+    },
+    {
+      "command": [
+        "systemctl",
+        "daemon-reload"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "systemctl",
+        "start",
+        "fic.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "ipc_command": "status",
+      "response": {
+        "api_version": 1,
+        "config_schema_version": 1,
+        "lifecycle_state": "UNINSTALLING",
+        "message": "fic daemon is running",
+        "ok": true,
+        "product_version": "0.1.1"
+      }
+    },
+    {
+      "ipc_command": "apply_all",
+      "response": {
+        "api_version": 1,
+        "error_code": "UNINSTALL_IN_PROGRESS",
+        "message": "\u041e\u0448\u0438\u0431\u043a\u0430 [apply_all]: FIC \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u0432 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u044f.",
+        "ok": false
+      }
+    },
+    {
+      "ipc_command": "rollback_all",
+      "response": {
+        "api_version": 1,
+        "message": "FIC ownership release completed",
+        "ok": true,
+        "summary": {
+          "blocked": 0,
+          "failed": 0,
+          "groups": 89,
+          "released": 89
+        },
+        "domain_results": [
+          {
+            "domain": "DE",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "domain": "DM",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "domain": "PAM_PROVIDER",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "domain": "PAM_PASSWORD",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          }
+        ]
+      },
+      "response_sha256": "b72bf3b7dfeb04564bbc35c4f62e795d2bbb627a04596a7a24b19f97d73b3150"
+    },
+    {
+      "snapshot": "before-detach-restricted-idempotent-rollback",
+      "lifecycle": "UNINSTALLING\n",
+      "config": {
+        "/opt/fic/config/GLOBAL.conf": "c974e28f79b0069b0c0a49df20c9303927a600f196b3a528898188b1bae2b369",
+        "/opt/fic/config/FIREWALL.conf": "baef7dc7a5888a77e4ddae0613544201569503a8d0486106950ec6dff772276c",
+        "/opt/fic/config/DAC.conf": "c6df9755c2d8bafa214888d3324ed27b84c39ced619be5cb2ab7e5e16d490bc0",
+        "/opt/fic/config/OSS.conf": "e13726945a5d9e7d137ec390ebde29ebb80d2e1e54818520e0e21418beec823d",
+        "/opt/fic/config/DC.conf": "c9cb053a8c6b88f82d841e8c3f82a8cee70f9946ac9646eb15a7613e702eeca8",
+        "/opt/fic/config/SYSCTL.conf": "e5168294c0a29e4f1db2d7b5aaaf7f6f6bb92db31a52f516733a2c02e7b618af",
+        "/opt/fic/config/NET.conf": "bb4a6b8e55b980b5b958503f324ea5016b5d3b031785b2ffab44ed6c5bb52a0e",
+        "/opt/fic/config/AUDIT.conf": "32d1c5973e6279f56045f26429159390e5839d0dd6e5f983be89fca657ca9a17",
+        "/opt/fic/config/IDENTITY_ACCESS.conf": "a6ef6114184af2946adadfa51505b86fbee64052dcdf58b9af0a6082fb452415"
+      },
+      "pam": {
+        "/etc/pam.d/su": "fda16622dc6198eae5d6ae522bb820b7b68dbf2e73899295c4cac9744f7c7904",
+        "/etc/pam.d/runuser-l": "be9329a8b26e3cfd4af879fe60900f646f8188f3fbe491688f23d4d8b491c5b1",
+        "/etc/pam.d/chsh": "0101e7e589ce40435c5a8709888225400a78ab6be86dfc5fef86ee23ba5338ad",
+        "/etc/pam.d/common-session-noninteractive": "1bd1ef2b6241fc8b3c97bbaf57e5c6038c96c275e30c62ebee6eec15701e2e07",
+        "/etc/pam.d/common-session": "bb18da0d0c0be4b993d97d30cb473c7a81d47f1f0ca29bf3f0fa51cdee83b03f",
+        "/etc/pam.d/runuser": "2d430cb6628248953568010427d663f3305856f3cb055955c2239bea226c5280",
+        "/etc/pam.d/login": "089abccf4956b607e4b2d13f455a15eec5f6636ce0be287d54b08f8a429668a4",
+        "/etc/pam.d/chfn": "d66a095a330d7e20d0bbb56a4cb28a4b1bfc92e8a5a5e9bfc3d0a51c5e3d7170",
+        "/etc/pam.d/common-auth": "9c1ed395c2a67b699dfe01a5cdd06e02f3303a81bd79c73b4f5af131476a964e",
+        "/etc/pam.d/su-l": "4d10241676e97e5e8d8935e5c8e8f6cb2f871afb881059715f155909be9ebd77",
+        "/etc/pam.d/chpasswd": "f3f96229e82bf41a7fd3ec12e697b3465235d96bb1e44c39ba91157425a36082",
+        "/etc/pam.d/other": "d13078e71d3351ef7f63a7265ddb50b710a2598b9febc78810fbb0130a02695a",
+        "/etc/pam.d/newusers": "26e75ce7c9066801b8db380ff9d8ba58a5e8cf2de5fb38ffd1db5ba62c85acef",
+        "/etc/pam.d/common-account": "00edde310c1e99f00d85c26e751d61795e8efafcccf757430bb1384cd694a3c2",
+        "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
+        "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
+        "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
+        "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+      },
+      "selection": {
+        "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
+        "/var/lib/pam/seen": "8e31252b037d018a655ae4bdc8fccfce24dd33e257ea72832885f4b2686bd744",
+        "/var/lib/pam/auth": "3234a74627ae768ace3d6b3ba88c0d3f9803aa43ccb88d511eebb60c595bec15",
+        "/var/lib/pam/account": "20d3d34f0d0123d24bef79a5173320e333ed751d93319a1827341e477b30b4d1",
+        "/var/lib/pam/password": "801dabc5fcbd4415cac78fb35cbf7934a4dfb36a984e0e255e629a5ded164386",
+        "/var/lib/pam/session-noninteractive": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1"
+      },
+      "resources": {
+        "/etc/login.defs": "26091fa084e8b4184c22cd877baae611427832fa5c03b668649c3bb168d8f1e2",
+        "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
+      },
+      "active": [],
+      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+    },
+    {
+      "command": [
+        "systemctl",
+        "daemon-reload"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "apt-get",
+        "remove",
+        "-y",
+        "fic"
+      ],
+      "exit_code": 100,
+      "output_sha256": "db061e9262c9c541fdb6c0c2bd93f9545c8d86a71808129294e6fb3f07dd4c18",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages will be REMOVED:\n  fic\n0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.\nAfter this operation, 25.6 MB disk space will be freed.\n(Reading database ... \n(Reading database ... 5%\n(Reading database ... 10%\n(Reading database ... 15%\n(Reading database ... 20%\n(Reading database ... 25%\n(Reading database ... 30%\n(Reading database ... 35%\n(Reading database ... 40%\n(Reading database ... 45%\n(Reading database ... 50%\n(Reading database ... 55%\n(Reading database ... 60%\n(Reading database .\n...\nL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nFIC package lifecycle refused: FIC PAM package hooks remain selected/attached after removal\ndpkg: error processing package fic (--remove):\n installed fic package pre-removal script subprocess returned error exit status 1\ndpkg: too many errors, stopping\nFIC: package operation aborted; lifecycle fence retained; no restart/apply\nErrors were encountered while processing:\n fic\nProcessing was halted because there were too many errors.\nE: Sub-process /usr/bin/dpkg returned an error code (1)\n"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c30fa76196bbdd6ec8c51db046fc2a8d20331bc0983cdce281b2244ca84de5cb",
+      "output_excerpt": "install ok installed"
+    },
+    {
+      "command": [
+        "systemctl",
+        "is-active",
+        "--quiet",
+        "fic.service"
+      ],
+      "exit_code": 3,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "snapshot": "partial-detach-failed-real-prerm",
+      "lifecycle": "UNINSTALLING\n",
+      "config": {
+        "/opt/fic/config/GLOBAL.conf": "c974e28f79b0069b0c0a49df20c9303927a600f196b3a528898188b1bae2b369",
+        "/opt/fic/config/FIREWALL.conf": "baef7dc7a5888a77e4ddae0613544201569503a8d0486106950ec6dff772276c",
+        "/opt/fic/config/DAC.conf": "c6df9755c2d8bafa214888d3324ed27b84c39ced619be5cb2ab7e5e16d490bc0",
+        "/opt/fic/config/OSS.conf": "e13726945a5d9e7d137ec390ebde29ebb80d2e1e54818520e0e21418beec823d",
+        "/opt/fic/config/DC.conf": "c9cb053a8c6b88f82d841e8c3f82a8cee70f9946ac9646eb15a7613e702eeca8",
+        "/opt/fic/config/SYSCTL.conf": "e5168294c0a29e4f1db2d7b5aaaf7f6f6bb92db31a52f516733a2c02e7b618af",
+        "/opt/fic/config/NET.conf": "bb4a6b8e55b980b5b958503f324ea5016b5d3b031785b2ffab44ed6c5bb52a0e",
+        "/opt/fic/config/AUDIT.conf": "32d1c5973e6279f56045f26429159390e5839d0dd6e5f983be89fca657ca9a17",
+        "/opt/fic/config/IDENTITY_ACCESS.conf": "a6ef6114184af2946adadfa51505b86fbee64052dcdf58b9af0a6082fb452415"
+      },
+      "pam": {
+        "/etc/pam.d/su": "fda16622dc6198eae5d6ae522bb820b7b68dbf2e73899295c4cac9744f7c7904",
+        "/etc/pam.d/runuser-l": "be9329a8b26e3cfd4af879fe60900f646f8188f3fbe491688f23d4d8b491c5b1",
+        "/etc/pam.d/chsh": "0101e7e589ce40435c5a8709888225400a78ab6be86dfc5fef86ee23ba5338ad",
+        "/etc/pam.d/common-session-noninteractive": "1bd1ef2b6241fc8b3c97bbaf57e5c6038c96c275e30c62ebee6eec15701e2e07",
+        "/etc/pam.d/common-session": "bb18da0d0c0be4b993d97d30cb473c7a81d47f1f0ca29bf3f0fa51cdee83b03f",
+        "/etc/pam.d/runuser": "2d430cb6628248953568010427d663f3305856f3cb055955c2239bea226c5280",
+        "/etc/pam.d/login": "089abccf4956b607e4b2d13f455a15eec5f6636ce0be287d54b08f8a429668a4",
+        "/etc/pam.d/chfn": "d66a095a330d7e20d0bbb56a4cb28a4b1bfc92e8a5a5e9bfc3d0a51c5e3d7170",
+        "/etc/pam.d/common-auth": "b787b01c7e71c658fa9acb84cbe153f71786cf380af4b01ae9135210cdc0154d",
+        "/etc/pam.d/su-l": "4d10241676e97e5e8d8935e5c8e8f6cb2f871afb881059715f155909be9ebd77",
+        "/etc/pam.d/chpasswd": "f3f96229e82bf41a7fd3ec12e697b3465235d96bb1e44c39ba91157425a36082",
+        "/etc/pam.d/other": "d13078e71d3351ef7f63a7265ddb50b710a2598b9febc78810fbb0130a02695a",
+        "/etc/pam.d/newusers": "26e75ce7c9066801b8db380ff9d8ba58a5e8cf2de5fb38ffd1db5ba62c85acef",
+        "/etc/pam.d/common-account": "00edde310c1e99f00d85c26e751d61795e8efafcccf757430bb1384cd694a3c2",
+        "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
+        "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
+        "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
+        "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+      },
+      "selection": {
+        "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
+        "/var/lib/pam/seen": "8e31252b037d018a655ae4bdc8fccfce24dd33e257ea72832885f4b2686bd744",
+        "/var/lib/pam/auth": "1119b101213fb5d7dab9f2fda236e12205fd3a1940d2715ea4d0c1dcd867000c",
+        "/var/lib/pam/account": "20d3d34f0d0123d24bef79a5173320e333ed751d93319a1827341e477b30b4d1",
+        "/var/lib/pam/password": "801dabc5fcbd4415cac78fb35cbf7934a4dfb36a984e0e255e629a5ded164386",
+        "/var/lib/pam/session-noninteractive": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1"
+      },
+      "resources": {
+        "/etc/login.defs": "26091fa084e8b4184c22cd877baae611427832fa5c03b668649c3bb168d8f1e2",
+        "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
+      },
+      "active": [],
+      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+    },
+    {
+      "command": [
+        "systemctl",
+        "daemon-reload"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "systemctl",
+        "start",
+        "fic.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "ipc_command": "status",
+      "response": {
+        "api_version": 1,
+        "config_schema_version": 1,
+        "lifecycle_state": "UNINSTALLING",
+        "message": "fic daemon is running",
+        "ok": true,
+        "product_version": "0.1.1"
+      }
+    },
+    {
+      "ipc_command": "apply_all",
+      "response": {
+        "api_version": 1,
+        "error_code": "UNINSTALL_IN_PROGRESS",
+        "message": "\u041e\u0448\u0438\u0431\u043a\u0430 [apply_all]: FIC \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u0432 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u044f.",
+        "ok": false
+      }
+    },
+    {
+      "ipc_command": "rollback_all",
+      "response": {
+        "api_version": 1,
+        "message": "FIC ownership release completed",
+        "ok": true,
+        "summary": {
+          "blocked": 0,
+          "failed": 0,
+          "groups": 89,
+          "released": 89
+        },
+        "domain_results": [
+          {
+            "domain": "DE",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "domain": "DM",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "domain": "PAM_PROVIDER",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "domain": "PAM_PASSWORD",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          }
+        ]
+      },
+      "response_sha256": "b72bf3b7dfeb04564bbc35c4f62e795d2bbb627a04596a7a24b19f97d73b3150"
+    },
+    {
+      "snapshot": "partial-detach-restricted-idempotent-rollback",
+      "lifecycle": "UNINSTALLING\n",
+      "config": {
+        "/opt/fic/config/GLOBAL.conf": "c974e28f79b0069b0c0a49df20c9303927a600f196b3a528898188b1bae2b369",
+        "/opt/fic/config/FIREWALL.conf": "baef7dc7a5888a77e4ddae0613544201569503a8d0486106950ec6dff772276c",
+        "/opt/fic/config/DAC.conf": "c6df9755c2d8bafa214888d3324ed27b84c39ced619be5cb2ab7e5e16d490bc0",
+        "/opt/fic/config/OSS.conf": "e13726945a5d9e7d137ec390ebde29ebb80d2e1e54818520e0e21418beec823d",
+        "/opt/fic/config/DC.conf": "c9cb053a8c6b88f82d841e8c3f82a8cee70f9946ac9646eb15a7613e702eeca8",
+        "/opt/fic/config/SYSCTL.conf": "e5168294c0a29e4f1db2d7b5aaaf7f6f6bb92db31a52f516733a2c02e7b618af",
+        "/opt/fic/config/NET.conf": "bb4a6b8e55b980b5b958503f324ea5016b5d3b031785b2ffab44ed6c5bb52a0e",
+        "/opt/fic/config/AUDIT.conf": "32d1c5973e6279f56045f26429159390e5839d0dd6e5f983be89fca657ca9a17",
+        "/opt/fic/config/IDENTITY_ACCESS.conf": "a6ef6114184af2946adadfa51505b86fbee64052dcdf58b9af0a6082fb452415"
+      },
+      "pam": {
+        "/etc/pam.d/su": "fda16622dc6198eae5d6ae522bb820b7b68dbf2e73899295c4cac9744f7c7904",
+        "/etc/pam.d/runuser-l": "be9329a8b26e3cfd4af879fe60900f646f8188f3fbe491688f23d4d8b491c5b1",
+        "/etc/pam.d/chsh": "0101e7e589ce40435c5a8709888225400a78ab6be86dfc5fef86ee23ba5338ad",
+        "/etc/pam.d/common-session-noninteractive": "1bd1ef2b6241fc8b3c97bbaf57e5c6038c96c275e30c62ebee6eec15701e2e07",
+        "/etc/pam.d/common-session": "bb18da0d0c0be4b993d97d30cb473c7a81d47f1f0ca29bf3f0fa51cdee83b03f",
+        "/etc/pam.d/runuser": "2d430cb6628248953568010427d663f3305856f3cb055955c2239bea226c5280",
+        "/etc/pam.d/login": "089abccf4956b607e4b2d13f455a15eec5f6636ce0be287d54b08f8a429668a4",
+        "/etc/pam.d/chfn": "d66a095a330d7e20d0bbb56a4cb28a4b1bfc92e8a5a5e9bfc3d0a51c5e3d7170",
+        "/etc/pam.d/common-auth": "b787b01c7e71c658fa9acb84cbe153f71786cf380af4b01ae9135210cdc0154d",
+        "/etc/pam.d/su-l": "4d10241676e97e5e8d8935e5c8e8f6cb2f871afb881059715f155909be9ebd77",
+        "/etc/pam.d/chpasswd": "f3f96229e82bf41a7fd3ec12e697b3465235d96bb1e44c39ba91157425a36082",
+        "/etc/pam.d/other": "d13078e71d3351ef7f63a7265ddb50b710a2598b9febc78810fbb0130a02695a",
+        "/etc/pam.d/newusers": "26e75ce7c9066801b8db380ff9d8ba58a5e8cf2de5fb38ffd1db5ba62c85acef",
+        "/etc/pam.d/common-account": "00edde310c1e99f00d85c26e751d61795e8efafcccf757430bb1384cd694a3c2",
+        "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
+        "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
+        "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
+        "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+      },
+      "selection": {
+        "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
+        "/var/lib/pam/seen": "8e31252b037d018a655ae4bdc8fccfce24dd33e257ea72832885f4b2686bd744",
+        "/var/lib/pam/auth": "1119b101213fb5d7dab9f2fda236e12205fd3a1940d2715ea4d0c1dcd867000c",
+        "/var/lib/pam/account": "20d3d34f0d0123d24bef79a5173320e333ed751d93319a1827341e477b30b4d1",
+        "/var/lib/pam/password": "801dabc5fcbd4415cac78fb35cbf7934a4dfb36a984e0e255e629a5ded164386",
+        "/var/lib/pam/session-noninteractive": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1"
+      },
+      "resources": {
+        "/etc/login.defs": "26091fa084e8b4184c22cd877baae611427832fa5c03b668649c3bb168d8f1e2",
+        "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
+      },
+      "active": [],
+      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+    },
+    {
+      "command": [
+        "apt-get",
+        "remove",
+        "-y",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "a70b346c0039d24125953659376389807cebb5f9b0d00e25e2187ce076a17ad1",
+      "output_excerpt": "Reading package lists...\nBuilding dependency tree...\nReading state information...\nThe following packages will be REMOVED:\n  fic\n0 upgraded, 0 newly installed, 1 to remove and 0 not upgraded.\nAfter this operation, 25.6 MB disk space will be freed.\n(Reading database ... \n(Reading database ... 5%\n(Reading database ... 10%\n(Reading database ... 15%\n(Reading database ... 20%\n(Reading database ... 25%\n(Reading database ... 30%\n(Reading database ... 35%\n(Reading database ... 40%\n(Reading database ... 45%\n(Reading database ... 50%\n(Reading database ... 55%\n(Reading database ... 60%\n(Reading database .\n...\n \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nREMOVED: writers absent and PAM detached; policy configuration and journal retained\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic-device.service\".\n\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic.service\".\n\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic-notify.service\".\n\n"
+    },
+    {
+      "snapshot": "retry-removed",
+      "lifecycle": "REMOVED\n",
+      "config": {
+        "/opt/fic/config/GLOBAL.conf": "c974e28f79b0069b0c0a49df20c9303927a600f196b3a528898188b1bae2b369",
+        "/opt/fic/config/FIREWALL.conf": "baef7dc7a5888a77e4ddae0613544201569503a8d0486106950ec6dff772276c",
+        "/opt/fic/config/DAC.conf": "c6df9755c2d8bafa214888d3324ed27b84c39ced619be5cb2ab7e5e16d490bc0",
+        "/opt/fic/config/OSS.conf": "e13726945a5d9e7d137ec390ebde29ebb80d2e1e54818520e0e21418beec823d",
+        "/opt/fic/config/DC.conf": "c9cb053a8c6b88f82d841e8c3f82a8cee70f9946ac9646eb15a7613e702eeca8",
+        "/opt/fic/config/SYSCTL.conf": "e5168294c0a29e4f1db2d7b5aaaf7f6f6bb92db31a52f516733a2c02e7b618af",
+        "/opt/fic/config/NET.conf": "bb4a6b8e55b980b5b958503f324ea5016b5d3b031785b2ffab44ed6c5bb52a0e",
+        "/opt/fic/config/AUDIT.conf": "32d1c5973e6279f56045f26429159390e5839d0dd6e5f983be89fca657ca9a17",
+        "/opt/fic/config/IDENTITY_ACCESS.conf": "a6ef6114184af2946adadfa51505b86fbee64052dcdf58b9af0a6082fb452415"
+      },
+      "pam": {
+        "/etc/pam.d/su": "fda16622dc6198eae5d6ae522bb820b7b68dbf2e73899295c4cac9744f7c7904",
+        "/etc/pam.d/runuser-l": "be9329a8b26e3cfd4af879fe60900f646f8188f3fbe491688f23d4d8b491c5b1",
+        "/etc/pam.d/chsh": "0101e7e589ce40435c5a8709888225400a78ab6be86dfc5fef86ee23ba5338ad",
+        "/etc/pam.d/common-session-noninteractive": "1bd1ef2b6241fc8b3c97bbaf57e5c6038c96c275e30c62ebee6eec15701e2e07",
+        "/etc/pam.d/common-session": "bb18da0d0c0be4b993d97d30cb473c7a81d47f1f0ca29bf3f0fa51cdee83b03f",
+        "/etc/pam.d/runuser": "2d430cb6628248953568010427d663f3305856f3cb055955c2239bea226c5280",
+        "/etc/pam.d/login": "089abccf4956b607e4b2d13f455a15eec5f6636ce0be287d54b08f8a429668a4",
+        "/etc/pam.d/chfn": "d66a095a330d7e20d0bbb56a4cb28a4b1bfc92e8a5a5e9bfc3d0a51c5e3d7170",
+        "/etc/pam.d/common-auth": "b787b01c7e71c658fa9acb84cbe153f71786cf380af4b01ae9135210cdc0154d",
+        "/etc/pam.d/su-l": "4d10241676e97e5e8d8935e5c8e8f6cb2f871afb881059715f155909be9ebd77",
+        "/etc/pam.d/chpasswd": "f3f96229e82bf41a7fd3ec12e697b3465235d96bb1e44c39ba91157425a36082",
+        "/etc/pam.d/other": "d13078e71d3351ef7f63a7265ddb50b710a2598b9febc78810fbb0130a02695a",
+        "/etc/pam.d/newusers": "26e75ce7c9066801b8db380ff9d8ba58a5e8cf2de5fb38ffd1db5ba62c85acef",
+        "/etc/pam.d/common-account": "aa8a63d72e79399b6c51ebe4e9f828c954145a799eb4b8f3224724f51cbb9fac",
+        "/etc/pam.d/passwd": "87696fad1046d6b33b6d3407bb419980987331b4dcd8905f7a6041bced90c51d",
+        "/etc/pam.d/common-password": "7f5172321895e81a2c71f4bc3e4ba0d46f418d7d3111e21420cd78b02924f229",
+        "/etc/pam.d/fic-faillock-account": "f50e1e3e431184637566a3df2bba4604534b2b54a0865da436e25e4ed4f5f1dd",
+        "/etc/pam.d/fic-password-quality": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history-initial": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-password-history": "9601e36ee0db20bd1c9f7a7e53f60236e1ffa9a4029a589c92b22a7557a2ac89",
+        "/etc/pam.d/fic-faillock-authfail": "8165e46bfe442a04e8ae39e6aaaba42ac38ce43f492db1be6f03727763913bcf",
+        "/etc/pam.d/fic-faillock-authsucc": "bf3feab127c8f54a49b98a2c2a5865ab1f43f41711647cbe9d86a62e134653a8",
+        "/etc/pam.d/fic-faillock-preauth": "205398b8ac582a04aaa237b4e463226515460207b01f3add86aa22bc29c89303",
+        "/etc/pam.d/sshd": "65822d20f36db29cb50275526854b584df7a04a9efe975f3801473f81b44f521",
+        "/etc/pam.d/sudo-i": "349e44c0f9b293c5e12fd271c62f10de9ff21a0c472fd8532eb08aaaab41f9f5",
+        "/etc/pam.d/sudo": "237bd06ddff88d0ab7735346ef15d412fdd121f5c07ab3c4f04a4a620acec158"
+      },
+      "selection": {
+        "/var/lib/pam/session": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1",
+        "/var/lib/pam/seen": "d742f00aa0bd73c771b46fa585271df27ca8f437367a4c0dad364770491a5b57",
+        "/var/lib/pam/auth": "1119b101213fb5d7dab9f2fda236e12205fd3a1940d2715ea4d0c1dcd867000c",
+        "/var/lib/pam/account": "9f0f66ec5d201dd496bda06760e5871fa68e349fb9d423eac447d332652f6f13",
+        "/var/lib/pam/password": "801dabc5fcbd4415cac78fb35cbf7934a4dfb36a984e0e255e629a5ded164386",
+        "/var/lib/pam/session-noninteractive": "4a0e1452e4462ee2c1337989554acb3fe7a2473086870ec5b16e46aceb48e0e1"
+      },
+      "resources": {
+        "/etc/login.defs": "26091fa084e8b4184c22cd877baae611427832fa5c03b668649c3bb168d8f1e2",
+        "/etc/sudoers.d/README": "b428c9b673c3c806370f2aa28a98293a9cb578c70c3a8a2d1a39031861b3dbd8"
+      },
+      "active": [],
+      "journal": "9b1ee786c507df4e81868c1e3c75d7cfa716700026e05e4d507d5ddff9b84dd7"
+    },
+    {
+      "command": [
+        "dpkg",
+        "--purge",
+        "fic",
+        "fic-cli",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "5dd635d073ee3774c7d7d3ec8d001f6ecb96c919ef4b4021374f06545505d9bc",
+      "output_excerpt": "(Reading database ... 26812 files and directories currently installed.)\nPurging configuration files for fic (0.1.1) ...\nFIC purge: deleting configuration and MutationJournal/witness; remaining OS policy settings are not adopted on reinstall\ndpkg: warning: while removing fic, directory '/opt/fic/log' not empty so not removed\ndpkg: warning: while removing fic, directory '/lib/x86_64-linux-gnu/security' not empty so not removed\ndpkg: warning: ignoring request to remove fic-cli which isn't installed\nRemoving fic-dick (0.1.1) ...\nPurging configuration files for fic-dick (0.1.1) ...\ndpkg: warning: while removing fic-dick, directory '/opt/fic' not empty so not removed\ndpkg: warning: while removing fic-dick, directory '/lib/systemd/system' not empty so not removed\n"
+    }
+  ],
+  "classification_regression_log": "[  0%] Built target fic-platform\n[100%] Built target fic-core\n[100%] Built target fic-policy\n[100%] Building CXX object tests/CMakeFiles/package_release_support_tests.dir/fic/daemon/PackageReleaseSupportTests.cpp.o\n[100%] Linking CXX executable package_release_support_tests\n[100%] Built target package_release_support_tests\nInternal ctest changing into directory: /build\nTest project /build\n    Start 205: package_release_support_tests\n1/1 Test #205: package_release_support_tests ....   Passed    0.00 sec\n\n100% tests passed, 0 tests failed out of 1\n\nTotal Test time (real) =   0.01 sec\npassword release support misclassified\nRED PASS: original supports() classification is rejected by regression\n",
+  "unit_log_excerpt": " /build\nTest project /build\n    Start   5: prelogin_package_lifecycle_tests\n1/9 Test   #5: prelogin_package_lifecycle_tests .....   Passed    0.11 sec\n    Start   9: platform_profile_static_checks\n2/9 Test   #9: platform_profile_static_checks .......   Passed    0.52 sec\n    Start  10: pam_packaging_static_checks\n3/9 Test  #10: pam_packaging_static_checks ..........   Passed    0.04 sec\n    Start  51: deb_binary_depends_tests\n4/9 Test  #51: deb_binary_depends_tests .............   Passed    0.24 sec\n    Start  84: pam_provider_package_release_tests\n5/9 Test  #84: pam_provider_package_release_tests ...   Passed    0.61 sec\n    Start 142: pam_password_package_release_tests\n6/9 Test #142: pam_password_package_release_tests ...   Passed    0.70 sec\n    Start 202: uninstall_lifecycle_tests\n7/9 Test #202: uninstall_lifecycle_tests ............   Passed    0.01 sec\n    Start 204: uninstall_release_order_tests\n8/9 Test #204: uninstall_release_order_tests ........   Passed    0.00 sec\n    Start 205: package_release_support_tests\n9/9 Test #205: package_release_support_tests ........   Passed    0.00 sec\n\n100% tests passed, 0 tests failed out of 9\n\nLabel Time Summary:\nstatic    =   0.80 sec*proc (3 tests)\n\nTotal Test time (real) =   2.25 sec\n"
+}

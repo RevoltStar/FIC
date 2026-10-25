@@ -1,5 +1,4 @@
 #include "daemon/PackageReleaseResources.h"
-#include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
@@ -9,28 +8,6 @@
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include <grp.h>
 namespace fic::daemon {
-bool PackageReleaseResources::supports(PackageReleaseDomain domain,std::string& error) const {
-    if(domain==PackageReleaseDomain::AltHistoryTopology||domain==PackageReleaseDomain::AltFaillockTopology) {
-        if(platform_.id!="alt-p11"){error="ALT topology release requires the ALT p11 platform";return false;}
-        error.clear();return true;
-    }
-    if(domain==PackageReleaseDomain::DisplayManager||domain==PackageReleaseDomain::Desktop||domain==PackageReleaseDomain::PamProvider) {
-        error.clear();return true;
-    }
-    if(domain!=PackageReleaseDomain::PamPassword){error="unknown package release domain";return false;}
-    const fic::platform::PamCapabilityConfig *quality=nullptr,*history=nullptr;
-    const std::vector<std::string> *qualityServices=nullptr,*historyServices=nullptr;
-    const bool qualityResolved=fic::identity::pam::resolveCapability(platform_.pam,
-        fic::platform::PamCapability::PasswordQuality,quality,qualityServices,error);
-    const bool historyResolved=fic::identity::pam::resolveCapability(platform_.pam,
-        fic::platform::PamCapability::PasswordHistory,history,historyServices,error);
-    if((qualityResolved&&quality->topology==fic::platform::PamTopologyStrategyKind::PamAuthUpdate)||
-       (historyResolved&&history->topology==fic::platform::PamTopologyStrategyKind::PamAuthUpdate)) {
-        error.clear();return true;
-    }
-    error="FIC package password release requires a pam-auth-update password topology; this platform does not provide one";
-    return false;
-}
 bool PackageReleaseResources::preflight(PackageReleaseDomain domain,fic::rollback::MutationJournal& journal,
     PackageResourceReleaseReport& report,std::string& error) const {
     return run(domain,journal,Action::Preflight,report,error);
@@ -47,7 +24,7 @@ bool PackageReleaseResources::run(PackageReleaseDomain domain,fic::rollback::Mut
     Action action,PackageResourceReleaseReport& report,std::string& error) const {
     const bool preview=action==Action::Preflight,proof=action==Action::Proof;
     report={};
-    if(!supports(domain,error))return false;
+    if(supports(domain,error)!=PackageReleaseSupport::Supported)return false;
     switch(domain) {
     case PackageReleaseDomain::AltHistoryTopology: {
         using namespace fic::identity::pam;
