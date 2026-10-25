@@ -211,12 +211,35 @@ find_qt_plugin_dir() {
 }
 
 detect_binary_depends() {
-    local binary_path="$1"
-    local deps
+    local binary_path resolved_path work output deps
+    local binaries=()
+    for binary_path in "$@"; do
+        resolved_path="$(realpath -e -- "$binary_path")" || return 1
+        binaries+=("$resolved_path")
+    done
+    [ "${#binaries[@]}" -gt 0 ] || return 1
 
-    deps="$(dpkg-shlibdeps -O "$binary_path" 2>/dev/null | sed -n 's/^shlibs:Depends=//p')"
+    # dpkg-shlibdeps requires a source-package context even for -O. Never
+    # turn failed analysis into a package with incomplete runtime dependencies.
+    work="$(mktemp -d "$STAGING_BASE/binary-shlibdeps-XXXXXX")" || return 1
+    mkdir -p "$work/debian" || { rm -rf "$work"; return 1; }
+    cat > "$work/debian/control" <<'EOF'
+Source: fic-runtime-analysis
+
+Package: fic-runtime-analysis
+Architecture: any
+Description: temporary dependency analysis package
+EOF
+    if ! output="$(cd "$work" && dpkg-shlibdeps -O "${binaries[@]}")"; then
+        echo "Failed to derive runtime dependencies for: ${binaries[*]}" >&2
+        rm -rf "$work"
+        return 1
+    fi
+    rm -rf "$work"
+    deps="$(printf '%s\n' "$output" | sed -n 's/^shlibs:Depends=//p')"
     if [ -z "$deps" ]; then
-        deps="libc6, libstdc++6"
+        echo "Empty runtime dependency analysis for: ${binaries[*]}" >&2
+        return 1
     fi
 
     printf '%s' "$deps"
@@ -522,8 +545,9 @@ build_fic_dick_package() {
     # Infrastructure proofs only; no policy/MutationJournal engine is linked.
     install -m 0755 "$FIC_BUILD_DIR/fic-package-infrastructure" "$package_root/opt/fic/bin/fic-package-infrastructure"
 
-    binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-dick")"
-    package_depends="$(join_depends "$binary_depends" "$(detect_binary_depends "$package_root/opt/fic/bin/fic-package-infrastructure")" "udev" "systemd" "util-linux")"
+    binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-dick" \
+        "$package_root/opt/fic/bin/fic-package-infrastructure")" || return 1
+    package_depends="$(join_depends "$binary_depends" "udev" "systemd" "util-linux")"
 
     write_control_file \
         "$package_root" \
@@ -555,7 +579,7 @@ build_fic_cli_package() {
     chmod 0750 "$package_root/opt/fic/bin/fic-cli"
     sed -i 's/\r$//' "$package_root/usr/share/bash-completion/completions/fic-cli"
 
-    binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-cli")"
+    binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-cli")" || return 1
     package_depends="$(join_depends "$binary_depends" "fic (= ${PACKAGE_VERSION})")"
 
     write_control_file \
@@ -589,9 +613,9 @@ build_fic_session_agent_package() {
     chmod 0755 "$package_root/usr/libexec/fic/fic-xfconf-inspect"
 
     binary_depends="$(detect_binary_depends \
-        "$package_root/usr/libexec/fic/fic-session-agent")"
+        "$package_root/usr/libexec/fic/fic-session-agent")" || return 1
     helper_depends="$(detect_binary_depends \
-        "$package_root/usr/libexec/fic/fic-xfconf-inspect")"
+        "$package_root/usr/libexec/fic/fic-xfconf-inspect")" || return 1
     binary_depends="$(join_depends "$binary_depends" "$helper_depends")"
 
     write_control_file \
@@ -631,7 +655,7 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/log"
     mkdir -p "$package_root/opt/fic/notify"
 
-    binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")"
+    binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")" || return 1
     package_depends="$(join_depends "$binary_depends" "fic-dick (= ${PACKAGE_VERSION})" "libnotify-bin" "util-linux" "nftables" "libpam-runtime" "libpam-modules" "libpam-pwquality")"
 
     write_control_file \
@@ -701,24 +725,9 @@ build_fic_gui_package() {
 
 detect_prelogin_depends() {
     local package_root="$1"
-    local work output depends
-    local binaries=("$package_root/opt/fic/bin/fic-prelogin" "$package_root/opt/fic/bin/fic-prelogin-integration" "$package_root/usr/libexec/fic/fic-prelogin-frontend")
-    work="$(mktemp -d "$STAGING_BASE/prelogin-shlibdeps-XXXXXX")"
-    mkdir -p "$work/debian"
-    cat > "$work/debian/control" <<'EOF'
-Source: fic-prelogin
-Section: utils
-Priority: optional
-Maintainer: FIC Maintainers <maintainers@example.com>
-
-Package: fic-prelogin
-Architecture: any
-Description: dependency analysis fixture
-EOF
-    output="$(cd "$work" && dpkg-shlibdeps -O "${binaries[@]}")" || return 1
-    depends="$(printf '%s\n' "$output" | sed -n 's/^shlibs:Depends=//p')"
-    [ -n "$depends" ] || return 1
-    printf '%s\n' "$depends"
+    detect_binary_depends "$package_root/opt/fic/bin/fic-prelogin" \
+        "$package_root/opt/fic/bin/fic-prelogin-integration" \
+        "$package_root/usr/libexec/fic/fic-prelogin-frontend"
 }
 
 detect_prelogin_plugin_depends() {

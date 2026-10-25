@@ -5,6 +5,12 @@ Payload бинарников, service-файлов, конфигурации и 
 maintainer scripts и Qt runtime bundle, но не поддерживают отдельную копию
 production-путей в исходных systemd/tmpfiles/udev-файлах.
 
+Системные ELF-зависимости вычисляются через `dpkg-shlibdeps` во временном
+Debian source-package контексте. Ошибка анализа или пустой результат прерывают
+сборку пакета; подстановка сокращённого списка зависимостей не допускается.
+Runtime-проверки установки должны включать образ без заранее установленных
+build/devel-зависимостей, чтобы они не скрывали ошибки `Depends`.
+
 This packaging flow builds five distribution-specific Debian-format packages:
 
 - `fic-dick`

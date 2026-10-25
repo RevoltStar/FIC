@@ -502,6 +502,12 @@ add_test(
 )
 
 add_test(
+    NAME deb_binary_depends_tests
+    COMMAND bash
+            ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/deb-binary-depends-test.sh
+)
+
+add_test(
     NAME version_contract_tests
     COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/common/version/version-contract-test.sh
 )
@@ -2876,6 +2882,7 @@ set(FIC_STATIC_TESTS
     session_agent_static_checks
     desktop_environment_architecture_static_checks
     packaging_build_resource_tests
+    deb_binary_depends_tests
     version_contract_tests
     release_contract_tests
     pam_policy_defaults_tests

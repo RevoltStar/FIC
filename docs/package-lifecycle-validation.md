@@ -34,6 +34,31 @@ complete SHA-256; original unabridged commands.json remains in the uniquely name
 ignored build evidence directory recorded in each file. Failed directories do
 not have PASS results and were not reused as successful evidence.
 
+### Follow-up: DEB runtime dependencies
+
+The original runtime images also contained build/devel libraries, so the matrix
+above did not prove completeness of `Depends`. A subsequent minimal-image check
+found missing Qt Core in the main DEB: failed `dpkg-shlibdeps` analysis had silently
+fallen back to `libc6, libstdc++6`.
+
+The detector now uses a temporary Debian source-package context, preserves errors
+and rejects failed/empty analysis. The shared path covers main/CLI/device/helper/
+session/prelogin ELF inputs. Regression tests cover relative paths with spaces,
+multiple inputs, native errors, empty output and package-builder failure
+propagation, including helper-only failures; the test fails against the previous
+detector. Five related CTest pass; affected executables and three actual DEBs were
+rebuilt on Ubuntu 24.04.
+
+Corrected `fic`, `fic-dick` and `fic-cli` DEBs were installed via APT in a separate
+Ubuntu 24.04 systemd PID1 container without Qt Core, CMake, g++ or Qt devel packages
+preinstalled. Dependency downloads were prepared beforehand; runtime networking
+was disabled. APT installed Qt Core from declared dependencies, all four shipped
+executables passed `ldd` without missing libraries, packages reached
+`install ok installed`, both daemons were active, CLI/status and device readiness
+passed. This follow-up is Ubuntu 24.04 evidence, not a repeat of the five-distro
+matrix. Raw build/test/native logs are in `/tmp/fic-readiness-diag/build-fixed-debs.log`
+and `/tmp/fic-deb-depends-native/` on the validation machine.
+
 ## Proven scenarios and limits
 
 All five actual package gates enable/apply shared login.defs and Sudo policies,
