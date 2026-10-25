@@ -114,3 +114,26 @@ dpkg status/audit, both daemon services, CLI/readiness, main remove, surviving
 helper proof and final purge. The SSH stop is an explicit test-administrator
 action preserving existing release restrictions. Success is written only after
 the final checks. On failure, diagnostics.json retains native unit/journal facts.
+
+
+### Optional managed software boundary
+
+Build target `optional_owner_fixture` in the matching native build/cache and
+pass its path as the fourth runner argument:
+
+```sh
+bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/optional-packages minimal_runtime_native.py BUILD/tests/optional_owner_fixture
+```
+
+The runtime image removes preinstalled sudo/openssh-server/procps, and the
+driver verifies packages and executables remain absent after real APT install.
+It checks all SSH/SUDO/SYSCTL no-owner outcomes are `NOTHING_TO_RELEASE`, then
+rejects orphan markers, detached sudo fragments, staging, unsafe parents,
+hardlinks and symlinks without adoption or mutation. Ordinary remove/purge
+must succeed. A fresh real reinstall then uses the test-only fixture under
+daemon.lock to seed valid production-API pending/owned records: SSH Prepared,
+SUDO Prepared, and SYSCTL Applied with physical drift. Restricted rollback and
+real package removal must refuse and retain provenance/configuration. These
+negative rows are synthetic; they are not evidence of successful native
+provider apply. The container is destroyed with those rows still active; no
+journal reset, retirement or invented recovery is used to get the clean PASS.

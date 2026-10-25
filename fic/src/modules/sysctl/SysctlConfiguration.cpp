@@ -188,6 +188,14 @@ bool removeAndSync(const std::filesystem::path& path, std::string& error) {
 SysctlConfiguration::SysctlConfiguration(SysctlConfigurationOptions options)
     : options_(std::move(options)) {}
 
+bool SysctlConfiguration::inspectManagedSettings(const std::string& content,bool& present,std::string& error) {
+    present=false;
+    ManagedAssignments managed;
+    if(!inspectManagedAssignments(linesWithEndings(content),managed,error))return false;
+    present=!managed.values.empty();
+    error.clear();return true;
+}
+
 void SysctlConfiguration::clear() {
     documents_.clear();
     assignments_.clear();

@@ -11,11 +11,13 @@ Debian source-package контексте. Ошибка анализа или п�
 Runtime-проверки установки должны включать образ без заранее установленных
 build/devel-зависимостей, чтобы они не скрывали ошибки `Depends`.
 
-`fic` также требует `sudo`, `procps` и `openssh-server`: существующие uninstall
-backends проверяют их конфигурацию даже без активных journal records. Эти
-зависимости нельзя вывести из ELF. Установка `openssh-server` и активация его
-служб следуют правилам пакета дистрибутива; ограничения release для работающего
-SSH описаны в [package lifecycle](../../docs/package-lifecycle.md).
+`sudo`, `procps` и `openssh-server` не являются обязательными зависимостями FIC.
+Uninstall не устанавливает управляемые программы: при отсутствии ownership
+backend доказывает отсутствие физических FIC-артефактов и незавершённых операций.
+Неподтверждённое состояние и активный ownership сохраняют строгий отказ.
+SYSCTL runtime использует `/proc/sys` напрямую, а загрузчик профилей —
+systemd-sysctl; утилиты procps для работы ядра FIC не нужны. Ограничения release
+описаны в [package lifecycle](../../docs/package-lifecycle.md).
 
 This packaging flow builds five distribution-specific Debian-format packages:
 

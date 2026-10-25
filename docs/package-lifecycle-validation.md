@@ -62,10 +62,10 @@ passed. This follow-up is Ubuntu 24.04 evidence, not a repeat of the five-distro
 matrix. Raw build/test/native logs are in `/tmp/fic-readiness-diag/build-fixed-debs.log`
 and `/tmp/fic-deb-depends-native/` on the validation machine.
 
-### Final minimal DEB runtime matrix
+### Historical minimal DEB runtime matrix (c7b598c, dependency decision superseded)
 
-Production PAM classification is `621910c`; the accompanying validation commit
-also adds the missing non-ELF uninstall prerequisites `sudo`, `procps` and
+Production PAM classification is `621910c`; historical commit `c7b598c`
+added unnecessary non-ELF uninstall dependencies `sudo`, `procps` and
 `openssh-server` to fic Depends. Native binaries were rebuilt on each matching
 distro; final archives were repackaged with that exact production builder.
 Archive/ELF/builder digests, exact versioned Depends, separate build/runtime image
@@ -106,7 +106,8 @@ Two genuine findings preceded these PASS runs:
   No product unit/check/timeout was weakened; hardware enforcement is not tested.
 * Packaging: without the three tool/data providers, ordinary removal failed on
   missing sudoers, sshd_config and Debian12's dangling 99-sysctl.conf symlink.
-  The fix declares the required providers, preserving rollback contracts.
+  That workaround incorrectly required optional managed software and is superseded
+  by physical no-ownership inspection; see the optional-resource matrix below.
   OpenSSH package installation/activation follows distro package behavior; the
   gate explicitly stops SSH before release. A regression against the previous
   package builder fails on the missing sudo dependency; the fixed builder passes.
@@ -125,6 +126,61 @@ provider fix, five related tests per platform passed again, alongside native
 gates, Python compilation, shell syntax/static checks and git diff --check.
 This is targeted validation, not a new full project CTest run. Log hashes/image
 identities are in `evidence/followup-validation.json`.
+
+### Optional programs: replacement for c7b598c dependency workaround
+
+FIC no longer depends on sudo, openssh-server or procps. Audit found no core
+procps command calls: SysctlRuntime uses descriptor-based `/proc/sys` I/O, and
+all four DEB profiles use systemd-sysctl. ELF dependency discovery remains
+strict. The historical matrix above describes the old archives, not current
+requirements; its dependency workaround was an incorrect product decision.
+
+| Minimal native runtime | Install without all three optional programs / five ELF | Ordinary remove from INSTALLED / purge | Physical / pending / active ownership refusal |
+| --- | --- | --- | --- |
+| Debian 12 | PASS | PASS | PASS |
+| Debian 13 | PASS | PASS | PASS |
+| Ubuntu 24.04 | PASS | PASS | PASS |
+| Ubuntu 26.04 | PASS | PASS | PASS |
+
+Each platform has two separate real APT runs: ordinary remove directly from
+INSTALLED, and an explicit rollback-all proof/negative gate. The latter first
+requires every SSH/SUDO/SYSCTL row to report NOTHING_TO_RELEASE. Unknown SSH
+markers, detached sudo fragments and empty sysctl staging must refuse without
+adoption. Unsafe parent permissions, hardlinked sudo state and a symlinked
+sysctl artifact must also refuse. Test-only artifacts are then removed by the
+test administrator; clean remove/purge succeeds with unchanged desired values.
+
+A fresh APT reinstall then seeds three valid records through production
+MutationJournal APIs under daemon.lock: SSH Prepared, SUDO Prepared, SYSCTL
+Applied with a deliberately drifted managed assignment. This tests unresolved
+transactions/active ownership, not successful native optional-provider apply.
+Rollback-all refuses in each backend, preserves active IDs/undo payloads and
+physical/configured state, and actual APT removal fails with UNINSTALLING and
+main payload retained. The runner destroys the container with ownership still
+active; it does not rewrite the journal to manufacture a clean removal.
+
+Versioned Depends, archive/ELF hashes, isolation, command output digests,
+per-backend reports and retained typed records are in
+`evidence/optional-providers-{debian12,debian13,ubuntu2404,ubuntu2604}.json` under
+`tests/integration/package-lifecycle/`. Native fixtures assert absence of both
+optional package installations and sudo/visudo/sshd/sysctl executables.
+Ubuntu bases initially contained procps; the test image now explicitly removes
+preinstalled optional providers before dependency preparation. The original
+procps assertion failure was fixture contamination, not a product failure.
+
+Affected executables and rollback_executor_tests build on each matching
+platform; five focused CTest pass on each. Ubuntu24 additionally builds/tests
+all four other direct test consumers of RollbackExecutor. Unit coverage keeps
+existing strict active rollback/CAS, unhealthy journal and SSH Prepared gates,
+and adds missing parents/providers, foreign config without visudo, unknown
+markers, detached fragments, staging and dangling parent aliases. Shell/Python
+syntax, dependency regression and git diff --check pass. This is not a full
+project build/CTest or new ALT native run. Runtime `/sys` and `/proc/sys` are
+read-only; no live SSH session, real-user PAM or physical enforcement claim.
+Absence inspection is bounded and fail-closed, within existing cooperative
+FIC locking; it does not claim atomic isolation from arbitrary privileged
+external filesystem writers. No MutationJournal schema/recovery, apply, active
+release algorithm or package-lifecycle architecture was changed.
 
 ## Proven scenarios and limits
 

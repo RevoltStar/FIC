@@ -18,6 +18,9 @@
 // beforeWrite / beforeRestore hooks are deterministic test seams.
 enum class SshOfflineReleaseProfile { None, UbuntuSocket, AltService };
 struct SshRollbackOptions {
+    // Metadata enforcement for read-only unrecorded ownership inspection.
+    // Production keeps true; isolated filesystem unit fixtures may opt out.
+    bool enforceOwnership = true;
     SshOfflineReleaseProfile offlineRelease = SshOfflineReleaseProfile::None;
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;

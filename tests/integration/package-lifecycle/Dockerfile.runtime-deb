@@ -4,6 +4,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Harness/boot only. Product libraries and utilities must come from DEB Depends.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     systemd systemd-sysv udev dbus python3 ca-certificates && rm -rf /var/lib/apt/lists/*
+# Some base images already contain procps. Prove the optional-provider boundary
+# rather than inheriting it from the image's package selection.
+RUN for package in sudo openssh-server procps; do \
+        if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -qx 'install ok installed'; then \
+            apt-get purge -y "$package" || exit 1; \
+        fi; \
+    done
 # Test fixture only: keep sysfs read-only even during boot, never coldplug the
 # shared kernel's devices. Allow native udev control/inventory on readonly sysfs.
 RUN mkdir -p /etc/systemd/system/sysinit.target.wants /etc/systemd/system/sockets.target.wants && \

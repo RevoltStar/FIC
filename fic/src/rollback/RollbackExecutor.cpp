@@ -1,5 +1,6 @@
 #include "modules/net/ssh/SshResourceLock.h"
 #include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
+#include "rollback/UnrecordedResourceInspection.h"
 #include "rollback/RollbackExecutor.h"
 #include "rollback/ScopeTransition.h"
 
@@ -1037,6 +1038,19 @@ RollbackReport checkUnrecordedOwnership(
     report.status = RollbackStatus::NothingToDo;
     report.message = "Active mutation records отсутствуют; FIC не владеет "
                      "изменениями этой политики";
+
+    std::string inspectionError;
+    const auto inspection=inspectUnrecordedResource(policy,deps,*journal,inspectionError);
+    if(inspection==UnrecordedResourceState::UnprovenOwnership) {
+        report=provenanceUnavailable(policy);report.message+=" "+inspectionError;return report;
+    }
+    if(inspection==UnrecordedResourceState::Error) {
+        report.status=RollbackStatus::Failed;report.message=inspectionError;return report;
+    }
+    if(inspection==UnrecordedResourceState::ProvenEmpty) {
+        report.message="No active domain ownership; physical FIC artifacts and staging are proven absent";
+        return report;
+    }
 
     if (policy.moduleName == "IDENTITY_ACCESS" &&
         isSharedLoginDefsPolicy(policy)) {

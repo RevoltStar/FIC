@@ -77,6 +77,20 @@ A complete reverse Required-dependency plan is checked before release. Shared
 PAM/DE/DM owners form resource groups. A failed dependent blocks its prerequisite,
 while unrelated groups continue. Reports include per-policy status, mutation IDs,
 resource outcomes, retained active records and native provider/password details.
+
+SSH, SUDO and SYSCTL are optional managed resources, not installation
+prerequisites. With no active records anywhere in the corresponding backend,
+rollback inspects its physical ownership namespace, trusted ancestors, file
+identity/metadata and interrupted atomic staging. SUDO additionally inspects
+the include graph, detached sudoers.d fragments and historical proof paths;
+SSH also inspects historical resource paths. Only proven absence of owned
+state yields `NOTHING_TO_RELEASE` in rollback-all. An empty journal alone is
+insufficient. Unreadable, untrusted or orphan artifacts fail closed without
+adoption or journal changes. A no-op does not require visudo, sshd_config or
+foreign sysctl loader configuration to exist. Active ownership always uses
+the existing strict release/CAS path, even if the managed program was removed.
+No program is installed automatically to make rollback succeed. SYSCTL uses
+direct `/proc/sys` access and systemd-sysctl, not the optional procps utility.
 A failure does not disable any configured policy or discard its provenance.
 
 Administrative IPC uses the existing API version and framing. The new root-only

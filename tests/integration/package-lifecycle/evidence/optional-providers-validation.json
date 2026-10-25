@@ -1,0 +1,89 @@
+{
+  "source_base": "c7b598c4b717481a0d030a6ecb37ddf1955552e5",
+  "source_files_sha256": {
+    "fic/src/daemon/UninstallRollback.cpp": "624b9798a7e1bc369ae20cc46c122b24f64ecb8d64af1e036b122453c6fd6674",
+    "fic/src/modules/dac/sudo/SudoersAuthenticationTransaction.cpp": "27100f335958b763b4b137e7ef5dd5da1c8016e1b92d0e2d14dbef53ced645f1",
+    "fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp": "b74e16df3408ac337b45889d13e20a7cb158ed9383f0fdf6f0c77f9498fd9739",
+    "fic/src/modules/net/ssh/SshRollback.cpp": "d1235f6fe4d255df3341bb191569b0afb90f8b877848dd9899dffd83193d1e61",
+    "fic/src/modules/net/ssh/SshRollback.h": "e380f6569cb43c8e075e3df595529abe848ea9c2e88e6c45fa631e4daeb157ff",
+    "fic/src/modules/sysctl/SysctlConfiguration.cpp": "7f4ff2c5e104843caeb5ee0f9420e91a980afafc2b5d6b5ec34f40790a954eeb",
+    "fic/src/modules/sysctl/SysctlConfiguration.h": "6249275034ec0942f11e1931ea843bc57a151dd32a587ed545f3025d07018261",
+    "fic/src/modules/sysctl/SysctlRuntime.cpp": "524be58a68719cc20c64b08fa46fd2e40348d740de17ee8a50611d49152e2fc1",
+    "fic/src/rollback/MutationJournal.cpp": "50e683a1781bf5d16a1bf8241e03213937024f10386773ef9cf9afd243e594dd",
+    "fic/src/rollback/RollbackExecutor.cpp": "e374b4bfa797cc543ca1e733c572b10e6f6edc70959471ffaf7d54316d366227",
+    "fic/src/rollback/UnrecordedResourceInspection.cpp": "36165b06c4f7f38c12d0df95c82bdf6267889c1fcee62333ae97d48eea7e7cd8",
+    "fic/src/rollback/UnrecordedResourceInspection.h": "ba2c35592edbd645c69032018a8fff1a1aec699341e793ded2751523485269ea",
+    "packaging/deb/build-fic-debian12-deb.sh": "4236feb1afca8855c3d1408479c9746ece7ea91159f9a5bafe5c56deafaf3b33",
+    "tests/CMakeLists.txt": "b509f065258f8553e1d3900aedd44445e934c0e10571f9b744a50ecf8e52662f",
+    "tests/fic/rollback/RollbackExecutorTests.cpp": "0da4f413bed13b830196d91cdcd7cd7905893f2acdaa8450bdb1bb9b470bc3c8",
+    "tests/integration/package-lifecycle/Dockerfile.runtime-deb": "ec7c2cb68323d4203852b3eb744a03ce809602fd0004441d4d249767e81e96b3",
+    "tests/integration/package-lifecycle/OptionalOwnerFixture.cpp": "2a25565c458c77bf742e82d6a67c10c630cf68e10a44c026b48f55a829c88534",
+    "tests/integration/package-lifecycle/minimal_runtime_native.py": "dfd10d3ca382abbff5e1ddf2e86a84031ef2999554427420af41a71491de9501",
+    "tests/integration/package-lifecycle/run-deb.sh": "c63ec70031adcd5b234f92089d1a1eed9cf8fd68a7a3160600d9178b58ccd4c6",
+    "tests/integration/packaging/deb-binary-depends-test.sh": "a1517b4d65f59b2cf8448997421cb62e11882ba1ae2793809b9ffff37cd27754"
+  },
+  "build_images": [
+    "[fic-followup-build:debian12] sha256:421563e252d75774bf381e6f74e28733e3769cf9169b8fdb25222a6d128946a3",
+    "[fic-followup-build:debian13] sha256:acf31f5fafeb46247e38b16c7fb3e7cd20bf3d158a6029446813092f13d3cfad",
+    "[fic-deb-depends-build:ubuntu2404] sha256:6f7b74bdc7e2811ff16240134a6dbbb47f48118792d9c54a28df4596695d2c6d",
+    "[fic-followup-build:ubuntu2604] sha256:73cb2d7e926c9fe511f41c9ee4b7aec4d24fe753b6336cbdbfd2b5f1356eca02"
+  ],
+  "build_command": "docker run --rm --network none -v REPO:/src:ro -v MATCHING_CACHE:/build:rw MATCHING_BUILD_IMAGE bash /build-optional.sh PLATFORM",
+  "build_script": "set -euo pipefail\nplatform=$1\ncmake -S /src -B /build -DFIC_TARGET_PLATFORM=\"$platform\" -DFIC_PRODUCT_VERSION=0.1.1 -DFIC_BUILD_COMMIT=unknown -DFIC_RELEASE_TAG=none -DFIC_RELEASE_BUILD=OFF\ncmake --build /build --target fic fic-cli fic-dick fic-package-infrastructure pam_fic_access rollback_executor_tests optional_owner_fixture -j2\nctest --test-dir /build -R '^(rollback_executor_tests|deb_binary_depends_tests|pam_packaging_static_checks|prelogin_package_lifecycle_tests|platform_profile_static_checks)$' --output-on-failure\nexport BUILD_ROOT=/build DIST_DIR=/build/optional-packages FIC_PACKAGING_TARGET_PLATFORM=\"$platform\"\nsource /src/packaging/deb/build-fic-debian12-deb.sh 0.1.1\nmkdir -p \"$DIST_DIR\"\nbuild_fic_dick_package\nbuild_fic_package\nbuild_fic_cli_package\n",
+  "targeted_ctest_per_platform": "5/5 PASS: rollback_executor_tests, deb_binary_depends_tests, pam_packaging_static_checks, prelogin_package_lifecycle_tests, platform_profile_static_checks",
+  "other_direct_test_consumers_ubuntu2404": "4/4 PASS: sudo_scoped_defaults_lifecycle_tests, pam_password_wiring_tests, identity_login_defs_tests, identity_concrete_policies_tests",
+  "native_command": "bash tests/integration/package-lifecycle/run-deb.sh fic-optional-runtime:TAG CACHE/optional-packages minimal_runtime_native.py [CACHE/tests/optional_owner_fixture]",
+  "logs_sha256": {
+    "build-optional-uninstall/build-debian12.log": "3bcb20d715c22a6b5e92ac56daf3644c5c8a8464dce515ef40a9a1262449f492",
+    "build-optional-uninstall/build-debian13.log": "ff2734c85f4bf14036b4e0168494e43208e006d825018d674c6bd97bfd351c9c",
+    "build-optional-uninstall/build-ubuntu2404-final.log": "66631591bce00d288fdf1998024b9a206244d167ac5444346f9a851c547fa156",
+    "build-optional-uninstall/build-ubuntu2404.log": "217169aa5a1dda3020fd2c4783cef180531eab733af36b890696cafdf3e5506f",
+    "build-optional-uninstall/build-ubuntu2604.log": "00e99ebf8558743261f5b344cd8f9d3896b2d36363c2fa66d487fadba450ddcc",
+    "build-optional-uninstall/final-ctest-debian12.log": "4bd1e30bc2e0b2d27543a0fe136bada0f6e07e401cf12db48f480781bb080e70",
+    "build-optional-uninstall/final-ctest-debian13.log": "322e02eb95258fe065d1d449dc2575ea578e1473429ec57ef96c3bdcb78d73d0",
+    "build-optional-uninstall/final-ctest-ubuntu2404.log": "1afcc60c983797906caefcc54dc42c439faf8fad2a28e6c1ac33bad61bb57564",
+    "build-optional-uninstall/final-ctest-ubuntu2604.log": "1988c01979c90a26ddd340d4175f27338ef9f6329d6c9576229f3418915d5b03",
+    "build-optional-uninstall/fixture-ubuntu2404.log": "50298ef0f9c59afa272c678e0094c2f54529c5c3d08e9db6e1d2d5ed8cc92231",
+    "build-optional-uninstall/image-debian12.log": "d28d936bbf0210633e19f753f4779a67a29aee652bd46b8b51503526a0adbcbf",
+    "build-optional-uninstall/image-debian13.log": "d6de657587a6adc0f5b8bf530ad2dc14c1b7a89ab5d5a90b8bd5b25e54830493",
+    "build-optional-uninstall/image-ubuntu2404.log": "0b17263f95e688a21a4a6e249090caab439995f823a9c33a2cf91f6d9a81d213",
+    "build-optional-uninstall/image-ubuntu2604.log": "c581014a56a685848f3df0202865a909749feb7ba504f83796104bbf52e4edbf",
+    "build-optional-uninstall/native-debian12.log": "8527acac6a7518df860be31424ce56caf152528553cc619fa49c161ed1718962",
+    "build-optional-uninstall/native-debian13.log": "73d3cd224d865abac2a6841dab52896a0d5aba8a82dce49e0d211b5ae3ab06b5",
+    "build-optional-uninstall/native-ubuntu2404-clean.log": "84420c35d3bbb2e5e206ef7d6655e79ac4268da6666c57cc8497286e907b2817",
+    "build-optional-uninstall/native-ubuntu2404.log": "2363978d9d807460c58083700e7581b74184112d55bbcbb076480cf831f39359",
+    "build-optional-uninstall/native-ubuntu2604.log": "e4aa31dfd0dcd47ad5403193819de5904fbd1d498915f0383b59aa13d7976d57",
+    "build-optional-uninstall/ordinary-remove-debian12.log": "9df7b30e7f2a5ca2f2060aab34940ff238fa09c60fb4b4c1211e52af8536c8b6",
+    "build-optional-uninstall/ordinary-remove-debian13.log": "efc7338437ed365f07507a25b07121361ebdfe545589d934a60e78a913767f9a",
+    "build-optional-uninstall/ordinary-remove-ubuntu2404.log": "bac4cc2cba97a397377b45120dffb80c7e28c966152265614b4dd02dd6b758c2",
+    "build-optional-uninstall/ordinary-remove-ubuntu2604.log": "8e772b55011ed41c81f5bf23bbb0f23303eb7f3a87e08726038a66fa2fb41113",
+    "build-optional-uninstall/related-ubuntu2404.log": "c62ecfb9715a387842d761f225e9c66d597fbbbd9758348573ef2b70d4d59d2d"
+  },
+  "initial_failures": [
+    {
+      "log": "build-optional-uninstall/build-ubuntu2404.log",
+      "reason": "Initial inspection used Failed for orphan state; three old contract tests expected Unsupported. Corrected UnprovenOwnership projection; final 5/5 green. No weakening of refusal."
+    },
+    {
+      "log": "build-optional-uninstall/native-ubuntu2404.log",
+      "reason": "Base image contained procps. Optional packages now explicitly purged before runtime image preparation; all final runs prove package and executable absence."
+    }
+  ],
+  "validation": [
+    "Eight real native APT gates PASS on matching Debian12/13 Ubuntu24/26.",
+    "All five shipped ELF resolved and package status/audit/readiness passed.",
+    "Shell syntax, Python compilation, standalone Depends regression, git diff --check PASS."
+  ],
+  "unchanged_contracts": [
+    "MutationJournal schema/recovery/witness",
+    "apply",
+    "active backend rollback/CAS",
+    "daemon.lock/package lifecycle architecture"
+  ],
+  "limitations": [
+    "No full project build/CTest or new ALT native gate.",
+    "Seeded active records are valid API fixtures, not native optional-provider apply.",
+    "Readonly sys/proc-sys; no live SSH/real-user PAM/hardware enforcement claim.",
+    "Existing cooperative filesystem/privileged-writer boundary unchanged."
+  ]
+}

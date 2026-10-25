@@ -656,9 +656,7 @@ build_fic_package() {
     mkdir -p "$package_root/opt/fic/notify"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic")" || return 1
-    # Uninstall inspection needs these providers/configuration even without
-    # active ownership; ELF dependency discovery cannot infer script/tool data.
-    package_depends="$(join_depends "$binary_depends" "fic-dick (= ${PACKAGE_VERSION})" "libnotify-bin" "util-linux" "nftables" "libpam-runtime" "libpam-modules" "libpam-pwquality" "sudo" "procps" "openssh-server")"
+    package_depends="$(join_depends "$binary_depends" "fic-dick (= ${PACKAGE_VERSION})" "libnotify-bin" "util-linux" "nftables" "libpam-runtime" "libpam-modules" "libpam-pwquality")"
 
     write_control_file \
         "$package_root" \

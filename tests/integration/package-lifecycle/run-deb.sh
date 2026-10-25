@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # No runtime host mounts, ports or host namespaces; actual DEBs are copied in.
 set -euo pipefail
-[[ $# == 2 || $# == 3 ]] || { echo 'usage: run-deb.sh IMAGE PACKAGE_DIRECTORY [deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py]' >&2; exit 2; }
+[[ $# -ge 2 && $# -le 4 ]] || { echo 'usage: run-deb.sh IMAGE PACKAGE_DIRECTORY [DRIVER [OPTIONAL_OWNER_FIXTURE]]' >&2; exit 2; }
 driver=${3:-deb_native.py}
 case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py) ;; *) exit 2 ;; esac
+extra=()
+if [[ $# == 4 ]]; then
+    [[ "$driver" == minimal_runtime_native.py && -f "$4" ]] || exit 2
+    extra=(--optional-ownership)
+fi
 image=$1 packages=$(realpath "$2")
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 name="fic-deb-lifecycle-$$"
@@ -31,4 +36,5 @@ docker exec "$name" timeout 60 sh -c 'systemctl is-system-running --wait >/dev/n
 docker exec "$name" mkdir -p /var/tmp/fic-packages
 docker cp "$packages/." "$name:/var/tmp/fic-packages/"
 docker cp "$repo/tests/integration/package-lifecycle/$driver" "$name:/usr/local/bin/deb-native.py"
-docker exec "$name" python3 /usr/local/bin/deb-native.py
+if [[ $# == 4 ]]; then docker cp "$4" "$name:/usr/local/bin/optional-owner-fixture"; fi
+docker exec "$name" python3 /usr/local/bin/deb-native.py "${extra[@]}"

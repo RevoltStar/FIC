@@ -1159,6 +1159,13 @@ target_include_directories(mutation_journal_tests PRIVATE
 )
 target_link_libraries(mutation_journal_tests PRIVATE fic-core fic-policy Threads::Threads)
 add_test(NAME mutation_journal_tests COMMAND mutation_journal_tests)
+add_executable(optional_owner_fixture
+    integration/package-lifecycle/OptionalOwnerFixture.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp)
+target_include_directories(optional_owner_fixture PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(optional_owner_fixture PRIVATE fic-core fic-policy Threads::Threads)
 
 add_executable(rollback_executor_tests
     fic/rollback/RollbackExecutorTests.cpp
@@ -1170,6 +1177,7 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/UnrecordedResourceInspection.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoProviderCapabilities.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
@@ -1288,6 +1296,7 @@ add_executable(sudo_scoped_defaults_lifecycle_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/UnrecordedResourceInspection.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoProviderCapabilities.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
@@ -1768,6 +1777,7 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/UnrecordedResourceInspection.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoProviderCapabilities.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
@@ -2355,6 +2365,7 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/mode_and_owner/TcbCredentialTreeHandler.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/UnrecordedResourceInspection.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoProviderCapabilities.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
@@ -2475,6 +2486,7 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/RollbackExecutor.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/UnrecordedResourceInspection.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoProviderCapabilities.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp

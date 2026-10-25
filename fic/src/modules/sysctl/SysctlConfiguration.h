@@ -58,6 +58,9 @@ public:
     // source currently wins precedence (an external file may shadow the FIC
     // entry while the entry still exists and is FIC-owned).
     SysctlValueObservation inspectManagedValue(const std::string& key) const;
+    // Parse a securely captured dedicated artifact, without requiring the
+    // foreign boot loader's configuration or procps to be installed.
+    static bool inspectManagedSettings(const std::string& content, bool& present, std::string& error);
 
     // Rollback support: remove the FIC-managed entry for the given key from
     // the managed sysctl configuration. Ownership is determined by the

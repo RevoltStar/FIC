@@ -93,6 +93,6 @@ write_system_integration_symlink_prerm() { :; }
 analysis_case=success
 build_fic_package >/dev/null || fail 'valid package dependency metadata rejected'
 for provider in sudo procps openssh-server; do
-    grep -Eq "(^|, )$provider(,|$)" "$test_root/control-written" || fail "missing uninstall runtime provider: $provider"
+    if grep -Eq "(^|, )$provider([[:space:](,]|$)" "$test_root/control-written"; then fail "optional provider forced into Depends: $provider"; fi
 done
 echo 'DEB binary dependency tests passed'

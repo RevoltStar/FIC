@@ -1,27 +1,29 @@
 # Current workspace
 
 ## Current base
-* Branch main. A: 621910c (PAM domain classification and native retry). B is the accompanying final DEB runtime/provider validation commit. Earlier bases: ab0f47e strict dependency discovery; 752354c lifecycle; 50e0d04 historical rich-image gates. No push.
+* Branch main; base c7b598c4b717481a0d030a6ecb37ddf1955552e5. Current task is one follow-up commit; no push.
 
 ## Current task
-* Attachment68cebd90 follow-up completed: silent skip fixed; real before/partial infrastructure detach retry proved; final real DEBs install/remove/purge in minimal Debian12/13 and Ubuntu24/26. No next development stage authorized.
+* Remove c7b598c's forced sudo/openssh-server/procps dependencies and prove safe no-owner rollback/uninstall in minimal Debian12/13 and Ubuntu24/26.
 
 ## Accepted architecture / invariants
-* AGENTS17/docs/package-lifecycle.md unchanged: four states, daemon-owned policy release, infrastructure-only helper, daemon.lock, ownership/CAS/journal guarantees. No M1/runtime/finalizer/cancel/automatic restart/adoption.
-* Supported/NotApplicable/Error: only resolved native ALT passwdqc/static + pwhistory/TCB excludes C2. Missing capability/scope or unexpected topology is a FAILED PAM_PASSWORD JSON outcome.
-* DEB needs actual ELF dependencies plus sudo/procps/openssh-server for existing uninstall inspections. OpenSSH installation/activation follows distro rules; SSH release restrictions unchanged.
+* AGENTS17/docs/package-lifecycle.md: existing four-state lifecycle, daemon-owned release, infrastructure-only helper and daemon.lock remain. No new recovery, journal schema, adoption, force or automatic provider installation.
+* Only a healthy initialized journal/witness plus physical ownership/staging absence permits no-op. Active ownership uses unchanged strict rollback/CAS; unknown/untrusted physical state fails closed.
 
 ## Completed / changed areas
-* A daemon support classification, explicit JSON failure, unit/RED-GREEN and detach_retry_native.py. Real prerm failures after rollback/stop preserve UNINSTALLING/main payload/referenced PAM module; partial auth detach is real. Explicit obstruction repair + restricted interval1 restart/idempotent rollback and normal remove/purge pass, without restoring resources/config values. Manual commands are in docs/package-lifecycle.md.
-* B declares missing non-ELF providers, updates dependency regression and supplies separate minimal runtime Dockerfile/init/preparation/driver. Runtime fixture uses readonly /sys and /proc/sys BEFORE PID1, masks coldplug, allows native udev control/inventory via test-only condition overrides. No production unit is changed; this does not validate hardware enforcement.
-* All four final runtime gates PASS: APT actual Depends, no preinstalled Qt/devel, all 5 shipped ELF ldd, installed statuses/audit, both daemons, CLI/readiness, main remove, surviving helper proof, purge. Final retry rerun PASS in minimal Ubuntu24 on final archives.
-* Docs and compact evidence: docs/package-lifecycle-validation.md and tests/integration/package-lifecycle/evidence/followup-*.json. Archive/builder/ELF hashes, independent image identities, actual outputs/failures included. Native README gives reproduction commands.
+* DEB builder no longer requires sudo, openssh-server or procps. Audit: SysctlRuntime uses direct /proc/sys; profiles use systemd-sysctl; no core/runtime procps command calls found. Strict ELF dependency discovery retained.
+* Read-only UnrecordedResourceInspection for SSH/SUDO/SYSCTL checks the whole backend has no active records, trusted ancestors, bounded secure reads, single links and interrupted staging. SSH includes historical paths; SUDO includes current include graph, detached fragments and historical proof paths. SYSCTL reuses existing managed assignment grammar without parsing foreign loader files. Active release paths unchanged; SSH Prepared gate preserved.
+* rollback_all projects proven optional-backend no-ops as NOTHING_TO_RELEASE. Orphans are neither adopted nor deleted; failure preserves provenance/configuration.
+* Unit/dependency regressions and minimal native driver/runner extended. Test-only optional_owner_fixture seeds typed unresolved state via production journal API under lock, is not installed, and cannot perform rollback/recovery.
+* Docs/evidence: docs/package-lifecycle{,-validation}.md, packaging/deb/README.md, native README and evidence/optional-providers-*.json. Historical c7b598c evidence retained and its dependency workaround marked superseded.
 
 ## Validation
-* Native affected builds + 9 related CTest PASS on Debian12, Debian13, Ubuntu24, Ubuntu26; final packaging fix repack + 5 related CTest PASS per platform. Support regression rejects original logic (bool→enum adaptation only), fixed code GREEN; provider regression rejects previous Depends, fixed code GREEN.
-* Four real minimal APT install/readiness/remove/purge gates and final detach retry PASS. Bash/Python syntax/related static checks and git diff --check PASS. No new full project build/CTest claim.
-* Raw logs/evidence: build-package-followup/, build-package-lifecycle/native-* referenced by committed evidence. Current DEBs: build-env-full-debian12/followup-packages and build-recovery-policy/{debian13,ubuntu2404,ubuntu2604}/followup-packages.
+* Matching affected production builds + rollback_executor_tests/optional_owner_fixture and five focused CTest PASS on Debian12/13 Ubuntu24/26. Four other direct RollbackExecutor consumers build and CTest PASS on Ubuntu24 (SUDO scoped lifecycle, PAM wiring, identity login.defs/concrete).
+* Eight real minimal native APT gates PASS: four ordinary remove-from-INSTALLED/purge runs; four no-owner/physical/active negatives. All three optional packages/executables absent, all five shipped ELF resolve, daemons/readiness and configured package status/audit pass.
+* Negative gates reject orphan SSH/SUDO markers, SYSCTL staging, unsafe parent mode, hardlink and symlink without adoption. Fresh reinstall plus SSH/SUDO Prepared and drifted SYSCTL Applied fixture retains IDs/undo/config and blocks actual APT removal in UNINSTALLING. Clean remove/purge is proved before this retained negative state; no journal rewrite/reset to manufacture success.
+* Shell/Python syntax, standalone dependency regression and git diff --check PASS. Raw logs: build-optional-uninstall/; per-run container/commands/results: build-package-lifecycle/native-fic-optional-runtime:*. Source/archive/ELF/log/image digests in committed evidence.
 
 ## Remaining boundaries
-* No unresolved blocker for this follow-up. Initial udev-condition failures were a harness defect; missing sudo/SSH/sysctl prerequisites were packaging defects and fixed. Old three readiness-timeout root cause remains unproved; 30s limit untouched. No real-user PAM authentication, physical devices, graphical boot, live SSH continuity or physical reboot claim.
-* Podman absent, Docker used by existing user authorization. Disposable runtime containers are removed by runner; build/runtime images/caches retained for reproduction. Preserve unrelated six volumes. DOCKER_CONFIG=/tmp/fic-package-docker-config avoids missing Windows credential helper.
+* No task blocker. Active negative records are test-seeded production-API fixtures, not real optional-provider apply. No new full project build/CTest, ALT native matrix, live SSH, real-user PAM or hardware enforcement claim. Runtime /sys and /proc/sys read-only; native isolation does not prove physical enforcement. Existing cooperative locking cannot isolate arbitrary privileged external writers.
+* Initial Ubuntu procps assertion was base-image contamination; runtime fixture now purges preinstalled optional providers. Failed runs preserved separately. Earlier readiness-timeout root cause remains unproved and timeout unchanged.
+* Docker used by user authorization. Runtime containers removed by runner; build images/caches retained; unrelated volumes untouched. No host security/resource mutations.

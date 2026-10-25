@@ -196,7 +196,11 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
                         if(absent){results.push_back({{"policy",formatPolicyRef(ref)},{"status","NOTHING_TO_RELEASE"}});continue;}
                     }
                     const auto report=rollbackPolicyBeforeDisable(ref,resourceHint(*registry.findPolicy(ref)),deps);
-                    results.push_back({{"policy",formatPolicyRef(ref)},{"status",rollbackStatusToString(report.status)},{"message",report.message}});
+                    const bool optionalResource=ref.moduleName=="SYSCTL"||
+                        (ref.moduleName=="DAC"&&ref.submoduleName=="SudoEdit")||
+                        (ref.moduleName=="NET"&&ref.submoduleName=="SshEdit");
+                    results.push_back({{"policy",formatPolicyRef(ref)},{"status",optionalResource&&report.status==RollbackStatus::NothingToDo?
+                        "NOTHING_TO_RELEASE":rollbackStatusToString(report.status)},{"message",report.message}});
                     for(const auto& outcome:report.outcomes)
                         results.push_back({{"policy",formatPolicyRef(ref)},{"mutation_id",outcome.id},
                             {"resource",outcome.resource},{"status",rollbackStatusToString(outcome.status)},{"message",outcome.message}});

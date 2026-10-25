@@ -1859,6 +1859,7 @@ public:
 
     SshRollbackOptions options() const {
         SshRollbackOptions value;
+        value.enforceOwnership = false;
         value.configPath = configPath();
         value.includeBasePath = tree.root;
         value.serviceUnits = {"ssh.service", "sshd.service"};
@@ -2984,6 +2985,73 @@ void testKerberosExecutorDriftConflictRefusesDisable() {
 
 int runFirewallProvenanceTests(const std::string& scenario);
 
+void testOptionalResourcesRequirePhysicalAbsenceProof() {
+    TempJournal journal;
+    JournalOverride override(journal.tree.root / "mutations.json");
+    TempTree files("/tmp/fic-optional-resource-XXXXXX");
+    RollbackExecutorDeps deps;
+    SudoersConfigurationOptions sudo;
+    sudo.mainPath=files.root/"etc/sudoers";
+    sudo.managedPath=files.root/"etc/sudoers.d/99-fic.conf";
+    sudo.enforceOwnership=false;sudo.requireValidator=true;
+    sudo.validatorPath="/no-such-visudo";
+    deps.sudoersOptions=[sudo]{return sudo;};
+    const PolicyRef auth{"DAC","SudoEdit","sudo_require_authentication"};
+    require(rollbackPolicyBeforeDisable(auth,"",deps).status==RollbackStatus::NothingToDo,
+            "missing sudo with proven empty domain must not require installation");
+    writeFile(sudo.managedPath,"# FIC container=orphan\n");
+    require(!rollbackPolicyBeforeDisable(auth,"",deps).rollbackCompleted(),"orphan sudo container was skipped");
+    std::filesystem::remove(sudo.managedPath);
+    const auto fragment=sudo.managedPath.parent_path()/"foreign.backup";
+    writeFile(fragment,"#@FIC_SUDO_AUTH_BROKEN\n");
+    require(!rollbackPolicyBeforeDisable(auth,"",deps).rollbackCompleted(),"detached sudo wrapper was skipped");
+    std::filesystem::remove(fragment);
+    const auto staged=sudo.managedPath.parent_path()/".99-fic.conf.tmp.unfinished";
+    writeFile(staged,"");
+    require(!rollbackPolicyBeforeDisable(auth,"",deps).rollbackCompleted(),"empty staged sudo file was skipped");
+    std::filesystem::remove(staged);
+    writeFile(sudo.mainPath,"root ALL=(ALL:ALL) ALL\n@includedir "+sudo.managedPath.parent_path().string()+"\n");
+    require(rollbackPolicyBeforeDisable(auth,"",deps).status==RollbackStatus::NothingToDo,
+            "retained foreign sudoers must not require absent visudo for no-op");
+
+    SshRollbackOptions ssh;
+    ssh.enforceOwnership=false;ssh.configPath=files.root/"etc/ssh/sshd_config";
+    deps.sshOptions=[ssh]{return ssh;};
+    const PolicyRef port{"NET","SshEdit","ssh_port"};
+    require(rollbackPolicyBeforeDisable(port,"Port",deps).status==RollbackStatus::NothingToDo,
+            "missing SSH domain was not proven empty");
+    writeFile(ssh.configPath,"Port 22\n");
+    require(rollbackPolicyBeforeDisable(port,"Port",deps).status==RollbackStatus::NothingToDo,
+            "foreign config without sshd is not owned");
+    writeFile(ssh.configPath,"#@FIC_POLICY_BEGIN name=future_policy\n");
+    require(!rollbackPolicyBeforeDisable(port,"Port",deps).rollbackCompleted(),"unknown SSH orphan was skipped");
+    std::filesystem::remove(ssh.configPath);
+    const auto sshTemp=ssh.configPath.parent_path()/".sshd_config.tmp.pending";
+    writeFile(sshTemp,"");
+    require(!rollbackPolicyBeforeDisable(port,"Port",deps).rollbackCompleted(),"staged SSH artifact was skipped");
+    std::filesystem::remove(sshTemp);
+    std::filesystem::remove(ssh.configPath.parent_path());
+    std::filesystem::create_directory_symlink(files.root/"missing",ssh.configPath.parent_path());
+    require(!rollbackPolicyBeforeDisable(port,"Port",deps).rollbackCompleted(),"dangling parent alias was treated as absence");
+    std::filesystem::remove(ssh.configPath.parent_path());
+
+    SysctlConfigurationOptions sysctl;
+    sysctl.enforceOwnership=false;
+    sysctl.platform.managedConfigPath=files.root/"etc/sysctl.d/zzzz-fic.conf";
+    sysctl.directories={sysctl.platform.managedConfigPath.parent_path()};
+    deps.sysctlOptions=[sysctl]{return sysctl;};
+    std::filesystem::create_directories(sysctl.directories.front());
+    std::filesystem::create_symlink(files.root/"missing-sysctl.conf",sysctl.directories.front()/"99-sysctl.conf");
+    const PolicyRef kernel{"SYSCTL","Global","swappiness_policy"};
+    require(rollbackPolicyBeforeDisable(kernel,"vm.swappiness",deps).status==RollbackStatus::NothingToDo,
+            "unowned SYSCTL must not need foreign procps configuration");
+    writeFile(sysctl.platform.managedConfigPath,"future.unknown = 1\n");
+    require(!rollbackPolicyBeforeDisable(kernel,"vm.swappiness",deps).rollbackCompleted(),"unknown managed SYSCTL key was skipped");
+    std::filesystem::remove(sysctl.platform.managedConfigPath);
+    writeFile(sysctl.directories.front()/".zzzz-fic.conf.tmp.pending","");
+    require(!rollbackPolicyBeforeDisable(kernel,"vm.swappiness",deps).rollbackCompleted(),"staged SYSCTL artifact was skipped");
+}
+
 int main(int argc, char** argv) {
     if (argc == 3 && std::string(argv[1]) == "--firewall-provenance")
         return runFirewallProvenanceTests(argv[2]);
@@ -3046,6 +3114,7 @@ int main(int argc, char** argv) {
          testModeAndOwnerProductionDisableFlowIsReleaseOnly},
         {"authentication production disable and requested-state guard", testAuthenticationProductionDisable},
         {"unsupported policy refuses disable", testUnsupportedPolicyRefusesDisable},
+        {"optional resources require physical absence proof", testOptionalResourcesRequirePhysicalAbsenceProof},
         {"sysctl rollback removes managed key and moves runtime",
          testSysctlRollbackRemovesManagedKeyAndMovesRuntime},
         {"sysctl rollback conflict on drift", testSysctlRollbackConflictOnDrift},
