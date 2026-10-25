@@ -1,0 +1,83 @@
+{
+  "source_base": "5a16b7ddfdf75f50bc9262225bdb0e9a90304ef9",
+  "source_sha256": {
+    "fic/src/daemon/UninstallRollback.cpp": "c25d3d4eff8cbc30303b2e8ad48860f05d86cee47219c26f26a031a142cc6ed9",
+    "fic/src/rollback/UnrecordedResourceInspection.cpp": "a973494c6922dcaebfe5962df793d868e2da297f83fd3e2c3ae4bdc93e6afb01",
+    "fic/src/rollback/UnrecordedResourceInspection.h": "e680688c35a9d6f3730a3fcf4b0422b1d36b41d06ccba8ada9b023f606a1b04b",
+    "tests/fic/rollback/RollbackExecutorTests.cpp": "ee80bf12281624f1d1443e9767a357f7e39a7703ff7ed451a8ef2989499f79d1",
+    "tests/integration/package-lifecycle/OptionalOwnerFixture.cpp": "cb96d5c7a4910c64813dd2be442c9b16d59cf70f195516e5092b137e07e9c6c5",
+    "tests/integration/package-lifecycle/minimal_runtime_native.py": "43dd648662d5ad0974ba574d545a17e1e79241855a962c402da2270b0c98d010"
+  },
+  "unchanged_contract_files_sha256": {
+    "fic/src/rollback/MutationJournal.cpp": "50e683a1781bf5d16a1bf8241e03213937024f10386773ef9cf9afd243e594dd",
+    "fic/src/modules/sysctl/SysctlConfiguration.cpp": "7f4ff2c5e104843caeb5ee0f9420e91a980afafc2b5d6b5ec34f40790a954eeb",
+    "fic/src/modules/net/ssh/SshRollback.cpp": "d1235f6fe4d255df3341bb191569b0afb90f8b877848dd9899dffd83193d1e61",
+    "fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp": "b74e16df3408ac337b45889d13e20a7cb158ed9383f0fdf6f0c77f9498fd9739",
+    "packaging/deb/build-fic-debian12-deb.sh": "4236feb1afca8855c3d1408479c9746ece7ea91159f9a5bafe5c56deafaf3b33"
+  },
+  "build_script": "set -euo pipefail\nplatform=$1\ncmake -S /src -B /build -DFIC_TARGET_PLATFORM=\"$platform\" -DFIC_PRODUCT_VERSION=0.1.1 -DFIC_BUILD_COMMIT=unknown -DFIC_RELEASE_TAG=none -DFIC_RELEASE_BUILD=OFF\ncmake --build /build --target fic fic-cli fic-dick fic-package-infrastructure pam_fic_access rollback_executor_tests optional_owner_fixture -j2\nctest --test-dir /build -R '^(rollback_executor_tests|deb_binary_depends_tests|pam_packaging_static_checks|prelogin_package_lifecycle_tests|platform_profile_static_checks)$' --output-on-failure\nexport BUILD_ROOT=/build DIST_DIR=/build/final-proof-packages FIC_PACKAGING_TARGET_PLATFORM=\"$platform\"\nsource /src/packaging/deb/build-fic-debian12-deb.sh 0.1.1\nmkdir -p \"$DIST_DIR\"\nbuild_fic_dick_package\nbuild_fic_package\nbuild_fic_cli_package\n",
+  "build_images": [
+    "[fic-followup-build:debian12] sha256:421563e252d75774bf381e6f74e28733e3769cf9169b8fdb25222a6d128946a3",
+    "[fic-followup-build:debian13] sha256:acf31f5fafeb46247e38b16c7fb3e7cd20bf3d158a6029446813092f13d3cfad",
+    "[fic-deb-depends-build:ubuntu2404] sha256:6f7b74bdc7e2811ff16240134a6dbbb47f48118792d9c54a28df4596695d2c6d",
+    "[fic-followup-build:ubuntu2604] sha256:73cb2d7e926c9fe511f41c9ee4b7aec4d24fe753b6336cbdbfd2b5f1356eca02"
+  ],
+  "focused_ctest": "5/5 on each Debian12/13 Ubuntu24/26; four other direct consumers 4/4 on Ubuntu24",
+  "native": "Four expanded real rollback_all/repair/remove/purge + four ordinary remove-from-INSTALLED/purge PASS; no sudo, SSH or procps installed.",
+  "unit_mixed_cases": [
+    "SSH recorded A + structured orphan B; strict release, final refusal, explicit repair, valid last container release",
+    "SUDO global owner A + detached wrapper B; release removes last container, final refuses B, explicit repair permits retry",
+    "SYSCTL A + unknown B; release retires A and retains B; empty/header-only refusal and valid last key deletion"
+  ],
+  "red": {
+    "raw_evidence": "build-package-lifecycle/native-fic-optional-runtime:ubuntu2404-20261025T134427Z-80220",
+    "raw_commands_sha256": "9fc7dab3b9a2aa347c0e62ec1947a64e169bbc7213c2e9584abf9afc012a0078",
+    "rollback_ok": [
+      true,
+      true
+    ],
+    "cause": "Actual 5a16b7d packages falsely return ok=true for existing empty SYSCTL file; new driver correctly fails."
+  },
+  "initial_fixture_failure": "Active strict rollback rejected a dangling 99-sysctl.conf after procps removal. Final fixture supplies a valid foreign baseline equal to readonly runtime, verifies bytes unchanged and restores it. No production weakening.",
+  "logs_sha256": {
+    "build-final-release-proof/build-debian12.log": "a0ceeb471b4a53f065d68267e0068bbd4484f03df777a21ffcb8265f12b9de13",
+    "build-final-release-proof/build-debian13.log": "0ae7085c8f8666d7a3ef8b4bdf2c91aab4194cbf7e48cc46bbe408e77fd8b6c3",
+    "build-final-release-proof/build-ubuntu2404.log": "8a9817622b03a0307981fcee980d0f98ab2abea3ff78d1d258a9d6e65a88a6e0",
+    "build-final-release-proof/build-ubuntu2604.log": "49a188c441703bb6df931d1fcfbf6800d9cd7fae571fbe81f5221e113995c321",
+    "build-final-release-proof/final-ctest-debian12.log": "3037f6a2b23caabaa7196a9eb2bf87a7883f38ae56ad44da94901f1a028d33c3",
+    "build-final-release-proof/final-ctest-debian13.log": "665369425dc2248a492b8b92b71c2394c320b8cf71f173e46fbdf61990e03ac7",
+    "build-final-release-proof/final-ctest-ubuntu2404.log": "e024b5a5a18c1158c5f807a0b83ae7122681fa9b07abe376e447cb321fed714b",
+    "build-final-release-proof/final-ctest-ubuntu2604.log": "15dd77aa078895206ca135a3a5ebabfcc86a6d8aabe64d4feaf912791b63f68d",
+    "build-final-release-proof/image-debian12.log": "e893e9af04d45c7d4027ce821d83e4f6b164f37e2140fa352dd744fa04490d21",
+    "build-final-release-proof/image-debian13.log": "475b1651ff4f3913a7be8601a2839fc883647dcec3d4d450817ad7cd54f7e0db",
+    "build-final-release-proof/image-ubuntu2404.log": "097c057de32c32cacb34e66e0a0b3c2da4fd444062d2884aac2d3636599fd51c",
+    "build-final-release-proof/image-ubuntu2604.log": "444fa10b91474c70ba2c3569006da3b0f28dc57867365a462d7cb59c924c4a87",
+    "build-final-release-proof/native-debian12-final.log": "b5b2fef8ac7ca6e3449ed4ef0e4492ac0e55728918af29272627a19b45efe87e",
+    "build-final-release-proof/native-debian12.log": "f53de0a865c83195870508739e320e1c4befeafa35a058e8a059ca98d59e785b",
+    "build-final-release-proof/native-debian13-final.log": "5a92f5c4459e61e2412e8f998cb8349061c5e518a31f346ba11d668836d67b63",
+    "build-final-release-proof/native-debian13.log": "a1681d54887a243cc01c84dd4acffa88d19e0a703ed28d61d3b7d260860294d0",
+    "build-final-release-proof/native-ubuntu2404-final.log": "018eaa31479a514cd0bf28a5fe2b907f49ef9b621cb6c9769d1de772463c0a51",
+    "build-final-release-proof/native-ubuntu2404-fixed-fixture.log": "9aacaab271c360f562768c65f91de2446b7f1b594cf0a19420765e52cb0206b0",
+    "build-final-release-proof/native-ubuntu2404.log": "3ab94f05cf48b0900759b9adbecbfd8636b5ee3e4afc9646c5fac645477e3681",
+    "build-final-release-proof/native-ubuntu2604-final.log": "bbe081df6726ee1d094f8746f85ece0cf3f333b949ba6bd1de779d78d0ebb454",
+    "build-final-release-proof/ordinary-debian12.log": "0eb84ce7ef5943a3c2652ceb94703a63d9667a4f5770515af0554f7f7f70b61e",
+    "build-final-release-proof/ordinary-debian13.log": "beeeca2ea1578fda1d5f54389b2054893733a130967bdfe823b94e2c7faacc02",
+    "build-final-release-proof/ordinary-ubuntu2404.log": "294929c6fe95d8350f8eac8650cfb1118f21827d4ce641089a07438034f1e8b8",
+    "build-final-release-proof/ordinary-ubuntu2604.log": "0fee70c1425cd5d73a68b2b1fff67bdd1ada7f66614d62dbec7a1bb8600bfa1d",
+    "build-final-release-proof/red-native-ubuntu2404.log": "b27f217b703b14888c5dace778db63ceedfca938e0a1c21568b56a7d8e9f68af",
+    "build-final-release-proof/related-ubuntu2404.log": "e21811b27c5eba7313dc9de087e85c3509e03d114ea612b90f00660d56bac963"
+  },
+  "validation": [
+    "Affected builds and related CTest",
+    "Python compilation and shell syntax",
+    "git diff --check",
+    "No diff in MutationJournal, ordinary active release/apply, dependencies"
+  ],
+  "limits": [
+    "No full project build/CTest or full upgrade/abort/override/PAM-detach repeat; package lifecycle scripts/dependencies unchanged.",
+    "Native mixed A/B is SYSCTL; SSH/SUDO use production backend unit tests with command fixtures.",
+    "Seeded production API journal fixtures do not prove real provider apply.",
+    "Readonly /sys and /proc/sys; no real-user PAM/live SSH/hardware enforcement/ALT native claim.",
+    "Existing cooperative locking/privileged external writer boundary unchanged."
+  ]
+}

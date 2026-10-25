@@ -182,6 +182,50 @@ FIC locking; it does not claim atomic isolation from arbitrary privileged
 external filesystem writers. No MutationJournal schema/recovery, apply, active
 release algorithm or package-lifecycle architecture was changed.
 
+### Follow-up: final physical proof and empty SYSCTL artifacts
+
+The prior optional-program gate did not cover empty managed SYSCTL files or
+mixed recorded/unrecorded ownership. Assignment inventory was incorrectly
+used as artifact-absence proof; additionally, a per-policy inspection could
+defer while another owner was active without a final backend sweep after
+that owner retired.
+
+Bulk uninstall now uses strict physical SYSCTL preflight (no false per-policy
+NOTHING_TO_RELEASE for empty/header-only files) and a final read-only
+SSH/SUDO/SYSCTL sweep using the existing inspector after recorded releases.
+Unprovable/orphan artifacts report FINAL_PHYSICAL_PROOF/FAILED and overall
+ok=false. Remaining active records keep original errors. Ordinary disable,
+apply, active release/CAS, MutationJournal and package dependencies are unchanged.
+
+Targeted native real-package gates were repeated on Debian12/13 and
+Ubuntu24/26. Each rejects empty/header-only SYSCTL files, orphan/metadata/staging
+faults, and releases a typed SYSCTL Applied A while retaining unknown B. The
+final proof must fail with no active A; after explicit test-admin removal of B,
+retry succeeds. Desired config and foreign baseline bytes remain unchanged.
+Clean remove/purge and the previous active-record refusal gates also pass,
+without sudo/openssh-server/procps. A valid foreign sysctl baseline is supplied
+only for the mixed active fixture: procps-free bases may retain a dangling
+99-sysctl.conf and strict active rollback correctly refuses such a loader graph.
+Its test value equals readonly runtime; no kernel mutation is needed. The
+fixture baseline is verified unchanged and restored before removal.
+
+Unit regression additionally covers SSH A plus structured unknown B and SUDO A
+plus detached wrapper B: recorded A releases, orphan bytes remain, final proof
+refuses, and explicit repair permits retry. Valid last-owner SYSCTL/SUDO file
+deletion and last SSH container removal pass final inspection. Five focused
+CTest pass on each platform and four other direct consumers pass on Ubuntu24.
+A native RED run with the actual 5a16b7d packages confirms the empty-file false
+success; the new gate rejects that result. Evidence is in
+`tests/integration/package-lifecycle/evidence/final-physical-*.json`.
+
+This is a targeted repeat with real rollback_all and real APT install/remove/
+purge, not a full rerun of upgrade/abort/PAM-detach/override matrices: their
+scriptlets, dependency metadata and lifecycle architecture did not change.
+Native mixed A/B coverage is SYSCTL; SSH/SUDO mixed release uses production
+backends with deterministic command fixtures in CTest. No real-user PAM/live
+SSH/hardware enforcement or full-project CTest claim. Active fixtures are
+seeded via production journal API, not proof of actual provider apply.
+
 ## Proven scenarios and limits
 
 ### Follow-up: password-domain classification and detach retry

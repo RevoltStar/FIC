@@ -2,6 +2,7 @@
 #include "modules/dac/sudo/SudoersAuthenticationGrammar.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
+#include "rollback/UnrecordedResourceInspection.h"
 #include "rollback/PamRollback.h"
 #include "daemon/PolicyDisableFlow.h"
 
@@ -2985,6 +2986,89 @@ void testKerberosExecutorDriftConflictRefusesDisable() {
 
 int runFirewallProvenanceTests(const std::string& scenario);
 
+// Exercise the same final bulk proof used by rollback_all after real recorded
+// releases. Other domains point at absent paths inside this test's own tree.
+UnrecordedResourceState finalDomain(const std::string& domain, RollbackExecutorDeps deps,
+                                    const std::filesystem::path& root) {
+    if(!deps.sshOptions)deps.sshOptions=[root]{SshRollbackOptions o;o.enforceOwnership=false;o.configPath=root/"absent/sshd_config";return o;};
+    if(!deps.sudoersOptions)deps.sudoersOptions=[root]{SudoersConfigurationOptions o;o.enforceOwnership=false;o.mainPath=root/"absent/sudoers";o.managedPath=root/"absent/sudoers.d/99-fic.conf";return o;};
+    if(!deps.sysctlOptions)deps.sysctlOptions=[root]{SysctlConfigurationOptions o;o.enforceOwnership=false;o.platform.managedConfigPath=root/"absent/sysctl.d/zzzz-fic.conf";return o;};
+    std::string error;auto* journal=DaemonMutationJournal::instance().tryGet(error);require(journal,error);
+    for(const auto& proof:inspectReleasedOptionalResources(deps,*journal))
+        if(proof.domain==domain)return proof.state;
+    throw std::runtime_error("missing final domain");
+}
+void testFinalSysctlPhysicalArtifactProof() {
+    TempJournal j;JournalOverride override(j.tree.root/"journal.json");SysctlTree tree;
+    const auto path=tree.options().platform.managedConfigPath;
+    require(finalDomain("SYSCTL",tree.deps(),tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"absent SYSCTL must pass");
+    for(const auto& bytes:std::vector<std::string>{"","# Managed by FIC. Manual changes may be overwritten.\n","unknown.key = 1\n","invalid line\n"}) {
+        writeFile(path,bytes);
+        require(finalDomain("SYSCTL",tree.deps(),tree.tree.root)!=UnrecordedResourceState::ProvenEmpty,"existing SYSCTL orphan falsely released");
+        require(readFile(path)==bytes,"final inspection changed orphan bytes");
+    }
+    std::filesystem::remove(path);
+    tree.createManagedValue("vm.swappiness","10");
+    const auto id=recordApplied(kSysctlPolicy,"vm.swappiness",sysctlUndo("10"));
+    require(rollbackPolicyBeforeDisable(kSysctlPolicy,"vm.swappiness",tree.deps()).rollbackCompleted(),"last SYSCTL release failed");
+    require(!std::filesystem::exists(path),"last SYSCTL owner must delete file");
+    require(finalDomain("SYSCTL",tree.deps(),tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"valid last-owner deletion rejected");
+    require([&]{std::string e;auto* journal=DaemonMutationJournal::instance().tryGet(e);return journal&&journal->records().back().id==id;}(),"journal identity changed");
+}
+void testFinalMixedSysctlOwnership() {
+    TempJournal j;JournalOverride override(j.tree.root/"journal.json");SysctlTree tree;
+    tree.createManagedValue("vm.swappiness","10");
+    tree.createManagedValue("unknown.orphan","7");
+    const auto path=tree.options().platform.managedConfigPath;
+    const auto id=recordApplied(kSysctlPolicy,"vm.swappiness",sysctlUndo("10"));
+    require(finalDomain("SYSCTL",tree.deps(),tree.tree.root)==UnrecordedResourceState::Continue,"active owner must use strict rollback");
+    require(rollbackPolicyBeforeDisable(kSysctlPolicy,"vm.swappiness",tree.deps()).rollbackCompleted(),"recorded SYSCTL release failed");
+    const auto bytes=readFile(path);require(bytes.find("unknown.orphan = 7")!=std::string::npos&&bytes.find("vm.swappiness")==std::string::npos,"orphan/owner bytes incorrect");
+    require(finalDomain("SYSCTL",tree.deps(),tree.tree.root)==UnrecordedResourceState::UnprovenOwnership,"mixed orphan skipped after release");
+    require(readFile(path)==bytes,"orphan changed by final proof");
+    std::string error;auto* journal=DaemonMutationJournal::instance().tryGet(error);
+    require(journal&&journal->activeRecords(kSysctlPolicy).empty()&&journal->records().back().id==id,"recorded owner not resolved");
+    std::filesystem::remove(path); // explicit administrator repair, never adoption
+    require(finalDomain("SYSCTL",tree.deps(),tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"repaired SYSCTL retry failed");
+}
+void testFinalMixedSshOwnership() {
+    TempJournal j;JournalOverride override(j.tree.root/"journal.json");SshTree tree;
+    writeFile(tree.configPath(),"# foreign bytes\n");
+    const PolicyRef owner{"NET","SshEdit","ssh_port"};
+    const auto undo=tree.applyMutation("ssh_port","Port","2222");
+    tree.recordMutation(owner,tree.sshResource(),undo);
+    tree.applyMutation("future_orphan","MaxSessions","7");
+    require(rollbackPolicyBeforeDisable(owner,"Port",tree.deps()).rollbackCompleted(),"recorded SSH release failed");
+    const auto bytes=readFile(tree.configPath());
+    require(bytes.find("future_orphan")!=std::string::npos&&bytes.find("ssh_port")==std::string::npos,"SSH orphan/owner bytes incorrect");
+    require(finalDomain("SSH",tree.deps(),tree.tree.root)==UnrecordedResourceState::UnprovenOwnership,"SSH orphan skipped after recorded release");
+    require(readFile(tree.configPath())==bytes,"SSH final proof changed foreign/orphan bytes");
+    std::string error;auto* journal=DaemonMutationJournal::instance().tryGet(error);require(journal&&journal->activeRecords(owner).empty(),error);
+    writeFile(tree.configPath(),"# foreign bytes\n");
+    require(finalDomain("SSH",tree.deps(),tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"SSH repaired retry failed");
+    const auto last=tree.applyMutation("ssh_port","Port","2222");
+    tree.recordMutation(owner,tree.sshResource(),last);
+    require(rollbackPolicyBeforeDisable(owner,"Port",tree.deps()).rollbackCompleted(),"last SSH owner release failed");
+    require(finalDomain("SSH",tree.deps(),tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"valid released SSH container rejected");
+    require(readFile(tree.configPath())=="# foreign bytes\n","last SSH release changed foreign bytes");
+}
+void testFinalMixedSudoOwnership() {
+    TempJournal j;JournalOverride override(j.tree.root/"journal.json");SudoersTree tree;
+    const auto options=tree.options("Defaults passwd_tries=2");
+    const auto id=applySudoFixture(options,kSudoPolicy,"passwd_tries","Defaults passwd_tries=3","3");
+    const auto detached=options.managedPath.parent_path()/"detached.backup";
+    const std::string orphan="#@FIC_SUDO_AUTH_ORPHAN\n";writeFile(detached,orphan);
+    require(rollbackPolicyBeforeDisable(kSudoPolicy,"passwd_tries",tree.deps("")).rollbackCompleted(),"recorded SUDO release failed");
+    require(!std::filesystem::exists(options.managedPath),"last SUDO container was not deleted");
+    const auto foreign=readFile(options.mainPath);
+    require(finalDomain("SUDO",tree.deps(""),tree.tree.root)!=UnrecordedResourceState::ProvenEmpty,"detached SUDO orphan skipped");
+    require(readFile(detached)==orphan&&readFile(options.mainPath)==foreign,"SUDO final proof changed bytes");
+    std::string error;auto* journal=DaemonMutationJournal::instance().tryGet(error);
+    require(journal&&journal->activeRecords(kSudoPolicy).empty()&&journal->records().back().id==id,"SUDO recorded owner not resolved");
+    std::filesystem::remove(detached);
+    require(finalDomain("SUDO",tree.deps(""),tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"valid released SUDO container rejected");
+}
+
 void testOptionalResourcesRequirePhysicalAbsenceProof() {
     TempJournal journal;
     JournalOverride override(journal.tree.root / "mutations.json");
@@ -3114,6 +3198,10 @@ int main(int argc, char** argv) {
          testModeAndOwnerProductionDisableFlowIsReleaseOnly},
         {"authentication production disable and requested-state guard", testAuthenticationProductionDisable},
         {"unsupported policy refuses disable", testUnsupportedPolicyRefusesDisable},
+        {"final SYSCTL artifact proof",testFinalSysctlPhysicalArtifactProof},
+        {"final mixed SYSCTL ownership",testFinalMixedSysctlOwnership},
+        {"final mixed SSH ownership",testFinalMixedSshOwnership},
+        {"final mixed SUDO ownership",testFinalMixedSudoOwnership},
         {"optional resources require physical absence proof", testOptionalResourcesRequirePhysicalAbsenceProof},
         {"sysctl rollback removes managed key and moves runtime",
          testSysctlRollbackRemovesManagedKeyAndMovesRuntime},

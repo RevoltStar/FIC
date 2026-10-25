@@ -89,6 +89,23 @@ insufficient. Unreadable, untrusted or orphan artifacts fail closed without
 adoption or journal changes. A no-op does not require visudo, sshd_config or
 foreign sysctl loader configuration to exist. Active ownership always uses
 the existing strict release/CAS path, even if the managed program was removed.
+Bulk uninstall additionally performs a final read-only SSH/SUDO/SYSCTL physical
+proof after attempting recorded releases. Per-owner success is provisional:
+a remaining orphan, including unknown markers/keys, detached fragments,
+historical paths or staging, makes the overall result fail. The report names
+the domain and `phase=FINAL_PHYSICAL_PROOF`; summary includes
+`final_physical_failed`. If active ownership remains, its original rollback
+error/ACTIVE_RECORD_REMAINS is retained instead of inventing a no-op.
+
+For SYSCTL, absence of assignments is not proof of artifact absence. Uninstall
+rejects even an empty or header-only managed file without active ownership;
+it neither deletes nor adopts it. The existing last-owner rollback deletes
+the file. SUDO's last global owner likewise deletes its inert container after
+durable include release; incomplete intermediate containers are not acceptable
+released state. Ordinary apply and policy disable semantics remain unchanged.
+Explicit administrator repair of an orphan permits an idempotent retry once
+all other physical and provenance checks pass.
+
 No program is installed automatically to make rollback succeed. SYSCTL uses
 direct `/proc/sys` access and systemd-sysctl, not the optional procps utility.
 A failure does not disable any configured policy or discard its provenance.

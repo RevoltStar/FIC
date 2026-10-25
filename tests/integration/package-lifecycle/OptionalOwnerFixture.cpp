@@ -9,7 +9,7 @@
 #include <cstdlib>
 #include <unistd.h>
 #include <sys/stat.h>
-int main(){
+int main(int argc,char** argv){
     using namespace fic::rollback;
     const char* flag=std::getenv("FIC_PACKAGE_LIFECYCLE_NATIVE");
     const char* hostNamespace=std::getenv("FIC_HOST_MNT_INODE");
@@ -30,6 +30,14 @@ int main(){
         }
         std::cout<<id<<' '<<formatPolicyRef(policy)<<'\n';return true;
     };
+    if(argc==2&&std::string(argv[1])=="--mixed-sysctl") {
+        std::filesystem::create_directories("/etc/sysctl.d");
+        std::ofstream("/etc/sysctl.d/zzzz-fic.conf")
+            <<"# Managed by FIC. Manual changes may be overwritten.\nnet.ipv4.tcp_syncookies = 1\nunknown.orphan = 7\n";
+        return seed({"SYSCTL","network_kernel_protection","tcp_syncookies_enable"},"net.ipv4.tcp_syncookies",
+            {MutationBackend::Sysctl,UndoRemoveManagedSetting{"net.ipv4.tcp_syncookies","1"}},true)?0:1;
+    }
+    if(argc!=1)return 2;
     if(!seed({"NET","SshEdit","ssh_port"},"ssh:/etc/ssh/sshd_config:Port",
         {MutationBackend::Ssh,UndoRemoveSshManagedPolicy{"ssh_port","Port","2222",{}}},false))return 1;
     if(!seed({"DAC","SudoEdit","sudo_passwd_tries"},"passwd_tries",

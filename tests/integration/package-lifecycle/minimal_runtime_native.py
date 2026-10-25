@@ -114,6 +114,16 @@ if negative_mode:
     assert request('prepare_uninstall')['ok']
     assert_empty_report(request('rollback_all'))
     assert not active()
+    managed=Path('/etc/sysctl.d/zzzz-fic.conf')
+    managed.parent.mkdir(parents=True,exist_ok=True)
+    for content in ('','# Managed by FIC. Manual changes may be overwritten.\n'):
+        assert not managed.exists();managed.write_text(content)
+        rejected=request('rollback_all');assert not rejected['ok'] and not active(),rejected
+        assert not any(row.get('policy','').startswith('SYSCTL:') and row['status']=='NOTHING_TO_RELEASE' for row in rejected['results']),rejected
+        assert any(row.get('domain')=='SYSCTL' and row.get('phase')=='FINAL_PHYSICAL_PROOF' and row['status']=='FAILED' for row in rejected['results']),rejected
+        assert managed.read_text()==content and config()==configured
+        managed.unlink()  # explicit administrative removal of test-only orphan
+    assert_empty_report(request('rollback_all'))
     ssh=Path('/etc/ssh/sshd_config');sudo=Path('/etc/sudoers.d/detached.backup')
     staged=Path('/etc/sysctl.d/.zzzz-fic.conf.tmp.interrupted')
     for p in (ssh,sudo,staged):p.parent.mkdir(parents=True,exist_ok=True);assert not p.exists()
@@ -136,6 +146,30 @@ if negative_mode:
         assert any(row.get('policy','').startswith(prefix) and row['status'] not in ('NOTHING_TO_RELEASE','success') for row in rejected['results']),prefix
     managed_sudo.unlink();managed_sysctl.unlink();outside.unlink();ssh.parent.chmod(original_mode)
     assert_empty_report(request('rollback_all'));assert config()==configured
+    # Real rollback_all: resolve recorded A, retain unrecorded B, reject the
+    # final physical proof, then retry after explicit test-administrator repair.
+    # procps-free bases can have a dangling 99-sysctl.conf. Active rollback
+    # correctly requires a valid loader graph. Supply a foreign test baseline
+    # equal to runtime so this readonly-kernel gate needs no sysctl writes.
+    foreign=Path('/etc/sysctl.conf');foreign_before=foreign.read_bytes() if foreign.exists() else None
+    current=Path('/proc/sys/net/ipv4/tcp_syncookies').read_text().strip()
+    foreign_test=(foreign_before or b'')+b'\n# native mixed ownership fixture\nnet.ipv4.tcp_syncookies = '+current.encode()+b'\n'
+    foreign.write_bytes(foreign_test)
+    run(['systemctl','stop','fic.service'])
+    run(['/usr/local/bin/optional-owner-fixture','--mixed-sysctl'])
+    mixed=active();assert len(mixed)==1,mixed
+    run(['systemctl','start','fic.service'])
+    rejected=request('rollback_all');assert not rejected['ok'] and not active(),rejected
+    assert any(row.get('domain')=='SYSCTL' and row.get('phase')=='FINAL_PHYSICAL_PROOF' and row['status']=='FAILED' for row in rejected['results']),rejected
+    assert managed.read_text()=='# Managed by FIC. Manual changes may be overwritten.\nunknown.orphan = 7\n'
+    retired=json.loads(Path('/opt/fic/db/mutation-journal.json').read_text())['records']
+    assert any(row['id']==mixed[0]['id'] and row['status']=='rolled_back' and row['undo']==mixed[0]['undo'] for row in retired),retired
+    assert config()==configured
+    managed.unlink()  # repair only the orphan fixture; no journal edit
+    assert_empty_report(request('rollback_all'))
+    assert foreign.read_bytes()==foreign_test
+    if foreign_before is None:foreign.unlink()
+    else:foreign.write_bytes(foreign_before)
 # Preserve existing active-SSH release restrictions; no live SSH claim.
 run(['systemctl','stop','ssh.service','ssh.socket','sshd.service','sshd.socket'],False)
 run(['apt-get','remove','-y','fic'])

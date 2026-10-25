@@ -1,0 +1,1304 @@
+{
+  "source_base": "5a16b7ddfdf75f50bc9262225bdb0e9a90304ef9",
+  "result": {
+    "status": "PASS",
+    "scope": "minimal final DEB Depends install/all ELF/readiness/remove/purge",
+    "os_release": "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+    "archives_sha256": {
+      "fic_0.1.1_debian12_amd64.deb": "05da0472149933c9eb256bdc5dcde70bf17e4da600f524e86a81bbdacadafc92",
+      "fic-cli_0.1.1_debian12_amd64.deb": "b9e8f27e55033b3141675e8189b6ec3f50b6f9cb9d7b4f78e2518ddd9b514f08",
+      "fic-dick_0.1.1_debian12_amd64.deb": "652ca15351e7e43ddd10ba29b46bffb4c68b17c4d2a1dc7bc878ea19e13bf16b"
+    },
+    "depends": {
+      "fic": "libc6 (>= 2.34), libgcc-s1 (>= 3.0), libglib2.0-0 (>= 2.12.0), libqt6core6 (>= 6.4.0), libssl3 (>= 3.0.0), libstdc++6 (>= 11), libsystemd0 (>= 240), fic-dick (= 0.1.1), libnotify-bin, util-linux, nftables, libpam-runtime, libpam-modules, libpam-pwquality",
+      "fic-cli": "libc6 (>= 2.34), libgcc-s1 (>= 3.0), libstdc++6 (>= 11), fic (= 0.1.1)",
+      "fic-dick": "libc6 (>= 2.34), libgcc-s1 (>= 3.0), libsqlite3-0 (>= 3.5.9), libssl3 (>= 3.0.0), libstdc++6 (>= 11), udev, systemd, util-linux"
+    },
+    "elfs": {
+      "/lib/x86_64-linux-gnu/security/pam_fic_access.so": {
+        "package": "fic",
+        "sha256": "a14cdac9812fa6690e069163ca29e46c9f10f4b537e69366c0f002e82cfd0665",
+        "ldd": "\tlinux-vdso.so.1 (0x00007ffc0856c000)\n\tlibpam.so.0 => /lib/x86_64-linux-gnu/libpam.so.0 (0x00007d0cc57f4000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007d0cc55da000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007d0cc55ba000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007d0cc53d8000)\n\tlibaudit.so.1 => /lib/x86_64-linux-gnu/libaudit.so.1 (0x00007d0cc53a7000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007d0cc52c5000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007d0cc5a07000)\n\tlibcap-ng.so.0 => /lib/x86_64-linux-gnu/libcap-ng.so.0 (0x00007d0cc52bd000)\n"
+      },
+      "/opt/fic/bin/fic": {
+        "package": "fic",
+        "sha256": "19b6f82f2eeb3357d4ff2618ac31e259c95f8945bd73bd836faa43412d2fc33b",
+        "ldd": "\tlinux-vdso.so.1 (0x00007ffd01ba9000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007e05c05bb000)\n\tlibQt6Core.so.6 => /lib/x86_64-linux-gnu/libQt6Core.so.6 (0x00007e05c00c9000)\n\tlibsystemd.so.0 => /lib/x86_64-linux-gnu/libsystemd.so.0 (0x00007e05bfff9000)\n\tlibglib-2.0.so.0 => /lib/x86_64-linux-gnu/libglib-2.0.so.0 (0x00007e05bfec0000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007e05bfca6000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007e05bfc84000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007e05bfaa2000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007e05c147d000)\n\tlibicui18n.so.72 => /lib/x86_64-linux-gnu/libicui18n.so.72 (0x00007e05bf778000)\n\tlibicuuc.so.72 => /lib/x86_64-linux-gnu/libicuuc.so.72 (0x00007e05bf57a000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007e05bf55b000)\n\tlibdouble-conversion.so.3 => /lib/x86_64-linux-gnu/libdouble-conversion.so.3 (0x00007e05bf546000)\n\tlibb2.so.1 => /lib/x86_64-linux-gnu/libb2.so.1 (0x00007e05bf525000)\n\tlibpcre2-16.so.0 => /lib/x86_64-linux-gnu/libpcre2-16.so.0 (0x00007e05bf497000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x00007e05bf3db000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007e05bf2fb000)\n\tlibcap.so.2 => /lib/x86_64-linux-gnu/libcap.so.2 (0x00007e05bf2ef000)\n\tlibgcrypt.so.20 => /lib/x86_64-linux-gnu/libgcrypt.so.20 (0x00007e05bf1a6000)\n\tliblzma.so.5 => /lib/x86_64-linux-gnu/liblzma.so.5 (0x00007e05bf177000)\n\tliblz4.so.1 => /lib/x86_64-linux-gnu/liblz4.so.1 (0x00007e05bf151000)\n\tlibpcre2-8.so.0 => /lib/x86_64-linux-gnu/libpcre2-8.so.0 (0x00007e05bf0b7000)\n\tlibicudata.so.72 => /lib/x86_64-linux-gnu/libicudata.so.72 (0x00007e05bd2e5000)\n\tlibgomp.so.1 => /lib/x86_64-linux-gnu/libgomp.so.1 (0x00007e05bd29d000)\n\tlibgpg-error.so.0 => /lib/x86_64-linux-gnu/libgpg-error.so.0 (0x00007e05bd273000)\n"
+      },
+      "/opt/fic/bin/fic-cli": {
+        "package": "fic-cli",
+        "sha256": "04646a9aa5b431e6476d3d1dcab442487640e7f05161727e9ee167505d994880",
+        "ldd": "\tlinux-vdso.so.1 (0x00007ffcf9583000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000073d96a956000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000073d96a936000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000073d96a754000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000073d96a674000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000073d96abfb000)\n"
+      },
+      "/opt/fic/bin/fic-dick": {
+        "package": "fic-dick",
+        "sha256": "da3126f38f606b5fe97d371c580311ad9f67f323f77be23ebb8eb460f17f687a",
+        "ldd": "\tlinux-vdso.so.1 (0x00007ffeddfad000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007e55a3902000)\n\tlibsqlite3.so.0 => /lib/x86_64-linux-gnu/libsqlite3.so.0 (0x00007e55a37a3000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007e55a3589000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007e55a3569000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007e55a3387000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007e55a3f43000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007e55a32a5000)\n"
+      },
+      "/opt/fic/bin/fic-package-infrastructure": {
+        "package": "fic-dick",
+        "sha256": "d99c28cb5bbb938e718d06335e117e7a5b24f2f8070e3344aec1b76429ce8803",
+        "ldd": "\tlinux-vdso.so.1 (0x00007ffcee75b000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x0000700d49e83000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000700d49c69000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000700d49c49000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000700d49a67000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000700d49987000)\n\t/lib64/ld-linux-x86-64.so.2 (0x0000700d4a450000)\n"
+      }
+    },
+    "optional_ownership_negatives": {
+      "status": "PASS",
+      "fixture": "test-seeded valid MutationJournal API records; no real provider apply",
+      "retained_active": [
+        {
+          "backend": "ssh",
+          "created_at_epoch": 1792936174,
+          "error": "",
+          "id": 1,
+          "policy": {
+            "module": "NET",
+            "policy": "ssh_port",
+            "submodule": "SshEdit"
+          },
+          "resource": "ssh:/etc/ssh/sshd_config:Port",
+          "status": "prepared",
+          "undo": {
+            "action": "remove_ssh_managed_policy",
+            "applied_value": "2222",
+            "backend": "ssh",
+            "directive": "Port",
+            "disabled_mutation_ids": [],
+            "policy": "ssh_port"
+          },
+          "updated_at_epoch": 1792936174
+        },
+        {
+          "backend": "sudo",
+          "created_at_epoch": 1792936174,
+          "error": "could not open /etc/sudoers: No such file or directory",
+          "id": 2,
+          "policy": {
+            "module": "DAC",
+            "policy": "sudo_passwd_tries",
+            "submodule": "SudoEdit"
+          },
+          "resource": "passwd_tries",
+          "status": "rollback_failed",
+          "undo": {
+            "action": "release_sudo_global_default",
+            "added_separator": false,
+            "applied_line": "Defaults passwd_tries=3",
+            "backend": "sudo",
+            "container_id": "FIC-SUDO-1792936174-153474152-1744-0-0",
+            "key": "passwd_tries",
+            "previous_line": "",
+            "separator_prefix_digest": ""
+          },
+          "updated_at_epoch": 1792936180
+        },
+        {
+          "backend": "sysctl",
+          "created_at_epoch": 1792936174,
+          "error": "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u043d\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u044e sysctl: \u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c symlink sysctl-\u0444\u0430\u0439\u043b\u0430 /etc/sysctl.d/99-sysctl.conf: No such file or directory",
+          "id": 3,
+          "policy": {
+            "module": "SYSCTL",
+            "policy": "tcp_syncookies_enable",
+            "submodule": "network_kernel_protection"
+          },
+          "resource": "net.ipv4.tcp_syncookies",
+          "status": "rollback_failed",
+          "undo": {
+            "action": "remove_managed_setting",
+            "applied_value": "0",
+            "backend": "sysctl",
+            "key": "net.ipv4.tcp_syncookies"
+          },
+          "updated_at_epoch": 1792936180
+        }
+      ],
+      "lifecycle": "UNINSTALLING",
+      "clean_remove_purge_completed_before_negative_fixture": true
+    }
+  },
+  "raw_evidence": "build-package-lifecycle/native-fic-final-proof-runtime:debian12-20261025T134846Z-81964",
+  "raw_commands_sha256": "97cb2495ffbb86c78287c2ad998a50aaf107d453797ddb250d907d750e7aa820",
+  "isolation": {
+    "image": "sha256:9eee59e66b28a07c7ba772a3a3946be8b11a3eda7ffd5a2a5ef89cd5f10c8dbb",
+    "tag": "fic-final-proof-runtime:debian12",
+    "network": "none",
+    "binds": null,
+    "cgroupns": "private",
+    "pid_mode": "",
+    "ports": {},
+    "mounts": []
+  },
+  "fixture_sha256": "0973dd96a0e364982afd0e3703a16e86e5efbf7eef4347bd789883cebbfe946c",
+  "rollback_all": [
+    {
+      "scenario": "absent",
+      "ok": true,
+      "summary": {
+        "blocked": 0,
+        "failed": 0,
+        "final_physical_failed": 0,
+        "groups": 89,
+        "released": 89
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 5
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 7
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 29
+          },
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "scenario": "empty_sysctl",
+      "ok": false,
+      "summary": {
+        "blocked": 0,
+        "failed": 29,
+        "final_physical_failed": 1,
+        "groups": 89,
+        "released": 60
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "SYSCTL managed artifact has no active journal provenance: /etc/sysctl.d/zzzz-fic.conf",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 5
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 7
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "FAILED": 29
+          },
+          "diagnostics": [
+            "SYSCTL managed artifact has no active journal provenance: /etc/sysctl.d/zzzz-fic.conf"
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "header_only_sysctl",
+      "ok": false,
+      "summary": {
+        "blocked": 0,
+        "failed": 29,
+        "final_physical_failed": 1,
+        "groups": 89,
+        "released": 60
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "SYSCTL managed artifact has no active journal provenance: /etc/sysctl.d/zzzz-fic.conf",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 5
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 7
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "FAILED": 29
+          },
+          "diagnostics": [
+            "SYSCTL managed artifact has no active journal provenance: /etc/sysctl.d/zzzz-fic.conf"
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "clean_retry",
+      "ok": true,
+      "summary": {
+        "blocked": 0,
+        "failed": 0,
+        "final_physical_failed": 0,
+        "groups": 89,
+        "released": 89
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 5
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 7
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 29
+          },
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "scenario": "orphan_markers_staging",
+      "ok": false,
+      "summary": {
+        "blocked": 1,
+        "failed": 40,
+        "final_physical_failed": 3,
+        "groups": 89,
+        "released": 48
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "SSH physical FIC artifact has no active provenance: /etc/ssh/sshd_config",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "SUDO physical FIC artifact has no active provenance: /etc/sudoers.d/detached.backup",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "unresolved resource staging artifact: /etc/sysctl.d/.zzzz-fic.conf.tmp.interrupted",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "unsupported": 5
+          },
+          "diagnostics": [
+            "Rollback provenance unavailable for legacy-applied policy NET:SshEdit:ssh_max_auth_tries. Automatic rollback is not possible. SSH physical FIC artifact has no active provenance: /etc/ssh/sshd_config",
+            "Rollback provenance unavailable for legacy-applied policy NET:SshEdit:ssh_port. Automatic rollback is not possible. SSH physical FIC artifact has no active provenance: /etc/ssh/sshd_config",
+            "Rollback provenance unavailable for legacy-applied policy NET:SshEdit:ssh_pubkey_auth. Automatic rollback is not possible. SSH physical FIC artifact has no active provenance: /etc/ssh/sshd_config",
+            "Rollback provenance unavailable for legacy-applied policy NET:SshEdit:ssh_root_login. Automatic rollback is not possible. SSH physical FIC artifact has no active provenance: /etc/ssh/sshd_config",
+            "Rollback provenance unavailable for legacy-applied policy NET:SshEdit:ssh_use_pam. Automatic rollback is not possible. SSH physical FIC artifact has no active provenance: /etc/ssh/sshd_config"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "failed": 6
+          },
+          "diagnostics": [
+            "SUDO physical FIC artifact has no active provenance: /etc/sudoers.d/detached.backup"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "FAILED": 29
+          },
+          "diagnostics": [
+            "unresolved resource staging artifact: /etc/sysctl.d/.zzzz-fic.conf.tmp.interrupted"
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "untrusted_metadata",
+      "ok": false,
+      "summary": {
+        "blocked": 1,
+        "failed": 40,
+        "final_physical_failed": 3,
+        "groups": 89,
+        "released": 48
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "missing, symlink or untrusted directory ancestor",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "/etc/sudoers.d/99-fic.conf: state file has multiple hard links: /etc/sudoers.d/99-fic.conf",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "/etc/sysctl.d/zzzz-fic.conf: state file is a symbolic link: /etc/sysctl.d/zzzz-fic.conf",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "failed": 5
+          },
+          "diagnostics": [
+            "missing, symlink or untrusted directory ancestor"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "failed": 6
+          },
+          "diagnostics": [
+            "/etc/sudoers.d/99-fic.conf: state file has multiple hard links: /etc/sudoers.d/99-fic.conf"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "FAILED": 29
+          },
+          "diagnostics": [
+            "/etc/sysctl.d/zzzz-fic.conf: state file is a symbolic link: /etc/sysctl.d/zzzz-fic.conf"
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "clean_retry",
+      "ok": true,
+      "summary": {
+        "blocked": 0,
+        "failed": 0,
+        "final_physical_failed": 0,
+        "groups": 89,
+        "released": 89
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 5
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 7
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 29
+          },
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "scenario": "recorded_A_released_orphan_B_retained",
+      "ok": false,
+      "summary": {
+        "blocked": 0,
+        "failed": 0,
+        "final_physical_failed": 1,
+        "groups": 89,
+        "released": 89
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "SYSCTL managed artifact has no active journal provenance: /etc/sysctl.d/zzzz-fic.conf",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "FAILED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 5
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 7
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 28,
+            "success": 2
+          },
+          "diagnostics": [
+            "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation",
+            "Managed sysctl-\u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 'net/ipv4/tcp_syncookies' \u0443\u0434\u0430\u043b\u0435\u043d\u043e \u0438\u0437 managed sysctl-\u0444\u0430\u0439\u043b\u0430 FIC. Runtime sysctl \u043f\u0440\u0438\u0432\u0435\u0434\u0451\u043d \u043a \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u044e '1' \u0438\u0437 /etc/sysctl.d/99-sysctl.conf"
+          ]
+        }
+      }
+    },
+    {
+      "scenario": "explicit_orphan_repair_retry",
+      "ok": true,
+      "summary": {
+        "blocked": 0,
+        "failed": 0,
+        "final_physical_failed": 0,
+        "groups": 89,
+        "released": 89
+      },
+      "final_physical_proofs": [
+        {
+          "domain": "SSH",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SUDO",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        },
+        {
+          "domain": "SYSCTL",
+          "message": "",
+          "phase": "FINAL_PHYSICAL_PROOF",
+          "status": "RELEASED"
+        }
+      ],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 5
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 7
+          },
+          "diagnostics": [
+            "No active domain ownership; physical FIC artifacts and staging are proven absent"
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "NOTHING_TO_RELEASE": 29
+          },
+          "diagnostics": []
+        }
+      }
+    },
+    {
+      "scenario": "active_ownership_errors_retained",
+      "ok": false,
+      "summary": {
+        "blocked": 1,
+        "failed": 40,
+        "final_physical_failed": 0,
+        "groups": 89,
+        "released": 48
+      },
+      "final_physical_proofs": [],
+      "groups": {
+        "NET:SshEdit:": {
+          "status_counts": {
+            "failed": 5,
+            "ACTIVE_RECORD_REMAINS": 1
+          },
+          "diagnostics": [
+            "SSH recovery required: unresolved Prepared mutation 1"
+          ]
+        },
+        "DAC:SudoEdit:": {
+          "status_counts": {
+            "failed": 6,
+            "unsupported": 1,
+            "ACTIVE_RECORD_REMAINS": 1
+          },
+          "diagnostics": [
+            "Shared SUDO global ownership is not proven: could not open /etc/sudoers: No such file or directory",
+            "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c sudoers: \u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0439 sudoers-\u0444\u0430\u0439\u043b \u043d\u0435 \u0441\u0443\u0449\u0435\u0441\u0442\u0432\u0443\u0435\u0442: /etc/sudoers",
+            "could not open /etc/sudoers: No such file or directory",
+            "Rollback provenance unavailable for legacy-applied policy DAC:SudoEdit:sudo_require_authentication. Automatic rollback is not possible."
+          ]
+        },
+        "SYSCTL:": {
+          "status_counts": {
+            "failed": 30,
+            "ACTIVE_RECORD_REMAINS": 1
+          },
+          "diagnostics": [
+            "\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043f\u0440\u043e\u0430\u043d\u0430\u043b\u0438\u0437\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u043a\u043e\u043d\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u044e sysctl: \u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u0440\u0430\u0437\u0440\u0435\u0448\u0438\u0442\u044c symlink sysctl-\u0444\u0430\u0439\u043b\u0430 /etc/sysctl.d/99-sysctl.conf: No such file or directory"
+          ]
+        }
+      }
+    }
+  ],
+  "commands": [
+    {
+      "command": [
+        "systemctl",
+        "is-active",
+        "systemd-udevd.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "45df5ad5e0ecfa54d3226343e0e6857337494ba6e32f189d1174070665d8c659"
+    },
+    {
+      "command": [
+        "systemctl",
+        "is-enabled",
+        "systemd-udev-trigger.service"
+      ],
+      "exit_code": 1,
+      "output_sha256": "71692b9801e6e1a49440510df456ae0704544147099c51ef95a7278bc46d27f0"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "cmake"
+      ],
+      "exit_code": 1,
+      "output_sha256": "d5d6e94caf014a50c86fd1b0f027ec46770bcd2a1ba90862cee18ec4878a302f"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "make"
+      ],
+      "exit_code": 1,
+      "output_sha256": "49266ab8c334d7b2ba0dd4a90d7a6516c664ac897b139fe72e620593dbe99f75"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "gcc"
+      ],
+      "exit_code": 1,
+      "output_sha256": "de0bd5c3bd7dafa9bbb116698edb0e4b08f99ce7baaa73d1ede2edc58da18421"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "g++"
+      ],
+      "exit_code": 1,
+      "output_sha256": "65b7f7d49af981da45557cc82ecd1b42336bc115f41efca05a7643b3e094d035"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "qt6-base-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "bfc58a679662dd0dbfd473f124d0dccaa4f01a2c5a391240ba5cc0dcc4128813"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "qtbase5-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "d64d626904f083e423e403f3ae07a97e795e76419608baa95a4bbaf45ed9202a"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libssl-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "b94991199d865813fd019c15d79ce39816f7246b04498283c59ceb02633c1ab4"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libsystemd-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "51d74027b39e750b8717725bb42f3663babb3a4a0d2843308244d0f764ee48a1"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libglib2.0-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "7e1020424b9063590e234601c0cd136fdb60cd6ae98afe1af2be34ad3ec66a43"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libpam0g-dev"
+      ],
+      "exit_code": 0,
+      "output_sha256": "33dcf4f6bba7c86bbe1e76c22f7f25cf617d9d9064b4da11324253735b0e69df"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "libsqlite3-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "96041bdeb947096e3cd26f88ad33b380ebb067036a76feebfdb540e60a1edb0a"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "nlohmann-json3-dev"
+      ],
+      "exit_code": 1,
+      "output_sha256": "5f24fe4f84fe3b85614909503917fe8686428b240e181ea503bb70478e6873a0"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "dpkg-dev"
+      ],
+      "exit_code": 0,
+      "output_sha256": "33dcf4f6bba7c86bbe1e76c22f7f25cf617d9d9064b4da11324253735b0e69df"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "pkg-config"
+      ],
+      "exit_code": 1,
+      "output_sha256": "566a0e1f42dde57b321a3c63bfbbcd90e499d43936a97e38252433b64065536f"
+    },
+    {
+      "command": [
+        "dpkg-deb",
+        "-f",
+        "/var/tmp/fic-packages/fic_0.1.1_debian12_amd64.deb",
+        "Depends"
+      ],
+      "exit_code": 0,
+      "output_sha256": "9522dc4b1101bb7c8f1f15c98abebbf6c3d8101388df6b8c49ec17eef41dd633"
+    },
+    {
+      "command": [
+        "dpkg-deb",
+        "-f",
+        "/var/tmp/fic-packages/fic-cli_0.1.1_debian12_amd64.deb",
+        "Depends"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c5c76841a6acd0e4ea9dea4f76c8c10617d7d0b9aeff04954f8b9c0b1049fda5"
+    },
+    {
+      "command": [
+        "dpkg-deb",
+        "-f",
+        "/var/tmp/fic-packages/fic-dick_0.1.1_debian12_amd64.deb",
+        "Depends"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e6cd80d2ac2e0746e7851943ac305e523e634b9ae5d8779c885e067d6a9485fc"
+    },
+    {
+      "command": [
+        "apt-get",
+        "-o",
+        "Dir::Cache::archives=/var/tmp/fic-dependency-cache",
+        "install",
+        "--no-install-recommends",
+        "-y",
+        "/var/tmp/fic-packages/fic_0.1.1_debian12_amd64.deb",
+        "/var/tmp/fic-packages/fic-cli_0.1.1_debian12_amd64.deb",
+        "/var/tmp/fic-packages/fic-dick_0.1.1_debian12_amd64.deb"
+      ],
+      "exit_code": 0,
+      "output_sha256": "28205e1d8e6504d13b8cdfb7edb1fb3174dbc428bb6844c96a1aff63b5a77e8b"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c30fa76196bbdd6ec8c51db046fc2a8d20331bc0983cdce281b2244ca84de5cb"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "fic-cli"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c30fa76196bbdd6ec8c51db046fc2a8d20331bc0983cdce281b2244ca84de5cb"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c30fa76196bbdd6ec8c51db046fc2a8d20331bc0983cdce281b2244ca84de5cb"
+    },
+    {
+      "command": [
+        "dpkg",
+        "--audit"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "sudo"
+      ],
+      "exit_code": 1,
+      "output_sha256": "d4bb551054e9daa1b9903b99bd28e435ddfe981f5818e311b3178389e163d7a1"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "openssh-server"
+      ],
+      "exit_code": 0,
+      "output_sha256": "33dcf4f6bba7c86bbe1e76c22f7f25cf617d9d9064b4da11324253735b0e69df"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "procps"
+      ],
+      "exit_code": 1,
+      "output_sha256": "3eb5f26fc4d61cd375bca1dbb3c9387b29cc21d907c6c1218fe252380e934751"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-L",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "afb57da573deead51ed8612fbccb8eb9dce1ad59f48a2ccaa20236917e4bdda0"
+    },
+    {
+      "command": [
+        "ldd",
+        "/lib/x86_64-linux-gnu/security/pam_fic_access.so"
+      ],
+      "exit_code": 0,
+      "output_sha256": "9f1d9f74abd4449a519dca9a9fab93c8e03934e0ffc05f2cae0655076b39f008"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "67ad7728311959a15bf255e5665ea4a605fe7ec1ae7fe1d9681c259288d4f69f"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-L",
+        "fic-cli"
+      ],
+      "exit_code": 0,
+      "output_sha256": "af594b69db00733b59ccbe0e0352e393d7295f652082f41645eeb6443509c1d3"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic-cli"
+      ],
+      "exit_code": 0,
+      "output_sha256": "d53268c27c51e31ec95b1df76a8081009bc71f6b4db4c4cdbdd75cae4f0f030f"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-L",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "981d9ea47b96a376c65457461e0a225eac8c0f0c7767bdac0b64db41ba914227"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "d749bf3e3593e6495acc9104dd08296600cfb55386b35b3f9f119fa0810fad47"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic-package-infrastructure"
+      ],
+      "exit_code": 0,
+      "output_sha256": "7e28d3072c4aaad25eabe76f58a74a3f42075b3c0c0aa8dc65b75caa3f6f1771"
+    },
+    {
+      "command": [
+        "systemctl",
+        "is-active",
+        "fic.service",
+        "fic-device.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "54233fea09439225592caba48eaef86204f35acbd98a0a8b8672f03f9ddc8cce"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "status"
+      ],
+      "exit_code": 0,
+      "output_sha256": "9f3b5d3a971c325e0462d3bfa7d954584ce776a1a72284e69c99e5b93248ab92"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-dick",
+        "wait-daemon",
+        "30"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "fic.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "/usr/local/bin/optional-owner-fixture",
+        "--mixed-sysctl"
+      ],
+      "exit_code": 0,
+      "output_sha256": "4a995631c62c40aa2104d1f2fbac5f79bef0c380d14d8594fdfd6529684f1acc"
+    },
+    {
+      "command": [
+        "systemctl",
+        "start",
+        "fic.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "ssh.service",
+        "ssh.socket",
+        "sshd.service",
+        "sshd.socket"
+      ],
+      "exit_code": 5,
+      "output_sha256": "b6472aea4fa4efe107cc86aff5b4681ebc9fdabb028105e1b4fc779eb1195b93"
+    },
+    {
+      "command": [
+        "apt-get",
+        "remove",
+        "-y",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "78b1a506d251525c6d2522487aa9e68647757b9c7cd6dd659be313fd5ecb0866"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-package-infrastructure",
+        "prove-remove"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "ldd",
+        "/opt/fic/bin/fic-package-infrastructure"
+      ],
+      "exit_code": 0,
+      "output_sha256": "5784e597773340589ae4fee3c9e16073e8368b84ee4fe83f659e9d720f7c23f1"
+    },
+    {
+      "command": [
+        "apt-get",
+        "purge",
+        "-y",
+        "fic",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "819a755913152aa7ba0a108d00baba218ab43915bba911f9cdfe42a67bed2e4e"
+    },
+    {
+      "command": [
+        "dpkg",
+        "--audit"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "apt-get",
+        "-o",
+        "Dir::Cache::archives=/var/tmp/fic-dependency-cache",
+        "install",
+        "--no-install-recommends",
+        "-y",
+        "/var/tmp/fic-packages/fic_0.1.1_debian12_amd64.deb",
+        "/var/tmp/fic-packages/fic-cli_0.1.1_debian12_amd64.deb",
+        "/var/tmp/fic-packages/fic-dick_0.1.1_debian12_amd64.deb"
+      ],
+      "exit_code": 0,
+      "output_sha256": "1d355548b9ff177f51dd201649a474b311f97039f5f726310f4c4f946fa04baf"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "sudo"
+      ],
+      "exit_code": 1,
+      "output_sha256": "d4bb551054e9daa1b9903b99bd28e435ddfe981f5818e311b3178389e163d7a1"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "openssh-server"
+      ],
+      "exit_code": 0,
+      "output_sha256": "33dcf4f6bba7c86bbe1e76c22f7f25cf617d9d9064b4da11324253735b0e69df"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "procps"
+      ],
+      "exit_code": 1,
+      "output_sha256": "3eb5f26fc4d61cd375bca1dbb3c9387b29cc21d907c6c1218fe252380e934751"
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "fic.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "/usr/local/bin/optional-owner-fixture"
+      ],
+      "exit_code": 0,
+      "output_sha256": "fdb54a2d28a86b3821cb6001eb9dd698dd0bc86c718da14e47f80df66571a93b"
+    },
+    {
+      "command": [
+        "systemctl",
+        "start",
+        "fic.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "command": [
+        "apt-get",
+        "remove",
+        "-y",
+        "fic"
+      ],
+      "exit_code": 100,
+      "output_sha256": "130af1b992347205eb9531e625373e5de934b9b080c6cb7f6949d33ddc1f3aa9"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "sudo"
+      ],
+      "exit_code": 1,
+      "output_sha256": "d4bb551054e9daa1b9903b99bd28e435ddfe981f5818e311b3178389e163d7a1"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "openssh-server"
+      ],
+      "exit_code": 0,
+      "output_sha256": "33dcf4f6bba7c86bbe1e76c22f7f25cf617d9d9064b4da11324253735b0e69df"
+    },
+    {
+      "command": [
+        "dpkg-query",
+        "-W",
+        "-f=${Status}",
+        "procps"
+      ],
+      "exit_code": 1,
+      "output_sha256": "3eb5f26fc4d61cd375bca1dbb3c9387b29cc21d907c6c1218fe252380e934751"
+    }
+  ],
+  "limits": [
+    "Mixed native A/B uses SYSCTL with production API seeded ownership; SSH/SUDO mixed release is in CTest with command fixtures.",
+    "Foreign sysctl baseline equals readonly runtime; verified unchanged/restored. No provider install or kernel mutation.",
+    "Explicit administrator removal of test orphan enables retry; no journal reset/adoption.",
+    "No full upgrade/abort/PAM-detach/override matrix, physical devices, live SSH or real-user PAM claim."
+  ],
+  "ordinary_remove_from_installed": {
+    "result": {
+      "status": "PASS",
+      "scope": "minimal final DEB Depends install/all ELF/readiness/remove/purge",
+      "os_release": "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+      "archives_sha256": {
+        "fic_0.1.1_debian12_amd64.deb": "05da0472149933c9eb256bdc5dcde70bf17e4da600f524e86a81bbdacadafc92",
+        "fic-cli_0.1.1_debian12_amd64.deb": "b9e8f27e55033b3141675e8189b6ec3f50b6f9cb9d7b4f78e2518ddd9b514f08",
+        "fic-dick_0.1.1_debian12_amd64.deb": "652ca15351e7e43ddd10ba29b46bffb4c68b17c4d2a1dc7bc878ea19e13bf16b"
+      },
+      "depends": {
+        "fic": "libc6 (>= 2.34), libgcc-s1 (>= 3.0), libglib2.0-0 (>= 2.12.0), libqt6core6 (>= 6.4.0), libssl3 (>= 3.0.0), libstdc++6 (>= 11), libsystemd0 (>= 240), fic-dick (= 0.1.1), libnotify-bin, util-linux, nftables, libpam-runtime, libpam-modules, libpam-pwquality",
+        "fic-cli": "libc6 (>= 2.34), libgcc-s1 (>= 3.0), libstdc++6 (>= 11), fic (= 0.1.1)",
+        "fic-dick": "libc6 (>= 2.34), libgcc-s1 (>= 3.0), libsqlite3-0 (>= 3.5.9), libssl3 (>= 3.0.0), libstdc++6 (>= 11), udev, systemd, util-linux"
+      },
+      "elfs": {
+        "/lib/x86_64-linux-gnu/security/pam_fic_access.so": {
+          "package": "fic",
+          "sha256": "a14cdac9812fa6690e069163ca29e46c9f10f4b537e69366c0f002e82cfd0665",
+          "ldd": "\tlinux-vdso.so.1 (0x00007fff5518e000)\n\tlibpam.so.0 => /lib/x86_64-linux-gnu/libpam.so.0 (0x000071c98c980000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x000071c98c766000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x000071c98c746000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x000071c98c564000)\n\tlibaudit.so.1 => /lib/x86_64-linux-gnu/libaudit.so.1 (0x000071c98c533000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x000071c98c451000)\n\t/lib64/ld-linux-x86-64.so.2 (0x000071c98cb93000)\n\tlibcap-ng.so.0 => /lib/x86_64-linux-gnu/libcap-ng.so.0 (0x000071c98c449000)\n"
+        },
+        "/opt/fic/bin/fic": {
+          "package": "fic",
+          "sha256": "19b6f82f2eeb3357d4ff2618ac31e259c95f8945bd73bd836faa43412d2fc33b",
+          "ldd": "\tlinux-vdso.so.1 (0x00007ffc4b3fe000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007c89118b5000)\n\tlibQt6Core.so.6 => /lib/x86_64-linux-gnu/libQt6Core.so.6 (0x00007c89113c3000)\n\tlibsystemd.so.0 => /lib/x86_64-linux-gnu/libsystemd.so.0 (0x00007c89112f3000)\n\tlibglib-2.0.so.0 => /lib/x86_64-linux-gnu/libglib-2.0.so.0 (0x00007c89111ba000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007c8910fa0000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007c8910f7e000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007c8910d9c000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007c8912777000)\n\tlibicui18n.so.72 => /lib/x86_64-linux-gnu/libicui18n.so.72 (0x00007c8910a72000)\n\tlibicuuc.so.72 => /lib/x86_64-linux-gnu/libicuuc.so.72 (0x00007c8910874000)\n\tlibz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x00007c8910855000)\n\tlibdouble-conversion.so.3 => /lib/x86_64-linux-gnu/libdouble-conversion.so.3 (0x00007c8910840000)\n\tlibb2.so.1 => /lib/x86_64-linux-gnu/libb2.so.1 (0x00007c891081f000)\n\tlibpcre2-16.so.0 => /lib/x86_64-linux-gnu/libpcre2-16.so.0 (0x00007c8910791000)\n\tlibzstd.so.1 => /lib/x86_64-linux-gnu/libzstd.so.1 (0x00007c89106d5000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007c89105f5000)\n\tlibcap.so.2 => /lib/x86_64-linux-gnu/libcap.so.2 (0x00007c89105e9000)\n\tlibgcrypt.so.20 => /lib/x86_64-linux-gnu/libgcrypt.so.20 (0x00007c89104a0000)\n\tliblzma.so.5 => /lib/x86_64-linux-gnu/liblzma.so.5 (0x00007c8910471000)\n\tliblz4.so.1 => /lib/x86_64-linux-gnu/liblz4.so.1 (0x00007c891044b000)\n\tlibpcre2-8.so.0 => /lib/x86_64-linux-gnu/libpcre2-8.so.0 (0x00007c89103b1000)\n\tlibicudata.so.72 => /lib/x86_64-linux-gnu/libicudata.so.72 (0x00007c890e5df000)\n\tlibgomp.so.1 => /lib/x86_64-linux-gnu/libgomp.so.1 (0x00007c890e597000)\n\tlibgpg-error.so.0 => /lib/x86_64-linux-gnu/libgpg-error.so.0 (0x00007c890e56d000)\n"
+        },
+        "/opt/fic/bin/fic-cli": {
+          "package": "fic-cli",
+          "sha256": "04646a9aa5b431e6476d3d1dcab442487640e7f05161727e9ee167505d994880",
+          "ldd": "\tlinux-vdso.so.1 (0x00007ffe51bf6000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000764d46a83000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000764d46a63000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000764d46881000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000764d467a1000)\n\t/lib64/ld-linux-x86-64.so.2 (0x0000764d46d28000)\n"
+        },
+        "/opt/fic/bin/fic-dick": {
+          "package": "fic-dick",
+          "sha256": "da3126f38f606b5fe97d371c580311ad9f67f323f77be23ebb8eb460f17f687a",
+          "ldd": "\tlinux-vdso.so.1 (0x00007ffe8bdd6000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x00007b3d8d1ea000)\n\tlibsqlite3.so.0 => /lib/x86_64-linux-gnu/libsqlite3.so.0 (0x00007b3d8d08b000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x00007b3d8ce71000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x00007b3d8ce51000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x00007b3d8cc6f000)\n\t/lib64/ld-linux-x86-64.so.2 (0x00007b3d8d82b000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x00007b3d8cb8d000)\n"
+        },
+        "/opt/fic/bin/fic-package-infrastructure": {
+          "package": "fic-dick",
+          "sha256": "d99c28cb5bbb938e718d06335e117e7a5b24f2f8070e3344aec1b76429ce8803",
+          "ldd": "\tlinux-vdso.so.1 (0x00007ffdcb62f000)\n\tlibcrypto.so.3 => /lib/x86_64-linux-gnu/libcrypto.so.3 (0x0000771bf250e000)\n\tlibstdc++.so.6 => /lib/x86_64-linux-gnu/libstdc++.so.6 (0x0000771bf22f4000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000771bf22d4000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000771bf20f2000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000771bf2012000)\n\t/lib64/ld-linux-x86-64.so.2 (0x0000771bf2adb000)\n"
+        }
+      },
+      "optional_ownership_negatives": null
+    },
+    "raw_evidence": "build-package-lifecycle/native-fic-final-proof-runtime:debian12-20261025T135153Z-83124",
+    "raw_commands_sha256": "052b20614c36f7dd3a8256890344d9c3b9427eb5a37ecc3e7bf013529f44e782"
+  }
+}

@@ -1,4 +1,5 @@
 #include "rollback/UnrecordedResourceInspection.h"
+#include "modules/net/ssh/SshResourceLock.h"
 #include <fic/core/fs/RootControlledDirectory.h>
 #include <fic/core/fs/SecureStateFile.h>
 #include <cerrno>
@@ -102,7 +103,8 @@ bool sudoDirectory(const Path& directory,bool enforce,std::string& error) {
 }
 }
 UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
-    const RollbackExecutorDeps& deps,MutationJournal& journal,std::string& error) {
+    const RollbackExecutorDeps& deps,MutationJournal& journal,std::string& error,
+    ResourceInspectionPhase phase) {
     using State=UnrecordedResourceState;
     std::optional<MutationBackend> backend;
     if(policy.moduleName=="SYSCTL")backend=MutationBackend::Sysctl;
@@ -123,7 +125,13 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
         if(!read(options.platform.managedConfigPath,options.enforceOwnership,state,error))return State::Error;
         bool owned=false;
         if(state&&!SysctlConfiguration::inspectManagedSettings(state->content,owned,error))return State::Error;
-        if(owned){error="SYSCTL managed settings have no active journal provenance";return State::UnprovenOwnership;}
+        // The parser proves assignment syntax, not absence of the physical
+        // artifact. Final uninstall requires the last-owner deletion contract;
+        // even an empty/header-only orphan cannot be adopted or removed here.
+        if(owned||(state&&phase==ResourceInspectionPhase::UninstallFinal)) {
+            error="SYSCTL managed artifact has no active journal provenance: "+options.platform.managedConfigPath.string();
+            return State::UnprovenOwnership;
+        }
         return State::ProvenEmpty;
     }
     if(*backend==MutationBackend::Ssh) {
@@ -180,5 +188,22 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
     }
     for(const auto& file:historical)if(!noSudoMarkers(file,options.enforceOwnership,error))return State::Error;
     return State::ProvenEmpty;
+}
+std::vector<ReleasedResourceInspection> inspectReleasedOptionalResources(
+    const RollbackExecutorDeps& deps, MutationJournal& journal) {
+    std::vector<ReleasedResourceInspection> results;
+    for(const auto& policy:std::vector<PolicyRef>{{"NET","SshEdit","ssh_port"},
+            {"DAC","SudoEdit","sudo_require_authentication"},{"SYSCTL","",""}}) {
+        // Ordinary SSH rollback already holds this shared mutex; the final
+        // read-only sweep runs separately and takes the same resource lock.
+        std::unique_lock<std::mutex> sshLock(sshResourceMutex(),std::defer_lock);
+        if(policy.moduleName=="NET")sshLock.lock();
+        ReleasedResourceInspection result;
+        result.domain=policy.moduleName=="NET"?"SSH":policy.moduleName=="DAC"?"SUDO":"SYSCTL";
+        result.state=inspectUnrecordedResource(policy,deps,journal,result.detail,
+            ResourceInspectionPhase::UninstallFinal);
+        results.push_back(std::move(result));
+    }
+    return results;
 }
 }

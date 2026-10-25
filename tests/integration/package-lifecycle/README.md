@@ -137,3 +137,18 @@ real package removal must refuse and retain provenance/configuration. These
 negative rows are synthetic; they are not evidence of successful native
 provider apply. The container is destroyed with those rows still active; no
 journal reset, retirement or invented recovery is used to get the clean PASS.
+
+
+### Final physical release proof follow-up
+
+The optional-owner gate also rejects empty/header-only SYSCTL artifacts with
+both per-policy failures and a final SYSCTL physical-proof failure. It then
+seeds a single SYSCTL Applied A plus unrecorded B using `--mixed-sysctl` on the
+test-only fixture. Real `rollback_all` must retire A, leave B, fail the final
+proof, and preserve foreign/configuration bytes. Only explicit test-admin
+removal of B allows retry and ordinary package removal. A valid foreign
+`/etc/sysctl.conf` fixture sets the same value as readonly runtime to permit
+strict active rollback without kernel writes; it is verified unchanged and
+restored afterwards. This is an isolated test precondition, not production
+recovery. SSH/SUDO mixed releases and valid container deletion are additionally
+covered by the production rollback/final-inspection unit suites.

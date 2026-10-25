@@ -4,6 +4,7 @@
 #include "daemon/PackageWritersQuiescence.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/ScopeTransition.h"
+#include "rollback/UnrecordedResourceInspection.h"
 #include "modules/sysctl/Sysctl.h"
 #include "modules/dac/sudo/Sudo.h"
 #include "modules/net/ssh/Ssh.h"
@@ -195,6 +196,18 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
                         }
                         if(absent){results.push_back({{"policy",formatPolicyRef(ref)},{"status","NOTHING_TO_RELEASE"}});continue;}
                     }
+                    // Preserve ordinary disable semantics while making bulk
+                    // no-owner SYSCTL reports account for the artifact itself,
+                    // including an empty/header-only orphan.
+                    if(ref.moduleName=="SYSCTL"&&journal->activeRecords(ref).empty()) {
+                        std::string detail;
+                        const auto proof=inspectUnrecordedResource(ref,deps,*journal,detail,ResourceInspectionPhase::UninstallFinal);
+                        if(proof!=UnrecordedResourceState::Continue) {
+                            const bool absent=proof==UnrecordedResourceState::ProvenEmpty;
+                            results.push_back({{"policy",formatPolicyRef(ref)},{"status",absent?"NOTHING_TO_RELEASE":"FAILED"},{"message",detail}});
+                            node.ok&=absent;continue;
+                        }
+                    }
                     const auto report=rollbackPolicyBeforeDisable(ref,resourceHint(*registry.findPolicy(ref)),deps);
                     const bool optionalResource=ref.moduleName=="SYSCTL"||
                         (ref.moduleName=="DAC"&&ref.submoduleName=="SudoEdit")||
@@ -214,7 +227,17 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
     for(const auto& record:journal->records())if(record.isActive()) {
         overall=false;results.push_back({{"policy",formatPolicyRef(record.policy)},{"status","ACTIVE_RECORD_REMAINS"},{"mutation_id",record.id}});
     }
+    std::size_t finalProofFailures=0;
+    for(const auto& proof:inspectReleasedOptionalResources(deps,*journal)) {
+        // Original per-owner failures/active-record diagnostics remain intact.
+        if(proof.state==UnrecordedResourceState::Continue)continue;
+        const bool proven=proof.state==UnrecordedResourceState::ProvenEmpty;
+        if(!proven){overall=false;++finalProofFailures;}
+        results.push_back({{"domain",proof.domain},{"phase","FINAL_PHYSICAL_PROOF"},
+            {"status",proven?"RELEASED":"FAILED"},{"message",proof.detail}});
+    }
     return json{{"ok",overall},{"message",overall?"FIC ownership release completed":"FIC ownership release incomplete; independent resources attempted"},
-        {"summary",{{"groups",nodes.size()},{"released",releasedGroups},{"failed",failedGroups},{"blocked",blockedGroups}}},{"results",results}};
+        {"summary",{{"groups",nodes.size()},{"released",releasedGroups},{"failed",failedGroups},{"blocked",blockedGroups},
+            {"final_physical_failed",finalProofFailures}}},{"results",results}};
 }
 }
