@@ -1,0 +1,129 @@
+{
+  "source_commit": "752354c",
+  "raw_evidence": "build-package-lifecycle/native-fic-package-native:debian12-20261025T071958Z-24160",
+  "raw_commands_sha256": "d12227de97524aad1e052669a8c600ae1bb2c1db977b7297886d01cb7b2dd48f",
+  "result": {
+    "status": "PASS",
+    "scope": "real dpkg late postrm failure/retry without daemon ELF"
+  },
+  "isolation": {
+    "image": "sha256:5e669781abdcb70e4dda26da7c511de221845af249de5e3fcdc70e2f321151eb",
+    "image_tag": "fic-package-native:debian12",
+    "binds": null,
+    "network": "none",
+    "cgroupns": "private",
+    "pid": "",
+    "mounts": []
+  },
+  "events": [
+    {
+      "command": [
+        "mount",
+        "--rbind",
+        "/sys",
+        "/sys"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "mount",
+        "-o",
+        "remount,bind,ro",
+        "/sys"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "ssh.service",
+        "ssh.socket"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "dpkg",
+        "-i",
+        "/var/tmp/fic-packages/upgrades/fic-dick_0.1.1_debian12_amd64.deb",
+        "/var/tmp/fic-packages/upgrades/fic_0.1.1_debian12_amd64.deb",
+        "/var/tmp/fic-packages/upgrades/fic-cli_0.1.1_debian12_amd64.deb"
+      ],
+      "exit_code": 0,
+      "output_sha256": "300bec0aa8a3536b6238579a3b799bce078dc94b66831820e897bdb0a8d25f15",
+      "output_excerpt": "Selecting previously unselected package fic-dick.\n(Reading database ... 27815 files and directories currently installed.)\nPreparing to unpack .../fic-dick_0.1.1_debian12_amd64.deb ...\nUnpacking fic-dick (0.1.1) ...\nSelecting previously unselected package fic.\nPreparing to unpack .../fic_0.1.1_debian12_amd64.deb ...\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nUnpacking fic (0.1.1) ...\nSelecting previously unselected package fic-cli.\nPreparing to unpack .../fic-cli_0.1.1_debian12_amd64.deb ...\nUnpacking fic-cli (0.1.1) ...\nSetting up fic-dick (0.1.1) ...\nSetting up fic (0.1.1) ...\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state proven UNLOCKED\ndevice database schema is initialized: 2\npackage trust sync completed: updated=13, unavailable=6\nmanaged password slots are provisioned\nsafe to attach\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic.service \u2192 /lib/systemd/system/fic.service.\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic-device.service \u2192 /lib/systemd/system/fic-device.service.\nCreated symlink /etc/systemd/system/multi-user.target.wants/fic-notify.service \u2192 /lib/systemd/system/fic-notify.service.\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\nSetting up fic-cli (0.1.1) ...\n"
+    },
+    {
+      "command": [
+        "dpkg",
+        "--remove",
+        "fic-cli",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "0fa8503b4eb1c72cbc7ec41e5c603ebc8374a845fadede00145de69317f57605",
+      "output_excerpt": "(Reading database ... 27894 files and directories currently installed.)\nRemoving fic-cli (0.1.1) ...\nRemoving fic (0.1.1) ...\n{\n  \"api_version\": 1,\n  \"message\": \"FIC ownership release completed\",\n  \"ok\": true,\n  \"results\": [\n    {\n      \"policy\": \"AUDIT:logging:log_level\",\n      \"status\": \"NOT_ENROLLED\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"AUDIT:logging:log_level\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"policy\": \"DAC:Mode_and_Owner:mode_and_owner_profiles\",\n      \"status\": \"NOT_ENROLLED\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:Mode_and_Owner\n[excerpt omitted; full output hash above]\n\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nREMOVED: writers absent and PAM detached; policy configuration and journal retained\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic-device.service\".\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic.service\".\nRemoved \"/etc/systemd/system/multi-user.target.wants/fic-notify.service\".\n"
+    },
+    {
+      "command": [
+        "dpkg",
+        "--purge",
+        "fic"
+      ],
+      "exit_code": 1,
+      "output_sha256": "030e80cdab3270e1d86f9cf14a8882519b2123fdd1182d66dddf0121294e9e06",
+      "output_excerpt": "(Reading database ... 27832 files and directories currently installed.)\nPurging configuration files for fic (0.1.1) ...\nFIC purge: writer or installer holds daemon.lock\ndpkg: error processing package fic (--purge):\n installed fic package post-removal script subprocess returned error exit status 1\nErrors were encountered while processing:\n fic\n"
+    },
+    {
+      "postrm_failure_dpkg_deleted_neutral_conffiles": [
+        "/etc/pam.d/fic-faillock-account",
+        "/etc/pam.d/fic-faillock-authfail",
+        "/etc/pam.d/fic-faillock-authsucc",
+        "/etc/pam.d/fic-faillock-preauth",
+        "/etc/pam.d/fic-password-history",
+        "/etc/pam.d/fic-password-history-initial",
+        "/etc/pam.d/fic-password-quality"
+      ]
+    },
+    {
+      "command": [
+        "flock",
+        "-n",
+        "/run/fic/daemon.lock",
+        "true"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "dpkg",
+        "--purge",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "ed459bdcb5cb24facf66f2d426ba7a60dd374dd530a33c57efc7e159b18b3119",
+      "output_excerpt": "(Reading database ... 27825 files and directories currently installed.)\nPurging configuration files for fic (0.1.1) ...\nFIC purge: deleting configuration and MutationJournal/witness; remaining OS policy settings are not adopted on reinstall\ndpkg: warning: while removing fic, directory '/opt/fic/log' not empty so not removed\n"
+    },
+    {
+      "command": [
+        "dpkg",
+        "--purge",
+        "fic-dick",
+        "fic-cli"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2488cbc596e604ffbbfdf9484227478de4939140490c0cd19ddeb1368d42cf80",
+      "output_excerpt": "(Reading database ... 27823 files and directories currently installed.)\nRemoving fic-dick (0.1.1) ...\nPurging configuration files for fic-dick (0.1.1) ...\ndpkg: warning: while removing fic-dick, directory '/opt/fic' not empty so not removed\ndpkg: warning: ignoring request to remove fic-cli which isn't installed\n"
+    }
+  ]
+}

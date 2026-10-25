@@ -1,0 +1,120 @@
+# Package lifecycle validation — 2026-10-25
+
+Production implementation: `752354c`; prerequisite platform enumeration fix:
+`6676a79`. Contract: [package-lifecycle.md](package-lifecycle.md).
+Reproduction instructions and isolation requirements:
+[native gates](../tests/integration/package-lifecycle/README.md).
+
+## Actual packages
+
+These are production FIC executables and production package scriptlets, with local
+test versions `0.1.0` → `0.1.1`. No dummy package/ownership engine substitutes for
+FIC. Docker replaces Podman by explicit user authorization. Each runtime has its
+own systemd PID1, mount/PID/cgroup/network context, no host binds/ports/network,
+and verified per-mount read-only sysfs. No host policy apply or physical device
+mutation was performed.
+
+| Native runtime | Actual package-manager gate | Result |
+| --- | --- | --- |
+| Debian 12 | apt/dpkg install, upgrade, configuring fault/retry, remove, purge, reinstall; optional prelogin installed/deactivated | PASS |
+| Debian 13 | Same core DEB lifecycle, including `dpkg --configure -a` | PASS |
+| Ubuntu 24.04 | Same core DEB lifecycle | PASS |
+| Ubuntu 26.04 | Same core DEB lifecycle | PASS |
+| ALT p11 | RPM install, upgrade, partial release/retry, erase, retained-state/helper reinstall, emergency erase | PASS |
+
+RPM has no native purge/configure-a action; those entries are not simulated.
+The minimal ALT image's foreign sudoers fixture needs an explicit administrator
+mode repair before FIC install, recorded in the commands. FIC never adopts or
+repairs that foreign metadata.
+
+Committed [evidence](../tests/integration/package-lifecycle/evidence) includes exact
+commands, versions, exit codes, IPC reports, PAM/config/journal/witness hashes,
+image identity/isolation and archive digests. Long stdout is excerpted with its
+complete SHA-256; original unabridged commands.json remains in the uniquely named
+ignored build evidence directory recorded in each file. Failed directories do
+not have PASS results and were not reused as successful evidence.
+
+## Proven scenarios and limits
+
+All five actual package gates enable/apply shared login.defs and Sudo policies,
+then release them without changing desired ENABLE/values. Debian/Ubuntu also use
+active C2 quality/history, lockout and provider ownership. ALT uses native
+faillock/pwhistory and passwdqc provider ownership; quality activation remains its
+existing StaticVerifyOnly contract. Compatible upgrades retain active mutation
+IDs and exact desired configuration. The current C2 read-only package preflight
+accepts an active-owned slot with a neutral sibling.
+
+A genuine foreign SSSD staging conflict causes a partial rollback while unrelated
+login.defs ownership releases. Foreign bytes/config remain; after explicit fixture
+repair, retry completes. Reverse Required planning, shared-resource targets,
+NotEnrolled/unsupported handling, journal/CAS/recovery and the other backend
+algorithms are also covered by the existing full unit/fault-injection suites.
+This does not claim native physical mutation of every backend class: graphical
+DE/DM, live SSH sessions and physical devices are outside these container gates.
+Existing ALT/Ubuntu SSH release restrictions were preserved; SSH is stopped by
+the test administrator before package runs.
+
+DEB gates verify failed config/journal configure without byte repair, explicit
+administrator restoration, real `dpkg --configure -a`, concurrent apply/prepare,
+STANDARD/IGNORE_ERROR/SKIP, live-writer refusal despite all-SKIP, unsafe override
+metadata, a genuine failed ExecStop with best-effort stop, broken main ELF and
+journal, foreign PAM-reference refusal and successful retry. ALT verifies erase
+refusal and retry with actual PAM physical references and broken ELF/journal.
+SKIP never runs an offline policy rollback or reads the poisoned journal.
+
+Successful remove preserves configuration and journal/witness; main and helper
+can be reinstalled from this supported retained state. DEB late purge works after
+the main ELF is gone, deletes retained configuration/journal/witness and keeps
+the restrictive REMOVED marker. An additional real-dpkg gate holds daemon.lock
+during late postrm: purge fails, FIC data/external PAM remain, and retry succeeds.
+dpkg itself deletes its own neutral PAM conffiles before postrm; their deletion
+is distinguished from FIC data loss.
+
+The actual restricted-daemon gate checks malformed config/journal, default-deny
+mutating IPC, periodic suppression, SIGKILL/restart, then a PID1/container restart
+with fresh tmpfs `/run` and persistent UNINSTALLING. This proves the requested
+restart-equivalent admission boundary, not a physical host reboot. Separate real
+ELF gates prove singleton rejection before side effects (default/custom socket),
+crashed lock-holder recovery, and read-only virgin/corrupt preflights.
+
+## Build and regression checks
+
+* Full Debian 12 project configure/build: PASS, including GUI/session/prelogin
+  and all test targets. Production affected targets/packages also build natively
+  on the other four distributions.
+* Full CTest excluding the permission-fault journal test: 204 selected, 199 PASS,
+  4 opt-in native SKIP, one stale platform static assertion failed after the RPM
+  pre-script split. That assertion was corrected; six affected static/contract
+  tests reran PASS. There is no remaining failed test from that run.
+* MutationJournal permission fault-injection test: PASS separately as UID1000;
+  root would invalidate its chmod-denial fixture. Across the full selection and
+  corrected rerun, 201 distinct tests passed and four were skipped by normal CTest.
+* Two skipped gates (singleton and maintenance preflight) were then run explicitly
+  in disposable containers: PASS. The generic verified-service native gate was
+  not run for this package task; actual five-distro package gates independently
+  exercise PAM attach/release/detach rather than claiming the skipped isolated
+  PAM component gate ran.
+* New native Python drivers compile; runner/build scripts pass bash syntax checks;
+  `git diff --check` passes.
+
+Raw validation log hashes/excerpts are in `evidence/validation.json`.
+
+## Findings and remaining boundaries
+
+The native runs found and fixed: missing SSH executable enumeration preventing
+Ubuntu/ALT staging; strict treatment of a genuinely failed-but-empty missing unit;
+fresh dependency-only missing state; incorrect legacy C2 pair validation; systemd
+unit cache reload before postinstall inspection; and the ALT dependency bootstrap
+mistaking preserved post-remove configuration for an unsupported legacy upgrade.
+
+During parallel full compilation plus several long native runs, device readiness
+occasionally exceeded the existing 30-second bound and configure failed. The
+exact cause was not proved; final repeat gates passed with the same product
+timeouts. These failed attempts are not PASS evidence. Readiness remains bounded:
+heavy-load startup can fail package configuration and require a safe retry; this
+work does not promise unbounded liveness or silently waive readiness.
+
+Real-user PAM authentication, graphical boot, physical devices and a physical VM
+reboot remain untested here. Arbitrary old development scriptlets are unsupported:
+there is no migration, adoption or guarantee that new scripts prevent an old
+scriptlet from running. No separate runtime/finalizer/retry protocol was restored.

@@ -1,0 +1,12 @@
+ARG BASE=debian:12
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+# Real runtime dependencies and native backend probes, installed only in the
+# disposable image. Runtime tests use an independent PID1 systemd container.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates systemd systemd-sysv dbus openssh-server nlohmann-json3-dev file git \
+    libnotify-bin nftables libpam-pwquality libpam-runtime libpam-modules \
+    udev sudo python3 qt6-base-dev libssl-dev libsystemd-dev libglib2.0-dev \
+    libpam0g-dev libsqlite3-dev cmake make g++ pkg-config dpkg-dev \
+    && rm -rf /var/lib/apt/lists/*
+CMD ["/lib/systemd/systemd"]

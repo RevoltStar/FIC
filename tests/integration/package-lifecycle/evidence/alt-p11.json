@@ -1,0 +1,1852 @@
+{
+  "source_commit": "752354c",
+  "raw_evidence": "build-package-lifecycle/native-fic-package-native:alt-p11-20261025T071531Z-22476",
+  "raw_commands_sha256": "279a9dee6716912eea68126d130140ce46c50219189980075deebce43d6b520d",
+  "result": {
+    "status": "PASS",
+    "compatible_upgrade_tested": true,
+    "scope": "actual ALT FIC RPM install/shared-apply/partial-rollback/erase/reinstall/emergency/config-preservation",
+    "limits": [
+      "no physical-device, real PAM login or graphical boot validation"
+    ]
+  },
+  "isolation": {
+    "image": "sha256:9f8445a3f2fbf2877d1179f32120ab22e23072cb81fefa52b51bc2c11fed2793",
+    "image_tag": "fic-package-native:alt-p11",
+    "binds": null,
+    "network": "none",
+    "cgroupns": "private",
+    "pid": "",
+    "mounts": []
+  },
+  "events": [
+    {
+      "command": [
+        "mount",
+        "--rbind",
+        "/sys",
+        "/sys"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "mount",
+        "-o",
+        "remount,bind,ro",
+        "/sys"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "sshd.service",
+        "sshd.socket"
+      ],
+      "exit_code": 5,
+      "output_sha256": "f20fae4d145a643fb821828bbf6e5027f297ba2c0d19e07c5bf10e01e412161e",
+      "output_excerpt": "Failed to stop sshd.socket: Unit sshd.socket not loaded.\n"
+    },
+    {
+      "command": [
+        "stat",
+        "-c",
+        "%a %n",
+        "/etc/sudoers.d/99-sudopw"
+      ],
+      "exit_code": 0,
+      "output_sha256": "aae43a84d07225a0dfa9befdd89fd453b07987db3f9bacd5901d7ac5107630f9",
+      "output_excerpt": "700 /etc/sudoers.d/99-sudopw\n"
+    },
+    {
+      "command": [
+        "chmod",
+        "0400",
+        "/etc/sudoers.d/99-sudopw"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "visudo",
+        "-c"
+      ],
+      "exit_code": 0,
+      "output_sha256": "36ccc8ab63da5462756c8a1b56b7fd9b463dba2b27de7c9919b128e09845f0ec",
+      "output_excerpt": "Warning: /etc/sudoers:23:12: unused User_Alias \"WHEEL_USERS\"\n/etc/sudoers: parsed OK\n/etc/sudoers.d/99-sudopw: parsed OK\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-qp",
+        "--qf",
+        "%{NAME} %{VERSION}-%{RELEASE}\\n",
+        "/var/tmp/fic-packages/fic-dick-0.1.0-1.altp11.x86_64.rpm"
+      ],
+      "exit_code": 0,
+      "output_sha256": "704d9945924a8580a3efc4452e530658abded4c0266417bae0e902fe75ce04d3",
+      "output_excerpt": "fic-dick 0.1.0-1.altp11\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-qp",
+        "--qf",
+        "%{NAME} %{VERSION}-%{RELEASE}\\n",
+        "/var/tmp/fic-packages/fic-0.1.0-1.altp11.x86_64.rpm"
+      ],
+      "exit_code": 0,
+      "output_sha256": "b4b788bc4ddab9c9a6fc3bbc6bee192f14086807b766561b2e52bfaa11b0ae49",
+      "output_excerpt": "fic 0.1.0-1.altp11\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-qp",
+        "--qf",
+        "%{NAME} %{VERSION}-%{RELEASE}\\n",
+        "/var/tmp/fic-packages/fic-cli-0.1.0-1.altp11.x86_64.rpm"
+      ],
+      "exit_code": 0,
+      "output_sha256": "95eee10dee5a98f23fc2758980f0c2225f7a3c2082b58c3c930b7cfc972260a2",
+      "output_excerpt": "fic-cli 0.1.0-1.altp11\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-Uvh",
+        "/var/tmp/fic-packages/fic-dick-0.1.0-1.altp11.x86_64.rpm"
+      ],
+      "exit_code": 0,
+      "output_sha256": "8457fa027a78ffec1ca8a20f1410cf9958f9da109e8a13af263d7517a489eed2",
+      "output_excerpt": "Preparing...                            ################################# [100%]\nUpdating / installing...\n1: fic-dick-0.1.0-1.altp11              ################################# [100%]\nRunning /usr/lib/rpm/posttrans-filetriggers\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-e",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "rpm",
+        "-Uvh",
+        "--replacepkgs",
+        "/var/tmp/fic-packages/fic-dick-0.1.0-1.altp11.x86_64.rpm",
+        "/var/tmp/fic-packages/fic-0.1.0-1.altp11.x86_64.rpm",
+        "/var/tmp/fic-packages/fic-cli-0.1.0-1.altp11.x86_64.rpm"
+      ],
+      "exit_code": 0,
+      "output_sha256": "cad360334e15eed3c51f916a88c4db4bffcd404858b5741f2a8883c0e6d75d0a",
+      "output_excerpt": "Preparing...                            ################################# [100%]\nUpdating / installing...\n1: fic-dick-0.1.0-1.altp11              ################################# [ 33%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\n2: fic-0.1.0-1.altp11                   ################################# [ 67%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state proven UNLOCKED\ndevice database schema is initialized: 2\npackage trust sync completed: updated=12, unavailable=7\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic.service' \u2192 '/usr/lib/systemd/system/fic.service'.\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic-device.service' \u2192 '/usr/lib/systemd/system/fic-device.service'.\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic-notify.service' \u2192 '/usr/lib/systemd/system/fic-notify.service'.\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\n3: fic-cli-0.1.0-1.altp11               ################################# [100%]\nRunning /usr/lib/rpm/posttrans-filetriggers\n"
+    },
+    {
+      "command": [
+        "systemctl",
+        "is-active",
+        "fic.service",
+        "fic-device.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "54233fea09439225592caba48eaef86204f35acbd98a0a8b8672f03f9ddc8cce",
+      "output_excerpt": "active\nactive\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "password_max_age_days"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "password_max_age_days"
+      ],
+      "exit_code": 0,
+      "output_sha256": "788a8a7333fe9bc0a8c6a737903aa378549c5ac22c9e6fa28dab781ab6799d54",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PASSWORD_AGING:password_max_age_days applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "DAC",
+        "sudo_disable_scoped_defaults"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "DAC",
+        "sudo_disable_scoped_defaults"
+      ],
+      "exit_code": 0,
+      "output_sha256": "acb6a75725da3fbf96e205bc748f3481d269144022eed9276700f9c6aa82fdf0",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nDAC:SudoEdit:sudo_disable_scoped_defaults applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "DAC",
+        "sudo_exempt_group_disable"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "DAC",
+        "sudo_exempt_group_disable"
+      ],
+      "exit_code": 0,
+      "output_sha256": "7c25a4c5ea5bc2b35bebf916bea17ac80ab5f2ac8ffabdd8567d184d8d208df2",
+      "output_excerpt": "policy applied\nsummary: total=2, applied=2, failed=0, disabled=0, not_found=0\nDAC:SudoEdit:sudo_disable_scoped_defaults applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\nDAC:SudoEdit:sudo_exempt_group_disable applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "DAC",
+        "sudo_env_reset"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "DAC",
+        "sudo_env_reset"
+      ],
+      "exit_code": 0,
+      "output_sha256": "59c11241cafcab3e41d068c1e5adadcd1fea4ef1593b9985b024b5d395980b0c",
+      "output_excerpt": "policy applied\nsummary: total=2, applied=2, failed=0, disabled=0, not_found=0\nDAC:SudoEdit:sudo_disable_scoped_defaults applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\nDAC:SudoEdit:sudo_env_reset applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "DAC",
+        "sudo_timeout"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "DAC",
+        "sudo_timeout"
+      ],
+      "exit_code": 0,
+      "output_sha256": "350cba8d7aff51f2b576240876d5060512601f264518870e4f70e5f14cb9472c",
+      "output_excerpt": "policy applied\nsummary: total=3, applied=3, failed=0, disabled=0, not_found=0\nDAC:SudoEdit:sudo_disable_scoped_defaults applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\nDAC:SudoEdit:sudo_exempt_group_disable applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\nDAC:SudoEdit:sudo_timeout applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "enable_authentication_lockout"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "enable_authentication_lockout"
+      ],
+      "exit_code": 0,
+      "output_sha256": "08700bbebc2e0a6f708808bf1d5442217b08143893a006bc3b3c193703ffe002",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PAM:enable_authentication_lockout applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "enable_password_history"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "enable_password_history"
+      ],
+      "exit_code": 0,
+      "output_sha256": "c10b7e966fc14b4c83edf39484dc1a8f1cc89c9d09a704729fa5f43c150006a2",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PAM:enable_password_history applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "enable",
+        "IDENTITY_ACCESS",
+        "passwdqc_retry_count"
+      ],
+      "exit_code": 0,
+      "output_sha256": "2e2cf4decc47c83d0f2e8d6fc3b4daa602ee9981d4a77025f5b44072b563a789",
+      "output_excerpt": "policy enabled\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "passwdqc_retry_count"
+      ],
+      "exit_code": 0,
+      "output_sha256": "200eb52e458fe60835ef7f9ea58e221fcc5c891d1296925a292ca853cecc07be",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PAM:passwdqc_retry_count applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "snapshot": "owned-before-upgrade",
+      "lifecycle": "INSTALLED\n",
+      "sha256": {
+        "/etc/pam.d/common-login": "c8ebb9acb901dca9e809967f305d9a51e476931b82fbe39216ea555451553e6b",
+        "/etc/pam.d/system-auth-use_first_pass-local": "233278bab33b730db765d6788ca3dfce2e3b327b00ca16f8366dc029ad65fcd0",
+        "/etc/pam.d/user-group-mod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/chpasswd-newusers": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/system-auth": "962fabef9682f0ba7db5abe7bcc65c280f51514dfb3d8bea54bda3aa1478f7fd",
+        "/etc/pam.d/system-policy-remote": "0703e882f4ab5e98047ac566e82f230a047dce5e65c4b85a85596b750bdb2e2a",
+        "/etc/pam.d/system-auth-ldap": "6026d3009ebf8cf3e47634e57dd963b5a3d41ae6337c07e8742ed77c2005642d",
+        "/etc/pam.d/system-auth-krb5": "8ea2839ad02c86b386e4e732fca58316ccf7ad5cc9028f65bb652b9f5be2581b",
+        "/etc/pam.d/runuser-l": "be9329a8b26e3cfd4af879fe60900f646f8188f3fbe491688f23d4d8b491c5b1",
+        "/etc/pam.d/system-auth-ldap-only": "1fc5724c4088a8e4fd04f310c94b5450d057dfae1a49a78a3ce0795177331e8f",
+        "/etc/pam.d/system-auth-use_first_pass-krb5": "9d93facc95979f13ca62f30ee3c6bf3bf8a4daff2d7e2a8c83956ba5578f47f0",
+        "/etc/pam.d/system-auth-krb5-only": "c80cb9e9a87cc451b5e9a7469ecba952a4012ced56fe02c1efb94a059e73cf76",
+        "/etc/pam.d/usermod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-krb5_ccreds": "2e06bb37d91d87a489aab505663cd652c01d83c69e47138374da4319fee584b9",
+        "/etc/pam.d/runuser": "2d430cb6628248953568010427d663f3305856f3cb055955c2239bea226c5280",
+        "/etc/pam.d/useradd": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-use_first_pass-winbind-only": "0c51da4efc05ce13b8dfaef3e995ea7298bd7375fdbf4d7f2aa662b55ed7e755",
+        "/etc/pam.d/system-auth-use_first_pass-ldap-only": "03034aeb8d36654399175e6ea1483dbdaea316c1fa2472cd583f7bcb36831a0d",
+        "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds": "86086ebc3e8dba5daa656a76bb1a6bdabf1ef9472527b66c2ed619291d6c06d8",
+        "/etc/pam.d/system-check-localuser-legacy": "0a69722fcb363f695f5614c4f68c31ef9087a5ee61830f99140853cec2036dec",
+        "/etc/pam.d/system-auth-use_first_pass-krb5-only": "5ac5a5222c40c651a12dcb7265583f239c94b4fda27d2d6212e37339f697e7cc",
+        "/etc/pam.d/groupdel": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-use_first_pass-winbind": "20a87607368e3480fc8954dc8c2ebde83dd57c1b8a359971c47127d98d814f6a",
+        "/etc/pam.d/system-auth-common": "9779511718107e89f9a70d1e37c0dbaf5c618f16196bb93da61e3ccf27dac68b",
+        "/etc/pam.d/system-auth-use_first_pass": "233278bab33b730db765d6788ca3dfce2e3b327b00ca16f8366dc029ad65fcd0",
+        "/etc/pam.d/system-policy": "642826be8597811a1d6e2c7d6a77601676941df757eb9f8abe1cf13a99dede63",
+        "/etc/pam.d/chpasswd": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/other": "dfc6acbe9e9a4e60354a0dff45c01387abc2ee9efa50492e754f4c3113ba0926",
+        "/etc/pam.d/system-auth-use_first_pass-local-only": "49cd987281b6ef5b64c1cb2405595ce4afc8be0b5654207a44fff1d32dcd3fef",
+        "/etc/pam.d/system-auth-krb5_ccreds-only": "56d04f3653cd88743931a2143d49544e7f3d47276fd79b26509525bc7cbc28a5",
+        "/etc/pam.d/system-auth-multi": "07a50af644481171941f04ebfb1075f3c068e7cddd140a3d26778ae1f016d98d",
+        "/etc/pam.d/system-auth-use_first_pass-ldap": "22f9a8e7be128e705d236c800e8d08157fe5bb6697398126c0680bd0171cef9a",
+        "/etc/pam.d/newusers": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/system-auth-winbind-only": "401b977ca528524ec960ff492cd759da187797e1cbf06b980e6f20701e180d29",
+        "/etc/pam.d/groupmod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/common-login-use_first_pass": "33c7100a74db519bdd9f36f3d7badf152c90eb3bf75c94ab1c53f6eabc68f783",
+        "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds-only": "c556a1f8012ce1d0682d80a75074bb1b2d2e9ed7908ef8741af935f8e5b0f002",
+        "/etc/pam.d/system-auth-use_first_pass-pkcs11": "daada138d863d453fd25be457de0facace2fa410b1c99f0b0c2e801a34b57eac",
+        "/etc/pam.d/system-auth-pkcs11": "775360e3af75bfe022e5905f536b4bf70516baca7407abc2445518d24f2175ac",
+        "/etc/pam.d/userdel": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-local-only": "af82aef13a81c4e24a0d52f62582737e65c96b229fb8ded0da72a46d6a454fed",
+        "/etc/pam.d/system-auth-use_first_pass-multi": "018312edd6b7e2551508f756936fdc6e4c683644ffa49f9e3cddc896d1f58c26",
+        "/etc/pam.d/system-auth-local": "962fabef9682f0ba7db5abe7bcc65c280f51514dfb3d8bea54bda3aa1478f7fd",
+        "/etc/pam.d/system-check-localuser-systemd": "bb3ea833d5afd3fa2b062f8fb7120cbd9269e93b8e08e32e24cdfbe894b1823a",
+        "/etc/pam.d/system-auth-winbind": "4f660358b8952e50854c12067437e32d143a81f6fe77b92d097bb864bc716373",
+        "/etc/pam.d/groupadd": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-check-localuser": "bb3ea833d5afd3fa2b062f8fb7120cbd9269e93b8e08e32e24cdfbe894b1823a",
+        "/etc/pam.d/system-policy-local": "642826be8597811a1d6e2c7d6a77601676941df757eb9f8abe1cf13a99dede63",
+        "/etc/pam.d/sudo": "9f15a29bdf9e76a23f496d42e7dc668dce48b18728c6f41e52b2b54608de908c",
+        "/etc/pam.d/login": "b73bf0e1dcafbec73162425b1e95b05f1546715706d7ccb873a280a3c052abe2",
+        "/etc/pam.d/systemd-run0": "6309bb1b0ceac504e286c4bf5e8aa809a4f977802f9a28f0d85a99074ec0b1d0",
+        "/etc/pam.d/systemd-user": "3267b52f941d7a163123d80e7e891862318e2ffceb1a305ff73e7dfac354fea3",
+        "/etc/pam.d/sshd": "21c90a9753ff4fa8512306c1afdf925ecb7cba2ca41c1fd21d53a8b8aca7cf2d",
+        "/opt/fic/config/GLOBAL.conf": "c974e28f79b0069b0c0a49df20c9303927a600f196b3a528898188b1bae2b369",
+        "/opt/fic/config/FIREWALL.conf": "baef7dc7a5888a77e4ddae0613544201569503a8d0486106950ec6dff772276c",
+        "/opt/fic/config/DAC.conf": "d0be5f1b11165e55dc5e3bee4819036f07230f6d62ee1def4d85123da3162d46",
+        "/opt/fic/config/OSS.conf": "e13726945a5d9e7d137ec390ebde29ebb80d2e1e54818520e0e21418beec823d",
+        "/opt/fic/config/DC.conf": "c9cb053a8c6b88f82d841e8c3f82a8cee70f9946ac9646eb15a7613e702eeca8",
+        "/opt/fic/config/SYSCTL.conf": "e5168294c0a29e4f1db2d7b5aaaf7f6f6bb92db31a52f516733a2c02e7b618af",
+        "/opt/fic/config/NET.conf": "bb4a6b8e55b980b5b958503f324ea5016b5d3b031785b2ffab44ed6c5bb52a0e",
+        "/opt/fic/config/AUDIT.conf": "32d1c5973e6279f56045f26429159390e5839d0dd6e5f983be89fca657ca9a17",
+        "/opt/fic/config/IDENTITY_ACCESS.conf": "c978438dc48b3ec4ddd18597de4718e8b7444bb265cd555b96593f1301b043ce",
+        "/opt/fic/db/mutation-journal.json": "be76e2804b24c3d40defe5d120c644ad65a4b15148f5a158731b10a060ef1e24",
+        "/opt/fic/db/mutation-journal.json.initialized": "0fa7def5f200d53086a7d7fe253e27262fb0cd134abdb3f8d50024969e1da320",
+        "/opt/fic/lockstatus": "d806a8d963162cb8656c183ff20f17986df6f1a9122a587a032b37281ff28a97"
+      }
+    },
+    {
+      "command": [
+        "rpm",
+        "-Uvh",
+        "/var/tmp/fic-packages/upgrades/fic-0.1.1-1.altp11.x86_64.rpm",
+        "/var/tmp/fic-packages/upgrades/fic-cli-0.1.1-1.altp11.x86_64.rpm",
+        "/var/tmp/fic-packages/upgrades/fic-dick-0.1.1-1.altp11.x86_64.rpm"
+      ],
+      "exit_code": 0,
+      "output_sha256": "eaf507fc4a8d2002e5745e5d725e0bf9b914b8e24dc88f93a8403c8ac32c2d1c",
+      "output_excerpt": "Preparing...                            ################################# [100%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nUpdating / installing...\n1: fic-dick-0.1.1-1.altp11              ################################# [ 17%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\n2: fic-0.1.1-1.altp11                   ################################# [ 33%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state already exists (proven); leaving it untouched\ndevice database schema is initialized: 2\npackage trust sync completed: updated=12, unavailable=7\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\n3: fic-cli-0.1.1-1.altp11               ################################# [ 50%]\nCleaning up / removing...\n4: fic-cli-0.1.0-1.altp11               ################################# [ 67%]\n5: fic-0.1.0-1.altp11                   ################################# [ 83%]\n6: fic-dick-0.1.0-1.altp11              ################################# [100%]\nRunning /usr/lib/rpm/posttrans-filetriggers\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "prepare-uninstall"
+      ],
+      "exit_code": 0,
+      "output_sha256": "ce028478cffcfebbb731fa4ecd80c7c628ee5e5ae32e3f555cd2485e4d4fda82",
+      "output_excerpt": "FIC \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u0432 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u044f.\n"
+    },
+    {
+      "ipc_command": "apply_all",
+      "request_fields": {},
+      "response": {
+        "api_version": 1,
+        "error_code": "UNINSTALL_IN_PROGRESS",
+        "message": "\u041e\u0448\u0438\u0431\u043a\u0430 [apply_all]: FIC \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u0432 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u044f.",
+        "ok": false
+      }
+    },
+    {
+      "ipc_command": "rollback_all",
+      "request_fields": {},
+      "response": {
+        "api_version": 1,
+        "message": "FIC ownership release incomplete; independent resources attempted",
+        "ok": false,
+        "results": [
+          {
+            "policy": "AUDIT:logging:log_level",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "AUDIT:logging:log_level",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "DAC:Mode_and_Owner:mode_and_owner_profiles",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "DAC:Mode_and_Owner:mode_and_owner_profiles",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation",
+            "policy": "DAC:SudoEdit:sudo_disable_scoped_defaults",
+            "status": "success"
+          },
+          {
+            "message": "\u041a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u043d\u044b\u0435 Defaults \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u044b \u0432 1 \u0444\u0430\u0439\u043b\u0430\u0445",
+            "mutation_id": 2,
+            "policy": "DAC:SudoEdit:sudo_disable_scoped_defaults",
+            "resource": "sudo/scoped_defaults/wrappers",
+            "status": "success"
+          },
+          {
+            "message": "",
+            "resource_group": "DAC:SudoEdit:sudo_disable_scoped_defaults",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation",
+            "policy": "DAC:SudoEdit:sudo_env_reset",
+            "status": "success"
+          },
+          {
+            "message": "Released one owned global Defaults entry",
+            "mutation_id": 4,
+            "policy": "DAC:SudoEdit:sudo_env_reset",
+            "resource": "env_reset",
+            "status": "success"
+          },
+          {
+            "message": "",
+            "resource_group": "DAC:SudoEdit:sudo_env_reset",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "DAC:SudoEdit:sudo_passwd_tries",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "DAC:SudoEdit:sudo_passwd_tries",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "DAC:SudoEdit:sudo_require_authentication",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "DAC:SudoEdit:sudo_require_authentication",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "DAC:SudoEdit:sudo_securepath",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "DAC:SudoEdit:sudo_securepath",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation",
+            "policy": "DAC:SudoEdit:sudo_timeout",
+            "status": "success"
+          },
+          {
+            "message": "Released one owned global Defaults entry",
+            "mutation_id": 5,
+            "policy": "DAC:SudoEdit:sudo_timeout",
+            "resource": "timestamp_timeout",
+            "status": "success"
+          },
+          {
+            "message": "",
+            "resource_group": "DAC:SudoEdit:sudo_timeout",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "DC:DeviceControl:block_optical_drives",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "DC:DeviceControl:block_optical_drives",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "DC:DeviceControl:block_printers_scanners",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "DC:DeviceControl:block_printers_scanners",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "DC:DeviceControl:block_usb_storage",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "DC:DeviceControl:block_usb_storage",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "DC:DeviceControl:permanent_device_missing_severity",
+            "status": "NOTHING_TO_RELEASE"
+          },
+          {
+            "message": "",
+            "resource_group": "DC:DeviceControl:permanent_device_missing_severity",
+            "status": "RELEASED"
+          },
+          {
+            "domain": "DE",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "message": "",
+            "resource_group": "DE",
+            "status": "RELEASED"
+          },
+          {
+            "domain": "DM",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "message": "",
+            "resource_group": "DM",
+            "status": "RELEASED"
+          },
+          {
+            "message": "",
+            "policy": "FIREWALL:HostFiltering:block_ftp",
+            "status": "NOTHING_TO_RELEASE"
+          },
+          {
+            "message": "",
+            "resource_group": "FIREWALL:HostFiltering:block_ftp",
+            "status": "RELEASED"
+          },
+          {
+            "message": "",
+            "policy": "FIREWALL:HostFiltering:block_rdp",
+            "status": "NOTHING_TO_RELEASE"
+          },
+          {
+            "message": "",
+            "resource_group": "FIREWALL:HostFiltering:block_rdp",
+            "status": "RELEASED"
+          },
+          {
+            "message": "",
+            "policy": "FIREWALL:HostFiltering:custom_rules",
+            "status": "NOTHING_TO_RELEASE"
+          },
+          {
+            "message": "",
+            "resource_group": "FIREWALL:HostFiltering:custom_rules",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "FIREWALL:HostFiltering:exclusive_firewall_control",
+            "status": "NOTHING_TO_RELEASE"
+          },
+          {
+            "message": "",
+            "resource_group": "FIREWALL:HostFiltering:exclusive_firewall_control",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "FIREWALL:HostFiltering:incident_quarantine",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "FIREWALL:HostFiltering:incident_quarantine",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "GLOBAL:lock_settings:incident_response_mode",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "GLOBAL:lock_settings:incident_response_mode",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "GLOBAL:lock_settings:lock_exempt_fic_members",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "GLOBAL:lock_settings:lock_exempt_fic_members",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "GLOBAL:system_settings:lang",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "GLOBAL:system_settings:lang",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; \u0431\u0435\u0437 \u0430\u043a\u0442\u0438\u0432\u043d\u043e\u0439 \u0437\u0430\u043f\u0438\u0441\u0438 journal FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 Kerberos (foreign relation \u043d\u0435 \u044f\u0432\u043b\u044f\u0435\u0442\u0441\u044f provenance FIC)",
+            "policy": "IDENTITY_ACCESS:KERBEROS:kerberos_ticket_lifetime",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:KERBEROS:kerberos_ticket_lifetime",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "IDENTITY_ACCESS:PASSWORD_AGING:password_aging_apply_to_existing_accounts",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:PASSWORD_AGING:password_aging_apply_to_existing_accounts",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "IDENTITY_ACCESS:PASSWORD_AGING:password_aging_enforce_for_root",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:PASSWORD_AGING:password_aging_enforce_for_root",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-owned sub-block \u0432 login.defs \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "IDENTITY_ACCESS:PASSWORD_AGING:password_expiration_warning_days",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:PASSWORD_AGING:password_expiration_warning_days",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation",
+            "policy": "IDENTITY_ACCESS:PASSWORD_AGING:password_max_age_days",
+            "status": "success"
+          },
+          {
+            "message": "shared login.defs ownership released",
+            "mutation_id": 1,
+            "policy": "IDENTITY_ACCESS:PASSWORD_AGING:password_max_age_days",
+            "resource": "/etc/login.defs",
+            "status": "success"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:PASSWORD_AGING:password_max_age_days",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-owned sub-block \u0432 login.defs \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "IDENTITY_ACCESS:PASSWORD_AGING:password_min_age_days",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:PASSWORD_AGING:password_min_age_days",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-owned sub-block \u0432 login.defs \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "IDENTITY_ACCESS:PASSWORD_AGING:regular_user_uid_max",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:PASSWORD_AGING:regular_user_uid_max",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-owned sub-block \u0432 login.defs \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "IDENTITY_ACCESS:PASSWORD_AGING:regular_user_uid_min",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:PASSWORD_AGING:regular_user_uid_min",
+            "status": "RELEASED"
+          },
+          {
+            "message": "staged SSSD removal artifact remains",
+            "policy": "IDENTITY_ACCESS:SSSD:sssd_offline_credentials_expiration",
+            "status": "FAILED"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:SSSD:sssd_offline_credentials_expiration",
+            "status": "FAILED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-owned sub-block \u0432 login.defs \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "IDENTITY_ACCESS:USER_CREATION:user_create_home",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:USER_CREATION:user_create_home",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-owned sub-block \u0432 login.defs \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "IDENTITY_ACCESS:USER_CREATION:user_create_private_group",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:USER_CREATION:user_create_private_group",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "IDENTITY_ACCESS:USER_CREATION:user_default_primary_group",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:USER_CREATION:user_default_primary_group",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "IDENTITY_ACCESS:USER_CREATION:user_default_shell",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:USER_CREATION:user_default_shell",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "IDENTITY_ACCESS:USER_CREATION:user_default_supplementary_groups",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:USER_CREATION:user_default_supplementary_groups",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "IDENTITY_ACCESS:USER_CREATION:user_home_base_directory",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:USER_CREATION:user_home_base_directory",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "IDENTITY_ACCESS:USER_CREATION:user_skeleton_directory",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "IDENTITY_ACCESS:USER_CREATION:user_skeleton_directory",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-\u043c\u0430\u0440\u043a\u0435\u0440\u044b \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438 \u0432 sshd_config \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442",
+            "policy": "NET:SshEdit:ssh_max_auth_tries",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "NET:SshEdit:ssh_max_auth_tries",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-\u043c\u0430\u0440\u043a\u0435\u0440\u044b \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438 \u0432 sshd_config \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442",
+            "policy": "NET:SshEdit:ssh_port",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "NET:SshEdit:ssh_port",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-\u043c\u0430\u0440\u043a\u0435\u0440\u044b \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438 \u0432 sshd_config \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442",
+            "policy": "NET:SshEdit:ssh_pubkey_auth",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "NET:SshEdit:ssh_pubkey_auth",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-\u043c\u0430\u0440\u043a\u0435\u0440\u044b \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438 \u0432 sshd_config \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442",
+            "policy": "NET:SshEdit:ssh_root_login",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "NET:SshEdit:ssh_root_login",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC-\u043c\u0430\u0440\u043a\u0435\u0440\u044b \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438 \u0432 sshd_config \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442",
+            "policy": "NET:SshEdit:ssh_use_pam",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "NET:SshEdit:ssh_use_pam",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_boot_efi_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_boot_efi_profile",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_boot_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_boot_profile",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_dev_shm_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_dev_shm_profile",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_home_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_home_profile",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_opt_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_opt_profile",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_removable_media_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_removable_media_profile",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_srv_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_srv_profile",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_tmp_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_tmp_profile",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_var_log_audit_secure_options",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_var_log_audit_secure_options",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_var_log_secure_options",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_var_log_secure_options",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:Fstab:fstab_var_tmp_profile",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Fstab:fstab_var_tmp_profile",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC managed GRUB \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 'GRUB_CMDLINE_LINUX' \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "OSS:Grub:grub_cmdline_linux",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Grub:grub_cmdline_linux",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC managed GRUB \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 'GRUB_DISABLE_RECOVERY' \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "OSS:Grub:grub_disable_recovery",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Grub:grub_disable_recovery",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC managed GRUB \u0437\u043d\u0430\u0447\u0435\u043d\u0438\u0435 'GRUB_TIMEOUT' \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u0435\u0442",
+            "policy": "OSS:Grub:grub_timeout",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:Grub:grub_timeout",
+            "status": "RELEASED"
+          },
+          {
+            "policy": "OSS:SessionManagement:lock_on_tty_switch",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "",
+            "resource_group": "OSS:SessionManagement:lock_on_tty_switch",
+            "status": "RELEASED"
+          },
+          {
+            "domain": "ALT_PWHISTORY",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "domain": "ALT_FAILLOCK",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": false,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": []
+            },
+            "status": "RELEASED"
+          },
+          {
+            "domain": "PAM_PROVIDER",
+            "message": "",
+            "password": {
+              "changed_system_state": false,
+              "compensated": false,
+              "compensated_state_proven": false,
+              "detached_identities": [],
+              "recovered_crash_leftovers": []
+            },
+            "provider": {
+              "changed_system_state": true,
+              "containers_deleted": [],
+              "containers_detached": [],
+              "containers_retained": [],
+              "released_records": [
+                "entry 8 passwdqc_retry_count"
+              ]
+            },
+            "status": "RELEASED"
+          },
+          {
+            "policy": "IDENTITY_ACCESS:PAM:disable_nopasswdlogin",
+            "status": "NOTHING_TO_RELEASE"
+          },
+          {
+            "message": "\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0435 mutation \u043d\u0435 \u0442\u0440\u0435\u0431\u0443\u044e\u0442 \u043e\u0442\u043a\u0430\u0442\u0430: FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0442\u0435\u043a\u0443\u0449\u0438\u043c \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435\u043c",
+            "policy": "IDENTITY_ACCESS:PAM:enable_authentication_lockout",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "FIC PAM topology absent",
+            "mutation_id": 6,
+            "policy": "IDENTITY_ACCESS:PAM:enable_authentication_lockout",
+            "resource": "capability/enable_authentication_lockout",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "\u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0435 mutation \u043d\u0435 \u0442\u0440\u0435\u0431\u0443\u044e\u0442 \u043e\u0442\u043a\u0430\u0442\u0430: FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0442\u0435\u043a\u0443\u0449\u0438\u043c \u0441\u043e\u0441\u0442\u043e\u044f\u043d\u0438\u0435\u043c",
+            "policy": "IDENTITY_ACCESS:PAM:enable_password_history",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "FIC PAM topology absent",
+            "mutation_id": 7,
+            "policy": "IDENTITY_ACCESS:PAM:enable_password_history",
+            "resource": "capability/enable_password_history",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:failed_authentication_attempts",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:failed_authentication_counting_period",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:failed_authentication_enforce_for_root",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:failed_authentication_unlock_time",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:passwdqc_match_length",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:passwdqc_passphrase_words",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:passwdqc_retry_count",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:passwdqc_similar_password",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:passwdqc_strength_thresholds",
+            "status": "nothing_to_do"
+          },
+          {
+            "policy": "IDENTITY_ACCESS:PAM:password_history_depth",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "policy": "IDENTITY_ACCESS:PAM:password_history_enforce_for_root",
+            "status": "NOT_ENROLLED"
+          },
+          {
+            "message": "no record \u0438 no physical FIC state: disable \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043d",
+            "policy": "IDENTITY_ACCESS:PAM:password_quality_enforce_for_root",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "PAM",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:fs_kernel_protection:fs_file_max_limit",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:fs_kernel_protection:fs_file_max_limit",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:fs_kernel_protection:fs_nr_open_limit",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:fs_kernel_protection:fs_nr_open_limit",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:fs_kernel_protection:fs_protected_hardlinks",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:fs_kernel_protection:fs_protected_hardlinks",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:fs_kernel_protection:fs_protected_symlinks",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:fs_kernel_protection:fs_protected_symlinks",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:fs_kernel_protection:fs_suid_dump_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:fs_kernel_protection:fs_suid_dump_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:kernel_dmesg_restrict",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:kernel_dmesg_restrict",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:kernel_kptr_restrict",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:kernel_kptr_restrict",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:kernel_perf_event_paranoid",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:kernel_perf_event_paranoid",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:kernel_pid_max_limit",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:kernel_pid_max_limit",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:kernel_randomize_va_space",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:kernel_randomize_va_space",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:kernel_sysrq_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:kernel_sysrq_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:kernel_threads_max_limit",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:kernel_threads_max_limit",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:ptrace_proc_restriction",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:ptrace_proc_restriction",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:global_kernel_protection:user_namespace_restriction",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:global_kernel_protection:user_namespace_restriction",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv4_all_accept_redirects_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv4_all_accept_redirects_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv4_all_rp_filter_enable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv4_all_rp_filter_enable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv4_all_send_redirects_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv4_all_send_redirects_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv4_default_accept_redirects_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv4_default_accept_redirects_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv4_default_rp_filter_enable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv4_default_rp_filter_enable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv4_default_send_redirects_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv4_default_send_redirects_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv4_packet_forwarding_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv4_packet_forwarding_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv6_all_accept_redirects_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv6_all_accept_redirects_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv6_default_accept_redirects_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv6_default_accept_redirects_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:ipv6_packet_forwarding_disable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:ipv6_packet_forwarding_disable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:tcp_fin_timeout",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:tcp_fin_timeout",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:tcp_keepalive_time",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:tcp_keepalive_time",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:tcp_max_syn_backlog",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:tcp_max_syn_backlog",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:tcp_synack_retries",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:tcp_synack_retries",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438",
+            "policy": "SYSCTL:network_kernel_protection:tcp_syncookies_enable",
+            "status": "nothing_to_do"
+          },
+          {
+            "message": "",
+            "resource_group": "SYSCTL:network_kernel_protection:tcp_syncookies_enable",
+            "status": "RELEASED"
+          },
+          {
+            "message": "Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation",
+            "policy": "DAC:SudoEdit:sudo_exempt_group_disable",
+            "status": "success"
+          },
+          {
+            "message": "Released the last global Defaults owner and shared SUDO artifacts",
+            "mutation_id": 3,
+            "policy": "DAC:SudoEdit:sudo_exempt_group_disable",
+            "resource": "exempt_group",
+            "status": "success"
+          },
+          {
+            "message": "",
+            "resource_group": "DAC:SudoEdit:sudo_exempt_group_disable",
+            "status": "RELEASED"
+          }
+        ],
+        "summary": {
+          "blocked": 0,
+          "failed": 1,
+          "groups": 89,
+          "released": 88
+        }
+      }
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "rollback",
+        "all"
+      ],
+      "exit_code": 0,
+      "output_sha256": "a9b1d219757b06811693dd322a610971baebd801b6ab38e45f2cef2a47b2deae",
+      "output_excerpt": "FIC ownership release completed\nAUDIT:logging:log_level NOT_ENROLLED \nAUDIT:logging:log_level RELEASED \nDAC:Mode_and_Owner:mode_and_owner_profiles NOT_ENROLLED \nDAC:Mode_and_Owner:mode_and_owner_profiles RELEASED \nDAC:SudoEdit:sudo_disable_scoped_defaults nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; \u043e\u0431\u0451\u0440\u0442\u043a\u0438 FIC_SUDO_DISABLED \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438 \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442\nDAC:SudoEdit:sudo_disable_scoped_defaults RELEASED \nDAC:SudoEdit:sudo_env_reset nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nDAC:SudoEdit:sudo_env_reset RELEASED \nDAC:SudoEdit:sudo_passwd_tries nothi\n[excerpt omitted; full output hash above]\nrk_kernel_protection:tcp_keepalive_time nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nSYSCTL:network_kernel_protection:tcp_keepalive_time RELEASED \nSYSCTL:network_kernel_protection:tcp_max_syn_backlog nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nSYSCTL:network_kernel_protection:tcp_max_syn_backlog RELEASED \nSYSCTL:network_kernel_protection:tcp_synack_retries nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nSYSCTL:network_kernel_protection:tcp_synack_retries RELEASED \nSYSCTL:network_kernel_protection:tcp_syncookies_enable nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nSYSCTL:network_kernel_protection:tcp_syncookies_enable RELEASED \nDAC:SudoEdit:sudo_exempt_group_disable nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nDAC:SudoEdit:sudo_exempt_group_disable RELEASED \n"
+    },
+    {
+      "command": [
+        "visudo",
+        "-c"
+      ],
+      "exit_code": 0,
+      "output_sha256": "36ccc8ab63da5462756c8a1b56b7fd9b463dba2b27de7c9919b128e09845f0ec",
+      "output_excerpt": "Warning: /etc/sudoers:23:12: unused User_Alias \"WHEEL_USERS\"\n/etc/sudoers: parsed OK\n/etc/sudoers.d/99-sudopw: parsed OK\n"
+    },
+    {
+      "snapshot": "released-before-remove",
+      "lifecycle": "UNINSTALLING\n",
+      "sha256": {
+        "/etc/pam.d/common-login": "c8ebb9acb901dca9e809967f305d9a51e476931b82fbe39216ea555451553e6b",
+        "/etc/pam.d/system-auth-use_first_pass-local": "233278bab33b730db765d6788ca3dfce2e3b327b00ca16f8366dc029ad65fcd0",
+        "/etc/pam.d/user-group-mod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/chpasswd-newusers": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/system-auth": "962fabef9682f0ba7db5abe7bcc65c280f51514dfb3d8bea54bda3aa1478f7fd",
+        "/etc/pam.d/system-policy-remote": "0703e882f4ab5e98047ac566e82f230a047dce5e65c4b85a85596b750bdb2e2a",
+        "/etc/pam.d/system-auth-ldap": "6026d3009ebf8cf3e47634e57dd963b5a3d41ae6337c07e8742ed77c2005642d",
+        "/etc/pam.d/system-auth-krb5": "8ea2839ad02c86b386e4e732fca58316ccf7ad5cc9028f65bb652b9f5be2581b",
+        "/etc/pam.d/runuser-l": "be9329a8b26e3cfd4af879fe60900f646f8188f3fbe491688f23d4d8b491c5b1",
+        "/etc/pam.d/system-auth-ldap-only": "1fc5724c4088a8e4fd04f310c94b5450d057dfae1a49a78a3ce0795177331e8f",
+        "/etc/pam.d/system-auth-use_first_pass-krb5": "9d93facc95979f13ca62f30ee3c6bf3bf8a4daff2d7e2a8c83956ba5578f47f0",
+        "/etc/pam.d/system-auth-krb5-only": "c80cb9e9a87cc451b5e9a7469ecba952a4012ced56fe02c1efb94a059e73cf76",
+        "/etc/pam.d/usermod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-krb5_ccreds": "2e06bb37d91d87a489aab505663cd652c01d83c69e47138374da4319fee584b9",
+        "/etc/pam.d/runuser": "2d430cb6628248953568010427d663f3305856f3cb055955c2239bea226c5280",
+        "/etc/pam.d/useradd": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-use_first_pass-winbind-only": "0c51da4efc05ce13b8dfaef3e995ea7298bd7375fdbf4d7f2aa662b55ed7e755",
+        "/etc/pam.d/system-auth-use_first_pass-ldap-only": "03034aeb8d36654399175e6ea1483dbdaea316c1fa2472cd583f7bcb36831a0d",
+        "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds": "86086ebc3e8dba5daa656a76bb1a6bdabf1ef9472527b66c2ed619291d6c06d8",
+        "/etc/pam.d/system-check-localuser-legacy": "0a69722fcb363f695f5614c4f68c31ef9087a5ee61830f99140853cec2036dec",
+        "/etc/pam.d/system-auth-use_first_pass-krb5-only": "5ac5a5222c40c651a12dcb7265583f239c94b4fda27d2d6212e37339f697e7cc",
+        "/etc/pam.d/groupdel": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-use_first_pass-winbind": "20a87607368e3480fc8954dc8c2ebde83dd57c1b8a359971c47127d98d814f6a",
+        "/etc/pam.d/system-auth-common": "9779511718107e89f9a70d1e37c0dbaf5c618f16196bb93da61e3ccf27dac68b",
+        "/etc/pam.d/system-auth-use_first_pass": "233278bab33b730db765d6788ca3dfce2e3b327b00ca16f8366dc029ad65fcd0",
+        "/etc/pam.d/system-policy": "642826be8597811a1d6e2c7d6a77601676941df757eb9f8abe1cf13a99dede63",
+        "/etc/pam.d/chpasswd": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/other": "dfc6acbe9e9a4e60354a0dff45c01387abc2ee9efa50492e754f4c3113ba0926",
+        "/etc/pam.d/system-auth-use_first_pass-local-only": "d849ae1e6634526cfbf60207c47bc984a21cfc786e37ba3f2f3302b7768f08ce",
+        "/etc/pam.d/system-auth-krb5_ccreds-only": "56d04f3653cd88743931a2143d49544e7f3d47276fd79b26509525bc7cbc28a5",
+        "/etc/pam.d/system-auth-multi": "07a50af644481171941f04ebfb1075f3c068e7cddd140a3d26778ae1f016d98d",
+        "/etc/pam.d/system-auth-use_first_pass-ldap": "22f9a8e7be128e705d236c800e8d08157fe5bb6697398126c0680bd0171cef9a",
+        "/etc/pam.d/newusers": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/system-auth-winbind-only": "401b977ca528524ec960ff492cd759da187797e1cbf06b980e6f20701e180d29",
+        "/etc/pam.d/groupmod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/common-login-use_first_pass": "33c7100a74db519bdd9f36f3d7badf152c90eb3bf75c94ab1c53f6eabc68f783",
+        "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds-only": "c556a1f8012ce1d0682d80a75074bb1b2d2e9ed7908ef8741af935f8e5b0f002",
+        "/etc/pam.d/system-auth-use_first_pass-pkcs11": "daada138d863d453fd25be457de0facace2fa410b1c99f0b0c2e801a34b57eac",
+        "/etc/pam.d/system-auth-pkcs11": "775360e3af75bfe022e5905f536b4bf70516baca7407abc2445518d24f2175ac",
+        "/etc/pam.d/userdel": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-local-only": "8bb94bb4fe9a96568ad8365efa1183e2f88af6ecd47e31ab69db6be1dd0b64f2",
+        "/etc/pam.d/system-auth-use_first_pass-multi": "018312edd6b7e2551508f756936fdc6e4c683644ffa49f9e3cddc896d1f58c26",
+        "/etc/pam.d/system-auth-local": "962fabef9682f0ba7db5abe7bcc65c280f51514dfb3d8bea54bda3aa1478f7fd",
+        "/etc/pam.d/system-check-localuser-systemd": "bb3ea833d5afd3fa2b062f8fb7120cbd9269e93b8e08e32e24cdfbe894b1823a",
+        "/etc/pam.d/system-auth-winbind": "4f660358b8952e50854c12067437e32d143a81f6fe77b92d097bb864bc716373",
+        "/etc/pam.d/groupadd": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-check-localuser": "bb3ea833d5afd3fa2b062f8fb7120cbd9269e93b8e08e32e24cdfbe894b1823a",
+        "/etc/pam.d/system-policy-local": "642826be8597811a1d6e2c7d6a77601676941df757eb9f8abe1cf13a99dede63",
+        "/etc/pam.d/sudo": "9f15a29bdf9e76a23f496d42e7dc668dce48b18728c6f41e52b2b54608de908c",
+        "/etc/pam.d/login": "b73bf0e1dcafbec73162425b1e95b05f1546715706d7ccb873a280a3c052abe2",
+        "/etc/pam.d/systemd-run0": "6309bb1b0ceac504e286c4bf5e8aa809a4f977802f9a28f0d85a99074ec0b1d0",
+        "/etc/pam.d/systemd-user": "3267b52f941d7a163123d80e7e891862318e2ffceb1a305ff73e7dfac354fea3",
+        "/etc/pam.d/sshd": "21c90a9753ff4fa8512306c1afdf925ecb7cba2ca41c1fd21d53a8b8aca7cf2d",
+        "/opt/fic/config/GLOBAL.conf": "c974e28f79b0069b0c0a49df20c9303927a600f196b3a528898188b1bae2b369",
+        "/opt/fic/config/FIREWALL.conf": "baef7dc7a5888a77e4ddae0613544201569503a8d0486106950ec6dff772276c",
+        "/opt/fic/config/DAC.conf": "d0be5f1b11165e55dc5e3bee4819036f07230f6d62ee1def4d85123da3162d46",
+        "/opt/fic/config/OSS.conf": "e13726945a5d9e7d137ec390ebde29ebb80d2e1e54818520e0e21418beec823d",
+        "/opt/fic/config/DC.conf": "c9cb053a8c6b88f82d841e8c3f82a8cee70f9946ac9646eb15a7613e702eeca8",
+        "/opt/fic/config/SYSCTL.conf": "e5168294c0a29e4f1db2d7b5aaaf7f6f6bb92db31a52f516733a2c02e7b618af",
+        "/opt/fic/config/NET.conf": "bb4a6b8e55b980b5b958503f324ea5016b5d3b031785b2ffab44ed6c5bb52a0e",
+        "/opt/fic/config/AUDIT.conf": "32d1c5973e6279f56045f26429159390e5839d0dd6e5f983be89fca657ca9a17",
+        "/opt/fic/config/IDENTITY_ACCESS.conf": "c978438dc48b3ec4ddd18597de4718e8b7444bb265cd555b96593f1301b043ce",
+        "/opt/fic/db/mutation-journal.json": "480a70b031bba63e5d2482424fbf9e057b5f521cb5ed8950f8c0a0d86fc2cb1b",
+        "/opt/fic/db/mutation-journal.json.initialized": "0fa7def5f200d53086a7d7fe253e27262fb0cd134abdb3f8d50024969e1da320",
+        "/opt/fic/lockstatus": "d806a8d963162cb8656c183ff20f17986df6f1a9122a587a032b37281ff28a97"
+      }
+    },
+    {
+      "command": [
+        "rpm",
+        "-e",
+        "fic-cli",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "9d36b590c98a8e6794d058fc936bb5d506ad12359462063736a160b32e30c804",
+      "output_excerpt": "{\n  \"api_version\": 1,\n  \"message\": \"FIC ownership release completed\",\n  \"ok\": true,\n  \"results\": [\n    {\n      \"policy\": \"AUDIT:logging:log_level\",\n      \"status\": \"NOT_ENROLLED\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"AUDIT:logging:log_level\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"policy\": \"DAC:Mode_and_Owner:mode_and_owner_profiles\",\n      \"status\": \"NOT_ENROLLED\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:Mode_and_Owner:mode_and_owner_profiles\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; \u043e\u0431\u0451\u0440\n[excerpt omitted; full output hash above]\n\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"SYSCTL:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"nothing_to_do\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nREMOVED: writers absent and PAM detached; policy configuration and journal retained\nRemoved '/etc/systemd/system/multi-user.target.wants/fic-device.service'.\nRemoved '/etc/systemd/system/multi-user.target.wants/fic.service'.\nRemoved '/etc/systemd/system/multi-user.target.wants/fic-notify.service'.\n"
+    },
+    {
+      "snapshot": "removed-with-journal-witness",
+      "lifecycle": "REMOVED\n",
+      "sha256": {
+        "/etc/pam.d/common-login": "c8ebb9acb901dca9e809967f305d9a51e476931b82fbe39216ea555451553e6b",
+        "/etc/pam.d/system-auth-use_first_pass-local": "233278bab33b730db765d6788ca3dfce2e3b327b00ca16f8366dc029ad65fcd0",
+        "/etc/pam.d/user-group-mod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/chpasswd-newusers": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/system-auth": "962fabef9682f0ba7db5abe7bcc65c280f51514dfb3d8bea54bda3aa1478f7fd",
+        "/etc/pam.d/system-policy-remote": "0703e882f4ab5e98047ac566e82f230a047dce5e65c4b85a85596b750bdb2e2a",
+        "/etc/pam.d/system-auth-ldap": "6026d3009ebf8cf3e47634e57dd963b5a3d41ae6337c07e8742ed77c2005642d",
+        "/etc/pam.d/system-auth-krb5": "8ea2839ad02c86b386e4e732fca58316ccf7ad5cc9028f65bb652b9f5be2581b",
+        "/etc/pam.d/runuser-l": "be9329a8b26e3cfd4af879fe60900f646f8188f3fbe491688f23d4d8b491c5b1",
+        "/etc/pam.d/system-auth-ldap-only": "1fc5724c4088a8e4fd04f310c94b5450d057dfae1a49a78a3ce0795177331e8f",
+        "/etc/pam.d/system-auth-use_first_pass-krb5": "9d93facc95979f13ca62f30ee3c6bf3bf8a4daff2d7e2a8c83956ba5578f47f0",
+        "/etc/pam.d/system-auth-krb5-only": "c80cb9e9a87cc451b5e9a7469ecba952a4012ced56fe02c1efb94a059e73cf76",
+        "/etc/pam.d/usermod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-krb5_ccreds": "2e06bb37d91d87a489aab505663cd652c01d83c69e47138374da4319fee584b9",
+        "/etc/pam.d/runuser": "2d430cb6628248953568010427d663f3305856f3cb055955c2239bea226c5280",
+        "/etc/pam.d/useradd": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-use_first_pass-winbind-only": "0c51da4efc05ce13b8dfaef3e995ea7298bd7375fdbf4d7f2aa662b55ed7e755",
+        "/etc/pam.d/system-auth-use_first_pass-ldap-only": "03034aeb8d36654399175e6ea1483dbdaea316c1fa2472cd583f7bcb36831a0d",
+        "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds": "86086ebc3e8dba5daa656a76bb1a6bdabf1ef9472527b66c2ed619291d6c06d8",
+        "/etc/pam.d/system-check-localuser-legacy": "0a69722fcb363f695f5614c4f68c31ef9087a5ee61830f99140853cec2036dec",
+        "/etc/pam.d/system-auth-use_first_pass-krb5-only": "5ac5a5222c40c651a12dcb7265583f239c94b4fda27d2d6212e37339f697e7cc",
+        "/etc/pam.d/groupdel": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-use_first_pass-winbind": "20a87607368e3480fc8954dc8c2ebde83dd57c1b8a359971c47127d98d814f6a",
+        "/etc/pam.d/system-auth-common": "7840ea86cd09232fceee89fbfd05e547f9e9afe5872a0f84cad98f539ac16283",
+        "/etc/pam.d/system-auth-use_first_pass": "233278bab33b730db765d6788ca3dfce2e3b327b00ca16f8366dc029ad65fcd0",
+        "/etc/pam.d/system-policy": "642826be8597811a1d6e2c7d6a77601676941df757eb9f8abe1cf13a99dede63",
+        "/etc/pam.d/chpasswd": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/other": "dfc6acbe9e9a4e60354a0dff45c01387abc2ee9efa50492e754f4c3113ba0926",
+        "/etc/pam.d/system-auth-use_first_pass-local-only": "d849ae1e6634526cfbf60207c47bc984a21cfc786e37ba3f2f3302b7768f08ce",
+        "/etc/pam.d/system-auth-krb5_ccreds-only": "56d04f3653cd88743931a2143d49544e7f3d47276fd79b26509525bc7cbc28a5",
+        "/etc/pam.d/system-auth-multi": "07a50af644481171941f04ebfb1075f3c068e7cddd140a3d26778ae1f016d98d",
+        "/etc/pam.d/system-auth-use_first_pass-ldap": "22f9a8e7be128e705d236c800e8d08157fe5bb6697398126c0680bd0171cef9a",
+        "/etc/pam.d/newusers": "c988465672ec21bc21ca52ca53ffdf2fd25f2ceccfa088735468af4621d3e440",
+        "/etc/pam.d/system-auth-winbind-only": "401b977ca528524ec960ff492cd759da187797e1cbf06b980e6f20701e180d29",
+        "/etc/pam.d/groupmod": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/common-login-use_first_pass": "33c7100a74db519bdd9f36f3d7badf152c90eb3bf75c94ab1c53f6eabc68f783",
+        "/etc/pam.d/system-auth-use_first_pass-krb5_ccreds-only": "c556a1f8012ce1d0682d80a75074bb1b2d2e9ed7908ef8741af935f8e5b0f002",
+        "/etc/pam.d/system-auth-use_first_pass-pkcs11": "daada138d863d453fd25be457de0facace2fa410b1c99f0b0c2e801a34b57eac",
+        "/etc/pam.d/system-auth-pkcs11": "775360e3af75bfe022e5905f536b4bf70516baca7407abc2445518d24f2175ac",
+        "/etc/pam.d/userdel": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-auth-local-only": "8bb94bb4fe9a96568ad8365efa1183e2f88af6ecd47e31ab69db6be1dd0b64f2",
+        "/etc/pam.d/system-auth-use_first_pass-multi": "018312edd6b7e2551508f756936fdc6e4c683644ffa49f9e3cddc896d1f58c26",
+        "/etc/pam.d/system-auth-local": "962fabef9682f0ba7db5abe7bcc65c280f51514dfb3d8bea54bda3aa1478f7fd",
+        "/etc/pam.d/system-check-localuser-systemd": "bb3ea833d5afd3fa2b062f8fb7120cbd9269e93b8e08e32e24cdfbe894b1823a",
+        "/etc/pam.d/system-auth-winbind": "4f660358b8952e50854c12067437e32d143a81f6fe77b92d097bb864bc716373",
+        "/etc/pam.d/groupadd": "656c6d8556da0bb10a38a78b96f3ca97574fc9ac26aeddf422a5ed5d449066f5",
+        "/etc/pam.d/system-check-localuser": "bb3ea833d5afd3fa2b062f8fb7120cbd9269e93b8e08e32e24cdfbe894b1823a",
+        "/etc/pam.d/system-policy-local": "642826be8597811a1d6e2c7d6a77601676941df757eb9f8abe1cf13a99dede63",
+        "/etc/pam.d/sudo": "9f15a29bdf9e76a23f496d42e7dc668dce48b18728c6f41e52b2b54608de908c",
+        "/etc/pam.d/login": "b73bf0e1dcafbec73162425b1e95b05f1546715706d7ccb873a280a3c052abe2",
+        "/etc/pam.d/systemd-run0": "6309bb1b0ceac504e286c4bf5e8aa809a4f977802f9a28f0d85a99074ec0b1d0",
+        "/etc/pam.d/systemd-user": "3267b52f941d7a163123d80e7e891862318e2ffceb1a305ff73e7dfac354fea3",
+        "/etc/pam.d/sshd": "21c90a9753ff4fa8512306c1afdf925ecb7cba2ca41c1fd21d53a8b8aca7cf2d",
+        "/opt/fic/config/GLOBAL.conf": "c974e28f79b0069b0c0a49df20c9303927a600f196b3a528898188b1bae2b369",
+        "/opt/fic/config/FIREWALL.conf": "baef7dc7a5888a77e4ddae0613544201569503a8d0486106950ec6dff772276c",
+        "/opt/fic/config/DAC.conf": "d0be5f1b11165e55dc5e3bee4819036f07230f6d62ee1def4d85123da3162d46",
+        "/opt/fic/config/OSS.conf": "e13726945a5d9e7d137ec390ebde29ebb80d2e1e54818520e0e21418beec823d",
+        "/opt/fic/config/DC.conf": "c9cb053a8c6b88f82d841e8c3f82a8cee70f9946ac9646eb15a7613e702eeca8",
+        "/opt/fic/config/SYSCTL.conf": "e5168294c0a29e4f1db2d7b5aaaf7f6f6bb92db31a52f516733a2c02e7b618af",
+        "/opt/fic/config/NET.conf": "bb4a6b8e55b980b5b958503f324ea5016b5d3b031785b2ffab44ed6c5bb52a0e",
+        "/opt/fic/config/AUDIT.conf": "32d1c5973e6279f56045f26429159390e5839d0dd6e5f983be89fca657ca9a17",
+        "/opt/fic/config/IDENTITY_ACCESS.conf": "c978438dc48b3ec4ddd18597de4718e8b7444bb265cd555b96593f1301b043ce",
+        "/opt/fic/db/mutation-journal.json": "480a70b031bba63e5d2482424fbf9e057b5f521cb5ed8950f8c0a0d86fc2cb1b",
+        "/opt/fic/db/mutation-journal.json.initialized": "0fa7def5f200d53086a7d7fe253e27262fb0cd134abdb3f8d50024969e1da320",
+        "/opt/fic/lockstatus": "d806a8d963162cb8656c183ff20f17986df6f1a9122a587a032b37281ff28a97"
+      }
+    },
+    {
+      "command": [
+        "rpm",
+        "-Uvh",
+        "--replacepkgs",
+        "/var/tmp/fic-packages/upgrades/fic-0.1.1-1.altp11.x86_64.rpm",
+        "/var/tmp/fic-packages/upgrades/fic-cli-0.1.1-1.altp11.x86_64.rpm",
+        "/var/tmp/fic-packages/upgrades/fic-dick-0.1.1-1.altp11.x86_64.rpm"
+      ],
+      "exit_code": 0,
+      "output_sha256": "3c6ba41309561b4c11970bd69847c4757c70d200f94a9e53d026e280624ef2d5",
+      "output_excerpt": "Preparing...                            ################################# [100%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nUpdating / installing...\n1: fic-dick-0.1.1-1.altp11              ################################# [ 33%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\n2: fic-0.1.1-1.altp11                   ################################# [ 67%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state already exists (proven); leaving it untouched\ndevice database schema is initialized: 2\npackage trust sync completed: updated=12, unavailable=7\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic.service' \u2192 '/usr/lib/systemd/system/fic.service'.\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic-device.service' \u2192 '/usr/lib/systemd/system/fic-device.service'.\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic-notify.service' \u2192 '/usr/lib/systemd/system/fic-notify.service'.\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\n3: fic-cli-0.1.1-1.altp11               ################################# [100%]\nRunning /usr/lib/rpm/posttrans-filetriggers\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "apply",
+        "IDENTITY_ACCESS",
+        "password_max_age_days"
+      ],
+      "exit_code": 0,
+      "output_sha256": "788a8a7333fe9bc0a8c6a737903aa378549c5ac22c9e6fa28dab781ab6799d54",
+      "output_excerpt": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nIDENTITY_ACCESS:PASSWORD_AGING:password_max_age_days applied - \u041f\u043e\u043b\u0438\u0442\u0438\u043a\u0430 \u0443\u0441\u043f\u0435\u0448\u043d\u043e \u043f\u0440\u0438\u043c\u0435\u043d\u0435\u043d\u0430\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-e",
+        "fic-cli",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "4105d526939c73faf0e08d358167d584392af200091521effd30b8afd450f352",
+      "output_excerpt": "{\n  \"api_version\": 1,\n  \"message\": \"FIC ownership release completed\",\n  \"ok\": true,\n  \"results\": [\n    {\n      \"policy\": \"AUDIT:logging:log_level\",\n      \"status\": \"NOT_ENROLLED\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"AUDIT:logging:log_level\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"policy\": \"DAC:Mode_and_Owner:mode_and_owner_profiles\",\n      \"status\": \"NOT_ENROLLED\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:Mode_and_Owner:mode_and_owner_profiles\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation\",\n      \n[excerpt omitted; full output hash above]\n:network_kernel_protection:tcp_syncookies_enable\",\n      \"status\": \"RELEASED\"\n    },\n    {\n      \"message\": \"Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation\",\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"success\"\n    },\n    {\n      \"message\": \"Released the last global Defaults owner and shared SUDO artifacts\",\n      \"mutation_id\": 11,\n      \"policy\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"resource\": \"exempt_group\",\n      \"status\": \"success\"\n    },\n    {\n      \"message\": \"\",\n      \"resource_group\": \"DAC:SudoEdit:sudo_exempt_group_disable\",\n      \"status\": \"RELEASED\"\n    }\n  ],\n  \"summary\": {\n    \"blocked\": 0,\n    \"failed\": 0,\n    \"groups\": 89,\n    \"released\": 89\n  }\n}\nREMOVED: writers absent and PAM detached; policy configuration and journal retained\nRemoved '/etc/systemd/system/multi-user.target.wants/fic-device.service'.\nRemoved '/etc/systemd/system/multi-user.target.wants/fic.service'.\nRemoved '/etc/systemd/system/multi-user.target.wants/fic-notify.service'.\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-e",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "rpm",
+        "-Uvh",
+        "--replacepkgs",
+        "/var/tmp/fic-packages/upgrades/fic-0.1.1-1.altp11.x86_64.rpm",
+        "/var/tmp/fic-packages/upgrades/fic-cli-0.1.1-1.altp11.x86_64.rpm",
+        "/var/tmp/fic-packages/upgrades/fic-dick-0.1.1-1.altp11.x86_64.rpm"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e5477b69a0847ef5ce508cce0759abb0488e46328c2f926a39987ac546894251",
+      "output_excerpt": "Preparing...                            ################################# [100%]\nUpdating / installing...\n1: fic-dick-0.1.1-1.altp11              ################################# [ 33%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\n2: fic-0.1.1-1.altp11                   ################################# [ 67%]\nINSTALLING: writers stopped; normal startup denied until infrastructure proofs\nworking configuration is present\nFIC incident state already exists (proven); leaving it untouched\ndevice database schema is initialized: 2\npackage trust sync completed: updated=12, unavailable=7\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic.service' \u2192 '/usr/lib/systemd/system/fic.service'.\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic-device.service' \u2192 '/usr/lib/systemd/system/fic-device.service'.\nCreated symlink '/etc/systemd/system/multi-user.target.wants/fic-notify.service' \u2192 '/usr/lib/systemd/system/fic-notify.service'.\nFIC: installation infrastructure verified; policy apply results are available in the daemon journal\n3: fic-cli-0.1.1-1.altp11               ################################# [100%]\nRunning /usr/lib/rpm/posttrans-filetriggers\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "prepare-uninstall"
+      ],
+      "exit_code": 0,
+      "output_sha256": "ce028478cffcfebbb731fa4ecd80c7c628ee5e5ae32e3f555cd2485e4d4fda82",
+      "output_excerpt": "FIC \u043d\u0430\u0445\u043e\u0434\u0438\u0442\u0441\u044f \u0432 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0435 \u0443\u0434\u0430\u043b\u0435\u043d\u0438\u044f.\n"
+    },
+    {
+      "command": [
+        "/opt/fic/bin/fic-cli",
+        "policy",
+        "rollback",
+        "all"
+      ],
+      "exit_code": 0,
+      "output_sha256": "3b2a40749e23f34f9bc89a99c5734fa84ab3461e0fa6a7af33fe1b63b0fed8a4",
+      "output_excerpt": "FIC ownership release completed\nAUDIT:logging:log_level NOT_ENROLLED \nAUDIT:logging:log_level RELEASED \nDAC:Mode_and_Owner:mode_and_owner_profiles NOT_ENROLLED \nDAC:Mode_and_Owner:mode_and_owner_profiles RELEASED \nDAC:SudoEdit:sudo_disable_scoped_defaults success Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation\nDAC:SudoEdit:sudo_disable_scoped_defaults success \u041a\u043e\u043d\u0442\u0435\u043a\u0441\u0442\u043d\u044b\u0435 Defaults \u0432\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u044b \u0432 1 \u0444\u0430\u0439\u043b\u0430\u0445 mutation_id=17 resource=\"sudo/scoped_defaults/wrappers\"\nDAC:SudoEdit:sudo_disable_scoped_defaults RELEASED \nDAC:SudoEdit:sudo_env_reset success Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation\nDAC:SudoEdit:sudo_env_reset su\n[excerpt omitted; full output hash above]\n\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nSYSCTL:network_kernel_protection:tcp_keepalive_time RELEASED \nSYSCTL:network_kernel_protection:tcp_max_syn_backlog nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nSYSCTL:network_kernel_protection:tcp_max_syn_backlog RELEASED \nSYSCTL:network_kernel_protection:tcp_synack_retries nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nSYSCTL:network_kernel_protection:tcp_synack_retries RELEASED \nSYSCTL:network_kernel_protection:tcp_syncookies_enable nothing_to_do Active mutation records \u043e\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044e\u0442; FIC \u043d\u0435 \u0432\u043b\u0430\u0434\u0435\u0435\u0442 \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f\u043c\u0438 \u044d\u0442\u043e\u0439 \u043f\u043e\u043b\u0438\u0442\u0438\u043a\u0438\nSYSCTL:network_kernel_protection:tcp_syncookies_enable RELEASED \nDAC:SudoEdit:sudo_exempt_group_disable success Rollback \u0432\u044b\u043f\u043e\u043b\u043d\u0435\u043d \u0434\u043b\u044f 1 mutation\nDAC:SudoEdit:sudo_exempt_group_disable success Released the last global Defaults owner and shared SUDO artifacts mutation_id=19 resource=\"exempt_group\"\nDAC:SudoEdit:sudo_exempt_group_disable RELEASED \n"
+    },
+    {
+      "command": [
+        "systemctl",
+        "stop",
+        "fic.service",
+        "fic-device.service",
+        "fic-notify.service",
+        "fic_get_device_info.service",
+        "fic_get_device_udev_info.service"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    },
+    {
+      "command": [
+        "rpm",
+        "-e",
+        "fic-cli",
+        "fic"
+      ],
+      "exit_code": 255,
+      "output_sha256": "d6538ac47c4275f7273f37cb7bb0c9bcaebd9aa9538aa545a22302621f6c75ed",
+      "output_excerpt": "FIC package lifecycle refused: connect(/run/fic/fic.sock) failed: No such file or directory\nerror: %preun(fic-0.1.1-1.altp11.x86_64) scriptlet failed, exit status 1\nerror: fic-0.1.1-1.altp11.x86_64: erase failed\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-e",
+        "fic"
+      ],
+      "exit_code": 255,
+      "output_sha256": "c5352c931d8c648f8ff6e548b011d186df09c620adfef205781f88cc2b050cb6",
+      "output_excerpt": "FIC emergency uninstall: /etc/fic-uninstall-overload is active; preserved OS settings may require manual cleanup\nFIC emergency uninstall: ROLLBACK_TYPE=SKIP: policy rollback was not requested or inspected\nFIC package lifecycle refused: another PAM service still references pam_fic_access.so\nerror: %preun(fic-0.1.1-1.altp11.x86_64) scriptlet failed, exit status 1\nerror: fic-0.1.1-1.altp11.x86_64: erase failed\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-e",
+        "fic"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e681b037379fa85115bd45a0ab9259056a109271ba6559fa14cc59c12e65802e",
+      "output_excerpt": "FIC emergency uninstall: /etc/fic-uninstall-overload is active; preserved OS settings may require manual cleanup\nFIC emergency uninstall: ROLLBACK_TYPE=SKIP: policy rollback was not requested or inspected\nREMOVED: writers absent and PAM detached; policy configuration and journal retained\nRemoved '/etc/systemd/system/multi-user.target.wants/fic-device.service'.\nRemoved '/etc/systemd/system/multi-user.target.wants/fic.service'.\nRemoved '/etc/systemd/system/multi-user.target.wants/fic-notify.service'.\n"
+    },
+    {
+      "command": [
+        "rpm",
+        "-e",
+        "fic-dick"
+      ],
+      "exit_code": 0,
+      "output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "output_excerpt": ""
+    }
+  ]
+}

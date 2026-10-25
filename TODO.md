@@ -276,7 +276,8 @@ auth requisite pam_faillock.so preauth silent audit deny=5 unlock_time=300
 
 ## Известные ошибки
 
-Скрипт удаление для Альта (preun) удаляет pam-topology через control, обходя rollback-механизм FIC. Для Debian/Ubuntu есть похожая проблема.
+Package uninstall больше не освобождает policy topology через control/standalone engine:
+release выполняет работающий daemon. Контракт — `docs/package-lifecycle.md`.
 
 Текущая архитектура DC-правила не позволяет создать rollback-механизм. Требуется переработка. Нужно перевести их на модель с выбором значений new/all. Тогда rollback будет заключаться в простом переобходе бд устройств (сделано!)
 
@@ -292,4 +293,5 @@ pam_pwhistory (впрочем, как и pam_pwquality) имеют не очен
 - ALT p11: bounded stock simple-service verified profile реализован;
   [контракт и native acceptance](docs/alt-p11-ssh-verified-activation.md).
 - Следующий этап — общее тестирование установленного FIC на Debian 12/13,
-  Ubuntu 24.04/26.04 и ALT p11 на виртуальных машинах. M1 остаётся заморожен.
+  Ubuntu 24.04/26.04 и ALT p11 на виртуальных машинах. Незавершённый M1 заменён
+  daemon-owned package lifecycle; native package evidence отдельно от VM-проверок.

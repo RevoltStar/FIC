@@ -1,0 +1,16 @@
+FROM fic-package-native:debian12 AS certificates
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+FROM registry.altlinux.org/p11/alt:latest
+# Bootstrap HTTPS trust from the already verified Debian CA bundle; never disable TLS verification.
+COPY --from=certificates /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/fic-native-ca.crt
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list \
+    && sed -i '/^#rpm \[p11\] http:/s/^#//' /etc/apt/sources.list.d/yandex.list \
+    && sed -i 's|http://mirror.yandex.ru/altlinux|https://distrib-coffee.ipsl.jussieu.fr/pub/linux/altlinux|g' /etc/apt/sources.list.d/yandex.list \
+    && apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/fic-native-ca.crt -o Acquire::https::Timeout=20 -o Acquire::Retries=1 update && apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/fic-native-ca.crt -o Acquire::https::Timeout=20 -o Acquire::Retries=1 install -y ca-certificates qt6-base-devel libsqlite3-devel \
+       openssl-devel libsystemd-devel libpam0-devel libgio-devel cmake gcc-c++ make \
+       pkg-config nlohmann-json-devel rpm-build nftables sudo libnotify python3 udev \
+       control systemd dbus openssh-server \
+    && apt-get clean
+CMD ["/sbin/init"]
+RUN apt-get update && apt-get install -y notify-send && apt-get clean

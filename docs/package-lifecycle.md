@@ -1,8 +1,8 @@
 # Package lifecycle
 
-The current task replaces the unfinished M1 runtime/finalizer design. This
-file describes the replacement contract; implementation and native package
-acceptance are still in progress (see HANDOFF).
+This contract replaces the unfinished M1 runtime/finalizer design. Real FIC
+DEB/RPM acceptance and its limits are recorded in
+[package-lifecycle-validation.md](package-lifecycle-validation.md).
 
 ## State and admission
 
@@ -43,8 +43,8 @@ an infrastructure-only helper, shipped with the existing fic-dick dependency,
 after daemon prepare/rollback. The helper takes daemon.lock, repeats actual
 systemd unit/cgroup/process proofs, detaches permanent hooks and proves no PAM
 references remain before recording Removed. It never loads a policy journal.
-Current cross-distribution package-manager acceptance remains in progress; see
-HANDOFF for actual results. Existing SSH, ownership/CAS, non-reverting policy and
+Cross-distribution package-manager results are in the validation report.
+Existing SSH, ownership/CAS, non-reverting policy and
 MutationJournal contracts remain.
 
 ## Registered rollback classes

@@ -1,0 +1,43 @@
+{
+  "debian12": {
+    "fic-cli_0.1.0_debian12_amd64.deb": "c7c3f46627d7fe0e042ab5fdf7a67d2154c2db8c9d8849ed9d07f476b42ea88e",
+    "fic-dick_0.1.0_debian12_amd64.deb": "bb1abf1662a69bcd1d952168b8d00ee2de7621fbdee519f39b4e1d537454db27",
+    "fic_0.1.0_debian12_amd64.deb": "df0c7369e70bc8963b074300e60469803d42e7bb54aee6203c3e3783a4efcba1",
+    "upgrades/fic-cli_0.1.1_debian12_amd64.deb": "1f6766e28302dd7b4383b559c1766f5bc868e95c8da49c8b1c7814abc02369de",
+    "upgrades/fic-dick_0.1.1_debian12_amd64.deb": "a2996ed2bb2c3a1f7f2520d188b72fff3da412bb96acc19663950cc63de66395",
+    "upgrades/fic-prelogin_0.1.1_debian12_amd64.deb": "dba95040b4936bbd73f713e9126b1a4235ab01ed25acf890267f42309e9694e8",
+    "upgrades/fic_0.1.1_debian12_amd64.deb": "4d7ddcad55128a5b91edaab789d64412e7f6882fc188c7c118c899cff73479df"
+  },
+  "debian13": {
+    "fic-cli_0.1.0_debian13_amd64.deb": "c8efb0d7233debda529b1e9fc4284bf78af7ec3bf22576338f94c18289e040ea",
+    "fic-dick_0.1.0_debian13_amd64.deb": "8c54b27d436a8eac9b5a71046ab3c63d3309def6f8d51ec4ef8046eac542e02f",
+    "fic_0.1.0_debian13_amd64.deb": "bca5d040c27cac8ff1e01e7f71ef419d6f3fc9710330c14dedf3d2285e73457c",
+    "upgrades/fic-cli_0.1.1_debian13_amd64.deb": "054da5cc71cdff5186523cbe936ceb1bd2d2044c84689d2f570a5c9974e6b342",
+    "upgrades/fic-dick_0.1.1_debian13_amd64.deb": "e502d8e24ab50ce5a9df91bba7faec01f88ced2fea1cdf7dc34e118a649b261d",
+    "upgrades/fic_0.1.1_debian13_amd64.deb": "819863df4bba72bf986615d34bb7fb27d2eafe314bc33cd440630ac8ef1da7d7"
+  },
+  "ubuntu2404": {
+    "fic-cli_0.1.0_ubuntu2404_amd64.deb": "eab7dad1f8228728dee3b80eab0c51899f529eaaf11a68c3841fc164e7dad48f",
+    "fic-dick_0.1.0_ubuntu2404_amd64.deb": "db0d430320b9d528ac18151a84a45933e36a85b5245602761c5b4ac1c39a2614",
+    "fic_0.1.0_ubuntu2404_amd64.deb": "94d76a1df10dfed8c058b35c538a07ff9b4ab7b6a08fc576d1962dad800637e7",
+    "upgrades/fic-cli_0.1.1_ubuntu2404_amd64.deb": "45a53ae15e310f17259b38fc8089a2f421934577c421aabed2ab1cae9e80d2a1",
+    "upgrades/fic-dick_0.1.1_ubuntu2404_amd64.deb": "81d084b76acc3fad13d2ae87177064007a0ca5f2da68260dd8ff59152846d2e6",
+    "upgrades/fic_0.1.1_ubuntu2404_amd64.deb": "8119b081db8aabf4ed2a6849287098bb78150f0c3853d22b246d1d5319925693"
+  },
+  "ubuntu2604": {
+    "fic-cli_0.1.0_ubuntu2604_amd64.deb": "4bf82acfb93106e7b1ddaf5c4abf2467768318b79edbd431aab5968e4bdafa3c",
+    "fic-dick_0.1.0_ubuntu2604_amd64.deb": "6754a06186b4e04840d2efaaa398388d97b9a17c358f69d58c6117640da8b169",
+    "fic_0.1.0_ubuntu2604_amd64.deb": "018920f4f09b5b8f6ef3bce78d84098e8a61c9f2501b55a3c8088f6066ad9733",
+    "upgrades/fic-cli_0.1.1_ubuntu2604_amd64.deb": "b8274f629ffcf347ddd8269e1fb8b951ec93da6228291ed3e2edcf859d2537d4",
+    "upgrades/fic-dick_0.1.1_ubuntu2604_amd64.deb": "4feace2ab005c2f481efe74004f654a24877ba16b4ce95aae831e4792b88e7e6",
+    "upgrades/fic_0.1.1_ubuntu2604_amd64.deb": "66c627b1005be612f66e1af53f8655af50d72c53522f5b35877d93d8554ec714"
+  },
+  "alt-p11": {
+    "fic-0.1.0-1.altp11.x86_64.rpm": "333cfcf525281a566e26afd5980a66d5883ced8515998529b7382a3e418f3f0b",
+    "fic-cli-0.1.0-1.altp11.x86_64.rpm": "d112d2c2dd8596be88e0fb1e5fd67f4b7d60ff2c73e3a0119758fbb8b528293d",
+    "fic-dick-0.1.0-1.altp11.x86_64.rpm": "678759f5b13f180b7b0d811dd11341c82dcd6b547649a76782d6e44b9c88e242",
+    "upgrades/fic-0.1.1-1.altp11.x86_64.rpm": "47e437ded8d7a0c448ddd3adf5854f86127206304e52a3b10f3d28e803b4e4bf",
+    "upgrades/fic-cli-0.1.1-1.altp11.x86_64.rpm": "f089983a89bd7f73e9fc56905636dcdbff088d4adb46e7cd0656e176c08d6de0",
+    "upgrades/fic-dick-0.1.1-1.altp11.x86_64.rpm": "dc3da63ff0ef7d54b68b3b6e5ec7c4eb89996a931bfbdc9237207ffa26da79c4"
+  }
+}

@@ -1,0 +1,140 @@
+{
+  "full_build": {
+    "log": "build-env-full-debian12/lifecycle-full-build-final.log",
+    "sha256": "c7551bad6e3ce7120235753a42d884b09705d3cf4a0c9715485df253ecf0e001",
+    "tail": [
+      "[ 84%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/devices/widgets/DeviceEventList.cpp.o",
+      "[ 84%] Building CXX object tests/CMakeFiles/incident_history_tests.dir/__/fic-gui/src/shared/i18n/QLocalizationManager.cpp.o",
+      "[ 84%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/devices/widgets/DeviceTree.cpp.o",
+      "[ 84%] Linking CXX executable incident_history_tests",
+      "[ 84%] Built target incident_history_tests",
+      "[ 84%] Linking CXX executable sudoers_authentication_transaction_tests",
+      "[ 84%] Built target sudoers_authentication_transaction_tests",
+      "[ 84%] Linking CXX executable package_writer_processes_tests",
+      "[ 84%] Built target package_writer_processes_tests",
+      "[ 84%] Linking CXX executable package_pam_hooks_tests",
+      "[ 85%] Built target package_pam_hooks_tests",
+      "[ 98%] Built target fic",
+      "[ 98%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/incidents/models/IncidentAuditModel.cpp.o",
+      "[ 98%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/incidents/pages/IncidentPage.cpp.o",
+      "[ 98%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/incidents/services/IncidentHistoryService.cpp.o",
+      "[ 98%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/incidents/services/IncidentService.cpp.o",
+      "[ 98%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/logs/services/LogService.cpp.o",
+      "[100%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/policies/services/PolicyService.cpp.o",
+      "[100%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/features/policies/widgets/PolicyEditorWidget.cpp.o",
+      "[100%] Building CXX object tests/CMakeFiles/incident_gui_tests.dir/__/fic-gui/src/shared/i18n/QLocalizationManager.cpp.o",
+      "[100%] Linking CXX executable incident_gui_tests",
+      "[100%] Built target incident_gui_tests"
+    ]
+  },
+  "full_ctest_initial": {
+    "log": "build-env-full-debian12/lifecycle-full-ctest-current.log",
+    "sha256": "9f90e52c1d5977f816b27535fd02a7ba0c7be94a018bf61862f2ecc80b9ebbcb",
+    "tail": [
+      "204/204 Test #204: sssd_uninstall_inspection_tests ..................   Passed    0.01 sec",
+      "",
+      "99% tests passed, 1 tests failed out of 204",
+      "",
+      "Label Time Summary:",
+      "integration    =   5.02 sec*proc (10 tests)",
+      "native         =   0.15 sec*proc (2 tests)",
+      "root           =  16.70 sec*proc (4 tests)",
+      "static         =   7.47 sec*proc (15 tests)",
+      "unit           = 199.12 sec*proc (75 tests)",
+      "",
+      "Total Test time (real) = 410.24 sec",
+      "",
+      "The following tests did not run:",
+      "\t186 - verified_config_service_native_tests (Skipped)",
+      "\t191 - daemon_singleton_startup_native (Skipped)",
+      "\t192 - maintenance_preflight_native (Skipped)",
+      "\t197 - package_pam_hooks_native (Skipped)",
+      "",
+      "The following tests FAILED:",
+      "\t  9 - platform_profile_static_checks (Failed)",
+      "Errors while running CTest"
+    ]
+  },
+  "corrected_static_checks": {
+    "log": "/tmp/fic-final-static-rerun.log",
+    "sha256": "e1d8311f8f4c962020578748ea47e1361b6e88865e2bdb922644a43f7b440191",
+    "tail": [
+      "Internal ctest changing into directory: /build",
+      "Test project /build",
+      "    Start   5: prelogin_package_lifecycle_tests",
+      "1/6 Test   #5: prelogin_package_lifecycle_tests .........   Passed    0.28 sec",
+      "    Start   9: platform_profile_static_checks",
+      "2/6 Test   #9: platform_profile_static_checks ...........   Passed    0.36 sec",
+      "    Start  10: pam_packaging_static_checks",
+      "3/6 Test  #10: pam_packaging_static_checks ..............   Passed    0.07 sec",
+      "    Start  11: desktop_package_release_checks",
+      "4/6 Test  #11: desktop_package_release_checks ...........   Passed    0.16 sec",
+      "    Start  12: incident_state_lifecycle_static_checks",
+      "5/6 Test  #12: incident_state_lifecycle_static_checks ...   Passed    0.10 sec",
+      "    Start 191: daemon_singleton_startup_static_checks",
+      "6/6 Test #191: daemon_singleton_startup_static_checks ...   Passed    0.06 sec",
+      "",
+      "100% tests passed, 0 tests failed out of 6",
+      "",
+      "Label Time Summary:",
+      "static    =   0.43 sec*proc (2 tests)",
+      "",
+      "Total Test time (real) =   1.05 sec"
+    ]
+  },
+  "journal_unprivileged": {
+    "log": "/tmp/fic-mutation-journal-final.log",
+    "sha256": "a08cb1a7a136a48f11bb60f7372992963d35744f6849ce8820be04f6fad8bc16",
+    "tail": [
+      "PASS: apply refused after provenance loss restart",
+      "PASS: interrupted bootstrap recovers",
+      "PASS: migration from pre-witness journal",
+      "PASS: witness creation failure fails closed",
+      "PASS: witness rename durability finish",
+      "PASS: witness rename durability failure fails closed",
+      "PASS: malformed witness fails closed",
+      "PASS: symlink witness fails closed",
+      "PASS: concurrent full bootstrap journal preserved",
+      "PASS: concurrent journal-only bootstrap migrates",
+      "PASS: virgin bootstrap journal disappears after witness fails closed",
+      "PASS: migration journal disappears before final proof fails closed",
+      "PASS: same-object retry after witness creation failure",
+      "PASS: same-object malformed witness never bypassed",
+      "PASS: successful lifecycle then journal deletion fails closed",
+      "PASS: migration does not rewrite journal file",
+      "PASS: empty records keep witness",
+      "PASS: read-only validation accepts initialized state",
+      "PASS: read-only validation virgin state creates no files",
+      "PASS: read-only validation pending migration fails closed",
+      "PASS: read-only validation malformed witness fails closed",
+      "PASS: read-only validation missing journal fails closed"
+    ]
+  },
+  "restricted_pid1_restart": {
+    "log": "/tmp/fic-native-restricted-pid1-final.log",
+    "sha256": "e6829781207a16dbd32f14c56e5a76eb95c77f665b9e7f91c1f2b1b47e019b37",
+    "tail": [
+      "PASS: real restricted daemon, denied mutations, periodic suppression, SIGKILL/restart, no config/journal repair",
+      "PASS: real restricted daemon, denied mutations, periodic suppression, SIGKILL/restart, no config/journal repair",
+      "PASS: PID1/container restart with fresh /run retains restricted durable admission"
+    ]
+  },
+  "singleton_native": {
+    "log": "/tmp/fic-singleton-native-current2.log",
+    "sha256": "40376abdaf112332ce5ba7404ddbb828517c2a140ec9a33e7770b2c837f27808",
+    "tail": [
+      "PASS: real daemon default/custom socket refused before startup effects; read-only scope, crash/restart",
+      "PASS: actual daemon/standalone lifecycle gate rejects Installing/Removed/corrupt/missing proof before security effects"
+    ]
+  },
+  "readonly_preflight_native": {
+    "log": "/tmp/fic-preflight-native-current.log",
+    "sha256": "2ac6aa6b093d238f2d4dcd43460e162116e6269c87f0411659dde8c30ebda211",
+    "tail": [
+      "PASS: check-persistent virgin read-only refusal",
+      "PASS: validate-pam-slots-before-attach virgin read-only refusal",
+      "PASS: check-persistent corrupt read-only refusal",
+      "PASS: validate-pam-slots-before-attach corrupt read-only refusal"
+    ]
+  }
+}
