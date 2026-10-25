@@ -205,10 +205,25 @@ fic::platform::PlatformExecutableSpec& executableSpec(
 }
 
 void testSelectedProfile() {
+    const auto supported = fic::platform::allExecutableIds();
+    for (const auto id : {fic::platform::ExecutableId::SshSocketGenerator,
+                          fic::platform::ExecutableId::SshKeygen}) {
+        require(std::count(supported.begin(), supported.end(), id) == 1,
+                "native SSH executable must be enumerated exactly once");
+        require(std::string(fic::platform::executableIdName(id)) != "unknown",
+                "native SSH executable must have a diagnostic name");
+    }
     const fic::platform::PlatformProfile profile =
         fic::platform::makeBuildPlatformProfile();
     std::string error;
     require(fic::platform::validatePlatformProfile(profile, error), error);
+    require((fic::platform::findExecutableSpec(profile.executables,
+                 fic::platform::ExecutableId::SshKeygen) != nullptr) == (profile.id == "alt-p11"),
+            "ssh-keygen launch prerequisite must match ALT profile");
+    require((fic::platform::findExecutableSpec(profile.executables,
+                 fic::platform::ExecutableId::SshSocketGenerator) != nullptr) ==
+                (profile.id == "ubuntu-24.04" || profile.id == "ubuntu-26.04"),
+            "SSH socket generator launch prerequisite must match Ubuntu profile");
     require(profile.ssh.socketUnits ==
                 (profile.id == "alt-p11"
                      ? std::vector<std::string>{"sshd.socket"}

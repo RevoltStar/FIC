@@ -56,6 +56,8 @@ const char* executableIdName(ExecutableId id) {
 
 std::vector<ExecutableId> allExecutableIds() {
     return {
+        ExecutableId::SshSocketGenerator,
+        ExecutableId::SshKeygen,
         ExecutableId::Sshd,
         ExecutableId::Systemctl,
         ExecutableId::Loginctl,
