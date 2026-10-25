@@ -93,13 +93,6 @@ verify_built_binary() {
             exit 1
         fi
     done
-    if [ "$component" = fic ]; then
-        grep -Fqx "lifecycle_package_version=0:${PACKAGE_VERSION}-${RPM_RELEASE}" <<< "$build_info" &&
-            grep -Fqx 'lifecycle_abi=1' <<< "$build_info" || {
-                echo "Lifecycle runtime identity mismatch for $binary_path" >&2
-                exit 1
-            }
-    fi
 }
 
 verify_rpm_metadata() {
@@ -254,9 +247,6 @@ build_project() {
         )
     fi
 
-    if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
-        cmake_args+=("-DFIC_LIFECYCLE_PACKAGE_VERSION=0:${PACKAGE_VERSION}-${RPM_RELEASE}")
-    fi
     cmake -S "$source_dir" -B "$build_dir" "${cmake_args[@]}"
     cmake --build "$build_dir" --parallel "$BUILD_JOBS"
 }
@@ -387,6 +377,10 @@ write_spec_file() {
         printf '\n%%pre\n%s\n' "$pre_script"
         printf '\n%%post\n%s\n' "$post_script"
         printf '\n%%preun\n%s\n' "$preun_script"
+        if [ "$package_name" = fic ] || [ "$package_name" = fic-dick ] || [ "$package_name" = fic-prelogin ]; then
+            printf '\n%%postun\nset -eu\nsystemctl daemon-reload\n'
+            if [ "$package_name" = fic-dick ]; then printf 'udevadm control --reload-rules\n'; fi
+        fi
         printf '\n%%files -f %%{SOURCE1}\n'
         printf '%%defattr(-,root,root,-)\n'
         printf '\n%%changelog\n'
@@ -446,238 +440,23 @@ build_rpm_package() {
 }
 
 common_pre_script() {
-    cat <<'EOF'
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd -r fic >/dev/null 2>&1 || true
-fi
-
-exit 0
-EOF
+    printf 'set -eu\nif ! getent group fic >/dev/null; then groupadd -r fic; fi\n'
 }
 
 system_integration_pre_script() {
-    local lifecycle_hook="${1:-}"
-    cat <<'EOF'
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd -r fic >/dev/null 2>&1 || true
-fi
-
-if [ -d /run/systemd/system ]; then
-    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
-        if [ -x "$systemctl_bin" ]; then
-            for unit in fic.service fic-device.service fic-notify.service; do
-                if "$systemctl_bin" is-active --quiet "$unit"; then
-                    "$systemctl_bin" stop "$unit" || exit 1
-                fi
-            done
-            break
-        fi
-    done
-fi
-EOF
-    printf '%s\n' "$lifecycle_hook"
-    printf 'exit 0\n'
+    cat "$ROOT_DIR/packaging/rpm/lifecycle/fic.pre"
 }
 
 common_post_script() {
-    cat <<'EOF'
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd -r fic >/dev/null 2>&1 || true
-fi
-
-if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
-
-    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
-    #
-    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
-    # state file: after the incident-state schema change a missing state file
-    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
-    # "0" would silently turn an uncontainable system into an apparently clean
-    # one, which is exactly the fail-open the incident model forbids.
-    #
-    # Only the main fic package may create the initial state, and only after it
-    # has proven the file durable. Everything else leaves it strictly alone.
-
-    if [ ! -f /opt/fic/db/commandhash.txt ]; then
-        : > /opt/fic/db/commandhash.txt || true
-    fi
-
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \; || true
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \; || true
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || true
-    fi
-fi
-
-exit 0
-EOF
+    printf 'set -eu\nexit 0\n'
 }
 
 symlink_post_script() {
-    local command_name="$1"
-    local target_path="$2"
-
-    cat <<EOF
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd -r fic >/dev/null 2>&1 || true
-fi
-
-if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
-
-    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
-    #
-    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
-    # state file: after the incident-state schema change a missing state file
-    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
-    # "0" would silently turn an uncontainable system into an apparently clean
-    # one, which is exactly the fail-open the incident model forbids.
-    #
-    # Only the main fic package may create the initial state, and only after it
-    # has proven the file durable. Everything else leaves it strictly alone.
-
-    if [ ! -f /opt/fic/db/commandhash.txt ]; then
-        : > /opt/fic/db/commandhash.txt || true
-    fi
-
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \\; || true
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \\; || true
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \\; || true
-    fi
-fi
-
-ln -sfn "$target_path" "/bin/$command_name"
-
-exit 0
-EOF
+    printf 'set -eu\nln -sfn "%s" "/bin/%s"\n' "$2" "$1"
 }
 
 system_integration_symlink_post_script() {
-    local command_name="$1"
-    local target_path="$2"
-    local lifecycle_hook="${3:-}"
-
-    cat <<EOF
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd -r fic >/dev/null 2>&1 || true
-fi
-
-if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
-
-    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
-    #
-    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
-    # state file: after the incident-state schema change a missing state file
-    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
-    # "0" would silently turn an uncontainable system into an apparently clean
-    # one, which is exactly the fail-open the incident model forbids.
-    #
-    # Only the main fic package may create the initial state, and only after it
-    # has proven the file durable. Everything else leaves it strictly alone.
-
-    if [ ! -f /opt/fic/db/commandhash.txt ]; then
-        : > /opt/fic/db/commandhash.txt || true
-    fi
-
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \\; || true
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \\; || true
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \\; || true
-    fi
-fi
-
-ln -sfn "$target_path" "/bin/$command_name"
-
-unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
-if [ -d /run/systemd/system ]; then
-    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
-        if [ -x "\$systemctl_bin" ]; then
-            for unit in fic.service fic-device.service fic-notify.service; do
-                if "\$systemctl_bin" is-active --quiet "\$unit"; then
-                    "\$systemctl_bin" stop "\$unit" || exit 1
-                fi
-            done
-            break
-        fi
-    done
-fi
-
-# Only a virgin first install may create the recovery configuration.
-fic_config_command=ensure-config
-if [ "\${1:-}" -eq 1 ] &&
-   [ ! -e /opt/fic/config ] && [ ! -L /opt/fic/config ] &&
-   [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then
-    chown root:fic /opt/fic || exit 1
-    chmod 2750 /opt/fic || exit 1
-    fic_config_command=ensure-config-first-install
-fi
-/opt/fic/bin/fic --maintenance "\$fic_config_command" || exit 1
-/opt/fic/bin/fic-dick --maintenance initialize-db || exit 1
-/opt/fic/bin/fic --maintenance check-config || exit 1
-/opt/fic/bin/fic-dick --maintenance check-db || exit 1
-
-# The main fic package is the single lifecycle owner of the authoritative
-# incident state. It creates the state ONLY when it is genuinely absent, does
-# so exclusively, proves the durability barrier and re-reads the file through
-# the daemon's own fail-closed parser. An existing - including corrupt or
-# foreign - state is left strictly untouched and remains BROKEN_STATE
-# (ISOLATE); an upgrade never repairs a missing or corrupt state to UNLOCKED.
-if [ "\${1:-}" -eq 1 ]; then
-    /opt/fic/bin/fic --maintenance incident-init || exit 1
-fi
-
-find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || exit 1
-find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \; || exit 1
-find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \; || exit 1
-find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || exit 1
-
-/opt/fic/bin/fic --trust-sync-platform || exit 1
-
-for tmpfiles_bin in /usr/bin/systemd-tmpfiles /bin/systemd-tmpfiles /usr/sbin/systemd-tmpfiles /sbin/systemd-tmpfiles; do
-    if [ -x "\$tmpfiles_bin" ]; then
-        "\$tmpfiles_bin" --create /usr/lib/tmpfiles.d/fic.conf >/dev/null 2>&1 || true
-        break
-    fi
-done
-
-$lifecycle_hook
-
-if [ -d /run/systemd/system ]; then
-    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
-        if [ -x "\$systemctl_bin" ]; then
-            "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || exit 1
-            "\$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
-            "\$systemctl_bin" enable --now fic.service >/dev/null 2>&1 || exit 1
-            "\$systemctl_bin" enable --now fic-device.service >/dev/null 2>&1 || exit 1
-            "\$systemctl_bin" enable --now fic_get_device_udev_info.service >/dev/null 2>&1 || true
-            "\$systemctl_bin" enable --now fic-notify.service >/dev/null 2>&1 || exit 1
-            "\$systemctl_bin" is-active --quiet fic.service || exit 1
-            "\$systemctl_bin" is-active --quiet fic-device.service || exit 1
-            /opt/fic/bin/fic --maintenance wait-daemon 30 || exit 1
-            /opt/fic/bin/fic-dick wait-daemon 10 || exit 1
-            break
-        fi
-    done
-fi
-
-for udevadm_bin in /usr/bin/udevadm /usr/sbin/udevadm /sbin/udevadm /bin/udevadm; do
-    if [ -x "\$udevadm_bin" ]; then
-        "\$udevadm_bin" control --reload-rules >/dev/null 2>&1 || true
-        break
-    fi
-done
-
-exit 0
-EOF
+    cat "$ROOT_DIR/packaging/rpm/lifecycle/fic.post"
 }
 
 simple_preun_script() {
@@ -700,178 +479,27 @@ EOF
 }
 
 system_integration_symlink_preun_script() {
-    local command_name="$1"
-    local target_path="$2"
-    local lifecycle_hook="${3:-}"
-    # Step 7F: optional post-stop hook, executed ONLY on actual erase
-    # ($1 -eq 0) AFTER every FIC writer has been stopped by the systemctl
-    # block below. RPM %preun argument semantics: 0 = erase, 1 = upgrade --
-    # an upgrade NEVER runs the ownership release.
-    local post_stop_hook="${4:-}"
-
-    cat <<EOF
-$lifecycle_hook
-
-if [ "\$1" -eq 0 ] && [ -L "/bin/$command_name" ] && [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
-    rm -f "/bin/$command_name"
-fi
-
-if [ "\$1" -eq 0 ]; then
-    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
-        if [ -x "\$systemctl_bin" ]; then
-            "\$systemctl_bin" disable --now fic.service >/dev/null 2>&1 || true
-            "\$systemctl_bin" disable --now fic-device.service >/dev/null 2>&1 || true
-            "\$systemctl_bin" disable --now fic-notify.service >/dev/null 2>&1 || true
-            "\$systemctl_bin" disable fic_get_device_udev_info.service >/dev/null 2>&1 || true
-            "\$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
-            break
-        fi
-    done
-fi
-
-$post_stop_hook
-
-exit 0
-EOF
+    cat "$ROOT_DIR/packaging/rpm/lifecycle/fic.preun"
 }
 
-# Step 7F: managed provider configuration release (Stage B) for the actual
-# erase ONLY, executed after every FIC writer has been stopped. The shell
-# performs NO PAM parsing here: the FIC maintenance binary owns the whole
-# provider release decision (fresh preflight + deterministic release of the
-# managed faillock/pwquality/pwhistory provider state + final proof).
-fic_pam_provider_post_stop_preun_script() {
-    cat <<'INNEREOF'
-if [ "$1" -eq 0 ]; then
-    if [ -x /opt/fic/bin/fic ]; then
-        if ! /opt/fic/bin/fic --maintenance dm-prerm-prepare release; then
-            echo "FIC: DM ownership release refused erase" >&2
-            exit 1
-        fi
-        if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare release; then
-            echo "FIC: DE ownership release failed; erase is refused" >&2
-            exit 1
-        fi
-        if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
-            echo "FIC: the managed PAM provider configuration release failed; the incident gate remains attached and the package erase is blocked" >&2
-            exit 1
-        fi
-        /opt/fic/bin/fic --maintenance incident-pam-alt detach || {
-            echo "FIC: refusing erase because the incident PAM account gate could not be detached" >&2
-            exit 1
-        }
-    else
-        echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the managed PAM provider state cannot be proven released and the erase is refused" >&2
-        exit 1
-    fi
-fi
-INNEREOF
-}
 
-fic_pam_facility_pre_upgrade_script() {
-    cat <<'EOF'
-if [ "$1" -ge 2 ] && [ -x /etc/control.d/facilities/fic-pam-faillock ]; then
-    /usr/sbin/control-dump fic-pam-faillock || exit 1
-fi
-if [ "$1" -ge 2 ] && [ -x /etc/control.d/facilities/fic-pam-pwhistory ]; then
-    /usr/sbin/control-dump fic-pam-pwhistory || exit 1
-fi
-EOF
-}
 
-fic_pam_facility_post_script() {
-    cat <<'EOF'
-/opt/fic/bin/fic --maintenance incident-pam-alt attach || exit 1
-/opt/fic/bin/fic --maintenance incident-pam-verify || exit 1
-/opt/fic/bin/fic --maintenance pam-alt-pwhistory prepare || exit 1
-if [ "$1" -ge 2 ] && [ -s /var/run/control/fic-pam-faillock ]; then
-    /usr/sbin/control-restore fic-pam-faillock || exit 1
-fi
-if [ "$1" -ge 2 ] && [ -s /var/run/control/fic-pam-pwhistory ]; then
-    /usr/sbin/control-restore fic-pam-pwhistory || exit 1
-fi
-EOF
-}
 
-fic_pam_facility_preun_script() {
-    cat <<'EOF'
-if [ "$1" -eq 0 ]; then
-    # Step 7F managed provider configuration preflight (Stage A): strictly
-    # read-only, BEFORE any side effect; a failure keeps the package
-    # installed.
-    if [ -x /opt/fic/bin/fic ]; then
-        /opt/fic/bin/fic --maintenance dm-prerm-prepare preflight || {
-            echo "FIC: DM ownership preflight refused erase" >&2
-            exit 1
-        }
-        /opt/fic/bin/fic --maintenance desktop-prerm-prepare preflight || {
-            echo "FIC: DE ownership preflight refused erase before any mutation" >&2
-            exit 1
-        }
-        /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare preflight || {
-            echo "FIC: the read-only managed PAM provider configuration preflight refused the erase BEFORE any mutation" >&2
-            exit 1
-        }
-    else
-        echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the managed PAM provider state cannot be proven and the erase is refused" >&2
-        exit 1
-    fi
-    /usr/sbin/control fic-pam-pwhistory disabled || {
-        echo "refusing to remove fic with unsafe FIC-owned pam_pwhistory topology" >&2
-        exit 1
-    }
-    /usr/sbin/control fic-pam-faillock disabled || {
-        echo "refusing to remove fic with unsafe FIC-owned PAM topology" >&2
-        exit 1
-    }
-fi
-EOF
-}
+
+
+
+
 
 fic_dick_post_script() {
-    cat <<'EOF'
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd -r fic >/dev/null 2>&1 || true
-fi
-
-if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} + || true
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \; || true
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \; || true
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \; || true
-    fi
-fi
-
-for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
-    if [ -x "$systemctl_bin" ]; then
-        "$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
-        "$systemctl_bin" enable fic-device.service >/dev/null 2>&1 || true
-        "$systemctl_bin" enable fic_get_device_info.service >/dev/null 2>&1 || true
-        break
-    fi
-done
-
-exit 0
-EOF
+    printf 'set -eu\nsystemctl daemon-reload\n'
 }
 
 fic_dick_preun_script() {
-    cat <<'EOF'
-if [ "$1" -eq 0 ]; then
-    for systemctl_bin in /usr/bin/systemctl /bin/systemctl /usr/sbin/systemctl /sbin/systemctl; do
-        if [ -x "$systemctl_bin" ]; then
-            "$systemctl_bin" disable fic-device.service >/dev/null 2>&1 || true
-            "$systemctl_bin" disable fic_get_device_info.service >/dev/null 2>&1 || true
-            "$systemctl_bin" daemon-reload >/dev/null 2>&1 || true
-            break
-        fi
-    done
-fi
+    cat "$ROOT_DIR/packaging/rpm/lifecycle/fic-dick.preun"
+}
 
-exit 0
-EOF
+fic_dick_pre_script() {
+    cat "$ROOT_DIR/packaging/rpm/lifecycle/fic-dick.pre"
 }
 
 build_fic_dick_package() {
@@ -881,6 +509,7 @@ build_fic_dick_package() {
 
     package_root="$(init_package_root "$package_name")"
     install_cmake_component "$FIC_DICK_BUILD_DIR" fic-dick "$package_root"
+    install -m 0755 "$FIC_BUILD_DIR/fic-package-infrastructure" "$package_root/opt/fic/bin/fic-package-infrastructure"
 
     output_rpm="$(build_rpm_package \
         "$package_root" \
@@ -888,7 +517,7 @@ build_fic_dick_package() {
         "Free Integrity Control device collector binary" \
         "Free Integrity Control device collector binary." \
         "" \
-        "$(system_integration_pre_script)" \
+        "$(fic_dick_pre_script)" \
         "$(fic_dick_post_script)" \
         "$(fic_dick_preun_script)")" || return 1
 
@@ -949,6 +578,7 @@ build_fic_package() {
 
     package_root="$(init_package_root "$package_name")"
     install_cmake_component "$FIC_BUILD_DIR" fic "$package_root"
+    rm -f "$package_root/opt/fic/bin/fic-package-infrastructure"
     mkdir -p "$package_root/opt/fic/log"
     mkdir -p "$package_root/opt/fic/notify"
     mkdir -p "$package_root/usr/lib/rpm"
@@ -969,9 +599,9 @@ build_fic_package() {
         "Free Integrity Control daemon package with runtime data" \
         "Free Integrity Control daemon package with runtime data." \
         "fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, notify-send, util-linux, nftables, control, pam >= 1.7.1, pam-config >= 1.10.0" \
-        "$(system_integration_pre_script "$(fic_pam_facility_pre_upgrade_script)")" \
-        "$(system_integration_symlink_post_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_post_script)")" \
-        "$(system_integration_symlink_preun_script "fic" "/opt/fic/bin/fic" "$(fic_pam_facility_preun_script)" "$(fic_pam_provider_post_stop_preun_script)")")" || return 1
+        "$(system_integration_pre_script)" \
+        "$(system_integration_symlink_post_script)" \
+        "$(system_integration_symlink_preun_script)")" || return 1
 
     printf '%s\n' "$output_rpm"
 }

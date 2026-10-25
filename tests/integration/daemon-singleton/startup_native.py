@@ -41,7 +41,7 @@ try:
     for command,action,version,abi in (('package-prepare','install','wrong','1'),('package-prepare','upgrade','1','2'),('package-release','remove','1','1')):
         result=subprocess.run([daemon,'--maintenance',command,action,version,abi],
                               capture_output=True,text=True,timeout=10)
-        assert result.returncode!=0 and 'refusing package runtime prerequisite:' in result.stderr, result.stderr
+        assert result.returncode!=0 and 'unsupported maintenance command/action' in result.stderr, result.stderr
         assert snapshot()==before, 'unproven package runtime changed security state before prerequisite'
     for extra in ([], ['--socket', '/tmp/fic-singleton-custom.sock']):
         result = subprocess.run([daemon, *extra], capture_output=True, text=True, timeout=10)
@@ -49,15 +49,9 @@ try:
         assert 'another daemon instance holds the lock' in result.stderr, result.stderr
         assert snapshot() == before, 'rejected startup changed security/journal/runtime files'
         assert not Path('/tmp/fic-singleton-custom.sock').exists(), 'created custom socket before lock'
-    for domain in ('dm', 'desktop', 'pam-provider', 'pam-password'):
-        result = subprocess.run([daemon, '--maintenance', domain + '-prerm-prepare', 'release'],
-                                capture_output=True, text=True, timeout=10)
-        assert result.returncode != 0 and 'another daemon instance holds the lock' in result.stderr, result.stderr
-        assert snapshot() == before, (domain, 'release modified persistent state before admission')
     for args in (['ensure-config'], ['ensure-config-first-install'], ['incident-init'],
                  ['bootstrap-pam-password-slots'], ['incident-pam-alt', 'attach'], ['incident-pam-alt', 'detach'],
-                 ['pam-alt-faillock', 'enable'], ['pam-alt-faillock', 'disable'],
-                 ['pam-alt-pwhistory', 'enable'], ['pam-alt-pwhistory', 'disable'], ['pam-alt-pwhistory', 'prepare']):
+                 ['initialize-journal'], ['complete-install'], ['pam-alt-pwhistory', 'prepare']):
         result = subprocess.run([daemon, '--maintenance', *args],
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode != 0 and 'another daemon instance holds the lock' in result.stderr, result.stderr
@@ -86,29 +80,34 @@ print('PASS: real daemon default/custom socket refused before startup effects; r
 fence_root=Path('/var/lib/fic-lifecycle')
 assert not fence_root.exists(), 'fixture refuses existing lifecycle provenance'
 fence_root.mkdir(mode=0o700)
-fence=fence_root/'state.json'
+fence=fence_root/'status'
 try:
-    for phase,operation in ((0,0),(12,0),(13,2),('corrupt',0),('missing',0)):
+    for phase in ('INSTALLING','REMOVED','corrupt','missing'):
         if fence.exists():
             fence.unlink()
         if phase=='corrupt':
             fence.write_text('{}\n')
         elif phase!='missing':
-            fence.write_text(json.dumps({'version':2,'operation':operation,'phase':phase,
-                'id':'a'*32,'mask_id':'a'*32,'package_version':'1','generation':0,'attempt_boot':'','attempt_ms':0,'failure':0})+'\n')
+            fence.write_text(phase+'\n')
         if fence.exists():
             fence.chmod(0o600)
         before=snapshot()
-        for args in ([],['--socket','/tmp/fic-singleton-custom.sock'],['--maintenance','incident-init'],
-                     ['--maintenance','ensure-config'],['--maintenance','pam-alt-pwhistory','prepare']):
+        denied=[[],['--socket','/tmp/fic-singleton-custom.sock'],['--maintenance','incident-pam-alt','detach']]
+        if phase!='INSTALLING':
+            denied += [['--maintenance','incident-init'],['--maintenance','ensure-config'],
+                       ['--maintenance','pam-alt-pwhistory','prepare']]
+        # INSTALLING intentionally admits the closed initialization allowlist
+        # and install trust sync; actual package gates verify their proofs.
+        for args in denied:
             result=subprocess.run([daemon,*args],capture_output=True,text=True,timeout=10)
             assert result.returncode!=0 and 'refusing lifecycle admission:' in result.stderr, result.stderr
             assert snapshot()==before, (phase,args,'lifecycle refusal mutated system state')
-        result=subprocess.run([daemon,'--trust-sync-platform'],capture_output=True,text=True,timeout=10)
-        assert result.returncode!=0 and 'refusing trust-sync lifecycle admission:' in result.stderr, result.stderr
-        assert snapshot()==before, (phase,'trust-sync changed state before lifecycle proof')
+        if phase!='INSTALLING':
+            result=subprocess.run([daemon,'--trust-sync-platform'],capture_output=True,text=True,timeout=10)
+            assert result.returncode!=0 and 'refusing trust-sync lifecycle admission:' in result.stderr, result.stderr
+            assert snapshot()==before, (phase,'trust-sync changed state before lifecycle proof')
 finally:
     if fence.exists():
         fence.unlink()
     fence_root.rmdir()
-print('PASS: actual daemon/standalone lifecycle gate rejects pending/tombstone/corrupt/missing proof before security effects')
+print('PASS: actual daemon/standalone lifecycle gate rejects Installing/Removed/corrupt/missing proof before security effects')

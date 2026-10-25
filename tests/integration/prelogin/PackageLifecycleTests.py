@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory(prefix='fic-prelogin-package-') as directory:
     helper = work / 'helper'
     helper.write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "' + str(calls) + '"\nexit "${FIXTURE_EXIT:-0}"\n')
     helper.chmod(0o755)
-    for name, cases in [('postinst', {'configure':'activate', 'abort-remove':'activate', 'abort-deconfigure':'activate', 'abort-upgrade':'activate', 'triggered':None}),
+    for name, cases in [('postinst', {'configure':'activate', 'abort-remove':None, 'abort-deconfigure':None, 'abort-upgrade':None, 'triggered':None}),
                         ('prerm', {'remove':'deactivate', 'deconfigure':'deactivate', 'upgrade':'deactivate', 'failed-upgrade':None})]:
         match = re.search(r'/DEBIAN/' + name + r'" <<\'EOF\'\n(.*?)\nEOF', section, re.S)
         assert match, name

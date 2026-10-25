@@ -1711,36 +1711,30 @@ identity detached, все три managed slot'а canonical Neutral, final semant
 класс `None` или `ForeignQuality`). Частичный «остаточный» topology при
 удалении пакета не допускается.
 
-Механика (Debian/Ubuntu prerm):
+Механика текущего uninstall (Debian/Ubuntu и ALT):
 
-* сгенерированный prerm не содержит shell-логики паролей: он вызывает
-  узкую maintenance-команду `fic --maintenance pam-password-prerm-prepare
-  preflight|release` (единственный вызов pam-auth-update над password
-  identity выполняет production transition executor внутри daemon binary);
-* Stage A (`preflight`) — строго read-only: инспекция топологии + coherence;
-  selected-but-unowned, unselected-owned и оба history-варианта с нарушением
-  инвариантов — fail closed ДО любой мутации (prerm отказывает в удалении
-  до остановки сервисов и любого pam-auth-update); Prepared-leftovers
-  допускаются через виртуальное recovery с пересчётом классификации;
-* Stage B (`release`) выполняется prerm'ом после остановки всех FIC writer'ов
-  и batch remove'а постоянных hook-профилей: `ExclusivePidLock` на
-  runtime lock-файл → recovery exact-id `Prepared` через
-  `compensateC2ActiveSlot` + свежее структурное доказательство → ОДИН
-  `executor.transition(false, false)` → независимый финальный proof
-  (нет selections, слоты Neutral, нет generated includes, foreign producer
-  сохранён);
+* `fic-cli prepare-uninstall` долговечно ограничивает работающий daemon;
+  `fic-cli policy rollback all` вызывает существующие domain release backend'ы
+  внутри этого daemon, без изменения ENABLE/DISABLE;
+* provider domain освобождается перед C2 password domain. Stage A остаётся
+  read-only: selected-but-unowned, unselected-owned и incoherent history
+  отвергаются до domain mutation; Prepared recovery следует прежнему контракту;
+* Stage B использует прежние resource locks, exact-id recovery и
+  `executor.transition(false, false)`, затем независимый final proof;
+* только после ownership release инфраструктурный helper останавливает и
+  доказывает отсутствие writers, отсоединяет постоянные hooks и проверяет
+  отсутствие PAM references. Он не загружает journal и не выполняет policy undo;
 * неудача release классифицируется: компенсация доказана —
   «pre-release topology proven restored» (retry возможен); компенсация
   недоказуема — CRITICAL «NOT proven restored», молчаливое восстановление
   запрещено;
-* prerm всегда восстанавливает permanent hook infrastructure
-  (`pam-auth-update --enable` четырёх постоянных hook-профилей) и НЕ делает
-  shell-snapshot и shell-restore password selection: pam-auth-update
-  остаётся владельцем generated stack, а C2 executor — владельцем joint
-  перехода.
+* permanent hook infrastructure остаётся подключённой до успешного daemon
+  ownership release. Shell не делает snapshot/restore password selection:
+  pam-auth-update остаётся владельцем generated stack, C2 executor — joint
+  перехода. Ошибка не запускает небезопасную package compensation.
 
 Код: `fic/src/modules/identity_access/pam/PamPasswordPackageRelease.{h,cpp}`;
-wiring — `fic/src/main.cpp` (`pam-password-prerm-prepare`); генерация prerm —
+wiring — `fic/src/daemon/UninstallRollback.cpp`; генерация prerm —
 `packaging/deb/build-fic-debian12-deb.sh`. Поведенческие и packaging-тесты —
 `PamPasswordPackageReleaseTests.cpp` и `tests/integration/packaging/
 PamPackagingChecks.py`.
@@ -2175,12 +2169,13 @@ FLY проверяет системный theme.master (`persistent_configuratio
 live runtime не подтверждает (`runtime_effect=NOT_VERIFIED`). Ошибка сессии не
 откатывает системные изменения и не инвалидирует global checkpoint.
 
-При uninstall root-only `desktop-prerm-prepare preflight|release` preflights
-пустые targets всех backends, затем использует тот же typed release независимо
-от текущего DE, scope и статуса policies. DEB/RPM проверяют ownership до остановки
-services, освобождают после остановки writers и до PAM detach. Ошибка запрещает
-удаление. Созданные контейнеры с чужими данными сохраняются и переходят в Detached;
-unproven legacy state и orphan markers не усыновляются.
+При uninstall работающий daemon через `policy rollback all` preflights пустые
+DE/DM targets и использует тот же typed release независимо от текущего DE,
+scope и статуса policies. Physical proof предшествует retire checkpoint.
+Ошибки сохраняют provenance и блокируют штатное удаление; независимые ресурсы
+продолжают освобождаться. Созданные контейнеры с чужими данными сохраняются и
+переходят в Detached; unproven legacy state и orphan markers не усыновляются.
+Standalone `desktop-prerm-prepare` удалён.
 
 Полный checkpoint/recovery/CAS контракт и ограничения native verification:
 [graphical-scope-transactions.md](graphical-scope-transactions.md).
@@ -2372,17 +2367,17 @@ container: deleted → RolledBack, retained foreign → Detached; несвяза
 продолжает оставшиеся активные записи (в отличие от C2 release с его
 compensation model).
 
-CLI: `fic --maintenance pam-provider-prerm-prepare preflight|release` —
-narrow root-only entrypoint без path/policy аргументов. DEB prerm
-(`write_system_integration_symlink_prerm`) выполняет provider preflight
-Stage A до любых side effects (вместе с C2 preflight) и provider release
-Stage B после остановки writer'ов и batch remove, ПЕРЕД C2 semantic
-transition (provider домен не зависит от pam-auth-update; отказ provider
-release блокирует удаление до любых C2 мутаций). ALT p11 RPM `%preun`
-выполняет provider preflight на actual erase (`$1 -eq 0`) до side effects
-и provider release post-stop hook'ом после остановки сервисов; upgrade
-никогда не запускает ownership release. Shell не содержит PAM parser'ов —
-решение целиком в maintenance binary.
+Production entrypoint — `fic-cli prepare-uninstall`, затем
+`fic-cli policy rollback all` в работающем daemon. Provider release сохраняет
+те же resource locks и ownership checks, выполняется перед C2 domain release;
+ошибка provider блокирует зависимый password release. Package scripts не
+запускают standalone policy engine. Постоянные hooks отсоединяет отдельный
+infrastructure-only helper после stopped-writer proof. Upgrade ownership не
+освобождает. Старые `pam-provider-prerm-prepare` и
+`pam-password-prerm-prepare` maintenance entrypoints удалены.
+
+Точный install/remove/purge/override contract:
+[package-lifecycle.md](package-lifecycle.md).
 
 ## Расширение
 

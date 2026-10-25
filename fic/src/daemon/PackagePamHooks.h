@@ -14,6 +14,7 @@ public:
     bool detach(const DaemonInstanceLock&,std::chrono::steady_clock::time_point deadline,
         std::string& error) const;
     bool proveDetached(std::string& error) const;
+    bool proveAttached(std::string& error) const;
 private:
     bool inspectOtherHooks(bool& detached,std::string& error) const;
     bool removeProfiles(bool incident,std::chrono::steady_clock::time_point,std::string& error) const;

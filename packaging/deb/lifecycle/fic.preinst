@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
+if ! getent group fic >/dev/null; then groupadd --system fic; fi
+case "$1" in
+ install|upgrade)
+    if [ -x /opt/fic/bin/fic-package-infrastructure ]; then
+        /opt/fic/bin/fic-package-infrastructure prepare-install
+    elif [ -e /opt/fic/config ] || [ -L /opt/fic/config ] ||
+         [ -e /opt/fic/lockstatus ] || [ -L /opt/fic/lockstatus ]; then
+        echo 'FIC: incompatible development installation; no automatic adoption or migration' >&2
+        exit 1
+    fi
+    ;;
+ *) echo 'FIC: unsupported preinst action' >&2; exit 1 ;;
+esac

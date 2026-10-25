@@ -3,6 +3,7 @@
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include "incident/IncidentStateStore.h"
 #include "rollback/DaemonMutationJournal.h"
+#include "incident/IncidentProfileSynchronization.h"
 
 #include <fic/core/process/VerifiedProcessExecutor.h>
 #include <fic/core/logging/Logger.h>
@@ -125,6 +126,29 @@ FirewallBackend::FirewallBackend(
     ownership_.expectation.maxSize = 4 * 1024 * 1024;
 }
 
+bool FirewallBackend::readOwnershipDocument(nlohmann::json& document,fic::core::SecureStateReadResult& witness,bool durable,std::string& error) const {
+    using Json=nlohmann::json;
+    using namespace fic::core;
+    if (!proveSafeParentDirectory(ownership_.path.parent_path(), ownership_.expectation, error)) return false;
+    witness = readSecureFileBounded(ownership_.path, ownership_.expectation, 4 * 1024 * 1024);
+    document = {{"schema_version", 1}, {"before", Json::object()}, {"after", Json::object()}};
+    if (witness.status == SecureStateReadStatus::Unprovable) {
+        error = "firewall ownership is unproven: " + witness.detail; return false;
+    }
+    if (witness.status == SecureStateReadStatus::Proven) {
+        try {
+            if (!parseFirewallJson(witness.content, document, error)) return false;
+            if (document.size() != 3 || document.at("schema_version") != 1 ||
+                !document.at("before").is_object() || !document.at("after").is_object()) {
+                error = "invalid firewall ownership document"; return false;
+            }
+            if (durable && !AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                    ownership_.path.string(), witness.targetState, &error)) return false;
+        } catch (const Json::exception& ex) { error = ex.what(); return false; }
+    }
+    return true;
+}
+
 bool FirewallBackend::resolveNft(std::string& executable,
                                  std::string& error) const {
     if (runner_) { executable = "injected-nft"; return true; }
@@ -206,6 +230,25 @@ bool FirewallBackend::applyPolicy(const std::string& policy,
 bool FirewallBackend::removePolicy(const std::string& policy, std::string& error) const {
     return FirewallCoordinator(*this).removePolicy(policy, error);
 }
+
+bool FirewallBackend::provePolicyAbsent(const std::string& policy,std::string& error) const {
+    std::lock_guard<std::recursive_mutex> lock(fic::incident::incidentProfileMutex());
+    const auto& policies=managedFirewallPolicies();
+    if(std::find(policies.begin(),policies.end(),policy)==policies.end()) {
+        error="unknown managed firewall policy";return false;
+    }
+    std::string executable;FirewallActualState actual;
+    if(!resolveNft(executable,error)||!readActual(executable,actual,error))return false;
+    std::map<std::string,nlohmann::json> observed;
+    if(!observeManagedObjects({{"nftables",actual.objects}},observed,error))return false;
+    nlohmann::json document;
+    fic::core::SecureStateReadResult witness;
+    if(!readOwnershipDocument(document,witness,false,error))return false;
+    if(observed.count(managedTableName(policy))) {
+        error="managed firewall table exists without journal provenance: "+managedTableName(policy);return false;
+    }
+    error.clear();return true;
+}
 bool FirewallBackend::applyExclusive(std::vector<ForeignBaseChain>& neutralized,
                                     std::string& error) const {
     bool changed = false;
@@ -259,23 +302,9 @@ bool FirewallBackend::applyEffective(const FirewallDesiredState& desired,
         if (!replacement.empty()) wanted[table] = std::move(replacement);
     }
 
-    if (!proveSafeParentDirectory(ownership_.path.parent_path(), ownership_.expectation, error)) return false;
-    const auto witness = readSecureFileBounded(ownership_.path, ownership_.expectation, 4 * 1024 * 1024);
-    Json document = {{"schema_version", 1}, {"before", Json::object()}, {"after", Json::object()}};
-    if (witness.status == SecureStateReadStatus::Unprovable) {
-        error = "firewall ownership is unproven: " + witness.detail; return false;
-    }
-    if (witness.status == SecureStateReadStatus::Proven) {
-        try {
-            if (!parseFirewallJson(witness.content, document, error)) return false;
-            if (document.size() != 3 || document.at("schema_version") != 1 ||
-                !document.at("before").is_object() || !document.at("after").is_object()) {
-                error = "invalid firewall ownership document"; return false;
-            }
-            if (!AtomicFileWriter::ensureTargetDurableIfCurrentState(
-                    ownership_.path.string(), witness.targetState, &error)) return false;
-        } catch (const Json::exception& ex) { error = ex.what(); return false; }
-    }
+    Json document;
+    SecureStateReadResult witness;
+    if(!readOwnershipDocument(document,witness,true,error))return false;
     if (onlySelectedPolicy && !removalOnly && document.at("after").contains("fic_incident_quarantine")) {
         // Drift may have removed quarantine before a profile restoration.
         // Its durable intent still distinguishes this from a normal single

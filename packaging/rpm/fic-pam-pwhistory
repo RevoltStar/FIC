@@ -23,11 +23,9 @@ summary)
 status)
     exec "$FIC_HELPER" --maintenance pam-alt-pwhistory status
     ;;
-enabled)
-    exec "$FIC_HELPER" --maintenance pam-alt-pwhistory enable
-    ;;
-disabled)
-    exec "$FIC_HELPER" --maintenance pam-alt-pwhistory disable
+enabled|disabled)
+    echo 'FIC: topology changes belong to daemon policies; use fic-cli policy enable/disable IDENTITY_ACCESS (enable_authentication_lockout or enable_password_history)' >&2
+    exit 1
     ;;
 *)
     printf '%s: %s\n' "${0##*/}" "Invalid mode: $REQUEST" >&2

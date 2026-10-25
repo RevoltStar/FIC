@@ -36,20 +36,18 @@
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 #include "modules/identity_access/pam/PamManagedPasswordSlotBootstrap.h"
-#include "modules/identity_access/pam/PamPasswordPackageRelease.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamSlotAttachValidator.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "daemon/DaemonInstanceLock.h"
-#include "daemon/PackageReleaseResources.h"
+#include "daemon/UninstallLifecycle.h"
+#include "daemon/InstallationProof.h"
+#include "daemon/UninstallRollback.h"
+#include "daemon/PackageWritersQuiescence.h"
+#include <fic/core/process/ExclusivePidLock.h>
 #include "daemon/MaintenanceAdmission.h"
 #include "daemon/PackageLifecycleAdmission.h"
-#include "daemon/PackageLifecycleCoordinator.h"
-#include "daemon/PackageRuntimePrerequisite.h"
-#include "daemon/PackageRuntimeIdentityGenerated.h"
-#include "daemon/PackageReleaseSession.h"
-#include "modules/identity_access/pam/PamProviderPackageRelease.h"
 #include <fic/ipc/FicAdminSocket.h>
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/ipc/FicReadinessStatus.h>
@@ -834,6 +832,7 @@ json handle_request(json request,
             return json{
                 {"ok", true},
                 {"message", "fic daemon is running"},
+                {"lifecycle_state", "INSTALLED"},
                 {"product_version", fic::version::PRODUCT_VERSION},
                 {"config_schema_version", fic::version::CONFIG_SCHEMA_VERSION}
             };
@@ -1257,7 +1256,8 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
     }
 
     const std::string command = request.at("command").get<std::string>();
-    if (command == "shutdown" || command == "reload_config" ||
+    if (command == "prepare_uninstall" || command == "rollback_all" ||
+        command == "shutdown" || command == "reload_config" ||
         command == "apply_all" || command == "incident_status" ||
         command == "access_gate_status" || command == "prelogin_status" ||
         command == "incident_clear") {
@@ -1305,7 +1305,8 @@ std::string handle_client_packet(
                       DesktopGlobalConfigReconciler& desktopGlobalConfig,
                       const fic::platform::PlatformProfile& platform,
                       const fic::platform::PlatformExecutableResolver& executables,
-                      fic::daemon::LogRecordsReader& logRecordsReader) {
+                      fic::daemon::LogRecordsReader& logRecordsReader,
+                      const fic::daemon::DaemonInstanceLock& daemonInstance) {
     const PeerCredentials peer = get_peer_credentials(clientFd);
     std::string error;
     json request;
@@ -1313,6 +1314,56 @@ std::string handle_client_packet(
     const bool requestValidated = fic::ipc::parse_request_json(requestText, request, error) &&
         validate_policy_request_schema(request, error);
     if (requestValidated) {
+        const auto command = request.at("command").get<std::string>();
+        const auto lifecycle = fic::core::readPackageState();
+        const auto finish = [&](json reply) {
+            audit_ipc_request(peer, request, reply);
+            reply["api_version"] = fic::ipc::API_VERSION;
+            return reply.dump();
+        };
+        if (command == "prepare_uninstall") {
+            if (!peer.available || peer.uid != 0)
+                return finish(fic::ipc::make_error_response("prepare-uninstall requires root"));
+            // Drain trust-sync under its existing resource lock. Once the state
+            // is published, new trust-sync operations refuse inside this lock.
+            const auto& paths = fic::core::FicRuntimePaths::get();
+            ExclusivePidLock trustBarrier(paths.commandHashFile.string()+".lock",
+                                          paths.lockDebugLogFile.string(),false);
+            if (!trustBarrier.tryAcquire())
+                return finish(fic::ipc::make_error_response("trust-sync is busy; retry prepare-uninstall"));
+            if (!fic::daemon::UninstallLifecycle().prepare(daemonInstance,error))
+                return finish(fic::ipc::make_error_response(error));
+            if (!fic::daemon::PackageWritersQuiescence(executables).stopAuxiliaryWriters(
+                    std::chrono::steady_clock::now()+std::chrono::seconds(30),error))
+                return finish(fic::ipc::make_error_response("UNINSTALLING saved; auxiliary writer drain failed: "+error));
+            Logger::log("FIC находится в процессе удаления.",logLevel::INFO,"daemon");
+            return finish(json{{"ok",true},{"message","FIC находится в процессе удаления."},
+                               {"lifecycle_state","UNINSTALLING"}});
+        }
+        if (command == "rollback_all") {
+            if (!peer.available || peer.uid != 0)
+                return finish(fic::ipc::make_error_response("rollback all requires root"));
+            return finish(fic::daemon::rollbackAllForUninstall(policyRegistry,daemonInstance,platform,executables));
+        }
+        if (lifecycle.state != fic::core::PackageState::Installed) {
+            if (!fic::daemon::UninstallLifecycle::allowedRequest(command)) {
+                const bool uninstalling=lifecycle.state==fic::core::PackageState::Uninstalling;
+                const std::string message=uninstalling
+                    ? "Ошибка ["+command+"]: FIC находится в процессе удаления."
+                    : "Package lifecycle state is unproven; mutation refused";
+                Logger::log(message,logLevel::ERROR,"daemon");
+                auto reply=fic::ipc::make_error_response(message);
+                reply["error_code"]=uninstalling?"UNINSTALL_IN_PROGRESS":"PACKAGE_STATE_UNPROVEN";
+                return finish(std::move(reply));
+            }
+            // Read-only requests bypass incident preflight/post-reconciliation.
+            // rollback_all gets its dedicated root-only handler separately.
+            auto reply=handle_request(request,peer,policyRegistry,desktopGlobalConfig,
+                                      platform,executables,logRecordsReader);
+            if(command=="status" && lifecycle.state)
+                reply["lifecycle_state"]=fic::core::packageStateName(*lifecycle.state);
+            return finish(std::move(reply));
+        }
         fic::incident::canonicalizePolicyRequest(request,
             [&](const std::string& module) {
                 return canonical_module_name(policyRegistry, module);
@@ -1601,8 +1652,6 @@ int main(int argc, char* argv[]) {
     if (get_arg_value(argc, argv, 1) == "--build-info") {
         fic::version::writeBuildInfo(std::cout, "fic");
         std::cout << "target_platform=" << platform.id << std::endl;
-        std::cout << "lifecycle_package_version=" << fic::daemon::LifecycleRuntimePackageVersion << '\n'
-                  << "lifecycle_abi=" << fic::daemon::LifecycleRuntimeAbi << std::endl;
         return 0;
     }
     if (get_arg_value(argc, argv, 1) == "--trust-list-platform-paths") {
@@ -1643,52 +1692,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Closed package entrypoint has its own stop/admission/reproof sequence.
-    // This is not normal maintenance admission and never clears a fence.
-    if (get_arg_value(argc,argv,1)=="--maintenance" &&
-        fic::daemon::maintenanceIntent(get_arg_value(argc,argv,2),get_arg_value(argc,argv,3))==
-            fic::daemon::MaintenanceIntent::LifecycleSession) {
-        const auto action=get_arg_value(argc,argv,3),version=get_arg_value(argc,argv,4);
-        constexpr auto abi=fic::daemon::LifecycleRuntimeAbi;
-        if(argc!=6 || get_arg_value(argc,argv,5)!=std::to_string(abi)) {
-            std::cerr<<"refusing package runtime prerequisite: exact operation, version and supported ABI required"<<std::endl;return 1;
-        }
-        if(!fic::daemon::proveExecutingPackageRuntime(platform,version,abi,pathError)) {
-            std::cerr<<"refusing package runtime prerequisite: "<<pathError<<std::endl;return 1;
-        }
-        const auto operation=action=="install"?fic::daemon::PackageOperation::Install:
-            action=="upgrade"?fic::daemon::PackageOperation::Upgrade:fic::daemon::PackageOperation::Remove;
-        const auto& paths=fic::core::FicRuntimePaths::get();
-        if(operation==fic::daemon::PackageOperation::Remove &&
-           !fic::daemon::PackageReleaseSession(platform,paths,{}).preflight(pathError)) {
-            std::cerr<<"refusing package removal preflight: "<<pathError<<std::endl;return 1;
-        }
-        fic::daemon::PackageLifecycleCoordinator coordinator(platform,paths);
-        if(!coordinator.requestStopBeforeAdmission(pathError)) {
-            std::cerr<<"refusing package writer stop: "<<pathError<<std::endl;return 1;
-        }
-        fic::daemon::DaemonInstanceLock guard;
-        fic::daemon::PackageLifecycleState prepared;
-        if(!guard.tryAcquire(paths.runtimeDir,pathError)||
-           !fic::daemon::proveExecutingPackageRuntime(platform,version,abi,pathError)||
-           !coordinator.prepare(guard,operation,version,prepared,pathError)) {
-            std::cerr<<"refusing package preparation: "<<pathError<<std::endl;return 1;
-        }
-        if(operation==fic::daemon::PackageOperation::Remove) {
-            const fic::daemon::PackageReleaseSessionPaths lifecycle{
-                fic::daemon::PackageLifecycleStateFile,
-                std::filesystem::path(fic::daemon::PackageLifecycleDirectory)/"operations","/etc/systemd/system"};
-            if(!fic::daemon::PackageReleaseSession(platform,paths,lifecycle).completeRelease(
-                guard,prepared.operationId,pathError)) {
-                std::cerr<<"package security release incomplete (fence retained): "<<pathError<<std::endl;return 1;
-            }
-            std::cout<<"package security release complete (awaiting removal finalizer): "<<prepared.operationId<<std::endl;
-            return 0;
-        }
-        std::cout<<"package operation prepared (still fenced): "<<prepared.operationId<<std::endl;
-        return 0;
-    }
-
     // Runtime-path initialization above is memory-only. This must precede
     // config checks whose failure can trigger incident/SSH containment, all
     // journal access and the startup policy pass. Custom sockets share it.
@@ -1703,13 +1706,31 @@ int main(int argc, char* argv[]) {
         std::cerr << "unsupported maintenance command/action" << std::endl;
         return 1;
     }
-    if ((daemonMode || fic::daemon::requiresInstanceLock(maintenanceAdmission)) && !daemonInstance.tryAcquire(
+    const auto packageSnapshot=fic::core::readPackageState();
+    const bool installTrustSync=(packageTrustSync||affectedPackageTrustSync)&&
+        packageSnapshot.state==fic::core::PackageState::Installing;
+    const bool installationMaintenance=packageSnapshot.state==fic::core::PackageState::Installing&&
+        get_arg_value(argc,argv,1)=="--maintenance"&&fic::daemon::installationMaintenanceCommand(
+            get_arg_value(argc,argv,2),get_arg_value(argc,argv,3));
+    if ((daemonMode || installTrustSync || fic::daemon::requiresInstanceLock(maintenanceAdmission)) && !daemonInstance.tryAcquire(
             fic::core::FicRuntimePaths::get().runtimeDir, pathError)) {
         std::cerr << (daemonMode ? "refusing daemon startup: " : "refusing maintenance admission: ") << pathError << std::endl;
         return 1;
     }
+    if (installationMaintenance) {
+        const auto current=fic::core::readPackageState();
+        if (!daemonInstance.heldByCurrentProcess() ||
+            current.state!=fic::core::PackageState::Installing ||
+            !AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                fic::core::PACKAGE_STATE_FILE,current.file.targetState,&pathError)) {
+            std::cerr << "installation admission changed before lock acquisition: " << pathError << std::endl;
+            return 1;
+        }
+    }
 
-    if (daemonMode || fic::daemon::requiresInstanceLock(maintenanceAdmission)) {
+    const bool uninstallMode = daemonMode &&
+        fic::core::readPackageState().state == fic::core::PackageState::Uninstalling;
+    if (((daemonMode && !uninstallMode) || fic::daemon::requiresInstanceLock(maintenanceAdmission)) && !installationMaintenance) {
         // No config failure containment, journal opening or policy mutation is
         // allowed before durable lifecycle completion. Absence is not recovery.
         fic::daemon::PackageLifecycleAdmission lifecycle;
@@ -1719,7 +1740,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    if (packageTrustSync || affectedPackageTrustSync) {
+    if ((packageTrustSync || affectedPackageTrustSync) && !installTrustSync) {
         fic::daemon::PackageLifecycleAdmission lifecycle;
         if(!lifecycle.inspectInstalled(pathError)) {
             std::cerr << "refusing trust-sync lifecycle admission: " << pathError << std::endl;
@@ -1728,49 +1749,19 @@ int main(int argc, char* argv[]) {
     }
 
     if (get_arg_value(argc, argv, 1) == "--maintenance") {
-        // Pre-stop inspection must never bootstrap or recover operational
-        // provenance. Release still opens fresh operational state separately.
-        std::unique_ptr<fic::rollback::MutationJournal> inspectedJournal;
-        const auto maintenanceJournal = [&](bool preflight, std::string& error)
-            -> fic::rollback::MutationJournal* {
-            if (!preflight)
-                return fic::rollback::DaemonMutationJournal::instance().tryGet(error);
-            inspectedJournal = std::make_unique<fic::rollback::MutationJournal>(
-                fic::core::FicRuntimePaths::get().mutationJournalFile);
-            if (!inspectedJournal->validatePersistentStateReadOnly(error)) return nullptr;
-            return inspectedJournal.get();
-        };
-        if (get_arg_value(argc, argv, 2) == "dm-prerm-prepare") {
-            const auto action = get_arg_value(argc, argv, 3);
-            if (::geteuid() != 0 || (action != "preflight" && action != "release")) {
-                std::cerr << "dm-prerm-prepare requires root and preflight/release" << std::endl; return 1;
-            }
-            std::string error;
-            auto* journal = maintenanceJournal(action == "preflight", error);
-            if (!journal) { std::cerr << error << std::endl; return 1; }
-            fic::daemon::PackageReleaseResources resources(platform,fic::core::FicRuntimePaths::get());
-            fic::daemon::PackageResourceReleaseReport report;
-            const auto domain=fic::daemon::PackageReleaseDomain::DisplayManager;
-            if (!(action=="preflight" ? resources.preflight(domain,*journal,report,error) :
-                  resources.release(daemonInstance,domain,*journal,report,error))) {
-                std::cerr << error << std::endl; return 1;
+        if(get_arg_value(argc,argv,2)=="check-persistent") {
+            if(!fic::daemon::checkPackagePersistentState(pathError)){std::cerr<<pathError<<std::endl;return 1;}
+            return 0;
+        }
+        if(get_arg_value(argc,argv,2)=="initialize-journal") {
+            if(!installationMaintenance||!fic::rollback::DaemonMutationJournal::instance().tryGet(pathError)) {
+                std::cerr<<"installation journal initialization refused: "<<pathError<<std::endl;return 1;
             }
             return 0;
         }
-        if (get_arg_value(argc, argv, 2) == "desktop-prerm-prepare") {
-            const auto action = get_arg_value(argc, argv, 3);
-            if (::geteuid() != 0 || (action != "preflight" && action != "release")) {
-                std::cerr << "desktop-prerm-prepare requires root and preflight/release" << std::endl; return 1;
-            }
-            std::string error;
-            auto* journal = maintenanceJournal(action == "preflight", error);
-            if (!journal) { std::cerr << error << std::endl; return 1; }
-            fic::daemon::PackageReleaseResources resources(platform,fic::core::FicRuntimePaths::get());
-            fic::daemon::PackageResourceReleaseReport report;
-            const auto domain=fic::daemon::PackageReleaseDomain::Desktop;
-            if (!(action=="preflight" ? resources.preflight(domain,*journal,report,error) :
-                  resources.release(daemonInstance,domain,*journal,report,error))) {
-                std::cerr << error << std::endl; return 1;
+        if(get_arg_value(argc,argv,2)=="complete-install") {
+            if(!fic::daemon::completePackageInstallation(daemonInstance,platform,pathError)) {
+                std::cerr<<"installation completion refused: "<<pathError<<std::endl;return 1;
             }
             return 0;
         }
@@ -2024,23 +2015,15 @@ int main(int argc, char* argv[]) {
                     maintenanceError) &&
                 qualityCapability->topology ==
                     fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
-                fic::identity::pam::PamSlotAttachVerdict passwordVerdict;
-                std::string passwordValidationError;
-                if (!fic::identity::pam::validatePamPasswordSlotAttach(
-                        platform.pam, *qualityServices, executables,
-                        paths.mutationJournalFile, {},
-                        fic::identity::pam::PamAttachmentValidationPhase::
-                            PreAttach,
-                        passwordVerdict, passwordValidationError)) {
-                    std::cerr << "FIC password PAM slot attach validation "
-                                 "failed: "
-                              << passwordValidationError << std::endl;
-                    return 1;
-                }
-                if (!passwordVerdict.safeToAttach) {
-                    std::cerr << "FIC password PAM slots are not safe to "
-                                 "attach permanent hooks (fail closed): "
-                              << passwordVerdict.detail << std::endl;
+                // Current C2 owns individual selected slots. The earlier
+                // pair-slot validator describes a different topology and
+                // cannot validate an installed C2 history-normal/initial state.
+                // Reuse its existing read-only release eligibility proof;
+                // no recovery, rollback or provenance mutation is allowed.
+                if (!fic::daemon::checkPackagePasswordTopology(
+                        platform, executables, validationError)) {
+                    std::cerr << "FIC password topology is unproven: "
+                              << validationError << std::endl;
                     return 1;
                 }
             } else if (!qualityCapability &&
@@ -2121,143 +2104,6 @@ int main(int argc, char* argv[]) {
                       << std::endl;
             return 0;
         }
-        if (command == "pam-provider-prerm-prepare") {
-            // Step 7F package-removal release of the managed PROVIDER
-            // configuration domain (faillock/pwquality/pwhistory provider
-            // primaries). Narrow package-maintenance entrypoint: root-only,
-            // no path/policy arguments, the platform profile and the
-            // production journal come from the production environment. Mode
-            // argument: "preflight" (Stage A, strictly read-only, BEFORE
-            // any prerm side effect) or "release" (Stage B, after every
-            // FIC writer has been stopped).
-            if (::geteuid() != 0) {
-                std::cerr << "FIC package provider release maintenance "
-                             "must be run as root"
-                          << std::endl;
-                return 1;
-            }
-            using fic::identity::pam::PamProviderPackageRelease;
-            const std::string providerReleaseMode = get_arg_value(argc, argv, 3);
-            PamProviderPackageRelease::Mode providerMode;
-            if (providerReleaseMode == "preflight") {
-                providerMode = PamProviderPackageRelease::Mode::Preflight;
-            } else if (providerReleaseMode == "release") {
-                providerMode = PamProviderPackageRelease::Mode::Release;
-            } else {
-                std::cerr << "unknown FIC package provider release mode: "
-                          << providerReleaseMode
-                          << " (expected \"preflight\" or \"release\")"
-                          << std::endl;
-                return 1;
-            }
-            std::string providerJournalError;
-            fic::rollback::MutationJournal* providerJournal =
-                maintenanceJournal(providerMode == PamProviderPackageRelease::Mode::Preflight,
-                    providerJournalError);
-            if (providerJournal == nullptr) {
-                std::cerr << "FIC mutation journal unavailable (fail "
-                             "closed): "
-                          << providerJournalError << std::endl;
-                return 1;
-            }
-            fic::daemon::PackageReleaseResources resources(platform,paths);
-            fic::daemon::PackageResourceReleaseReport report;
-            auto& providerReport=report.provider;
-            const auto domain=fic::daemon::PackageReleaseDomain::PamProvider;
-            if (!(providerMode==PamProviderPackageRelease::Mode::Preflight ?
-                  resources.preflight(domain,*providerJournal,report,maintenanceError) :
-                  resources.release(daemonInstance,domain,*providerJournal,report,maintenanceError))) {
-                std::cerr << "FIC package provider release ("
-                          << providerReleaseMode << ") failed: "
-                          << maintenanceError << std::endl;
-                return 1;
-            }
-            std::cout << "FIC package provider release ("
-                      << providerReleaseMode << ") proven";
-            for (const std::string& released : providerReport.releasedRecords) {
-                std::cout << " released:" << released;
-            }
-            for (const std::string& deleted : providerReport.containersDeleted) {
-                std::cout << " deleted:" << deleted;
-            }
-            for (const std::string& detached :
-                 providerReport.containersDetached) {
-                std::cout << " detached:" << detached;
-            }
-            for (const std::string& retained :
-                 providerReport.containersRetained) {
-                std::cout << " retained:" << retained;
-            }
-            std::cout << std::endl;
-            return 0;
-        }
-        if (command == "pam-password-prerm-prepare") {
-            // Package-removal release of the C2 password topology domain
-            // (three-profile prerm redesign). Narrow package-maintenance
-            // entrypoint: root-only, fixed target (Q=false, H=false), no
-            // policy names accepted. Mode argument: "preflight" (Stage A,
-            // strictly read-only, BEFORE any prerm side effect) or
-            // "release" (Stage B, after every FIC writer has been
-            // stopped).
-            if (::geteuid() != 0) {
-                std::cerr << "FIC package password release maintenance "
-                             "must be run as root"
-                          << std::endl;
-                return 1;
-            }
-            using fic::identity::pam::PamPasswordPackageRelease;
-            const std::string releaseMode = get_arg_value(argc, argv, 3);
-            PamPasswordPackageRelease::Mode mode;
-            if (releaseMode == "preflight") {
-                mode = PamPasswordPackageRelease::Mode::Preflight;
-            } else if (releaseMode == "release") {
-                mode = PamPasswordPackageRelease::Mode::Release;
-            } else {
-                std::cerr << "unknown FIC package password release mode: "
-                          << releaseMode
-                          << " (expected \"preflight\" or \"release\")"
-                          << std::endl;
-                return 1;
-            }
-            fic::daemon::PackageReleaseResources resources(platform,paths);
-            const auto domain=fic::daemon::PackageReleaseDomain::PamPassword;
-            if (!resources.supports(domain,maintenanceError)) {
-                std::cerr << maintenanceError << std::endl;
-                return 1;
-            }
-            std::string journalError;
-            fic::rollback::MutationJournal* releaseJournal =
-                maintenanceJournal(mode == PamPasswordPackageRelease::Mode::Preflight,
-                    journalError);
-            if (releaseJournal == nullptr) {
-                std::cerr << "FIC mutation journal unavailable (fail "
-                             "closed): "
-                          << journalError << std::endl;
-                return 1;
-            }
-            fic::daemon::PackageResourceReleaseReport report;
-            auto& releaseReport=report.password;
-            if (!(mode==PamPasswordPackageRelease::Mode::Preflight ?
-                  resources.preflight(domain,*releaseJournal,report,maintenanceError) :
-                  resources.release(daemonInstance,domain,*releaseJournal,report,maintenanceError))) {
-                std::cerr << "FIC package password release ("
-                          << releaseMode << ") failed: "
-                          << maintenanceError << std::endl;
-                return 1;
-            }
-            std::cout << "FIC package password release (" << releaseMode
-                      << ") proven";
-            for (const std::string& identity :
-                 releaseReport.detachedIdentities) {
-                std::cout << " released:" << identity;
-            }
-            for (const std::string& identity :
-                 releaseReport.recoveredCrashLeftovers) {
-                std::cout << " recovered:" << identity;
-            }
-            std::cout << std::endl;
-            return 0;
-        }
         if (command == "pam-alt-faillock") {
             if (::geteuid() != 0) {
                 std::cerr << "ALT PAM topology maintenance must be run as root"
@@ -2273,7 +2119,7 @@ int main(int argc, char* argv[]) {
             const std::string action = get_arg_value(argc, argv, 3);
             if (action == "status") {
                 fic::identity::pam::AltPamFaillockTopologyState state;
-                if (!manager.status(state, maintenanceError)) {
+                if (!manager.inspectReadOnly(state, maintenanceError)) {
                     std::cerr << "ALT pam_faillock topology status failed: "
                               << maintenanceError << std::endl;
                     return 1;
@@ -2281,22 +2127,6 @@ int main(int argc, char* argv[]) {
                 std::cout <<
                     fic::identity::pam::altPamFaillockTopologyStateName(state)
                           << std::endl;
-                return 0;
-            }
-            if (action == "enable") {
-                if (!manager.enable(maintenanceError)) {
-                    std::cerr << "ALT pam_faillock topology enable failed: "
-                              << maintenanceError << std::endl;
-                    return 1;
-                }
-                return 0;
-            }
-            if (action == "disable") {
-                if (!manager.disable(maintenanceError)) {
-                    std::cerr << "ALT pam_faillock topology disable failed: "
-                              << maintenanceError << std::endl;
-                    return 1;
-                }
                 return 0;
             }
             std::cerr << "unknown ALT pam_faillock topology action: "
@@ -2333,29 +2163,13 @@ int main(int argc, char* argv[]) {
             }
             if (action == "status") {
                 fic::identity::pam::AltPamPasswordHistoryTopologyState state;
-                if (!manager.status(state, maintenanceError)) {
+                if (!manager.inspectReadOnly(state, maintenanceError)) {
                     std::cerr << "ALT pam_pwhistory topology status failed: "
                               << maintenanceError << std::endl;
                     return 1;
                 }
                 std::cout << fic::identity::pam::
                     altPamPasswordHistoryTopologyStateName(state) << std::endl;
-                return 0;
-            }
-            if (action == "enable") {
-                if (!manager.enable(maintenanceError)) {
-                    std::cerr << "ALT pam_pwhistory topology enable failed: "
-                              << maintenanceError << std::endl;
-                    return 1;
-                }
-                return 0;
-            }
-            if (action == "disable") {
-                if (!manager.disable(maintenanceError)) {
-                    std::cerr << "ALT pam_pwhistory topology disable failed: "
-                              << maintenanceError << std::endl;
-                    return 1;
-                }
                 return 0;
             }
             std::cerr << "unknown ALT pam_pwhistory topology action: "
@@ -2366,7 +2180,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    if (!packageTrustSync && !affectedPackageTrustSync) {
+    if (!packageTrustSync && !affectedPackageTrustSync && !uninstallMode) {
         if (get_arg_value(argc, argv, 1) != "--maintenance") {
             (void)::sd_notify(0, "STATUS=Validating startup configuration");
         }
@@ -2392,7 +2206,12 @@ int main(int argc, char* argv[]) {
         // Advisory early check above avoids writes for an already pending
         // lifecycle. Repeat under the existing hash-store lock which fence
         // publication/final proof must also hold to close the check/write race.
-        const auto admission=[](std::string& error) {
+        const auto admission=[&](std::string& error) {
+            if(installTrustSync&&daemonInstance.heldByCurrentProcess()) {
+                const auto state=fic::core::readPackageState();
+                return state.state==fic::core::PackageState::Installing&&
+                    AtomicFileWriter::ensureTargetDurableIfCurrentState(fic::core::PACKAGE_STATE_FILE,state.file.targetState,&error);
+            }
             return fic::daemon::PackageLifecycleAdmission().inspectInstalled(error);
         };
         const bool synchronized =
@@ -2429,11 +2248,13 @@ int main(int argc, char* argv[]) {
             platform, executables, policyRegistry, registryError)) {
         std::cerr << "failed to initialize PolicyRegistry: "
                   << registryError << std::endl;
-        blockSshBeforeStartupFailure(platform, registryError);
-        return 1;
+        if (!uninstallMode) {
+            blockSshBeforeStartupFailure(platform, registryError);
+            return 1;
+        }
     }
 
-    if (fic::incident::IncidentResponseModeResolver::production().mode ==
+    if (!uninstallMode && fic::incident::IncidentResponseModeResolver::production().mode ==
         fic::incident::IncidentResponseMode::Active) {
         daemonReadiness().set(fic::incident::DaemonReadinessState::Applying);
         std::string blockError;
@@ -2454,7 +2275,7 @@ int main(int argc, char* argv[]) {
     // parser FIRST, so a missing/corrupt/unprovable state is already treated as
     // ISOLATE before any containment decision is made. Reconciliation never
     // changes the severity - it only re-proves the containment it requires.
-    {
+    if (!uninstallMode) {
         const fic::incident::IncidentResult reconciled =
             incidentController().reconcile();
         if (!reconciled.ok) {
@@ -2466,7 +2287,7 @@ int main(int argc, char* argv[]) {
     (void)::sd_notify(0, "STATUS=Applying startup policies");
     startupLifecycle().started = true;
     bool startupRegistryReloadFailed = false;
-    const bool startupApplyOk = run_daemon_apply_all_pass(
+    const bool startupApplyOk = !uninstallMode && run_daemon_apply_all_pass(
         policyRegistry, desktopGlobalConfig, platform, executables, "startup",
         &startupRegistryReloadFailed);
     startupLifecycle().completed = true;
@@ -2545,19 +2366,22 @@ int main(int argc, char* argv[]) {
                 uid, sessionId, session, error);
         },
         [&](const ClassifiedGraphicalSession& session) {
+            if (fic::core::readPackageState().state != fic::core::PackageState::Installed) return;
             reconcile_session_ready(
                 policyRegistry, desktopGlobalConfig, runtimeInventory, session);
         });
 
-    const auto accessReadiness = recomputeAccessReadiness(
-        policyRegistry, platform, executables);
-    if (!accessReadiness.ready) {
-        std::cerr << accessReadiness.diagnostic << std::endl;
+    bool accessReady = false;
+    if (!uninstallMode) {
+        const auto accessReadiness = recomputeAccessReadiness(policyRegistry, platform, executables);
+        accessReady = accessReadiness.ready;
+        if (!accessReady) std::cerr << accessReadiness.diagnostic << std::endl;
     }
     startupLifecycle().lifecycleCompleted = true;
     (void)::sd_notify(
         0,
-        !accessReadiness.ready
+        uninstallMode ? "READY=1\nSTATUS=UNINSTALLING; policy mutations disabled"
+        : !accessReady
             ? "READY=1\nSTATUS=Running in degraded incident response mode"
         : startupApplyOk
             ? "READY=1\nSTATUS=Running"
@@ -2578,7 +2402,7 @@ int main(int argc, char* argv[]) {
                     const std::string response = handle_client_packet(
                         clientFd, requestText,
                         policyRegistry, desktopGlobalConfig, platform,
-                        executables, logRecordsReader);
+                        executables, logRecordsReader, daemonInstance);
                     return response;
                 },
                 transportError)) {
@@ -2592,7 +2416,8 @@ int main(int argc, char* argv[]) {
         sessionEvents.processOne();
 
         auto now = std::chrono::steady_clock::now();
-        if (now >= nextPeriodicApply) {
+        const bool mayMutate = fic::core::readPackageState().state == fic::core::PackageState::Installed;
+        if (mayMutate && now >= nextPeriodicApply) {
             bool mayApply = true;
             const auto periodicMode =
                 fic::incident::IncidentResponseModeResolver::production();
@@ -2623,7 +2448,7 @@ int main(int argc, char* argv[]) {
                 daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
             nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
         }
-        if (now >= nextSshCheck) {
+        if (mayMutate && now >= nextSshCheck) {
             if (!periodicRegistryReloadFailed && !registryRebuildFailedThisRequest()) {
                 // Network drift must still be re-proven when SSH prerequisites
                 // fail. Registry failure, however, must suppress dependent apply.

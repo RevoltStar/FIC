@@ -89,9 +89,12 @@ for builder_name, builder in (
     require('chmod 0755 "$package_root/opt/fic/bin/fic-gui"' not in builder and
             'chmod 0755 "$package_root/opt/fic/bin/fic-gui.real"' not in builder,
             f"{builder_name} packaging makes fic-gui executable by ordinary users")
-    require("find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750" in builder and
-            "chmod 2750 /opt/fic" in builder,
-            f"{builder_name} packaging must normalize children and bootstrap the parent privately")
+    postinstall = (root / ("packaging/deb/lifecycle/fic.postinst" if builder_name == "DEB"
+                          else "packaging/rpm/lifecycle/fic.post")).read_text()
+    require("chmod 2750 /opt/fic" in postinstall and
+            "install -d -o root -g fic -m 2750" in postinstall and
+            "find /opt/fic" not in postinstall,
+            f"{builder_name} must bootstrap private directories without laundering existing metadata")
     for forbidden_private_mode in (
         "chmod 0755 /opt/fic",
         "chmod 0755 \"$package_root/opt/fic\"",

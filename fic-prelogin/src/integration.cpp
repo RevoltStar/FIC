@@ -2,6 +2,10 @@
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/fs/SecureStateFile.h>
 #include <fic/core/process/ProcessExecutor.h>
+#include <fic/core/process/ExclusivePidLock.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/runtime/PackageState.h>
+#include <memory>
 #include <systemd/sd-bus.h>
 #include <filesystem>
 #include <iostream>
@@ -113,6 +117,18 @@ int main(int argc, char** argv) {
     if (action != "activate" && action != "deactivate" && action != "verify") return 2;
     ::clearenv(); ::setenv("PATH", "/usr/sbin:/usr/bin:/sbin:/bin", 1);
     try {
+        // Serialize activation with daemon prepare-uninstall and package
+        // detach using the existing trust barrier. Deactivation is called by
+        // the package helper while that helper already holds this barrier.
+        std::unique_ptr<ExclusivePidLock> activationBarrier;
+        if(action == "activate") {
+            std::string error;
+            require(FicRuntimePaths::initializeProduction(error), error);
+            const auto& runtime=FicRuntimePaths::get();
+            activationBarrier=std::make_unique<ExclusivePidLock>(runtime.commandHashFile.string()+".lock",runtime.lockDebugLogFile.string(),false);
+            require(activationBarrier->tryAcquire(), "package preparation is active; retry prelogin activation");
+            require(requireInstalledPackage(error), error);
+        }
         const fs::path file = paths::DROPIN;
         const fs::path payload = fs::path(paths::SHARE) / "50-fic-prelogin.conf";
         safe(payload, false);

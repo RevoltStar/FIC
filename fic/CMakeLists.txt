@@ -53,18 +53,6 @@ find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core)
 find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core)
 
 set(FIC_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
-set(FIC_LIFECYCLE_PACKAGE_VERSION "" CACHE STRING "Exact native package version of the lifecycle runtime (including epoch/release)")
-string(LENGTH "${FIC_LIFECYCLE_PACKAGE_VERSION}" FIC_LIFECYCLE_PACKAGE_VERSION_LENGTH)
-if(FIC_LIFECYCLE_PACKAGE_VERSION_LENGTH GREATER 128 OR
-   (NOT FIC_LIFECYCLE_PACKAGE_VERSION STREQUAL "" AND
-    NOT FIC_LIFECYCLE_PACKAGE_VERSION MATCHES "^[0-9][0-9A-Za-z.+:~_-]*$"))
-    message(FATAL_ERROR "FIC_LIFECYCLE_PACKAGE_VERSION must be an exact native package version")
-endif()
-file(MAKE_DIRECTORY "${FIC_GENERATED_INCLUDE_DIR}/daemon")
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/daemon/PackageRuntimeIdentityGenerated.h.in"
-    "${FIC_GENERATED_INCLUDE_DIR}/daemon/PackageRuntimeIdentityGenerated.h"
-    @ONLY)
 file(MAKE_DIRECTORY "${FIC_GENERATED_INCLUDE_DIR}/platform")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/generated/PasswordAgingPolicyDefaultsGenerated.h.in"
@@ -224,3 +212,18 @@ install(FILES "${FIC_GENERATED_SCRIPTS_DIR}/tmpfiles/fic.conf"
 install(FILES src/resources/db/PCI_CLASS_ru.txt src/resources/db/USB_CLASS_ru.txt
         DESTINATION "${FIC_DATA_DIR}" COMPONENT fic)
 install(DIRECTORY src/resources/image/ DESTINATION "${FIC_IMAGE_DIR}" COMPONENT fic)
+
+# Infrastructure-only package helper. It deliberately has no policy/rollback
+# engine or MutationJournal dependency and remains usable if fic is broken.
+add_executable(fic-package-infrastructure package/PackageInfrastructureMain.cpp
+    src/daemon/DaemonInstanceLock.cpp src/daemon/PackageStateStore.cpp
+    src/daemon/UninstallLifecycle.cpp src/daemon/UninstallOverride.cpp
+    src/daemon/PackageWritersQuiescence.cpp src/daemon/StoppedWritersProof.cpp
+    src/daemon/PackageWriterProcesses.cpp
+    src/daemon/PackagePamHooks.cpp src/incident/PamIncidentAccessGateVerifier.cpp
+    src/incident/AltIncidentAccessGateTopology.cpp
+    src/modules/identity_access/pam/PamConfiguration.cpp
+    src/modules/identity_access/pam/PamConfigFileTransaction.cpp)
+target_include_directories(fic-package-infrastructure PRIVATE src)
+target_link_libraries(fic-package-infrastructure PRIVATE fic-core fic-ipc fic-platform ${CMAKE_DL_LIBS})
+install(TARGETS fic-package-infrastructure RUNTIME DESTINATION "${FIC_PRIVATE_BINDIR}" COMPONENT fic)

@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+case "$1" in
+ remove|deconfigure)
+    /opt/fic/bin/fic-package-infrastructure prove-remove
+    systemctl disable fic-device.service fic_get_device_info.service ;;
+ upgrade) /opt/fic/bin/fic-package-infrastructure prepare-install ;;
+ failed-upgrade) echo 'FIC device upgrade failed: no restart' >&2 ;;
+ *) exit 1 ;;
+esac

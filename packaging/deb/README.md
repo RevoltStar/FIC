@@ -115,14 +115,14 @@ files is read-only.
 
 ## Installation lifecycle
 
-Package versions must be Semantic Versions and are embedded through
-`FIC_PRODUCT_VERSION`. The `fic-dick` and `fic` pre-install actions stop active
-daemons before either package replaces its executable payload. The `fic`
-post-install action creates only missing working configs, initializes an absent
-or empty device database directly as schema 1, strictly checks config and DB
-schema 1, refreshes trusted command hashes, then starts and health-checks both
-administrative daemons. Schema, trust, start, and health-check failures are
-fatal; optional tmpfiles/udev refreshes remain best-effort.
+Package versions are embedded through `FIC_PRODUCT_VERSION`. The existing
+`fic-dick` dependency carries the infrastructure-only helper. Compatible install
+and upgrade establish INSTALLING before payload replacement, prove configuration,
+MutationJournal, PAM/incident infrastructure and the current device DB schema,
+then explicitly publish INSTALLED before starting and health-checking services.
+Failed proofs leave startup fenced; upgrade never performs ownership rollback or
+restores old executables. See [package lifecycle](../../docs/package-lifecycle.md)
+for the authoritative state, override, remove/purge and failure contract.
 
 Existing working configs and a non-empty database are never overwritten or
 converted. Incompatible state makes installation fail with an explicit error.
@@ -169,54 +169,19 @@ profiles. It never uses `--force`. Runtime policy enable/disable does not own
 those hook selections: AuthenticationLockout owns only strict marker blocks
 inside the four slot files.
 
-On `remove` the maintainer script stops `fic.service`, `fic-device.service`
-and `fic-notify.service` first, then performs a final strict
-`systemctl is-active` proof per unit (no `|| true`) and only then runs
-`pam-auth-update --package --remove ...`: a live daemon could otherwise mutate
-PAM or re-activate the hook infrastructure concurrently with the detach.
-If any of the three units is still active after the bounded stop wait, the
-prerm fails (non-zero exit, diagnostic naming the unit) and the hooks stay
-attached — a stop timeout is a package-removal failure, not permission to
-continue.
+On remove, the running daemon first enters durable UNINSTALLING and releases
+ownership through `policy rollback all` without changing configured ENABLE/values.
+The infrastructure helper then takes daemon.lock, proves stopped unit/cgroup and
+process state, detaches permanent hooks and independently proves the absence of
+PAM references. Overrides cannot waive those final proofs. There is no autonomous
+rollback or automatic reattachment/restart on `abort-remove`; failed release
+retains its provenance and UNINSTALLING until a successful retry.
 
-If removing any permanent hook fails, the prerm contains the damage locally
-while every FIC writer is still proven stopped: it re-enables all four
-permanent faillock hooks and `fic-incident-access`, proves restoration with a
-read-only standard-state check (`/var/lib/pam` selection records plus the
-generated `/etc/pam.d/common-*` stacks) and always exits non-zero. Legacy
-policy-owned selector profiles are never re-enabled by the recovery, and
-managed slots, the mutation journal and its witness are never touched. If
-the recovery cannot be proven (for example after a partial detach), the
-prerm states explicitly that the permanent hook state is not proven restored.
-The incident gate is detached last. Final detachment succeeds only after a
-read-only typed proof finds neither a selected `fic-incident-access` profile
-nor an active `pam_fic_access.so` reference in the platform PAM directories;
-an unreadable or malformed topology fails removal. `/bin/fic` is removed only
-after that proof succeeds, so failed removal leaves the symlink usable.
-
-Recovery after such a failed removal is dpkg's `postinst abort-remove` path.
-It is an early dedicated branch (not a configure path). A read-only guard
-first proves the permanent PAM hook infrastructure is attached; if that
-proof fails (a prerm-side recovery that could not be proven), the recovery
-refuses to restart any FIC writer and exits non-zero, leaving the package
-in the dpkg error state for manual administrator recovery. Otherwise it only
-reloads systemd units and restores package-owned enablement and runtime
-state (`enable`/`start` for `fic.service`, `fic-device.service`,
-`fic-notify.service` and the optional udev helper; `start` on an
-already-active unit is idempotent, so a writer that refused to stop keeps
-running). `fic.service`, `fic-device.service` and `fic-notify.service` are
-critical — normal configure starts `fic-notify.service` strictly
-(`systemctl enable --now` under `set -e`), so the recovery restores it
-strictly too; if any of the three cannot be restored to active+enabled, the
-recovery exits non-zero. `abort-remove` never calls `pam-auth-update`, never
-touches PAM managed slots, the mutation journal or its witness, and never
-stops or restarts a FIC writer. The failed removal keeps its non-zero status
-while the package returns to the Installed state (checked semantically as
-the third dpkg status field; the `install`/`deinstall` first-field wording
-varies between dpkg versions after an aborted removal).
-The full lifecycle invariants, the validator contract, the journal/witness
-state table and the reinstall behavior with preserved conffiles are
-documented in `docs/pam-owned-faillock-slots.md`.
+Remove preserves working configuration and the journal/witness pair. A late
+purge without the daemon ELF uses the previous REMOVED proof under daemon.lock
+and deletes that retained data. dpkg may delete its own neutral PAM conffiles
+before postrm; failed postrm does not authorize deletion of FIC data. Retry is
+idempotent. The restrictive REMOVED marker remains after purge.
 
 The hook topology is:
 
@@ -233,157 +198,13 @@ shape used when `pam-auth-update` calculates numeric jumps, while a degenerate
 stack containing only the hook fails closed. A strategy transition rewrites
 only the FIC-owned slots; `common-*` is never directly edited by the daemon.
 
-The old `fic-faillock-*` selector profiles are retained in package data only
-for upgrade/removal compatibility. They are not selected by the new runtime.
-Upgrade preinst refuses to unpack the new ownership model if an old FIC PAM
-selection or an active old PAM journal record still exists. Automatic adoption
-is intentionally forbidden because neither the profile name nor an old
-`Prepared`/`Applied` record proves which actor created the selection. The old
-daemon is stopped between two checks; if the second race check refuses the
-upgrade, units that were active are restarted.
+Legacy selector declarations in package data are not permission to adopt old
+ownership or to migrate arbitrary development installations. Compatible upgrade
+validates current provenance; no guarantee is made that a new script can prevent
+an old package manager scriptlet from running. Password quality/history use the
+current C2 owned-slot and joint package preflight/release contract. Pre-attach
+validation must accept its active-owned/neutral-sibling shape, and must not use
+the obsolete legacy pair validator.
 
-PasswordQuality and PasswordHistory are staged separately. Their legacy
-`PamAuthUpdate` backend can inspect and verify an already-effective topology,
-but it does not create a new `fic-pwquality`/`fic-pwhistory` selection and
-automatic rollback does not delete an exact legacy selection. A future
-password-stack ownership model must first prove `Password-Initial` /
-`use_authtok` placement and physical causal ownership. Provider configuration
-files/arguments remain independent from this topology decision.
-
-The full ownership and diagnostic rationale is documented in
-`docs/pam-owned-faillock-slots.md`.
-
-## Bundled Qt runtime for fic-gui
-
-`fic-gui` dynamically links to a minimal Qt runtime bundled inside the package.
-FIC remains under SUL-1.0; bundled Qt files retain their distro-declared
-third-party licenses.
-
-The package now:
-
-- installs the real GUI binary as `/opt/fic/bin/fic-gui.real`;
-- installs a launcher script as `/opt/fic/bin/fic-gui`;
-- installs `/opt/fic/bin/qt.conf` to point Qt to the bundled runtime;
-- starts the closure from `fic-gui.real`, `platforms/libqxcb.so`, and
-  `imageformats/libqjpeg.so`;
-- recursively copies only required `libQt6*.so*` files from the `qt6-base`
-  source package into `/opt/fic/qt`;
-- keeps package-owned non-Qt libraries as system dependencies and rejects an
-  unexpected unowned dependency;
-- generates `/usr/share/doc/fic-gui/third-party-components.json`, package
-  copyright notices, SUL-1.0, LGPLv3/GPLv3 texts, and `SOURCE_OFFER.md` from the
-  actual payload and `dpkg` database.
-
-The generated manifest treats the `dpkg` license value as a package-level
-summary, records and hashes every applicable notice, and never presents that
-summary as a per-library license conclusion. During packaging, `--license-info`
-is checked without a display. An Xvfb smoke test then creates a real Qt widget,
-loads the JPEG plugin, enters the event loop, and verifies from loader/plugin
-diagnostics that both the default bundle and a separate `FIC_QT_ROOT` tree were
-actually loaded. The smoke path does not contact the daemon.
-
-The launcher sets `LD_LIBRARY_PATH`, `QT_PLUGIN_PATH`, and
-`QT_QPA_PLATFORM_PLUGIN_PATH` before starting `fic-gui.real`. Set
-`FIC_QT_ROOT=/path/to/custom/qt` to use compatible replacement `lib/` and
-`plugins/` trees instead of `/opt/fic/qt`. Direct execution of
-`fic-gui.real` remains available.
-
-Packaging fails if Qt is not a shared ELF dependency, required license files
-are unavailable, a bundled file is absent from the manifest, or a Qt payload
-file does not originate from `qt6-base`. Official releases additionally follow
-[`docs/third-party-licensing.md`](../../docs/third-party-licensing.md) and must
-supply the exact Corresponding Source artifact index.
-
-## Build
-
-Debian 12, Debian 13, and Ubuntu 24.04 use separate entry points. Each entry
-point fixes the daemon compile-time platform profile and output distribution
-tag:
-
-```bash
-./packaging/deb/build-fic-debian12-deb.sh 0.0.0-alpha
-./packaging/deb/build-fic-debian13-deb.sh 0.0.0-alpha
-./packaging/deb/build-fic-ubuntu2404-deb.sh 0.0.0-alpha
-./packaging/deb/build-fic-ubuntu2604-deb.sh 0.0.0-alpha
-```
-
-The product version is mandatory and must be SemVer without build metadata.
-There is no default. Prerelease product versions remain unchanged in the
-binaries but use native package ordering: `0.1.0-rc.1` produces DEB version
-`0.1.0~rc.1`.
-
-The resulting packages are created under `dist/`. Output filenames include the
-target distribution tag, for example
-`fic-cli_0.0.0~alpha_debian13_amd64.deb`.
-
-## Docker build
-
-To avoid bundling Qt libraries that were compiled against a too-new `glibc`,
-build each package set inside its matching distribution image.
-
-Build Debian 12, Debian 13, or Ubuntu 24.04 through its matching container:
-
-```bash
-./packaging/deb/build-fic-debian12-deb-docker.sh 0.0.0-alpha
-./packaging/deb/build-fic-debian13-deb-docker.sh 0.0.0-alpha
-./packaging/deb/build-fic-ubuntu2404-deb-docker.sh 0.0.0-alpha
-./packaging/deb/build-fic-ubuntu2604-deb-docker.sh 0.0.0-alpha
-```
-
-Each builder passes its fixed `FIC_TARGET_PLATFORM` (`debian-12`, `debian-13`,
-or `ubuntu-24.04`) and never derives the target from the build host. The
-wrappers use separate temporary `BUILD_ROOT` directories, and the resulting
-`.deb` files are written into `dist/`.
-
-The payload compressor can be overridden explicitly:
-
-```bash
-DEB_COMPRESSOR=gzip ./packaging/deb/build-fic-debian12-deb.sh 0.0.0-alpha
-```
-
-## Build resource policy
-
-All native and container entry points use
-`packaging/lib/build-resources.sh`. By default a builder:
-
-- reserves 2 GiB of currently available memory for the host;
-- reserves two CPUs on hosts with at least four CPUs, or one CPU on smaller
-  multi-core hosts;
-- allows one parallel C++ job per 2 GiB of the remaining memory;
-- caps automatic parallelism at eight jobs;
-- runs with process nice level 10 and best-effort I/O priority 7.
-
-Container wrappers apply the calculated CPU and memory limits to both image
-build and package build. The container memory and memory-plus-swap limits are
-equal by default, so a package build cannot make the host unresponsive by
-swapping out the desktop session. `.containerignore` and `.dockerignore`
-exclude Git metadata, `dist/`, and local build directories from the image build
-context.
-
-The detected values and selected limits are printed before the build. They can
-be overridden when additional throughput or a stricter CI limit is required:
-
-```bash
-BUILD_JOBS=4 \
-CONTAINER_CPUS=4 \
-CONTAINER_MEMORY_MB=8192 \
-CONTAINER_MEMORY_SWAP_MB=8192 \
-./packaging/deb/build-fic-debian13-deb-docker.sh 0.0.0-alpha
-```
-
-The tuning inputs are:
-
-- `BUILD_JOBS`: explicit CMake parallelism;
-- `FIC_BUILD_MAX_JOBS`: automatic parallelism cap, default `8`;
-- `FIC_BUILD_MEMORY_PER_JOB_MB`: memory allowance per job, default `2048`;
-- `FIC_HOST_MEMORY_RESERVE_MB`: memory kept outside the container, default
-  `2048`;
-- `CONTAINER_CPUS`, `CONTAINER_MEMORY_MB`, and
-  `CONTAINER_MEMORY_SWAP_MB`: explicit container limits;
-- `FIC_BUILD_NICE` and `FIC_BUILD_IONICE_PRIORITY`: scheduling priorities,
-  default `10` and `7`.
-
-Optional `fic-prelogin` uses system Qt6 EGLFS/KMS, independently of the bundled
-`fic-gui` runtime. Its ELF dependencies and the actual owners of EGLFS/KMS plugins
-are retained in DEB metadata. Lifecycle/recovery and validation limits:
-[Pre-Login Gate](../../fic-prelogin/README.md).
+The ownership/diagnostic details are in
+[`docs/pam-owned-faillock-slots.md`](../../docs/pam-owned-faillock-slots.md).

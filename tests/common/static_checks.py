@@ -147,7 +147,8 @@ for marker in startup_markers:
         errors.append(f"fic readiness lifecycle is missing or misordered: {marker}")
         break
     cursor = position + len(marker)
-if daemon_startup.count("READY=1") != 3 or \
+if daemon_startup.count("READY=1") != 4 or \
+        "READY=1\\nSTATUS=UNINSTALLING; policy mutations disabled" not in daemon_startup or \
         "READY=1\\nSTATUS=Running in degraded incident response mode" not in daemon_startup:
     errors.append("fic must notify ready or incident-degraded startup explicitly")
 if "NOTIFY_SOCKET" in fic_main or "sd_notify(0" not in daemon_startup:

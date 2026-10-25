@@ -7,38 +7,29 @@ void expect(const std::string& command, const std::string& action, MaintenanceIn
 }
 int main() {
     try {
-        for(const auto* action:{"install","upgrade"})
-            expect("package-prepare",action,MaintenanceIntent::LifecycleSession);
-        expect("package-release","remove",MaintenanceIntent::LifecycleSession);
-        for(const auto* action:{"install","upgrade","recover","force","","unknown"})
-            expect("package-release",action,MaintenanceIntent::Invalid);
-        for(const auto* action:{"remove","recover","force","","unknown"})
-            expect("package-prepare",action,MaintenanceIntent::Invalid);
-        for (const auto* domain : {"dm-prerm-prepare", "desktop-prerm-prepare", "pam-provider-prerm-prepare", "pam-password-prerm-prepare"}) {
-            expect(domain, "preflight", MaintenanceIntent::ReadOnly);
-            expect(domain, "release", MaintenanceIntent::PackageMutation);
-            expect(domain, "force", MaintenanceIntent::Invalid);
-        }
-        for (const auto* command : {"check-config", "wait-daemon", "incident-pam-verify", "incident-pam-prove-detached", "validate-pam-slots-before-attach"})
+        for(const auto* command:{"package-prepare","package-release","dm-prerm-prepare","desktop-prerm-prepare","pam-provider-prerm-prepare","pam-password-prerm-prepare"})
+            for(const auto* action:{"install","upgrade","release","preflight","remove","force",""})
+                expect(command,action,MaintenanceIntent::Invalid);
+        for (const auto* command : {"check-config", "check-persistent", "wait-daemon", "incident-pam-verify", "incident-pam-prove-detached", "validate-pam-slots-before-attach"})
             expect(command, "", MaintenanceIntent::ReadOnly);
-        for (const auto* command : {"ensure-config", "ensure-config-first-install", "incident-init", "bootstrap-pam-password-slots"})
+        for (const auto* command : {"initialize-journal", "complete-install", "ensure-config", "ensure-config-first-install", "incident-init", "bootstrap-pam-password-slots"})
             expect(command, "", MaintenanceIntent::ExclusiveMutation);
         expect("incident-pam-alt", "status", MaintenanceIntent::ReadOnly);
         expect("incident-pam-alt", "attach", MaintenanceIntent::ExclusiveMutation);
         expect("incident-pam-alt", "detach", MaintenanceIntent::ExclusiveMutation);
         expect("incident-pam-alt", "force", MaintenanceIntent::Invalid);
         for(const auto* command:{"pam-alt-faillock","pam-alt-pwhistory"}) {
-            expect(command,"status",MaintenanceIntent::ResourceSerialized);
-            expect(command,"enable",MaintenanceIntent::ExclusiveMutation);
-            expect(command,"disable",MaintenanceIntent::ExclusiveMutation);
+            expect(command,"status",MaintenanceIntent::ReadOnly);
+            expect(command,"enable",MaintenanceIntent::Invalid);
+            expect(command,"disable",MaintenanceIntent::Invalid);
             expect(command,"force",MaintenanceIntent::Invalid);
         }
         expect("pam-alt-pwhistory","prepare",MaintenanceIntent::ExclusiveMutation);
         expect("pam-alt-faillock","prepare",MaintenanceIntent::Invalid);
         expect("future-command", "release", MaintenanceIntent::Invalid);
-        for (auto intent : {MaintenanceIntent::ReadOnly, MaintenanceIntent::ResourceSerialized, MaintenanceIntent::Invalid})
+        for (auto intent : {MaintenanceIntent::ReadOnly, MaintenanceIntent::Invalid})
             if (requiresInstanceLock(intent)) throw std::runtime_error("unexpected global lock");
-        if (!requiresInstanceLock(MaintenanceIntent::ExclusiveMutation) || !requiresInstanceLock(MaintenanceIntent::PackageMutation) || !requiresInstanceLock(MaintenanceIntent::LifecycleSession))
+        if (!requiresInstanceLock(MaintenanceIntent::ExclusiveMutation))
             throw std::runtime_error("missing mutation lock");
     } catch (const std::exception& e) { std::cerr << e.what() << '\n'; return 1; }
 }

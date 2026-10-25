@@ -61,7 +61,6 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/PamPackagingChecks.py
                 ${CMAKE_SOURCE_DIR}
-                $<TARGET_FILE:pam_incident_access_gate_verifier_tests>
     )
     add_test(NAME desktop_package_release_checks COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/integration/desktop/DesktopPackageReleaseChecks.py ${CMAKE_SOURCE_DIR})
@@ -3151,80 +3150,15 @@ add_executable(stopped_writers_proof_tests fic/daemon/StoppedWritersProofTests.c
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/StoppedWritersProof.cpp)
 target_include_directories(stopped_writers_proof_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 add_test(NAME stopped_writers_proof_tests COMMAND stopped_writers_proof_tests)
-add_executable(package_lifecycle_state_tests fic/daemon/PackageLifecycleStateTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_lifecycle_state_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_lifecycle_state_tests PRIVATE fic-core)
-add_test(NAME package_lifecycle_state_tests COMMAND package_lifecycle_state_tests)
-set_tests_properties(package_lifecycle_state_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-add_executable(package_finalizer_retry_tests fic/daemon/PackageFinalizerRetryTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_finalizer_retry_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_finalizer_retry_tests PRIVATE fic-core)
-add_test(NAME package_finalizer_retry_tests COMMAND package_finalizer_retry_tests)
-set_tests_properties(package_finalizer_retry_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-add_executable(package_lifecycle_crash_tests fic/daemon/PackageLifecycleCrashTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_lifecycle_crash_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_lifecycle_crash_tests PRIVATE fic-core)
-add_test(NAME package_lifecycle_crash_tests COMMAND package_lifecycle_crash_tests)
-set_tests_properties(package_lifecycle_crash_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-add_executable(package_manager_transaction_lock_tests fic/daemon/PackageManagerTransactionLockTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageManagerTransactionLock.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_manager_transaction_lock_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-add_test(NAME package_manager_transaction_lock_tests COMMAND package_manager_transaction_lock_tests)
-set_tests_properties(package_manager_transaction_lock_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-target_link_libraries(package_manager_transaction_lock_tests PRIVATE fic-platform fic-core)
-add_executable(package_unit_masks_tests fic/daemon/PackageUnitMasksTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageUnitMasks.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_unit_masks_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_unit_masks_tests PRIVATE fic-core)
-add_test(NAME package_unit_masks_tests COMMAND package_unit_masks_tests)
-set_tests_properties(package_unit_masks_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
 add_executable(package_unknown_writer_fixture fic/daemon/PackageUnknownWriterFixture.cpp)
 add_executable(package_writer_processes_tests fic/daemon/PackageWriterProcessesTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterInventory.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
 target_include_directories(package_writer_processes_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(package_writer_processes_tests PRIVATE fic-core)
 add_dependencies(package_writer_processes_tests package_unknown_writer_fixture)
 add_test(NAME package_writer_processes_tests COMMAND package_writer_processes_tests $<TARGET_FILE:package_unknown_writer_fixture>)
 set_tests_properties(package_writer_processes_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-add_executable(package_writers_quiescence_native_driver
-    integration/maintenance-lifecycle/QuiescenceDriver.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWritersQuiescence.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageUnitMasks.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/StoppedWritersProof.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_writers_quiescence_native_driver PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_writers_quiescence_native_driver PRIVATE fic-core fic-platform)
-add_executable(package_database_snapshot_tests fic/daemon/PackageDatabaseSnapshotTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageDatabaseSnapshot.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageManagerTransactionLock.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_database_snapshot_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_database_snapshot_tests PRIVATE fic-core fic-platform)
-add_test(NAME package_database_snapshot_tests COMMAND package_database_snapshot_tests)
-add_executable(package_release_session_tests fic/daemon/PackageReleaseSessionTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageReleaseSession.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageUnitMasks.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterInventory.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp)
-target_include_directories(package_release_session_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_release_session_tests PRIVATE fic-core fic-policy fic-platform Threads::Threads)
-add_test(NAME package_release_session_tests COMMAND package_release_session_tests)
-set_tests_properties(package_release_session_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)
-
 add_executable(package_pam_hooks_tests fic/daemon/PackagePamHooksTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackagePamHooks.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp
@@ -3254,52 +3188,6 @@ add_test(NAME package_pam_hooks_native
     $<$<STREQUAL:${FIC_TARGET_PLATFORM},alt-p11>:alt>)
 set_tests_properties(package_pam_hooks_native PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 LABELS "native;root")
 
-add_executable(package_lifecycle_admission_tests fic/daemon/PackageLifecycleAdmissionTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleAdmission.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_lifecycle_admission_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_lifecycle_admission_tests PRIVATE fic-core)
-add_test(NAME package_lifecycle_admission_tests COMMAND package_lifecycle_admission_tests)
-set_tests_properties(package_lifecycle_admission_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
-
-add_executable(package_lifecycle_coordinator_tests fic/daemon/PackageLifecycleCoordinatorTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleCoordinator.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleState.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageUnitMasks.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterProcesses.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageWriterInventory.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
-target_include_directories(package_lifecycle_coordinator_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_lifecycle_coordinator_tests PRIVATE fic-core fic-platform fic-policy)
-add_test(NAME package_lifecycle_coordinator_tests COMMAND package_lifecycle_coordinator_tests)
-set_tests_properties(package_lifecycle_coordinator_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 40)
-
-add_executable(package_payload_manifest_tests fic/daemon/PackagePayloadManifestTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackagePayloadManifest.cpp)
-target_include_directories(package_payload_manifest_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
-target_link_libraries(package_payload_manifest_tests PRIVATE fic-core)
-if(Python3_Interpreter_FOUND)
-    add_test(NAME package_payload_manifest_tests COMMAND package_payload_manifest_tests
-        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/packaging/lib/build-payload-manifest.py)
-    set_tests_properties(package_payload_manifest_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 20)
-endif()
-
-# Research reproductions, NOT production lifecycle gates. Require a fresh,
-# explicitly opted-in disposable container; default CTest must not install RPMs
-# or DEBs. Assertions record dependency-contract limitations as REPRODUCED_RED.
-if(Python3_Interpreter_FOUND)
-    add_test(NAME legacy_predepends_admission_reproduction
-        COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/tests/integration/maintenance-lifecycle/native_legacy_predepends_deb.py
-        ${CMAKE_SOURCE_DIR} previous-refusal)
-    add_test(NAME legacy_rpm_admission_reproduction
-        COMMAND ${Python3_EXECUTABLE}
-        ${CMAKE_SOURCE_DIR}/tests/integration/maintenance-lifecycle/native_legacy_admission_rpm.py)
-    set_tests_properties(legacy_predepends_admission_reproduction legacy_rpm_admission_reproduction
-        PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120 RUN_SERIAL TRUE LABELS "research;native;root")
-endif()
-
 # Ssh policy callers use the same verified engine as fic.
 get_property(FIC_LOCAL_TEST_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(ssh_caller IN LISTS FIC_LOCAL_TEST_TARGETS)
@@ -3327,3 +3215,36 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME alt_p11_ssh_research_guard
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/ssh-alt-p11-research/research.py --self-test)
 endif()
+
+add_executable(uninstall_lifecycle_tests fic/daemon/UninstallLifecycleTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/UninstallLifecycle.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageLifecycleAdmission.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(uninstall_lifecycle_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(uninstall_lifecycle_tests PRIVATE fic-core)
+add_test(NAME uninstall_lifecycle_tests COMMAND uninstall_lifecycle_tests)
+set_tests_properties(uninstall_lifecycle_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(uninstall_override_tests fic/daemon/UninstallOverrideTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/UninstallOverride.cpp)
+target_include_directories(uninstall_override_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(uninstall_override_tests PRIVATE fic-core)
+add_test(NAME uninstall_override_tests COMMAND uninstall_override_tests)
+set_tests_properties(uninstall_override_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(uninstall_release_order_tests fic/daemon/UninstallReleaseOrderTests.cpp)
+target_include_directories(uninstall_release_order_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+add_test(NAME uninstall_release_order_tests COMMAND uninstall_release_order_tests)
+add_executable(package_state_store_tests fic/daemon/PackageStateStoreTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/PackageStateStore.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DaemonInstanceLock.cpp)
+target_include_directories(package_state_store_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(package_state_store_tests PRIVATE fic-core)
+add_test(NAME package_state_store_tests COMMAND package_state_store_tests)
+set_tests_properties(package_state_store_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+add_executable(sssd_uninstall_inspection_tests fic/daemon/SssdUninstallInspectionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp)
+target_include_directories(sssd_uninstall_inspection_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sssd_uninstall_inspection_tests PRIVATE fic-core fic-platform)
+add_test(NAME sssd_uninstall_inspection_tests COMMAND sssd_uninstall_inspection_tests)
+set_tests_properties(sssd_uninstall_inspection_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)

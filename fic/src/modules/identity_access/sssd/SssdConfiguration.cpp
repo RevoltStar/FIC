@@ -1,6 +1,7 @@
 #include "modules/identity_access/sssd/SssdConfiguration.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/fs/RootControlledDirectory.h>
 
 #include <algorithm>
 #include <atomic>
@@ -1296,6 +1297,31 @@ std::unique_ptr<PreparedConfigurationChange> makeManagedSnippetChange(
 }
 
 } // namespace
+
+bool proveManagedSnippetAbsent(const SssdConfigurationOptions& options,bool& absent,std::string& error) {
+    absent=false;
+    auto directory=options.managedSnippetFile.parent_path();
+    if(!directory.is_absolute()||directory.lexically_normal()!=directory) {
+        error="invalid SSSD managed directory";return false;
+    }
+    const auto expectedDirectory=directory;
+    struct stat info{};
+    while(::lstat(directory.c_str(),&info)!=0) {
+        if(errno!=ENOENT||directory==directory.root_path()) {error="SSSD ancestor cannot be inspected";return false;}
+        directory=directory.parent_path();
+    }
+    const int descriptor=fic::core::openRootControlledDirectory(directory,error);
+    if(descriptor<0)return false;
+    ::close(descriptor);
+    if(directory!=expectedDirectory){absent=true;error.clear();return true;}
+    bool staged=false;
+    if(!hasManagedSnippetStagingArtifacts(options,staged,error))return false;
+    if(staged){error="staged SSSD removal artifact remains";return false;}
+    ConfigurationFileSnapshot snapshot;
+    const auto state=classifyForCompensation(managedSnippetOptions(options),options.snippetDirectory,snapshot,error);
+    if(state==CompensationReadState::Missing){absent=true;error.clear();return true;}
+    return state==CompensationReadState::ReadableForCompare;
+}
 
 bool SssdConfiguration::inspectManagedSnippet(
     const std::string& section,

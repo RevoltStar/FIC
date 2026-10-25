@@ -116,7 +116,7 @@ bool terminalGroup(int process,std::uint64_t& metadata,std::size_t& count,
 }
 
 }
-bool captureLegacyWriterImage(const std::filesystem::path& path,LegacyWriterImage& result,std::string& error) {
+bool captureLegacyWriterImage(const std::filesystem::path& path,LegacyWriterImage& result,std::string& error,bool requireExecutable) {
     result={};
     if(!path.is_absolute()||path.lexically_normal()!=path)return fail(error,"invalid legacy image path");
     Fd parent(fic::core::openRootControlledDirectory(path.parent_path(),error));
@@ -124,7 +124,7 @@ bool captureLegacyWriterImage(const std::filesystem::path& path,LegacyWriterImag
     Fd file(::openat(parent.fd,path.filename().c_str(),O_RDONLY|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK));
     struct stat info{};
     if(file.fd<0 || ::fstat(file.fd,&info) || !S_ISREG(info.st_mode) || info.st_uid ||
-        (info.st_mode&0022) || info.st_nlink!=1 || !(info.st_mode&0111))return fail(error,"untrusted legacy executable reference");
+        (info.st_mode&0022) || info.st_nlink!=1 || (requireExecutable&&!(info.st_mode&0111)))return fail(error,"untrusted legacy executable reference");
     std::uint64_t budget=MaxImage;std::string digest;
     if(!imageDigest(file.fd,digest,budget,std::chrono::steady_clock::now()+std::chrono::seconds(5)))
         return fail(error,"legacy executable reference cannot be fingerprinted within budget");

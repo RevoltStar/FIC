@@ -32,18 +32,18 @@ The package provides independent explicit activation for `pam_faillock` and
 
 ```bash
 sudo control fic-pam-faillock status
-sudo control fic-pam-faillock enabled
-sudo control fic-pam-faillock disabled
+sudo fic-cli policy enable IDENTITY_ACCESS enable_authentication_lockout
+sudo fic-cli policy disable IDENTITY_ACCESS enable_authentication_lockout
 sudo control fic-pam-pwhistory status
-sudo control fic-pam-pwhistory enabled
-sudo control fic-pam-pwhistory disabled
+sudo fic-cli policy enable IDENTITY_ACCESS enable_password_history
+sudo fic-cli policy disable IDENTITY_ACCESS enable_password_history
 ```
 
 The daemon exposes the corresponding logical activation policies
 `enable_authentication_lockout` and `enable_password_history`. They call the
 same `AltPamFaillockTopologyManager` and
-`AltPamPasswordHistoryTopologyManager` implementations used by the control
-facilities; there is no second topology implementation and no call to
+`AltPamPasswordHistoryTopologyManager` implementations inspected by the control
+facilities' diagnostic status; there is no second topology implementation and no call to
 `pam-auth-update`. `enable_password_quality` is `StaticVerifyOnly`: it accepts
 the native `pam_passwdqc` topology after Structural verification and never
 writes an ALT PAM stack. Disabling any of these FIC policies does not invoke
@@ -137,16 +137,14 @@ changed. The module has a fixed lock path and rejects unsafe lock metadata. The
 manager likewise verifies trusted module/config files and requires exactly
 `file=/var/lib/fic-pwhistory/opasswd`.
 
-The RPM prepares this storage but ships `remember=0`, so installation and
-topology activation do not themselves enforce password history. Administrator
-order is: install/update `fic`, run `control fic-pam-pwhistory enabled`, verify
-`status`, then apply the FIC history-depth/root policy. Disable restores the
-exact pre-enable PAM bytes but deliberately retains the history database.
-
-RPM upgrade uses ALT `control-dump` / `control-restore` to preserve the selected
-enabled/disabled state. Final erase invokes the same safe disable operation
-before removing the helper and facility; malformed managed state makes erase
-fail instead of triggering blind cleanup.
+The RPM prepares history storage with `remember=0`. Topology changes belong to
+running daemon policies: use `fic-cli policy enable/disable IDENTITY_ACCESS enable_password_history`;
+`control fic-pam-pwhistory status` remains diagnostic.
+Both ALT FIC control facilities reject enabled/disabled
+mutation requests. Package upgrade does not use control-restore to mutate policy
+topology, and final erase requests the daemon's existing joint topology release
+before infrastructure-only detach. Malformed ownership fails closed. History
+storage retention follows the existing backend contract.
 
 The `fic` RPM depends on `control`, `pam >= 1.7.1` (the ALT p11 owner of
 `pam_faillock.so` and `pam_pwhistory.so`) and `pam-config >= 1.10.0` (the owner of
@@ -244,14 +242,14 @@ files is read-only.
 
 ## Installation lifecycle
 
-Package versions must be Semantic Versions and are embedded through
-`FIC_PRODUCT_VERSION`. The `fic-dick` and `fic` `%pre` actions stop active
-daemons before either package replaces its executable payload. The `fic`
-`%post` action creates only missing working configs, initializes an absent or
-empty device database directly as schema 1, strictly checks config and DB schema
-1, refreshes trusted command hashes, then starts and health-checks both
-administrative daemons. Schema, trust, start, and health-check failures are
-fatal; optional tmpfiles/udev refreshes remain best-effort.
+Package versions are embedded through `FIC_PRODUCT_VERSION`. The existing
+`fic-dick` dependency carries the infrastructure-only helper. Compatible install
+and upgrade establish INSTALLING before payload replacement, prove configuration,
+MutationJournal, PAM/incident infrastructure and the current device DB schema,
+then explicitly publish INSTALLED before starting and health-checking services.
+Failed proofs leave startup fenced; upgrade never performs ownership rollback or
+restores old executables. See [package lifecycle](../../docs/package-lifecycle.md)
+for the authoritative state, override, remove/purge and failure contract.
 
 Existing working configs and a non-empty database are never overwritten or
 converted. Incompatible state makes installation fail with an explicit error.

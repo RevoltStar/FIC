@@ -1,0 +1,5 @@
+set -eu
+if [ "$1" -eq 0 ]; then
+    /opt/fic/bin/fic-package-infrastructure prove-remove
+    systemctl disable fic-device.service fic_get_device_info.service
+fi

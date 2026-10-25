@@ -1,5 +1,21 @@
 #include "FirewallTestFixture.h"
 using namespace firewall_test;
+void uninstallNoRecordInspection() {
+    Fixture f;std::string error;
+    for(const auto* policy:{"block_rdp","block_ftp","custom_rules"})
+        require(f.backend->provePolicyAbsent(policy,error),error);
+    require(f.nft.writes==0&&!std::filesystem::exists(f.ownership.path),"absence proof mutated firewall/witness");
+    require(!f.backend->provePolicyAbsent("unknown",error),"unknown policy accepted");
+    f.nft.malformed=true;require(!f.backend->provePolicyAbsent("block_rdp",error),"malformed ruleset accepted");f.nft.malformed=false;
+    f.nft.unavailable=true;require(!f.backend->provePolicyAbsent("block_rdp",error),"unavailable nft accepted");f.nft.unavailable=false;
+    {std::ofstream out(f.ownership.path);out<<"{}";}::chmod(f.ownership.path.c_str(),0640);
+    require(!f.backend->provePolicyAbsent("block_rdp",error),"malformed ownership document accepted");
+    std::filesystem::remove(f.ownership.path);
+    f.normal();
+    const int writes=f.nft.writes;
+    require(!f.backend->provePolicyAbsent("block_rdp",error),"unrecorded physical table accepted as absent");
+    require(f.nft.writes==writes,"orphan table was modified by inspection");
+}
 void parserTests() {
     FirewallActualState actual; std::string error;
     require(!parseNftActualState({{"nftables", Json::array({17})}}, actual, error), "C13 unsupported nft entry");
@@ -337,7 +353,7 @@ int main(int argc, char** argv) {
             for (const auto& object : compileFirewallObjects(desired)) commands.push_back({{"add", object}});
             std::cout << Json{{"nftables", commands}}.dump() << '\n'; return 0;
         }
-        parserTests(); configurationTests(); profilesAndDirectPaths(); failureTests(); foreignAndExceptionTests(); pendingJournalSurvivesProfiles(); controllerTests();
+        parserTests(); configurationTests(); uninstallNoRecordInspection(); profilesAndDirectPaths(); failureTests(); foreignAndExceptionTests(); pendingJournalSurvivesProfiles(); controllerTests();
         return 0;
     } catch (const std::exception& error) {
         AtomicFileWriter::setDirectoryFsyncHookForTests({});

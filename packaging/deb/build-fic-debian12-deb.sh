@@ -105,13 +105,6 @@ verify_built_binary() {
             exit 1
         fi
     done
-    if [ "$component" = fic ]; then
-        grep -Fqx "lifecycle_package_version=$PACKAGE_VERSION" <<< "$build_info" &&
-            grep -Fqx 'lifecycle_abi=1' <<< "$build_info" || {
-                echo "Lifecycle runtime identity mismatch for $binary_path" >&2
-                exit 1
-            }
-    fi
 }
 
 verify_deb_metadata() {
@@ -375,615 +368,39 @@ EOF
 }
 
 write_fic_pam_preinst() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/preinst" <<'EOF'
-#!/bin/sh
-set -e
-
-fic_legacy_pam_selection_present() {
-    for state in /var/lib/pam/auth /var/lib/pam/account \
-        /var/lib/pam/password /var/lib/pam/session \
-        /var/lib/pam/session-noninteractive; do
-        [ -f "$state" ] || continue
-        if grep -Eq '^Module: (fic-faillock-notify|fic-faillock-authfail|fic-faillock-preauth-required|fic-faillock-authsucc|fic-pwquality|fic-pwhistory)$' "$state"; then
-            return 0
-        fi
-    done
-    return 1
+    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic.preinst" "$1/DEBIAN/preinst"
 }
-
-fic_legacy_pam_journal_present() {
-    journal=/opt/fic/db/mutation-journal.json
-    [ -f "$journal" ] || return 1
-
-    # The journal is written by FIC as nlohmann::json dump(2). Parse one
-    # top-level record object at a time instead of matching unrelated records
-    # together. This check is intentionally read-only and conservative.
-    awk '
-        function evaluate_record() {
-            if (record ~ /"backend": "pam"/ &&
-                record ~ /"status": "(prepared|applied|rollback_failed)"/ &&
-                record ~ /"capability": "enable_(authentication_lockout|password_history|password_quality)"/ &&
-                record ~ /"activation_identifiers": \[/ &&
-                record ~ /"fic-(faillock-notify|faillock-authfail|faillock-preauth-required|faillock-authsucc|pwquality|pwhistory)"/) {
-                found = 1
-            }
-        }
-        /^    \{$/ {
-            in_record = 1
-            record = $0 "\n"
-            next
-        }
-        in_record {
-            record = record $0 "\n"
-        }
-        in_record && /^    \}[,]?$/ {
-            evaluate_record()
-            in_record = 0
-            record = ""
-        }
-        END {
-            exit found ? 0 : 1
-        }
-    ' "$journal"
-}
-
-fic_legacy_pam_state_present() {
-    fic_legacy_pam_selection_present || fic_legacy_pam_journal_present
-}
-
-fic_report_legacy_pam_upgrade_refusal() {
-    cat >&2 <<'MSG'
-FIC upgrade refused: legacy PAM ownership state is still active.
-The new version cannot prove who selected an old fic-* pam-auth-update profile
-and will not adopt or delete that state automatically. Disable/reconcile the
-affected PAM activation policy with the currently installed FIC version, then
-retry the upgrade.
-MSG
-}
-
-if [ "${1:-}" = "upgrade" ] && fic_legacy_pam_state_present; then
-    fic_report_legacy_pam_upgrade_refusal
-    exit 1
-fi
-
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-active_units=""
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    for unit in fic.service fic-device.service fic-notify.service; do
-        if systemctl is-active --quiet "$unit"; then
-            active_units="$active_units $unit"
-            systemctl stop "$unit"
-        fi
-    done
-fi
-
-# Close the race in which the old daemon could persist a legacy selection or
-# journal record after the first check but before it was stopped.
-if [ "${1:-}" = "upgrade" ] && fic_legacy_pam_state_present; then
-    fic_report_legacy_pam_upgrade_refusal
-    for unit in $active_units; do
-        systemctl start "$unit" || true
-    done
-    exit 1
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/preinst"
-}
-
 
 write_fic_preinst() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/preinst" <<'EOF'
-#!/bin/sh
-set -e
-
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    for unit in fic.service fic-device.service fic-notify.service; do
-        if systemctl is-active --quiet "$unit"; then
-            systemctl stop "$unit"
-        fi
-    done
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/preinst"
+    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic-dick.preinst" "$1/DEBIAN/preinst"
 }
 
 write_common_postinst() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/postinst" <<'EOF'
+    cat > "$1/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
-set -e
-
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
-
-    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
-    #
-    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
-    # state file: after the incident-state schema change a missing state file
-    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
-    # "0" would silently turn an uncontainable system into an apparently clean
-    # one, which is exactly the fail-open the incident model forbids.
-    #
-    # Only the main fic package may create the initial state, and only after it
-    # has proven the file durable. Everything else leaves it strictly alone.
-
-    if [ ! -f /opt/fic/db/commandhash.txt ]; then
-        : > /opt/fic/db/commandhash.txt
-    fi
-
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
-    fi
-fi
-
+set -eu
+# Auxiliary packages never rewrite shared policy/incident/journal metadata.
 exit 0
 EOF
-
-    chmod 0755 "$package_root/DEBIAN/postinst"
+    chmod 0755 "$1/DEBIAN/postinst"
 }
 
 write_symlink_postinst() {
-    local package_root="$1"
-    local command_name="$2"
-    local target_path="$3"
-
-    cat > "$package_root/DEBIAN/postinst" <<EOF
+    cat > "$1/DEBIAN/postinst" <<EOF
 #!/bin/sh
-set -e
-
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
-
-    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
-    #
-    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
-    # state file: after the incident-state schema change a missing state file
-    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
-    # "0" would silently turn an uncontainable system into an apparently clean
-    # one, which is exactly the fail-open the incident model forbids.
-    #
-    # Only the main fic package may create the initial state, and only after it
-    # has proven the file durable. Everything else leaves it strictly alone.
-
-    if [ ! -f /opt/fic/db/commandhash.txt ]; then
-        : > /opt/fic/db/commandhash.txt
-    fi
-
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
-    fi
-fi
-
-ln -sfn "$target_path" "/bin/$command_name"
-
-exit 0
+set -eu
+ln -sfn "$3" "/bin/$2"
 EOF
-
-    chmod 0755 "$package_root/DEBIAN/postinst"
+    chmod 0755 "$1/DEBIAN/postinst"
 }
 
 write_system_integration_postinst() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/postinst" <<'EOF'
-#!/bin/sh
-set -e
-
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
-
-    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
-    #
-    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
-    # state file: after the incident-state schema change a missing state file
-    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
-    # "0" would silently turn an uncontainable system into an apparently clean
-    # one, which is exactly the fail-open the incident model forbids.
-    #
-    # Only the main fic package may create the initial state, and only after it
-    # has proven the file durable. Everything else leaves it strictly alone.
-
-    if [ ! -f /opt/fic/db/commandhash.txt ]; then
-        : > /opt/fic/db/commandhash.txt
-    fi
-
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
-    fi
-fi
-
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    systemctl daemon-reload || true
-fi
-
-if command -v udevadm >/dev/null 2>&1; then
-    udevadm control --reload-rules || true
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/postinst"
+    write_common_postinst "$1"
 }
 
 write_system_integration_symlink_postinst() {
-    local package_root="$1"
-    local command_name="$2"
-    local target_path="$3"
-
-    cat > "$package_root/DEBIAN/postinst" <<'EOF'
-#!/bin/sh
-set -e
-
-EOF
-    write_pam_hook_proof_function >> "$package_root/DEBIAN/postinst"
-    cat >> "$package_root/DEBIAN/postinst" <<EOF
-
-# Recovery path after a failed \`prerm remove\`. When the pre-removal script
-# aborts, dpkg runs \`postinst abort-remove\` to restore the package. This is
-# NOT a configure path: it only restores package-managed service
-# enablement/runtime state and exits before any configure-specific mutation.
-# The generated prerm contains its own PAM detach-failure recovery: whenever
-# its \`pam-auth-update --remove\` fails, the prerm restores and proves the
-# permanent hook infrastructure while every FIC writer is still stopped, so
-# by the time dpkg reaches this path the PAM state is either intact (the
-# detach never started or changed nothing) or restored and proven. The
-# read-only guard below keeps that invariant complete: if the prerm-side
-# recovery could not prove the permanent hooks attached, no FIC writer is
-# restarted and the package is left in the dpkg error state for manual
-# administrator recovery. PAM topology, managed slots, the mutation journal
-# and the journal witness are never touched here.
-if [ "\${1:-}" = "abort-remove" ]; then
-    if command -v systemctl >/dev/null 2>&1; then
-        if ! fic_prove_permanent_hooks_attached; then
-            echo "FIC: abort-remove refuses to restore FIC services: the permanent PAM hook infrastructure is not proven attached (the PAM recovery after the failed removal did not succeed); fix the PAM state and re-run the removal or reinstall the package" >&2
-            exit 1
-        fi
-        systemctl daemon-reload || true
-        # Restore package-owned enablement. The critical units must be
-        # re-enabled; the optional udev helper keeps its existing optional
-        # semantics.
-        if ! systemctl enable fic.service; then
-            echo "FIC: abort-remove could not re-enable fic.service" >&2
-            exit 1
-        fi
-        if ! systemctl enable fic-device.service; then
-            echo "FIC: abort-remove could not re-enable fic-device.service" >&2
-            exit 1
-        fi
-        if ! systemctl enable fic-notify.service; then
-            echo "FIC: abort-remove could not re-enable fic-notify.service" >&2
-            exit 1
-        fi
-        systemctl enable fic_get_device_udev_info.service || true
-        # Restore runtime state. \`systemctl start\` on an already-active
-        # unit is idempotent. stop/restart are deliberately never used here:
-        # the removal may have failed exactly because a live FIC writer
-        # refuses to stop.
-        if ! systemctl start fic.service; then
-            echo "FIC: abort-remove could not restore fic.service runtime state" >&2
-            exit 1
-        fi
-        if ! systemctl start fic-device.service; then
-            echo "FIC: abort-remove could not restore fic-device.service runtime state" >&2
-            exit 1
-        fi
-        if ! systemctl start fic-notify.service; then
-            echo "FIC: abort-remove could not restore fic-notify.service runtime state" >&2
-            exit 1
-        fi
-        # Critical FIC writers must be active again for the package to count
-        # as restored; otherwise the recovery genuinely failed and dpkg must
-        # keep the failure visible. Normal \`postinst configure\` treats
-        # \`fic-notify.service\` as mandatory (\`systemctl enable --now\` under
-        # \`set -e\`), so the abort-remove recovery uses the same strict model.
-        if ! systemctl is-active --quiet fic.service; then
-            echo "FIC: abort-remove recovery left fic.service inactive" >&2
-            exit 1
-        fi
-        if ! systemctl is-active --quiet fic-device.service; then
-            echo "FIC: abort-remove recovery left fic-device.service inactive" >&2
-            exit 1
-        fi
-        if ! systemctl is-active --quiet fic-notify.service; then
-            echo "FIC: abort-remove recovery left fic-notify.service inactive" >&2
-            exit 1
-        fi
-    fi
-    exit 0
-fi
-
-if [ "\${1:-}" = "triggered" ]; then
-    shift
-    printf '%s\n' "\$@" |
-        /opt/fic/bin/fic --trust-sync-platform-affected
-    exit \$?
-fi
-
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-if [ -d /opt/fic ]; then
-    mkdir -p /opt/fic/db /opt/fic/log /opt/fic/notify
-
-    # FIC incident state and /opt/fic parent metadata are AUTHORITATIVE security state.
-    #
-    # No auxiliary package may synthesize UNLOCKED from a missing or corrupt
-    # state file: after the incident-state schema change a missing state file
-    # means BROKEN_STATE, whose effective severity is ISOLATE. Recreating it as
-    # "0" would silently turn an uncontainable system into an apparently clean
-    # one, which is exactly the fail-open the incident model forbids.
-    #
-    # Only the main fic package may create the initial state, and only after it
-    # has proven the file durable. Everything else leaves it strictly alone.
-
-    if [ ! -f /opt/fic/db/commandhash.txt ]; then
-        : > /opt/fic/db/commandhash.txt
-    fi
-
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
-    fi
-fi
-
-ln -sfn "$target_path" "/bin/$command_name"
-
-unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    for unit in fic.service fic-device.service fic-notify.service; do
-        if systemctl is-active --quiet "\$unit"; then
-            systemctl stop "\$unit"
-        fi
-    done
-fi
-
-# Only a virgin first install may create the recovery configuration.
-fic_config_command=ensure-config
-if [ "\${1:-}" = "configure" ] && [ -z "\${2:-}" ] &&
-   [ ! -e /opt/fic/config ] && [ ! -L /opt/fic/config ] &&
-   [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then
-    chown root:fic /opt/fic
-    chmod 2750 /opt/fic
-    fic_config_command=ensure-config-first-install
-fi
-/opt/fic/bin/fic --maintenance "\$fic_config_command"
-/opt/fic/bin/fic-dick --maintenance initialize-db
-/opt/fic/bin/fic --maintenance check-config
-/opt/fic/bin/fic-dick --maintenance check-db
-
-# The main fic package is the single lifecycle owner of the authoritative
-# incident state. It creates the state ONLY when it is genuinely absent, does
-# so exclusively (never clobbering an object that appeared meanwhile), proves
-# the durability barrier and then re-reads the file through the same fail-closed
-# parser the daemon uses. An existing - including corrupt or foreign - state is
-# left strictly untouched and remains BROKEN_STATE (ISOLATE); an upgrade never
-# silently repairs a missing or corrupt state into UNLOCKED.
-if [ "\${1:-}" = "configure" ] && [ -z "\${2:-}" ]; then
-    /opt/fic/bin/fic --maintenance incident-init
-fi
-
-find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
-find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
-find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
-
-if [ -x /opt/fic/bin/fic ]; then
-    /opt/fic/bin/fic --trust-sync-platform
-fi
-
-if [ "\${1:-}" = "configure" ]; then
-    # Step 5B: package-side bootstrap of the three managed password slots
-    # (/etc/pam.d/fic-password-quality, fic-password-history,
-    # fic-password-history-initial). The bootstrap exclusively creates a
-    # slot that is genuinely absent as the exact canonical neutral file;
-    # existing regular files (runtime-owned active state included) are
-    # never modified, repaired or removed, and no journal record or
-    # witness is created (package/bootstrap owns existence; runtime
-    # policy + journal own managed state). Failure fails closed before
-    # any validation or pam-auth-update invocation.
-    if ! /opt/fic/bin/fic --maintenance bootstrap-pam-password-slots; then
-        echo "FIC: refusing to continue package configuration: managed password slot bootstrap failed (fail closed)" >&2
-        exit 1
-    fi
-    # Package-side pre-attach validation (read-only): preserved
-    # /etc/pam.d/fic-faillock-* conffiles must be proven canonical-neutral or
-    # journal-bound FIC-owned state BEFORE the permanent hooks may reach the
-    # live PAM graph. On failure the package configuration aborts before any
-    # pam-auth-update invocation and before the daemon is started.
-    if ! /opt/fic/bin/fic --maintenance validate-pam-slots-before-attach; then
-        echo "FIC: refusing to attach permanent PAM hooks: existing /etc/pam.d/fic-faillock-* state failed pre-attach validation" >&2
-        exit 1
-    fi
-    pam-auth-update --package
-    # These four profiles are permanent integration infrastructure. Policy
-    # enable/disable never owns or deselects them; mutable ownership stays in
-    # the /etc/pam.d/fic-faillock-* conffile slots.
-    pam-auth-update --enable \
-        fic-faillock-hook-preauth \
-        fic-faillock-hook-authfail \
-        fic-faillock-hook-authsucc \
-        fic-faillock-hook-account \
-        fic-incident-access
-    if ! fic_prove_permanent_hooks_attached; then
-        echo "FIC: refusing to start daemon: permanent PAM account gate is not proven attached" >&2
-        exit 1
-    fi
-    /opt/fic/bin/fic --maintenance incident-pam-verify
-fi
-
-if command -v systemd-tmpfiles >/dev/null 2>&1; then
-    systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf || true
-fi
-
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-    systemctl daemon-reload
-    systemctl enable --now fic.service
-    systemctl enable --now fic-device.service
-    systemctl enable --now fic_get_device_udev_info.service || true
-    systemctl enable --now fic-notify.service
-    systemctl is-active --quiet fic.service
-    systemctl is-active --quiet fic-device.service
-    /opt/fic/bin/fic --maintenance wait-daemon 10
-    /opt/fic/bin/fic-dick wait-daemon 10
-fi
-
-if command -v udevadm >/dev/null 2>&1; then
-    udevadm control --reload-rules || true
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/postinst"
+    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic.postinst" "$1/DEBIAN/postinst"
 }
-# Shared generated-script snippet: read-only proof that the package-owned
-# permanent FIC PAM hook profiles are attached, expressed purely in terms of
-# the standard pam-auth-update state model:
-#   - selected profile identity is proven by an exact full-line
-#     "Module: <profile>" entry in the correct per-facility
-#     pam-auth-update state file (/var/lib/pam/auth for the three auth
-#     hooks, /var/lib/pam/account for the account hook); entries in another
-#     facility file, entries embedded in other lines and profile-name
-#     prefix/suffix collisions do not prove selection;
-#   - physical attachment is proven by an active, correctly facilitated,
-#     exact include rule in the generated common-* stack
-#     ("auth include <target>" in common-auth for the preauth/authfail/
-#     authsucc hook targets, "account include fic-faillock-account" in
-#     common-account); commented lines, wrong facility, non-include control
-#     words, target prefix/suffix names and unrelated text mentions do not
-#     prove attachment.
-# The proof never invokes any PAM tool and never mutates PAM state,
-# managed slots, the mutation journal or its witness. It is used by the
-# generated prerm (detach-failure recovery proof) and by the generated
-# postinst abort-remove recovery guard.
-write_pam_hook_proof_function() {
-    cat <<'EOF'
-fic_prove_permanent_hooks_attached() {
-    if [ ! -d /var/lib/pam ] || [ ! -f /etc/pam.d/common-auth ] ||
-        [ ! -f /etc/pam.d/common-account ]; then
-        return 1
-    fi
-    # Exact selection proof: a full-line "Module: <profile>" record in the
-    # correct per-facility pam state file.
-    grep -q "^Module: fic-faillock-hook-preauth$" /var/lib/pam/auth 2>/dev/null || return 1
-    grep -q "^Module: fic-faillock-hook-authfail$" /var/lib/pam/auth 2>/dev/null || return 1
-    grep -q "^Module: fic-faillock-hook-authsucc$" /var/lib/pam/auth 2>/dev/null || return 1
-    grep -q "^Module: fic-faillock-hook-account$" /var/lib/pam/account 2>/dev/null || return 1
-    grep -q "^Module: fic-incident-access$" /var/lib/pam/account 2>/dev/null || return 1
-    # Exact physical attachment proof: an active, correctly facilitated
-    # include rule with the exact hook target in the generated stack.
-    grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-preauth$" /etc/pam.d/common-auth 2>/dev/null || return 1
-    grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-authfail$" /etc/pam.d/common-auth 2>/dev/null || return 1
-    grep -Eq "^auth[[:space:]]+include[[:space:]]+fic-faillock-authsucc$" /etc/pam.d/common-auth 2>/dev/null || return 1
-    grep -Eq "^account[[:space:]]+include[[:space:]]+fic-faillock-account$" /etc/pam.d/common-account 2>/dev/null || return 1
-    grep -Eq "^account[[:space:]]+required[[:space:]]+pam_fic_access\.so[[:space:]]*$" /etc/pam.d/common-account 2>/dev/null || return 1
-    return 0
-}
-fic_prove_incident_gate_attached() {
-    grep -q "^Module: fic-incident-access$" /var/lib/pam/account 2>/dev/null &&
-    grep -Eq "^account[[:space:]]+required[[:space:]]+pam_fic_access\.so[[:space:]]*$" /etc/pam.d/common-account 2>/dev/null
-}
-EOF
-}
-
-
-write_fic_dick_postinst() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/postinst" <<'EOF'
-#!/bin/sh
-set -e
-
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
-    fi
-fi
-
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload || true
-    systemctl enable fic-device.service || true
-    systemctl enable fic_get_device_info.service || true
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/postinst"
-}
-
-write_system_integration_prerm() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/prerm" <<'EOF'
-#!/bin/sh
-set -e
-
-if [ "$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload || true
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/prerm"
-}
-
 write_symlink_prerm() {
     local package_root="$1"
     local command_name="$2"
@@ -1004,215 +421,15 @@ EOF
 }
 
 write_system_integration_symlink_prerm() {
-    local package_root="$1"
-    local command_name="$2"
-    local target_path="$3"
-
-    cat > "$package_root/DEBIAN/prerm" <<'EOF'
-#!/bin/sh
-set -e
-
-EOF
-    write_pam_hook_proof_function >> "$package_root/DEBIAN/prerm"
-    cat >> "$package_root/DEBIAN/prerm" <<EOF
-
-if [ "\$1" = "remove" ]; then
-    # Three-profile C2 package release (Stage A): strictly read-only early
-    # preflight BEFORE any side effect. The FIC maintenance binary owns
-    # the whole C2 password topology decision: it proves the current
-    # physical topology inspectable and package-release eligible (no
-    # selected-but-unowned FIC password identity, no ambiguous/unsafe
-    # state, no unsupported topology) without stopping any service and
-    # without touching any PAM state. A failure exits before ANY mutation
-    # (no systemctl call, no pam-auth-update, no slot write) and the
-    # package stays installed. The exact installed absolute path is used:
-    # the prerm never depends on PATH.
-    if [ ! -x /opt/fic/bin/fic ]; then
-        echo "FIC: the FIC maintenance binary /opt/fic/bin/fic is missing; the C2 password topology state cannot be proven and the removal is refused before any mutation" >&2
-        exit 1
-    fi
-    if ! /opt/fic/bin/fic --maintenance dm-prerm-prepare preflight; then
-        echo "FIC: DM ownership preflight refused removal" >&2
-        exit 1
-    fi
-    if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare preflight; then
-        echo "FIC: DE ownership preflight refused removal before any mutation" >&2
-        exit 1
-    fi
-    if ! /opt/fic/bin/fic --maintenance pam-password-prerm-prepare preflight; then
-        echo "FIC: the read-only password package preflight refused the removal BEFORE any PAM mutation (see the classified diagnostic above); the package stays installed" >&2
-        exit 1
-    fi
-    # Step 7F managed provider configuration preflight (Stage A): strictly
-    # read-only early check of the managed faillock/pwquality/pwhistory
-    # provider primary state (active journal records releasable, no orphan
-    # FIC markers/wrappers, coherent container provenance). Runs BEFORE any
-    # side effect; a failure keeps the package installed.
-    if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare preflight; then
-        echo "FIC: the read-only managed PAM provider configuration preflight refused the removal BEFORE any mutation; the package stays installed" >&2
-        exit 1
-    fi
-    # Invariant: package removal first stops all FIC PAM writers and only
-    # then detaches the permanent hooks. A live daemon could still perform
-    # PAM mutations or re-activate the infrastructure concurrently with the
-    # profile detach; after the services are stopped no new PAM mutation is
-    # possible.
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl disable --now fic-notify.service || true
-        systemctl disable --now fic-device.service || true
-        systemctl disable --now fic.service || true
-        systemctl disable fic_get_device_udev_info.service || true
-        systemctl daemon-reload || true
-        for unit in fic.service fic-device.service fic-notify.service; do
-            attempt=0
-            while [ "\$attempt" -lt 10 ]; do
-                systemctl is-active --quiet "\$unit" || break
-                attempt=\$((attempt + 1))
-                sleep 1
-            done
-            # Invariant: hook detach requires positive proof that every FIC
-            # PAM writer is inactive. A stop timeout is a package-removal
-            # failure, not permission to continue: the permanent hooks stay
-            # attached and the removal aborts before any pam-auth-update.
-            if systemctl is-active --quiet "\$unit"; then
-                echo "FIC: unit \$unit is still active after the bounded stop wait; refusing to detach permanent PAM hooks" >&2
-                exit 1
-            fi
-        done
-    fi
-    if ! /opt/fic/bin/fic --maintenance dm-prerm-prepare release; then
-        echo "FIC: DM ownership release refused removal" >&2
-        exit 1
-    fi
-    if ! /opt/fic/bin/fic --maintenance desktop-prerm-prepare release; then
-        echo "FIC: DE ownership release failed; removal is refused" >&2
-        exit 1
-    fi
-    # Release every fallible provider and password domain with the incident
-    # gate still attached. A failed release leaves account access fail-closed.
-    if ! /opt/fic/bin/fic --maintenance pam-provider-prerm-prepare release; then
-        echo "FIC: managed PAM provider release failed; incident gate remains attached" >&2
-        exit 1
-    fi
-    if ! /opt/fic/bin/fic --maintenance pam-password-prerm-prepare release; then
-        echo "FIC: C2 password release failed; incident gate remains attached" >&2
-        exit 1
-    fi
-
-    # The incident gate stays attached until every other release succeeds.
-    # On any partial removal, restore the complete package-owned permanent
-    # infrastructure before dpkg's abort-remove is allowed to restart writers.
-    fic_restore_permanent_hooks() {
-        if ! pam-auth-update --enable \
-            fic-faillock-hook-preauth \
-            fic-faillock-hook-authfail \
-            fic-faillock-hook-authsucc \
-            fic-faillock-hook-account \
-            fic-incident-access; then
-            if fic_prove_permanent_hooks_attached &&
-               /opt/fic/bin/fic --maintenance incident-pam-verify; then
-                echo "FIC: permanent PAM infrastructure remained proven attached; package removal blocked" >&2
-                exit 1
-            fi
-            echo "FIC: CRITICAL: permanent PAM infrastructure NOT proven restored; package removal blocked and writers remain stopped" >&2
-            exit 1
-        fi
-        if ! fic_prove_permanent_hooks_attached ||
-           ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
-            echo "FIC: CRITICAL: permanent PAM infrastructure NOT proven restored; package removal blocked and writers remain stopped" >&2
-            exit 1
-        fi
-        echo "FIC: complete permanent PAM infrastructure restored and proven attached; package removal blocked" >&2
-        exit 1
-    }
-    if ! pam-auth-update --package --remove \
-        fic-faillock-notify \
-        fic-faillock-authfail \
-        fic-faillock-preauth-required \
-        fic-faillock-authsucc \
-        fic-faillock-hook-preauth \
-        fic-faillock-hook-authfail \
-        fic-faillock-hook-authsucc \
-        fic-faillock-hook-account \
-        fic-pwquality \
-        fic-pwhistory; then
-        fic_restore_permanent_hooks
-    fi
-    if ! fic_prove_incident_gate_attached ||
-       ! /opt/fic/bin/fic --maintenance incident-pam-verify; then
-        fic_restore_permanent_hooks
-    fi
-    # This is the last semantic release. The typed proof distinguishes a
-    # remaining reference from an unreadable or unprovable PAM topology.
-    if ! pam-auth-update --package --remove fic-incident-access ||
-       ! /opt/fic/bin/fic --maintenance incident-pam-prove-detached; then
-        fic_restore_permanent_hooks
-    fi
-    # A failed symlink cleanup must not abort removal after the security gate
-    # has been proven detached. The package binary itself is removed by dpkg.
-    if [ -L "/bin/$command_name" ] &&
-       [ "\$(readlink -f "/bin/$command_name")" = "$target_path" ]; then
-        rm -f "/bin/$command_name" ||
-            echo "FIC: could not remove /bin/$command_name symlink" >&2
-    fi
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/prerm"
+    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic.prerm" "$1/DEBIAN/prerm"
 }
 
 write_fic_dick_postinst() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/postinst" <<'EOF'
-#!/bin/sh
-set -e
-
-if ! getent group fic >/dev/null 2>&1; then
-    groupadd --system fic
-fi
-
-if [ -d /opt/fic ]; then
-    find /opt/fic -mindepth 1 -path /opt/fic/lockstatus -prune -o -path /opt/fic/config -prune -o ! -type l ! \( -type f -links +1 \) -exec chown root:fic {} +
-    find /opt/fic -mindepth 1 -path /opt/fic/config -prune -o -type d -exec chmod 2750 {} \;
-    find /opt/fic -path /opt/fic/config -prune -o -type f ! -path /opt/fic/lockstatus ! -links +1 -exec chmod 0640 {} \;
-
-    if [ -d /opt/fic/bin ]; then
-        find /opt/fic/bin -maxdepth 1 -type f ! -links +1 -exec chmod 0750 {} \;
-    fi
-fi
-
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload || true
-    systemctl enable fic-device.service || true
-    systemctl enable fic_get_device_info.service || true
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/postinst"
+    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic-dick.postinst" "$1/DEBIAN/postinst"
 }
 
 write_fic_dick_prerm() {
-    local package_root="$1"
-
-    cat > "$package_root/DEBIAN/prerm" <<'EOF'
-#!/bin/sh
-set -e
-
-if [ "$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl disable fic-device.service || true
-    systemctl disable fic_get_device_info.service || true
-    systemctl daemon-reload || true
-fi
-
-exit 0
-EOF
-
-    chmod 0755 "$package_root/DEBIAN/prerm"
+    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic-dick.prerm" "$1/DEBIAN/prerm"
 }
 
 build_project() {
@@ -1229,7 +446,6 @@ build_project() {
     if [ "$source_dir" = "$FIC_SRC_DIR" ]; then
         cmake_args+=(
             "-DFIC_TARGET_PLATFORM=$FIC_PACKAGING_TARGET_PLATFORM"
-            "-DFIC_LIFECYCLE_PACKAGE_VERSION=$PACKAGE_VERSION"
         )
     fi
 
@@ -1302,9 +518,12 @@ build_fic_dick_package() {
 "$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     install_cmake_component "$FIC_DICK_BUILD_DIR" fic-dick "$package_root"
+    # Kept by the existing dependency package until main FIC removal finishes.
+    # Infrastructure proofs only; no policy/MutationJournal engine is linked.
+    install -m 0755 "$FIC_BUILD_DIR/fic-package-infrastructure" "$package_root/opt/fic/bin/fic-package-infrastructure"
 
     binary_depends="$(detect_binary_depends "$package_root/opt/fic/bin/fic-dick")"
-    package_depends="$(join_depends "$binary_depends" "udev")"
+    package_depends="$(join_depends "$binary_depends" "$(detect_binary_depends "$package_root/opt/fic/bin/fic-package-infrastructure")" "udev" "systemd" "util-linux")"
 
     write_control_file \
         "$package_root" \
@@ -1315,6 +534,7 @@ build_fic_dick_package() {
     write_fic_preinst "$package_root"
     write_fic_dick_postinst "$package_root"
     write_fic_dick_prerm "$package_root"
+    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic-dick.postrm" "$package_root/DEBIAN/postrm"
 
     rm -f "$output_deb"
     build_deb_package "$package_root" "$output_deb"
@@ -1405,6 +625,7 @@ build_fic_package() {
     output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
 
     install_cmake_component "$FIC_BUILD_DIR" fic "$package_root"
+    rm -f "$package_root/opt/fic/bin/fic-package-infrastructure"
     install_fic_pam_profiles "$package_root"
     install_fic_pam_slots "$package_root"
     mkdir -p "$package_root/opt/fic/log"
@@ -1424,6 +645,7 @@ build_fic_package() {
     write_platform_trust_triggers "$package_root" "$FIC_BUILD_DIR/fic"
     write_system_integration_symlink_postinst "$package_root" "fic" "/opt/fic/bin/fic"
     write_system_integration_symlink_prerm "$package_root" "fic" "/opt/fic/bin/fic"
+    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic.postrm" "$package_root/DEBIAN/postrm"
 
     rm -f "$output_deb"
     build_deb_package "$package_root" "$output_deb"
@@ -1532,7 +754,7 @@ EOF
 #!/bin/sh
 set -eu
 case "$1" in
-    configure|abort-remove|abort-deconfigure|abort-upgrade)
+    configure)
         if [ -d /run/systemd/system ]; then
             /opt/fic/bin/fic-prelogin-integration activate
         else

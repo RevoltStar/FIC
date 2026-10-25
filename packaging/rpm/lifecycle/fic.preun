@@ -1,0 +1,7 @@
+set -eu
+if [ "$1" -eq 0 ]; then
+    /opt/fic/bin/fic-package-infrastructure remove
+    systemctl disable fic.service fic-device.service fic-notify.service fic_get_device_udev_info.service
+    if [ -L /bin/fic ] && [ "$(readlink /bin/fic)" = /opt/fic/bin/fic ]; then rm /bin/fic; fi
+fi
+# During upgrade this runs AFTER the new %post. Never stop/fence the new daemon.

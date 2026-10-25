@@ -20,11 +20,10 @@ def snapshot():
 for corrupt in (False, True):
     if corrupt:
         journal.write_bytes(b'{corrupt preflight journal\n')
-    for domain in ('dm', 'desktop', 'pam-provider', 'pam-password'):
+    for domain in ('check-persistent', 'validate-pam-slots-before-attach'):
         before = snapshot()
-        result = subprocess.run([sys.argv[1], '--maintenance', domain + '-prerm-prepare', 'preflight'],
+        result = subprocess.run([sys.argv[1], '--maintenance', domain],
                                 capture_output=True, text=True, timeout=15)
         assert result.returncode != 0, (domain, 'unproven provenance accepted')
         assert snapshot() == before, (domain, 'preflight mutated persistent state', result.stderr)
-        assert 'journal' in result.stderr.lower() or 'witness' in result.stderr.lower(), result.stderr
         print('PASS:', domain, 'corrupt' if corrupt else 'virgin', 'read-only refusal')

@@ -1,0 +1,50 @@
+#!/bin/sh
+set -eu
+case "$1" in
+ purge)
+    # Late purge runs after the executable payload has gone. It never calls
+    # fic or invents a rollback. Require the durable successful-remove proof
+    # and serialize deletion with the same singleton lock as install/startup.
+    umask 077
+    trusted_directory() {
+        [ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c %u "$1")" = 0 ] &&
+            [ $(( 0$(stat -c %a "$1") & 022 )) = 0 ]
+    }
+    for directory in / /run /var /var/lib /var/lib/fic-lifecycle; do
+        trusted_directory "$directory" || { echo "FIC purge: untrusted directory $directory" >&2; exit 1; }
+    done
+    [ "$(stat -c '%u:%g:%a' /var/lib/fic-lifecycle)" = '0:0:700' ]
+    if [ ! -e /run/fic ]; then mkdir -m 755 /run/fic; fi
+    trusted_directory /run/fic
+    lock=/run/fic/daemon.lock
+    [ ! -L "$lock" ]
+    if [ ! -e "$lock" ]; then (set -C; : > "$lock"); fi
+    [ -f "$lock" ] && [ "$(stat -c '%u:%a:%h' "$lock")" = '0:600:1' ]
+    exec 9<> "$lock"
+    [ -f "$lock" ] && [ "$(stat -c '%u:%a:%h' "$lock")" = '0:600:1' ]
+    flock -n 9 || { echo 'FIC purge: writer or installer holds daemon.lock' >&2; exit 1; }
+    [ ! -L "$lock" ] &&
+        [ "$(stat -Lc '%d:%i' /proc/$$/fd/9)" = "$(stat -c '%d:%i' "$lock")" ]
+    proof=/var/lib/fic-lifecycle/status
+    [ -f "$proof" ] && [ ! -L "$proof" ] &&
+        [ "$(stat -c '%u:%g:%a:%h:%s' "$proof")" = '0:0:600:1:8' ] &&
+        [ "$(cat "$proof")" = REMOVED ] || {
+        echo 'FIC purge refused: successful previous removal is unproven' >&2; exit 1;
+    }
+    # Keep the small restrictive REMOVED marker. Ordinary startup must never
+    # treat absent config/journal as a completed installation. Trusted fresh
+    # install may replace this marker only after its own proofs.
+    echo 'FIC purge: deleting configuration and MutationJournal/witness; remaining OS policy settings are not adopted on reinstall' >&2
+    for directory in /opt /opt/fic /opt/fic/db; do
+        if [ -e "$directory" ]; then trusted_directory "$directory"; fi
+    done
+    rm -rf -- /opt/fic/config
+    rm -rf -- /opt/fic/db
+    rm -f -- /opt/fic/lockstatus
+    if [ -d /opt/fic ]; then sync -f /opt/fic; fi
+    ;;
+ remove) ;;
+ upgrade|failed-upgrade|abort-install|abort-upgrade|disappear) exit 0 ;;
+ *) exit 1 ;;
+esac
+if [ -d /run/systemd/system ]; then systemctl daemon-reload; fi

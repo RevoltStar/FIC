@@ -45,21 +45,10 @@ int main(int argc,char** argv) {
         fs::copy_file("/proc/self/exe",root/"renamed-copy");
         LegacyWriterImage reference;std::string error;
         require(captureLegacyWriterImage(root/"reference",reference,error),error);
-        DaemonInstanceLock guard,empty;require(guard.tryAcquire(root/"runtime",error),error);
-        const std::string id(32,'a');const auto inventory=root/"writers.json";
-        std::vector<LegacyWriterImage> images;
-        require(!readLegacyWriterInventory(inventory,id,images,error),"missing inventory treated as empty");
-        require(!writeLegacyWriterInventory(empty,inventory,id,{reference},error)&&!fs::exists(inventory),"unguarded inventory creation");
-        require(writeLegacyWriterInventory(guard,inventory,id,{reference},error),error);
-        require(!writeLegacyWriterInventory(guard,inventory,id,{},error),"existing inventory overwritten");
-        require(!readLegacyWriterInventory(inventory,std::string(32,'b'),images,error),"foreign operation accepted");
-        require(readLegacyWriterInventory(inventory,id,images,error)&&images.size()==1&&images[0].digest==reference.digest&&
-            images[0].inode==reference.inode,"inventory lost reference identity");
-        // The installed path can disappear during unpack. Restart proof must
-        // use persisted fingerprints, never reinterpret missing originals.
+        std::vector<LegacyWriterImage> images{reference};
         fs::remove(root/"reference");
-        const auto prove=[&]{return readLegacyWriterInventory(inventory,id,images,error)&&
-            proveNoPackageWriterProcesses(images,std::chrono::steady_clock::now()+std::chrono::seconds(5),error);};
+        const auto prove=[&]{return proveNoPackageWriterProcesses(images,
+            std::chrono::steady_clock::now()+std::chrono::seconds(5),error);};
         require(prove(),error);
         for(const auto* mode:{"--child","--thread-child"}) {
         int pipe[2];require(::pipe(pipe)==0,"pipe");
@@ -111,10 +100,6 @@ int main(int argc,char** argv) {
         require(!proveNoPackageWriterProcesses({invalid},std::chrono::steady_clock::now()+std::chrono::seconds(5),error),"invalid reference accepted");
         fs::create_symlink(root/"reference",root/"alias");
         require(!captureLegacyWriterImage(root/"alias",invalid,error),"symlink reference accepted");
-        const auto duplicate=root/"duplicates.json";
-        require(!writeLegacyWriterInventory(guard,duplicate,id,{reference,reference},error)&&!fs::exists(duplicate),"duplicate inventory accepted");
-        {std::ofstream corrupt(inventory);corrupt<<"{\"version\":1,\"id\":\""<<id<<"\",\"count\":0,\"count\":0}";}
-        require(!readLegacyWriterInventory(inventory,id,images,error)&&images.empty(),"corrupt inventory authorized empty census");
-        std::cout<<"PASS: immutable operation inventory after original removed, real procfs, renamed manual copy/live-thread refusal, no kill and bounded proof\n";
+        std::cout<<"PASS: captured identity after original removed, real procfs, renamed manual copy/live-thread refusal, no kill and bounded proof\n";
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

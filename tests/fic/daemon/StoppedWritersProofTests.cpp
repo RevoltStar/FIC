@@ -20,6 +20,17 @@ int main() {
     if (fic::daemon::proveStoppedUnit("fic.service",masked,error)) return 7;
     auto absent = base; absent.replace(absent.find("LoadState=loaded"), 16, "LoadState=not-found");
     if (!fic::daemon::proveStoppedUnit("fic.service", absent, error)) { std::cerr << error; return 5; }
+    auto removedFailed=absent;
+    removedFailed.replace(removedFailed.find("ActiveState=inactive"),20,"ActiveState=failed");
+    removedFailed.replace(removedFailed.find("SubState=dead"),13,"SubState=failed");
+    if(!fic::daemon::proveStoppedUnit("fic.service",removedFailed,error))return 11;
+    for(const auto* field:{"MainPID=42","ControlPID=43","Job=7"}) {
+        auto live=removedFailed;
+        const std::string name=std::string(field).substr(0,std::string(field).find('=')+1);
+        const auto begin=live.find(name),end=live.find('\n',begin);
+        live.replace(begin,end-begin,field);
+        if(fic::daemon::proveStoppedUnit("fic.service",live,error))return 12;
+    }
     fic::daemon::WriterUnitFacts facts;
     auto active=base;active.replace(active.find("ActiveState=inactive"),20,"ActiveState=active");
     active.replace(active.find("SubState=dead"),13,"SubState=running");

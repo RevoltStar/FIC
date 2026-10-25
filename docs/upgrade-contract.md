@@ -81,23 +81,19 @@ directory or downgrade state machine in the first-public-release contract.
 Runtime policy edits retain their own atomic/transactional behavior; that is a
 separate correctness mechanism and not old-state compatibility.
 
-## M1 legacy package compatibility: implementation blocked
+## Package lifecycle and supported upgrade boundary
 
-The accepted M1 contract requires early refusal of incompatible installed native
-versions **and actual maintainer scripts**, before any old product script runs.
-No legacy release is currently certified for the new lifecycle. A separate
-preparatory transition must preserve configuration, MutationJournal, PAM/incident
-infrastructure and ownership; it is not implemented or authorized implicitly.
-Do not delete state, patch installed scripts or rerun old hooks as a workaround.
+See [package-lifecycle.md](package-lifecycle.md). Trusted package preparation
+enters Installing under daemon.lock and proves stopped writers. After unpack,
+configuration, journal/witness, PAM/incident and device database proofs explicitly
+complete Installed before the normal services start. A missing lifecycle marker
+never permits ordinary startup. Existing configuration and policy values are
+preserved; compatible new-to-new upgrade does not invoke ownership rollback.
+Failed upgrade does not restore old binaries or unconditionally restart services.
 
-Native tests found that DEB Pre-Depends can accept a previously configured runtime
-after its repeated configuration refused, and apt may skip that runtime entirely.
-An old abort-upgrade postinst can then change protected metadata despite refusal
-of the new preinst. RPM Requires(pre) also does not require runtime %post success.
-Consequently dependency declarations alone do not implement the accepted early
-refusal guarantee. Current package scripts have not been switched to a purported
-safe legacy upgrade. The compatible lifecycle remains unfinished.
-
-See [the compatibility matrix, native reproductions and unresolved admission
-boundary](maintenance-legacy-compatibility.md). Do not interpret dependency-order
-or research-test success as authorization to upgrade a production legacy host.
+Arbitrary development/legacy maintainer scripts and formats are unsupported.
+There is no migrator, compatibility allowlist, separate runtime package or deferred
+finalizer. New scripts may reject recognizable unsupported state, but cannot
+promise refusal before dpkg/RPM executes an older package's scriptlet. Do not use
+this contract as authorization for an unvalidated production legacy upgrade.
+Native matrix and remaining acceptance work are recorded in HANDOFF.

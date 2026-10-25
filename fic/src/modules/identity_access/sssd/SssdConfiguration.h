@@ -40,6 +40,11 @@ bool hasManagedSnippetStagingArtifacts(
     bool& found,
     std::string& error);
 
+// Read-only no-record uninstall guard, independent of foreign SSSD effective
+// semantics. Missing physical ancestors are valid only below a proven real,
+// root-controlled directory. Existing staging artifacts remain a conflict.
+bool proveManagedSnippetAbsent(const SssdConfigurationOptions&,bool& absent,std::string& error);
+
 struct SssdSetting {
     std::string section;
     std::string option;

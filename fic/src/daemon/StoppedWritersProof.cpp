@@ -34,7 +34,12 @@ bool inspectWriterUnit(const std::string& unit,const std::string& properties,
         error="unproven systemd unit properties: "+unit;return false;
     }
     facts={values["LoadState"],values["ActiveState"],values["SubState"],values["MainPID"],values["ControlPID"],values["Job"]};
-    if(facts.loadState=="not-found"&&(facts.activeState!="inactive"||facts.subState!="dead"||facts.mainPid!="0"||facts.controlPid!="0"||!facts.job.empty())) {
+    // systemd retains failed state after a failed ExecStop even when the
+    // package removed its unit file. This is distinct from a live/job state;
+    // callers still prove empty cgroups and perform the process census.
+    const bool stoppedState=(facts.activeState=="inactive"&&facts.subState=="dead")||
+                            (facts.activeState=="failed"&&facts.subState=="failed");
+    if(facts.loadState=="not-found"&&(!stoppedState||facts.mainPid!="0"||facts.controlPid!="0"||!facts.job.empty())) {
         error="missing unit has inconsistent runtime state";facts={};return false;
     }
     error.clear();return true;

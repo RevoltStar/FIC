@@ -1,12 +1,13 @@
 #ifndef FIC_PACKAGE_LIFECYCLE_ADMISSION_H
 #define FIC_PACKAGE_LIFECYCLE_ADMISSION_H
-#include "daemon/PackageLifecycleState.h"
+#include "daemon/DaemonInstanceLock.h"
+#include <fic/core/runtime/PackageState.h>
 namespace fic::daemon {
-// Deliberately outside the product installation tree, package payload and volatile runtime. Package
-// purge must not own/remove this directory or its tombstone/provenance.
+// Deliberately outside the product installation tree, package payload and volatile runtime.
+// The small restrictive marker survives purge; no policy provenance is stored here.
 inline constexpr const char* PackageLifecycleDirectory="/var/lib/fic-lifecycle";
-inline constexpr const char* PackageLifecycleStateFile="/var/lib/fic-lifecycle/state.json";
-// Admission proves a previously finalized lifecycle, including a snapshot-bound
+inline constexpr const char* PackageLifecycleStateFile=fic::core::PACKAGE_STATE_FILE;
+// Admission proves an explicitly completed installation, including a snapshot-bound
 // durability barrier. It never creates/adopts/removes state or runs package proofs.
 class PackageLifecycleAdmission {
 public:

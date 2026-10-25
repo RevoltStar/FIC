@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
+case "$1" in
+ remove|deconfigure)
+    /opt/fic/bin/fic-package-infrastructure remove
+    systemctl disable fic.service fic-device.service fic-notify.service fic_get_device_udev_info.service
+    if [ -L /bin/fic ] && [ "$(readlink /bin/fic)" = /opt/fic/bin/fic ]; then rm /bin/fic; fi
+    ;;
+ upgrade) /opt/fic/bin/fic-package-infrastructure prepare-install ;;
+ failed-upgrade)
+    echo 'FIC: failed upgrade; admission remains fenced, no binary restoration or restart' >&2 ;;
+ *) echo 'FIC: unsupported prerm action' >&2; exit 1 ;;
+esac

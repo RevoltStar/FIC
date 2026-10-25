@@ -11,8 +11,8 @@ struct PackageResourceReleaseReport {
     fic::identity::pam::PamProviderPackageRelease::Report provider;
     fic::identity::pam::PamPasswordPackageRelease::Report password;
 };
-// Shared fixed domain operations for legacy maintenance routes and the closed
-// package-session. Existing domain backends remain the sole ownership engines.
+// Fixed domain operations used by daemon uninstall orchestration. Existing
+// domain backends remain the sole ownership engines.
 // Never loads/initializes the journal: the caller supplies the correctly admitted
 // journal, or a separately validated read-only preflight journal.
 class PackageReleaseResources {

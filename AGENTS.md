@@ -643,43 +643,35 @@ git diff --check
 Следующий агент должен иметь возможность продолжить текущую задачу из `docs/HANDOFF.md`, не восстанавливая предыдущую переписку.
 
 
-## 17. Package lifecycle и lifecycle runtime
+## 17. Package lifecycle
 
-При изменениях daemon/maintenance/packaging сохраняй принятый M1 contract:
+Текущее ТЗ package lifecycle заменяет незавершённый проект M1/runtime/finalizer.
 
-* Один engine и один daemon.lock для daemon, закрытой package-session и recovery.
-  Не добавляй второй policy/ownership engine, arbitrary executor, FD/environment
-  authority или force/bypass.
-* Предварительный runtime должен быть доступен до mutating preinst/%pre и переживать
-  удаление основного FIC. Версии/ABI, package ordering и отсутствие циклов проверяются
-  native package-manager tests; одного dependency declaration недостаточно.
-* Durable fence/tombstone сохраняется вне package-owned/deleted деревьев через
-  crash/reboot/purge. Неизвестное состояние fail-closed. Нет автоматического adoption.
-* Удаление lifecycle runtime двухстадийное: после удаления/purge FIC finalizer
-  сохраняет durable proof завершённого lifecycle вне package transaction. Runtime
-  prerm/%preun допускает erase только с proof из предыдущей завершённой transaction
-  и свежими проверками. Отсутствия FIC в package database недостаточно.
-* Совместный erase/autoremove может отказать с сохранённым runtime. Отказ не меняет
-  journal, PAM/incident protection или lifecycle provenance. Повторное удаление и
-  reinstall не обходят fence. Собственный postrm/%postun runtime не требует уже
-  удалённого ELF и не удаляет tombstone.
-* Postinst оставляет InstalledButFenced. Только deferred finalizer со свежими
-  package/journal/PAM/incident proofs завершает lifecycle. Temporary retries
-  ограничиваются по частоте/стоимости, не общим количеством; permanent watcher
-  не добавляется без отдельного архитектурного решения.
+* Policy ownership освобождает только работающий daemon через `prepare-uninstall`
+  и `policy rollback all`, существующие backend release/CAS и MutationJournal.
+  Конфигурационные ENABLE/DISABLE и значения при uninstall не меняются.
+* Минимальные durable states: INSTALLING / INSTALLED / UNINSTALLING / REMOVED.
+  Отсутствие или повреждение state не разрешает обычный startup. UNINSTALLING
+  переживает restart/reboot, запрещает apply/reconcile и не имеет cancel.
+* Один daemon.lock сериализует daemon и закрытые инфраструктурные операции.
+  Аварийный override не отменяет доказательство отсутствия writers и PAM refs.
+  Никакого standalone policy rollback engine, force/adoption или исполнения
+  произвольных команд.
+* Infrastructure-only helper не связывается с policy/MutationJournal engine.
+  Package ordering должен сохранить его до завершения удаления основного FIC;
+  порядок и реальные scriptlets подтверждаются native package-manager tests.
+* Remove сохраняет конфигурацию и согласованную journal/witness пару. Purge
+  удаляет эти данные, включая аварийный purge; поздний postrm не требует ELF
+  daemon и опирается на проверенный предыдущий remove, под daemon.lock.
+* Upgrade не запускает ownership rollback и не восстанавливает старые бинарники.
+  Новая версия запускается после явных конфигурационных/инфраструктурных proofs.
+  Ошибки отдельных apply допускают предупреждение; повреждённые persistent
+  state, конфигурация или startup admission не означают готовую установку.
+* Произвольные legacy development scriptlets не поддерживаются и не мигрируются.
+  Не обещать отказ раньше old scriptlet там, где dpkg/RPM этого не гарантируют.
+* Не возвращать fic-runtime, deferred finalizer, package-manager lock/retry
+  protocol, отдельный ownership engine или multi-stage runtime retention.
 
-* Несовместимые legacy maintainer scripts должны отклоняться предварительным
-  runtime до любых main/aux package transitions, включая old prerm/%preun.
-  Native version и фактические scripts обязательны; unknown не совместимы.
-  Отказ только нового preinst недостаточен. Pre-Depends/Requires(pre) сами по
-  себе не доказывают свежий successful admission каждой операции: прежняя
-  configuration и failed RPM %post требуют отдельных proofs. До доказательства
-  не объявлять прямой legacy upgrade безопасным.
-* Подготовительный переход несовместимых legacy packages пока не реализовывать
-  без отдельного согласования; installed scripts не патчить/не исполнять для
-  «проверки», security state и metadata не ремонтировать автоматически.
-  Совместимость и подтверждённое препятствие: `docs/maintenance-legacy-compatibility.md`.
-
-Authoritative design: `docs/maintenance-runtime-package-design.md` и
-`docs/maintenance-finalizer-retry-lifecycle.md`. Текущий implementation/validation
-status смотри в `docs/HANDOFF.md`; принятый contract не означает, что весь M1 готов.
+Authoritative contract: `docs/package-lifecycle.md`. Текущая готовность и реальные
+результаты проверок: `docs/HANDOFF.md`. Принятый contract не означает завершение
+package-manager E2E; mock/dummy tests не заменяют реальные FIC packages.

@@ -25,6 +25,8 @@ std::string arg(int argc, char* argv[], int index) {
 void print_help() {
     std::cout << "FREE INTEGRITY CONTROL CLI\n"
               << "Commands:\n"
+              << "  prepare-uninstall\n"
+              << "  policy rollback all\n"
               << "  --version\n"
               << "  --build-info\n"
               << "  policy set <module> <policy> <value>\n"
@@ -346,6 +348,10 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    if (command == "prepare-uninstall" && argc == 2) {
+        return print_response(fic::ipc::Client(fic::ipc::endpoint_socket_path(fic::ipc::Endpoint::PolicyDaemon),std::chrono::minutes(10)).request({{"command", "prepare_uninstall"}}));
+    }
+
     if (command == "status" || command == "shutdown") {
         return print_response(client.request({{"command", command}}));
     }
@@ -354,6 +360,21 @@ int main(int argc, char* argv[]) {
         const std::string action = arg(argc, argv, 2);
         const std::string module = arg(argc, argv, 3);
         const std::string policy = arg(argc, argv, 4);
+
+        if (action == "rollback" && module == "all" && argc == 4) {
+            const auto response=fic::ipc::Client(fic::ipc::endpoint_socket_path(fic::ipc::Endpoint::PolicyDaemon),std::chrono::minutes(10)).request({{"command","rollback_all"}});
+            const int code=print_response(response);
+            if(response.contains("results"))for(const auto& result:response["results"]) {
+                std::cout << result.value("policy",result.value("resource_group",result.value("domain",""))) << " "
+                          << result.value("status","") << " " << result.value("message","");
+                if(result.contains("mutation_id"))std::cout << " mutation_id=" << result["mutation_id"];
+                if(result.contains("resource"))std::cout << " resource=" << result["resource"];
+                std::cout << std::endl;
+                for(const auto* detail:{"provider","password"})
+                    if(result.contains(detail))std::cout << "  " << detail << ": " << result[detail].dump() << std::endl;
+            }
+            return code;
+        }
 
         if (action == "info") {
             const std::string infoType = arg(argc, argv, 3);

@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+case "$1" in
+ configure) systemctl daemon-reload ;;
+ abort-remove|abort-upgrade|abort-deconfigure)
+    echo 'FIC device package aborted: no automatic restart or shared-state repair' >&2 ;;
+ *) exit 1 ;;
+esac

@@ -1,3 +1,6 @@
+> Historical M1 design/research, superseded by [package-lifecycle.md](package-lifecycle.md).
+> Runtime/finalizer/coordinator/legacy compatibility guarantees below are not the current production contract.
+
 # M1: исследование доставки deferred finalizer
 
 ## Scope и статус

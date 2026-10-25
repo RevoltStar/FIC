@@ -1,0 +1,55 @@
+#!/bin/sh
+set -eu
+unset FIC_SOCKET_PATH FIC_DEVICE_SOCKET_PATH
+case "$1" in
+ abort-remove|abort-upgrade|abort-deconfigure)
+    echo 'FIC: package operation aborted; lifecycle fence retained; no restart/apply' >&2
+    exit 0 ;;
+ triggered)
+    shift
+    printf '%s\n' "$@" | /opt/fic/bin/fic --trust-sync-platform-affected
+    exit $? ;;
+ configure) ;;
+ *) echo 'FIC: unsupported postinst action' >&2; exit 1 ;;
+esac
+# Refresh the newly unpacked unit definitions before querying writer facts.
+# In particular, systemd retains a failed removed unit as LoadState=error
+# when its file reappears. This reload neither starts nor admits a writer;
+# preinst has already established INSTALLING for payload replacement.
+systemctl daemon-reload
+/opt/fic/bin/fic-package-infrastructure prepare-install
+# Do not recursively chmod/chown shared persistent state or journal witnesses.
+[ -d /opt/fic ] && [ ! -L /opt/fic ]
+[ "$(stat -c '%u' /opt/fic)" = 0 ]
+chown root:fic /opt/fic
+chmod 2750 /opt/fic
+for directory in db log notify; do
+    if [ ! -e "/opt/fic/$directory" ]; then
+        install -d -o root -g fic -m 2750 "/opt/fic/$directory"
+    fi
+    [ -d "/opt/fic/$directory" ] && [ ! -L "/opt/fic/$directory" ]
+done
+config_command=ensure-config
+if [ ! -e /opt/fic/config ] && [ ! -L /opt/fic/config ] &&
+   [ ! -e /opt/fic/lockstatus ] && [ ! -L /opt/fic/lockstatus ]; then
+    config_command=ensure-config-first-install
+fi
+/opt/fic/bin/fic --maintenance "$config_command"
+/opt/fic/bin/fic --maintenance incident-init
+/opt/fic/bin/fic --maintenance initialize-journal
+/opt/fic/bin/fic-dick --maintenance initialize-db
+/opt/fic/bin/fic --trust-sync-platform
+/opt/fic/bin/fic --maintenance bootstrap-pam-password-slots
+/opt/fic/bin/fic --maintenance validate-pam-slots-before-attach
+pam-auth-update --package
+pam-auth-update --enable fic-faillock-hook-preauth fic-faillock-hook-authfail \
+    fic-faillock-hook-authsucc fic-faillock-hook-account fic-incident-access
+/opt/fic/bin/fic --maintenance complete-install
+ln -sfn /opt/fic/bin/fic /bin/fic
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf
+systemctl daemon-reload
+systemctl enable fic.service fic-device.service fic-notify.service
+systemctl start fic.service fic-device.service fic-notify.service
+/opt/fic/bin/fic --maintenance wait-daemon 30
+/opt/fic/bin/fic-dick wait-daemon 30
+echo 'FIC: installation infrastructure verified; policy apply results are available in the daemon journal'

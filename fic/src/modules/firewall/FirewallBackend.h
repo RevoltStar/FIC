@@ -37,6 +37,9 @@ public:
     // Journal-authorized rollback releases only this resource, without
     // creating missing resources belonging to any other ordinary policy.
     bool removePolicy(const std::string& policyName, std::string& error) const;
+    // Read-only uninstall no-record guard. Absence never grants permission to
+    // delete an orphan table or create a journal record for it.
+    bool provePolicyAbsent(const std::string& policyName, std::string& error) const;
 
     bool applyExclusive(std::vector<ForeignBaseChain>& neutralized,
                         std::string& error) const;
@@ -55,6 +58,7 @@ private:
                       const std::vector<std::string>& args,
                       const ProcessOptions& options) const;
     bool resolveNft(std::string& executable, std::string& error) const;
+    bool readOwnershipDocument(nlohmann::json&,fic::core::SecureStateReadResult&,bool durable,std::string& error) const;
     bool readActual(const std::string& executable,
                     FirewallActualState& state,
                     std::string& error) const;

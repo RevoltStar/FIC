@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+if ! getent group fic >/dev/null; then groupadd --system fic; fi
+case "$1" in
+ upgrade)
+    [ -x /opt/fic/bin/fic-package-infrastructure ] || {
+        echo 'FIC: incompatible fic-dick development package; automatic legacy migration unsupported' >&2; exit 1;
+    }
+    /opt/fic/bin/fic-package-infrastructure prepare-install ;;
+ install)
+    # No shared security mutation before unpack. The main package's preinst
+    # must use the installed helper before its own mutating configuration.
+    # In particular, preserved config after remove is not a legacy upgrade.
+    : ;;
+ *) exit 1 ;;
+esac

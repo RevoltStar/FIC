@@ -3,6 +3,8 @@
 #include "daemon/StoppedWritersProof.h"
 #include <fic/core/fs/RootControlledDirectory.h>
 #include <fic/core/process/ProcessExecutor.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/runtime/PackageState.h>
 #include <algorithm>
 #include <array>
 #include <fstream>
@@ -43,7 +45,7 @@ bool run(const fic::platform::PlatformExecutableResolver& executables,const std:
     if(!result.success())return fail(error,"systemd writer operation failed: "+result.error+" "+result.standardError);
     output=result.standardOutput;error.clear();return true;
 }
-bool emptyWriterCgroups(std::chrono::steady_clock::time_point deadline,std::string& error) {
+bool emptyWriterCgroups(std::chrono::steady_clock::time_point deadline,std::string& error,bool auxiliaryOnly=false,const char* specificUnit=nullptr) {
     // Inspect actual cgroup trees, not only systemd ActiveState/MainPID. A
     // stopped KillMode=process unit can leave helpers behind in its cgroup.
     const std::filesystem::path root="/sys/fs/cgroup";
@@ -62,7 +64,8 @@ bool emptyWriterCgroups(std::chrono::steady_clock::time_point deadline,std::stri
         if(::lstat(it->path().c_str(),&info)||::statfs(it->path().c_str(),&fs)||
             fs.f_type!=CGROUP2_SUPER_MAGIC||info.st_dev!=rootInfo.st_dev)return fail(error,"cgroup mount identity changed");
         const auto name=it->path().filename().string();
-        if(std::find(units.begin(),units.end(),name)==units.end())continue;
+        if(auxiliaryOnly&&name=="fic.service")continue;
+        if(specificUnit ? name!=specificUnit : std::find(units.begin(),units.end(),name)==units.end())continue;
         std::ifstream events(it->path()/"cgroup.events");std::array<char,4097> bytes{};
         events.read(bytes.data(),bytes.size());
         if(events.bad()||events.gcount()>=static_cast<std::streamsize>(bytes.size()))return fail(error,"cgroup events unreadable/oversized");
@@ -76,8 +79,45 @@ bool emptyWriterCgroups(std::chrono::steady_clock::time_point deadline,std::stri
     return true;
 }
 }
+bool PackageWritersQuiescence::provePreloginStopped(std::chrono::steady_clock::time_point deadline,std::string& error) const {
+    std::string output;
+    return managerEnvironment(error)&&
+        run(executables_,{"show","fic-prelogin.service","--no-pager","--property=Id,LoadState,ActiveState,SubState,MainPID,ControlPID,Job"},deadline,output,error)&&
+        proveStoppedUnit("fic-prelogin.service",output,error)&&
+        emptyWriterCgroups(deadline,error,false,"fic-prelogin.service");
+}
 bool PackageWritersQuiescence::validateEnvironment(std::string& error) const {
     return managerEnvironment(error);
+}
+bool PackageWritersQuiescence::stopAuxiliaryWriters(std::chrono::steady_clock::time_point deadline,std::string& error) const {
+    if(!managerEnvironment(error))return false;
+    for(const auto* unit:units) {
+        if(std::string(unit)=="fic.service")continue;
+        std::string output;WriterUnitFacts facts;
+        const std::vector<std::string> query{"show",unit,"--no-pager","--property=Id,LoadState,ActiveState,SubState,MainPID,ControlPID,Job"};
+        if(!run(executables_,query,deadline,output,error)||!inspectWriterUnit(unit,output,facts,error))return false;
+        if(!proveStoppedUnit(unit,output,error)) {
+            if(!run(executables_,{"stop",unit},deadline,output,error)||
+               !run(executables_,query,deadline,output,error)||!proveStoppedUnit(unit,output,error))return false;
+        }
+    }
+    if(!emptyWriterCgroups(deadline,error,true))return false;
+    std::vector<LegacyWriterImage> images;
+    const auto& paths=fic::core::FicRuntimePaths::get();
+    for(const auto* name:{"fic","fic-dick"}) {
+        const auto file=paths.privateBinDir/name;
+        struct stat info{};
+        if(::lstat(file.c_str(),&info)) {
+            if(errno==ENOENT&&std::string(name)=="fic-dick")continue;
+            return fail(error,"writer image absent/unproven: "+file.string());
+        }
+        LegacyWriterImage image;
+        if(!captureLegacyWriterImage(file,image,error))return false;
+        images.push_back(std::move(image));
+    }
+    // The live daemon is excluded by its kernel PID; a manual auxiliary
+    // process (including a renamed copy) is not stopped or silently ignored.
+    return proveNoPackageWriterProcesses(images,deadline,error);
 }
 bool PackageWritersQuiescence::requestStopBeforeAdmission(std::chrono::steady_clock::time_point deadline,std::string& error) const {
     if(!managerEnvironment(error))return false;
@@ -92,27 +132,18 @@ bool PackageWritersQuiescence::requestStopBeforeAdmission(std::chrono::steady_cl
     if(args.size()==1){error.clear();return true;}
     std::string output;return run(executables_,args,deadline,output,error);
 }
-bool PackageWritersQuiescence::stopAndProve(const DaemonInstanceLock& guard,const PackageUnitMasks& masks,
-    const std::string& id,const std::vector<LegacyWriterImage>& images,
+bool PackageWritersQuiescence::proveStopped(const DaemonInstanceLock& guard,const std::vector<LegacyWriterImage>& images,
     std::chrono::steady_clock::time_point deadline,std::string& error) const {
-    if(!guard.heldByCurrentProcess())return fail(error,"writer stop lacks daemon admission");
-    if(!managerEnvironment(error)||!masks.provePublished(id,error))return false;
-    std::string output;
-    if(!run(executables_,{"daemon-reload"},deadline,output,error) ||
-       !requestStopBeforeAdmission(deadline,error))return false;
-    return prove(guard,masks,id,images,deadline,error);
-}
-bool PackageWritersQuiescence::prove(const DaemonInstanceLock& guard,const PackageUnitMasks& masks,
-    const std::string& id,const std::vector<LegacyWriterImage>& images,
-    std::chrono::steady_clock::time_point deadline,std::string& error) const {
-    if(!guard.heldByCurrentProcess())return fail(error,"writer proof lacks daemon admission");
-    if(!managerEnvironment(error)||!masks.provePublished(id,error))return false;
+    if(!guard.heldByCurrentProcess())return fail(error,"writer proof requires daemon.lock");
+    const auto state=fic::core::readPackageState();
+    if(!state.state||*state.state==fic::core::PackageState::Installed)
+        return fail(error,"writer proof requires a restrictive package lifecycle state");
+    if(!AtomicFileWriter::ensureTargetDurableIfCurrentState(fic::core::PACKAGE_STATE_FILE,state.file.targetState,&error)||!managerEnvironment(error))return false;
     for(const auto* unit:units) {
         std::string output;
         if(!run(executables_,{"show",unit,"--no-pager","--property=Id,LoadState,ActiveState,SubState,MainPID,ControlPID,Job"},deadline,output,error)||
-            !proveStoppedUnit(unit,output,error))return false;
+           !proveStoppedUnit(unit,output,error))return false;
     }
-    if(!emptyWriterCgroups(deadline,error)||!proveNoPackageWriterProcesses(images,deadline,error))return false;
-    error.clear();return true;
+    return emptyWriterCgroups(deadline,error)&&proveNoPackageWriterProcesses(images,deadline,error);
 }
 }

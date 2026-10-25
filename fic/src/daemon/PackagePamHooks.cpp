@@ -32,11 +32,37 @@ bool pamAuthUpdate(const fic::platform::PlatformProfile& platform) {
         platform.pam.incidentAccessGate.packageTopologyTarget.empty();
 }
 }
+bool PackagePamHooks::proveAttached(std::string& error) const {
+    if(!fic::incident::PamIncidentAccessGateVerifier::prove(platform_.pam,error))return false;
+    if(platform_.id=="alt-p11")return true;
+    if(!pamAuthUpdate(platform_))return fail(error,"unsupported package PAM infrastructure platform");
+    using namespace fic::identity::pam;
+    struct Hook {const char* facility;const char* common;const char* profile;const char* target;PamManagementGroup group;};
+    for(const auto& hook:{Hook{"auth","common-auth","fic-faillock-hook-preauth","fic-faillock-preauth",PamManagementGroup::Auth},
+        Hook{"auth","common-auth","fic-faillock-hook-authfail","fic-faillock-authfail",PamManagementGroup::Auth},
+        Hook{"auth","common-auth","fic-faillock-hook-authsucc","fic-faillock-authsucc",PamManagementGroup::Auth},
+        Hook{"account","common-account","fic-faillock-hook-account","fic-faillock-account",PamManagementGroup::Account}}) {
+        std::string selection;
+        if(!read(selection_/hook.facility,selection,error))return false;
+        std::istringstream lines(selection);std::string line;unsigned selected=0;
+        while(std::getline(lines,line))if(line==std::string("Module: ")+hook.profile)++selected;
+        if(selected!=1)return fail(error,"permanent PAM hook selection absent/duplicate: "+std::string(hook.profile));
+        if(platform_.pam.configDirectories.empty())return fail(error,"PAM configuration directory absent");
+        const auto file=platform_.pam.configDirectories.front()/hook.common;
+        std::string content;std::vector<PamRule> rules;
+        if(!read(file,content,error)||!PamConfiguration::parseRulesContent(file,content,rules,error))return false;
+        unsigned included=0;
+        for(const auto& rule:rules)if(rule.group==hook.group&&rule.control=="include"&&
+            rule.includeKind==PamIncludeKind::Include&&rule.includeTarget==hook.target)++included;
+        if(included!=1)return fail(error,"permanent PAM hook physical attachment absent/duplicate: "+std::string(hook.target));
+    }
+    error.clear();return true;
+}
 bool PackagePamHooks::inspectOtherHooks(bool& detached,std::string& error) const {
     detached=true;
-    if(platform_.id=="alt-p11"&&!platform_.pam.incidentAccessGate.packageTopologyTarget.empty())return true;
-    if(!pamAuthUpdate(platform_))return fail(error,"unsupported package PAM infrastructure platform");
-    for(const char* facility:{"auth","account","password","session"}) {
+    const bool alt=platform_.id=="alt-p11"&&!platform_.pam.incidentAccessGate.packageTopologyTarget.empty();
+    if(!alt&&!pamAuthUpdate(platform_))return fail(error,"unsupported package PAM infrastructure platform");
+    if(!alt)for(const char* facility:{"auth","account","password","session"}) {
         std::string content;if(!read(selection_/facility,content,error))return false;
         std::istringstream lines(content);std::string line;
         while(std::getline(lines,line))if(line.rfind("Module: fic-",0)==0) {
@@ -102,7 +128,13 @@ bool PackagePamHooks::removeProfiles(bool incident,std::chrono::steady_clock::ti
     const auto remaining=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now());
     if(remaining.count()<=0)return fail(error,"package PAM detach deadline exceeded");
     std::vector<std::string> args{"--package","--remove"};
-    for(const auto* profile:profiles)if((std::string(profile)=="fic-incident-access")==incident)args.emplace_back(profile);
+    // The four permanent faillock hooks and incident gate are package-owned
+    // infrastructure. Legacy/C2 policy selections MUST have been released by
+    // the daemon (or repaired manually); never undo their journal ownership
+    // from this offline helper, including emergency SKIP.
+    if(incident)args.emplace_back("fic-incident-access");
+    else for(const auto* profile:{"fic-faillock-hook-preauth","fic-faillock-hook-authfail",
+        "fic-faillock-hook-authsucc","fic-faillock-hook-account"})args.emplace_back(profile);
     ProcessOptions options;options.timeout=std::min(remaining,std::chrono::milliseconds(5000));options.maxOutputBytes=65536;
     options.clearEnvironment=true;options.environment={{"LANG","C"},{"LC_ALL","C"},{"PATH","/usr/sbin:/usr/bin:/sbin:/bin"}};
     const auto result=ProcessExecutor::execute(executable,args,options);
@@ -115,6 +147,8 @@ bool PackagePamHooks::detach(const DaemonInstanceLock& guard,std::chrono::steady
     if(std::chrono::steady_clock::now()>=deadline)return fail(error,"package PAM detach deadline exceeded");
     if(platform_.id=="alt-p11"&&!platform_.pam.incidentAccessGate.packageTopologyTarget.empty()) {
         if(std::chrono::steady_clock::now()>=deadline)return fail(error,"package PAM detach deadline exceeded");
+        bool detached=false;
+        if(!inspectOtherHooks(detached,error)||!detached)return fail(error,"PAM policy references remain; release through daemon or repair manually: "+error);
         return fic::incident::AltIncidentAccessGateTopology::detach(platform_.pam.incidentAccessGate.packageTopologyTarget,error)&&proveDetached(error);
     }
     if(!pamAuthUpdate(platform_))return fail(error,"unsupported package PAM infrastructure platform");

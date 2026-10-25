@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include <fic/core/runtime/PackageState.h>
 #include <fic/core/config/ConfigSchemaManager.h>
 #include <fic/device-db/DB.h>
 #include <fic/version/BuildInfo.h>
@@ -108,6 +109,11 @@ int main(int argc, char* argv[], char* envp[]) {
                 return 1;
             }
             const std::string command(argv[2]);
+            if (command == "initialize-db" &&
+                fic::core::readPackageState().state != fic::core::PackageState::Installing) {
+                std::cerr << "device database initialization requires INSTALLING admission" << std::endl;
+                return 1;
+            }
             try {
                 DB db(fic::device_control::DeviceRuntimePaths::get().databaseOptions());
                 std::string error;
@@ -121,6 +127,13 @@ int main(int argc, char* argv[], char* envp[]) {
                     return 0;
                 }
                 if (command == "initialize-db") {
+                    // DB holds the existing resource lock here. Repeat
+                    // admission after waiting: install completion checks the
+                    // same locked database before publishing INSTALLED.
+                    if (fic::core::readPackageState().state != fic::core::PackageState::Installing) {
+                        std::cerr << "device initialization admission changed while waiting for database lock" << std::endl;
+                        return 1;
+                    }
                     if (!db.initializeDatabase() ||
                         !db.verifyDatabaseSchema(error)) {
                         if (error.empty()) {
@@ -142,6 +155,11 @@ int main(int argc, char* argv[], char* envp[]) {
                           << exception.what() << std::endl;
                 return 1;
             }
+        }
+
+        if (!fic::core::requireInstalledPackage(pathError)) {
+            std::cerr << "refusing device writer admission: " << pathError << std::endl;
+            return 1;
         }
 
         std::string configError;

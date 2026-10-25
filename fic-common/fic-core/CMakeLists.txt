@@ -42,6 +42,7 @@ add_library(fic-core STATIC
     src/process/ProcessExecutor.cpp
     src/process/VerifiedProcessExecutor.cpp
     src/runtime/FicRuntimePaths.cpp
+    src/runtime/PackageState.cpp
 )
 
 set(FIC_CORE_GENERATED_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/include)

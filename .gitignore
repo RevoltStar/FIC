@@ -19,3 +19,5 @@ res.log
 *.py
 !packaging/lib/gui-runtime-manifest.py
 !packaging/lib/corresponding-source.py
+!tests/integration/package-lifecycle/*.py
+**/__pycache__/

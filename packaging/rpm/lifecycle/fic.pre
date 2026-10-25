@@ -1,0 +1,9 @@
+set -eu
+if ! getent group fic >/dev/null; then groupadd -r fic; fi
+if [ -x /opt/fic/bin/fic-package-infrastructure ]; then
+    /opt/fic/bin/fic-package-infrastructure prepare-install
+elif [ -e /opt/fic/config ] || [ -L /opt/fic/config ] ||
+     [ -e /opt/fic/lockstatus ] || [ -L /opt/fic/lockstatus ]; then
+    echo 'FIC: incompatible development installation; automatic migration unsupported' >&2
+    exit 1
+fi

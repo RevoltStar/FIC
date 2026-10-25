@@ -817,9 +817,11 @@ def main():
     )
     require(
         "/etc/control.d/facilities/fic-pam-faillock" in rpm_builder
-        and "control-dump fic-pam-faillock" in rpm_builder
-        and "control-restore fic-pam-faillock" in rpm_builder,
-        "ALT p11 packaging does not preserve the native PAM facility lifecycle",
+        and "control-dump fic-pam-faillock" not in rpm_builder
+        and "control-restore fic-pam-faillock" not in rpm_builder
+        and "topology changes belong to daemon policies" in
+            (root / "packaging/rpm/fic-pam-faillock").read_text(),
+        "ALT p11 must install the diagnostic facility without offline topology writers",
     )
     require(
         rpm_builder.count("%config") == 1
@@ -841,15 +843,18 @@ def main():
         "install layout has no centralized default configuration directory",
     )
     bootstrap_steps = (
-        "fic_config_command=ensure-config",
-        "fic_config_command=ensure-config-first-install",
-        '--maintenance "\\$fic_config_command"',
+        "fic-package-infrastructure prepare-install",
+        "config_command=ensure-config",
+        "config_command=ensure-config-first-install",
+        '--maintenance "$config_command"',
+        "--maintenance incident-init",
+        "--maintenance initialize-journal",
         "--maintenance initialize-db",
-        "--maintenance check-config",
-        "--maintenance check-db",
         "--trust-sync-platform",
-        "--maintenance wait-daemon ",
-        "fic-dick wait-daemon 10",
+        "--maintenance complete-install",
+        "systemctl start fic.service",
+        "--maintenance wait-daemon 30",
+        "fic-dick wait-daemon 30",
     )
     for builder_name, builder in (
         ("Debian-family", deb_builder),
@@ -868,16 +873,18 @@ def main():
             and 'PACKAGE_VERSION="$FIC_PACKAGE_VERSION"' in builder,
             f"{builder_name} packaging bypasses the native version mapping",
         )
+        lifecycle = (root / ("packaging/deb/lifecycle/fic.postinst" if builder_name == "Debian-family"
+                             else "packaging/rpm/lifecycle/fic.post")).read_text()
         cursor = 0
         for step in bootstrap_steps:
-            position = builder.find(step, cursor)
+            position = lifecycle.find(step, cursor)
             require(
                 position >= 0,
                 f"{builder_name} packaging omits bootstrap step: {step}",
             )
             cursor = position + len(step)
         require(
-            "is-active --quiet fic.service" in builder,
+            "--maintenance wait-daemon 30" in lifecycle,
             f"{builder_name} packaging omits daemon health checks",
         )
         require(
@@ -905,7 +912,10 @@ def main():
         "Debian-family daemon packages do not stop services before payload replacement",
     )
     require(
-        rpm_builder.count('"$(system_integration_pre_script') >= 2,
+        rpm_builder.count('"$(system_integration_pre_script') == 1
+        and rpm_builder.count('"$(fic_dick_pre_script)"') == 1
+        and 'fic-package-infrastructure prepare-install' in
+            (root / 'packaging/rpm/lifecycle/fic-dick.pre').read_text(),
         "ALT p11 daemon packages do not stop services before payload replacement",
     )
 
@@ -985,14 +995,17 @@ def main():
 
     for builder_path in primary_package_builders:
         builder = builder_path.read_text(encoding="utf-8")
+        lifecycle = (root / ("packaging/deb/lifecycle/fic.postinst" if builder_path.parent.name == "deb"
+                             else "packaging/rpm/lifecycle/fic.post")).read_text()
         require(
             "packaging/lib/build-resources.sh" in builder
             and '--parallel "$BUILD_JOBS"' in builder,
             f"{builder_path.relative_to(root)} bypasses adaptive build parallelism",
         )
         require(
-            "chmod 2750" in builder
-            and "chmod 0640" in builder
+            "chmod 2750" in lifecycle
+            and "options.fileMode = 0640" in
+                (root / "fic-common/fic-core/src/config/ConfigSchemaManager.cpp").read_text()
             and "chmod 0750" in builder
             and "chmod 2770" not in builder
             and "chmod 0660" not in builder
@@ -1037,11 +1050,12 @@ def main():
     require(
         "--trust-list-platform-paths" in deb_builder
         and "interest-noawait $candidate_path" in deb_builder
-        and "--trust-sync-platform-affected" in deb_builder,
+        and "--trust-sync-platform-affected" in
+            (root / "packaging/deb/lifecycle/fic.postinst").read_text(),
         "Debian package does not generate exact profile trust triggers",
     )
     require(
-        "--trust-sync-platform" in deb_builder,
+        "--trust-sync-platform" in (root / "packaging/deb/lifecycle/fic.postinst").read_text(),
         "Debian package does not run package trust sync",
     )
 

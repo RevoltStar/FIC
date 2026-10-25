@@ -128,7 +128,7 @@ def main():
             startup.count("recomputeAccessReadiness(") >= 4 and
             "std::chrono::seconds(30)" in startup,
             "admin changes and short periodic drift checks must recompute ACTIVE proof")
-    periodic = startup.find("if (now >= nextPeriodicApply)")
+    periodic = startup.find("if (mayMutate && now >= nextPeriodicApply)")
     periodic_block = startup.find("incidentSshGuard().block(", periodic)
     periodic_apply = startup.find("run_daemon_apply_all_pass(", periodic)
     require(0 <= periodic < periodic_block < periodic_apply,

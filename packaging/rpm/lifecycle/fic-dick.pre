@@ -1,0 +1,11 @@
+set -eu
+if ! getent group fic >/dev/null; then groupadd -r fic; fi
+if [ -x /opt/fic/bin/fic-package-infrastructure ]; then
+    /opt/fic/bin/fic-package-infrastructure prepare-install
+elif [ "$1" != 1 ]; then
+    echo 'FIC: incompatible fic-dick development package; automatic legacy migration unsupported' >&2
+    exit 1
+fi
+# First installation of the dependency does not adopt preserved configuration.
+# The main package must use the newly installed helper before its mutations;
+# that helper validates the durable state, including a prior normal remove.

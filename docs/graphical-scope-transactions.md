@@ -218,11 +218,12 @@ no no-op locker backend.
 Owner release invalidates the successful scope checkpoint before physical
 change. A successful registry/configuration reconciliation must reverify and
 recommit it; failed config save cannot leave consumers authorized by stale
-protection. Root-only `fic --maintenance desktop-prerm-prepare preflight|release`
-uses the same backends over genuinely empty target requirements, independent
-of current scope, active DE or policy status. Debian/RPM removal gates preflight
-before service stop, then release after writers stop and before PAM gate detach.
-Failures refuse removal. Unknown ownership is not erased.
+protection. Root-only `fic-cli prepare-uninstall` followed by
+`fic-cli policy rollback all` uses the same backends in the running restricted
+daemon over genuinely empty target requirements, independent of current scope,
+active DE or policy status. Infrastructure detach follows ownership release and
+independent stopped-writer proofs. Failures refuse ordinary removal. Unknown
+ownership is not erased. See [package-lifecycle.md](package-lifecycle.md).
 
 ## CAS boundary and validation
 
