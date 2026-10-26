@@ -21,4 +21,5 @@ res.log
 !packaging/lib/corresponding-source.py
 !tests/integration/package-lifecycle/*.py
 !tests/integration/verified_config_service/openssh_native/match_cases.py
+!tests/integration/verified_config_service/openssh_native/lifecycle_cases.py
 **/__pycache__/

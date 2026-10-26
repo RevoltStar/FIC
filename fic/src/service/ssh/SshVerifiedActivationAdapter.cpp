@@ -281,6 +281,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
                     if(::stat(("/proc/"+again.at("MainPID")+"/exe").c_str(),&processBinary)||
                        ::fstat(expectedBinary.get(),&diskBinary)||processBinary.st_dev!=diskBinary.st_dev||processBinary.st_ino!=diskBinary.st_ino)
                         throw d::Failure(ActivationStatus::InterferenceDetected,"SSH receipt process executable changed");
+                    result.runtimeEvidence={{"unit",request.reference.unit},{"InvocationID",again.at("InvocationID")},{"MainPID",again.at("MainPID")}};
                     result.status=SshActivationStatus::Success;
                     result.inputs=result.semantics=result.persistent=ProofState::Proven;
                     result.activation.status=result.activation.primaryStatus=ActivationStatus::Success;
@@ -355,6 +356,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
                 actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino)
                 throw d::Failure(ActivationStatus::InterferenceDetected, "ready service executable differs from verified SSH binary");
             promotedInvocation=ready.at("InvocationID");promotedPid=ready.at("MainPID");
+            result.runtimeEvidence={{"unit",request.reference.unit},{"InvocationID",promotedInvocation},{"MainPID",promotedPid}};
             if(socket)socket->ready(ready);
             if(alt)alt->ready(ready);
             runtimeProof = true;
@@ -513,9 +515,19 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     out.observedMetadata=metadataIdentities(observed);
     return out;
 }
-SshVerifiedActivationResult SshVerifiedActivationAdapter::activate(const SshVerifiedActivationRequest& r) { return perform(r); }
+#ifdef FIC_ACTIVATOR_TESTING
+namespace { thread_local const detail::AdapterTestHooks* policyTestHooks=nullptr; }
+#endif
+SshVerifiedActivationResult SshVerifiedActivationAdapter::activate(const SshVerifiedActivationRequest& r) {
+    return perform(r
+#ifdef FIC_ACTIVATOR_TESTING
+        ,policyTestHooks
+#endif
+    );
+}
 #ifdef FIC_ACTIVATOR_TESTING
 namespace detail {
+void setPolicyAdapterHooksForTests(const AdapterTestHooks* hooks) {policyTestHooks=hooks;}
 SshVerifiedActivationResult activateAdapterForTests(const SshVerifiedActivationRequest& r, const AdapterTestHooks& hooks) { return perform(r, &hooks); }
 }
 #endif

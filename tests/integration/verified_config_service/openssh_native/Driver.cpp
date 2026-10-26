@@ -8,6 +8,7 @@
 #include "modules/net/ssh/SshConfigTransaction.h"
 #include <fic/core/config/ModuleConfigFileHandler.h>
 #include "service/ssh/SshVerifiedActivationTestAccess.h"
+#include "service/ssh/SshListenerProof.h"
 // Test-only real OpenSSH adapter. Never installed or linked into FIC.
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/VerifiedConfigServiceActivatorTestAccess.h"
@@ -125,9 +126,31 @@ int main(int argc, char** argv) {
             bool journalFault=false;
             output["module"]=J::array();
             for(const auto& operation:input.at("operations")) {
+                const auto operationStarted=std::chrono::steady_clock::now();
                 const auto beforeAction=operation.value("before","");
+                if(beforeAction=="legacy-journal") {
+                    const auto path=work+"/module-state/journal.json";
+                    auto legacy=J::parse(text(path));legacy["schema_version"]=2;
+                    for(auto& record:legacy["records"])if(record["backend"]=="ssh")
+                        for(const auto* key:{"ownership_version","wrapper_fingerprints","operation_sequence","transition"})record["undo"].erase(key);
+                    write(path,legacy.dump());journalOwner.setOverridePath(path);
+                }
                 if(beforeAction=="restart") ctl({"restart",serviceUnit});
                 if(beforeAction=="main-comment") write(mainPath,text(mainPath)+"# administrative annotation\n");
+                if(beforeAction=="owned-drift"||beforeAction=="malformed-marker") {
+                    auto bytes=text(mainPath);
+                    if(beforeAction=="owned-drift") {
+                        const auto pos=bytes.find("MaxAuthTries 3");check(pos!=std::string::npos,"owned fixture line missing");
+                        bytes.replace(pos,std::string("MaxAuthTries 3").size(),"MaxAuthTries 4");
+                    } else bytes+="#@FIC_POLICY_BEGIN name=ssh_max_auth_tries@\n";
+                    write(mainPath,bytes);
+                }
+                if(beforeAction=="missing-owner") {
+                    const auto path=work+"/module-state/journal.json";auto doc=J::parse(text(path));
+                    auto& records=doc["records"];
+                    records.erase(std::remove_if(records.begin(),records.end(),[](const auto& record){return record["policy"]["policy"]=="ssh_max_auth_tries";}),records.end());
+                    write(path,doc.dump());journalOwner.setOverridePath(path);
+                }
                 const auto id=operation.at("policy").get<std::string>();
                 const auto desired=operation.at("value").get<std::string>();
                 std::map<std::string,std::string> configured;
@@ -141,8 +164,20 @@ int main(int argc, char** argv) {
                     catch(const d::Failure&) {return std::string("unavailable");}
                 };
                 const auto socketBefore=socketProof();
+                const auto listenerEvidence=[&](const auto& state) {
+                    J evidence;
+                    try {
+                        evidence["kernel"]=fic::service::ssh::detail::listener::kernelListeners();
+                        evidence["pid1_fds"]=fic::service::ssh::detail::listener::descriptors(1);
+                        if(state.at("MainPID")!="0")evidence["main_fds"]=fic::service::ssh::detail::listener::descriptors(std::stoul(state.at("MainPID")));
+                    } catch(...) {evidence["unproven"]=true;}
+                    return evidence;
+                };
+                const auto listenersBefore=listenerEvidence(before);
+
                 const auto fault=operation.value("fault","");
                 auto hook=[&] {
+                    if(fault=="before-save-crash") ::kill(::getpid(),SIGKILL);
                     if(fault=="disable") ctl({"disable",ubuntu?"ssh.socket":serviceUnit});
                     else if(fault=="foreign-input") write((includeDirectory+"/99-raced.conf"),"LogLevel VERBOSE\n");
                     else if(fault=="main-cas") write(mainPath,text(mainPath)+"# foreign CAS edit\n");
@@ -156,7 +191,13 @@ int main(int argc, char** argv) {
                 MODULE_CASE("ssh_max_auth_tries",NET_ssh_max_auth_tries);
 #undef MODULE_CASE
                 check(bool(policy),"unknown fixture policy");
+                fic::service::ssh::detail::AdapterTestHooks policyHooks;
+                if(fault=="cleanup")policyHooks.activation.fault=[](const std::string& action,std::size_t){return action=="umount"?EBUSY:0;};
+                if(fault=="runtime-crash")policyHooks.beforeFinalConfirmation=[] {::kill(::getpid(),SIGKILL);};
+                fic::service::ssh::detail::setPolicyAdapterHooksForTests(
+                    fault=="cleanup"||fault=="runtime-crash"?&policyHooks:nullptr);
                 setSshSaveOutcomeHookForTests([&](FileHandler::FileSaveOutcome& saved) {
+                    if(fault=="after-save-crash")::kill(::getpid(),SIGKILL);
                     if(fault=="after-save-stop") ctl({"stop",ubuntu?"ssh.socket":serviceUnit});
                     else if(fault=="after-save-disable") ctl({"disable",ubuntu?"ssh.socket":serviceUnit});
                     else if(fault=="after-save-input") write((includeDirectory+"/99-raced.conf"),"LogLevel VERBOSE\n");
@@ -173,18 +214,30 @@ int main(int argc, char** argv) {
                 bool applied;
                 std::string releaseMessage;
                 if(operation.value("rollback",false)) {
-                    if(operation.value("offline",false)) {if(ubuntu)ctl({"stop",serviceUnit,"ssh.socket"});else ctl({"stop",serviceUnit});}
+                    if(operation.value("offline",false)) {
+                        if(ubuntu)ctl({"stop",serviceUnit,"ssh.socket"});else ctl({"stop",serviceUnit});
+                        // systemd removes its RuntimeDirectory on stop. This
+                        // fixture provisions the native -T prerequisite only;
+                        // the stage-2 assertion concerns release of the current
+                        // refreshed block, not production offline admission.
+                        if(!alt)fs::create_directories("/run/sshd");
+                    }
                     const auto deps=fic::rollback::productionRollbackDeps(profile,resolver);
                     const auto released=fic::rollback::rollbackPolicyBeforeDisable(policy->policyRef(),static_cast<Ssh*>(policy.get())->managedResource(),deps);
                     applied=released.rollbackCompleted();releaseMessage=released.message;
                     for(const auto& outcome:released.outcomes)releaseMessage+="; "+outcome.message;
                 } else applied=policy->apply();
+                fic::service::ssh::detail::setPolicyAdapterHooksForTests(nullptr);
                 setSshSaveOutcomeHookForTests({});
                 const auto after=observe();
                 auto* journal=journalOwner.tryGet(error);check(journal||journalFault,error);
                 J records=J::array();
                 if(journal) for(const auto& record:journal->records())records.push_back({{"policy",record.policy.policyName},{"status",int(record.status)}});
                 output["module"].push_back({{"policy",id},{"applied",applied},{"release_message",releaseMessage},
+                    {"duration_ms",std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-operationStarted).count()},
+                    {"main_before",mainBefore},{"main_after",text(mainPath)},
+                    {"journal_before",J::parse(journalBefore)},{"journal_after",J::parse(text(work+"/module-state/journal.json"))},
+                    {"listeners_before",listenersBefore},{"listeners_after",listenerEvidence(after)},
                     {"socket_before",socketBefore},{"socket_after",socketProof()},{"before_pid",before.at("MainPID")},{"after_pid",after.at("MainPID")},
                     {"before_invocation",before.at("InvocationID")},{"after_invocation",after.at("InvocationID")},
                     {"main_unchanged",mainBefore==text(mainPath)},{"records",records},

@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <map>
 #include <string>
 #include <variant>
 #include <vector>
@@ -84,6 +85,28 @@ struct UndoRemoveGrubManagedSetting {
 // manual edits of the FIC block) and the provenance ids of the disabled
 // blocks FIC created for this mutation. No reverse delta and no historical
 // file content is recorded; old SSH payloads are not migrated.
+enum class SshTransitionPhase { Prepared, Published, DurablePublished, RuntimeVerified, Completed };
+struct SshOwnedProjection {
+    std::string value;
+    std::vector<std::string> disabledIds;
+    std::uint32_t ownershipVersion = 0; // 0: legacy ID-only, 1: creation-bound bodies
+    std::map<std::string,std::string> wrapperFingerprints;
+};
+struct SshPublicationProof {
+    std::uint64_t device=0, inode=0;
+    std::uint32_t mode=0, owner=0, group=0;
+    std::string sha256;
+    bool durable=false;
+};
+struct SshOwnershipTransition {
+    std::uint32_t version=1;
+    std::uint64_t sequence=0;
+    SshTransitionPhase phase=SshTransitionPhase::Prepared;
+    SshOwnedProjection previous, target;
+    std::string beforeSha256, targetSha256;
+    std::optional<SshPublicationProof> publication;
+    std::map<std::string,std::string> runtimeFacts;
+};
 struct UndoRemoveSshManagedPolicy {
     std::string policyName;   // FIC policy name (e.g. ssh_root_login)
     std::string directive;    // normalized sshd directive keyword
@@ -94,7 +117,17 @@ struct UndoRemoveSshManagedPolicy {
     // externally are treated as already released and are never
     // reconstructed.
     std::vector<std::string> disabledMutationIds;
+    std::uint32_t ownershipVersion=0;
+    std::map<std::string,std::string> wrapperFingerprints;
+    std::uint64_t operationSequence=0;
+    std::optional<SshOwnershipTransition> transition;
 };
+inline SshOwnedProjection sshOwnedProjection(const UndoRemoveSshManagedPolicy& p) {
+    return {p.appliedValue,p.disabledMutationIds,p.ownershipVersion,p.wrapperFingerprints};
+}
+inline bool sshTransitionPending(const UndoRemoveSshManagedPolicy& p) {
+    return p.transition && p.transition->phase!=SshTransitionPhase::Completed;
+}
 
 // Explicit FIC ownership payload for the SUDO scoped-Defaults blocker
 // (sudo_disable_scoped_defaults). The persistent ownership state lives in the

@@ -17,6 +17,7 @@
 #include <ctime>
 #include <functional>
 #include <limits>
+#include <stdexcept>
 #include <map>
 #include <set>
 #include <system_error>
@@ -406,6 +407,132 @@ bool validDesktopRecord(const MutationRecord& record, std::string& error) {
     return true;
 }
 
+json serializeSshProjection(const SshOwnedProjection& p) {
+    return {{"value",p.value},{"disabled_ids",p.disabledIds},{"ownership_version",p.ownershipVersion},
+        {"wrapper_fingerprints",p.wrapperFingerprints}};
+}
+bool validSshProjection(const SshOwnedProjection& p,std::string& error) {
+    // Schema 2 had no projection-specific size limit. Preserve its reader
+    // contract rather than imposing a new limit on historical permissions.
+    if(p.value.empty()||p.ownershipVersion>1||
+       (p.ownershipVersion==0&&!p.wrapperFingerprints.empty())) {
+        error="invalid SSH ownership projection";return false;
+    }
+    if(p.ownershipVersion==1) {
+        if(p.value.size()>4096||p.value.find_first_of("\r\n\0",0,3)!=std::string::npos) {
+            error="invalid SSH versioned value";return false;
+        }
+        std::set<std::string> ids;
+        for(const auto& id:p.disabledIds) {
+            const auto h=p.wrapperFingerprints.find(id);
+            if(id.empty()||id.size()>256||!ids.insert(id).second||h==p.wrapperFingerprints.end()||
+               !fic::core::ContentDigest::isCanonicalSha256Hex(h->second)) {
+                error="SSH creation-bound wrapper proof incomplete/duplicated";return false;
+            }
+        }
+        if(ids.size()!=p.wrapperFingerprints.size()){error="extra SSH wrapper fingerprint";return false;}
+    }
+    return true;
+}
+SshOwnedProjection deserializeSshProjection(const json& j) {
+    if(!j.is_object()||!j.at("ownership_version").is_number_unsigned()||j.at("ownership_version")>1||
+       !j.at("wrapper_fingerprints").is_object()||!j.at("disabled_ids").is_array())
+        throw std::runtime_error("invalid SSH projection types/version");
+    return {j.at("value").get<std::string>(),j.at("disabled_ids").get<std::vector<std::string>>(),
+        j.at("ownership_version").get<std::uint32_t>(),j.at("wrapper_fingerprints").get<std::map<std::string,std::string>>()};
+}
+const char* sshPhaseName(SshTransitionPhase phase) {
+    switch(phase) {
+    case SshTransitionPhase::Prepared:return "prepared";
+    case SshTransitionPhase::Published:return "published";
+    case SshTransitionPhase::DurablePublished:return "durable_published";
+    case SshTransitionPhase::RuntimeVerified:return "runtime_verified";
+    case SshTransitionPhase::Completed:return "completed";
+    }
+    return "unknown";
+}
+json serializeSshTransition(const SshOwnershipTransition& t) {
+    json publication=nullptr;
+    if(t.publication) {const auto& p=*t.publication;publication={{"device",p.device},{"inode",p.inode},
+        {"mode",p.mode},{"owner",p.owner},{"group",p.group},{"sha256",p.sha256},{"durable",p.durable}};}
+    return {{"version",t.version},{"intent","refresh"},{"sequence",t.sequence},{"phase",sshPhaseName(t.phase)},
+        {"previous",serializeSshProjection(t.previous)},{"target",serializeSshProjection(t.target)},
+        {"before_sha256",t.beforeSha256},{"target_sha256",t.targetSha256},
+        {"publication",publication},{"runtime_facts",t.runtimeFacts}};
+}
+bool deserializeSshTransition(const json& j,SshOwnershipTransition& t,std::string& error) {
+    if(!j.is_object()||j.at("intent")!="refresh"||!j.at("version").is_number_unsigned()||j.at("version")!=1||
+       !j.at("sequence").is_number_unsigned()){error="unsupported SSH operation contract";return false;}
+    t.version=1;t.sequence=j.at("sequence").get<std::uint64_t>();
+    bool found=false;
+    for(auto phase:{SshTransitionPhase::Prepared,SshTransitionPhase::Published,SshTransitionPhase::DurablePublished,
+                   SshTransitionPhase::RuntimeVerified,SshTransitionPhase::Completed})
+        if(j.at("phase")==sshPhaseName(phase)){t.phase=phase;found=true;}
+    if(!found){error="unknown SSH operation phase";return false;}
+    t.previous=deserializeSshProjection(j.at("previous"));t.target=deserializeSshProjection(j.at("target"));
+    t.beforeSha256=j.at("before_sha256").get<std::string>();t.targetSha256=j.at("target_sha256").get<std::string>();
+    t.runtimeFacts=j.at("runtime_facts").get<std::map<std::string,std::string>>();
+    const auto& p=j.at("publication");
+    if(!p.is_null()) {
+        for(const auto* key:{"device","inode","mode","owner","group"})
+            if(!p.at(key).is_number_unsigned()){error="invalid SSH publication identity";return false;}
+        if(p.at("mode")>07777||p.at("owner")>std::numeric_limits<std::uint32_t>::max()||p.at("group")>std::numeric_limits<std::uint32_t>::max()||!p.at("durable").is_boolean()){error="invalid SSH publication durability";return false;}
+        t.publication=SshPublicationProof{p.at("device").get<std::uint64_t>(),p.at("inode").get<std::uint64_t>(),
+            p.at("mode").get<std::uint32_t>(),p.at("owner").get<std::uint32_t>(),p.at("group").get<std::uint32_t>(),
+            p.at("sha256").get<std::string>(),p.at("durable").get<bool>()};
+    }
+    return true;
+}
+bool validSshRecord(const MutationRecord& record,std::string& error) {
+    if(record.undo.backend!=MutationBackend::Ssh)return true;
+    const auto* p=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);
+    if(!p||!validSshProjection(sshOwnedProjection(*p),error))return false;
+    if(p->ownershipVersion==1 && (record.policy.moduleName!="NET"||
+       record.policy.submoduleName!="SshEdit"||record.policy.policyName!=p->policyName||
+       record.resource.rfind("ssh:/",0)!=0)) {
+        error="invalid SSH versioned ownership identity";return false;
+    }
+    if(!p->transition)return true;
+    const auto& t=*p->transition;
+    if(std::string(sshPhaseName(t.phase))=="unknown"||t.version!=1||!t.sequence||t.sequence!=p->operationSequence||
+       record.policy.moduleName!="NET"||record.policy.submoduleName!="SshEdit"||record.policy.policyName!=p->policyName||
+       record.resource.rfind("ssh:/",0)!=0||!validSshProjection(t.previous,error)||!validSshProjection(t.target,error)||
+       (t.previous.ownershipVersion==0&&!t.previous.disabledIds.empty())||t.target.ownershipVersion!=1||
+       !fic::core::ContentDigest::isCanonicalSha256Hex(t.beforeSha256)||
+       !fic::core::ContentDigest::isCanonicalSha256Hex(t.targetSha256)||t.beforeSha256==t.targetSha256||
+       t.runtimeFacts.size()>32) {error="invalid SSH ownership transition/provenance";return false;}
+    for(const auto& [key,value]:t.runtimeFacts)
+        if(key.empty()||key.size()>128||value.size()>4096||value.find('\0')!=std::string::npos){error="invalid SSH runtime fact";return false;}
+    for(const auto& id:t.previous.disabledIds)
+        if(std::find(t.target.disabledIds.begin(),t.target.disabledIds.end(),id)==t.target.disabledIds.end()||
+           t.previous.wrapperFingerprints.at(id)!=t.target.wrapperFingerprints.at(id)) {
+            error="SSH refresh lost prior wrapper authority";return false;
+        }
+    if((t.phase==SshTransitionPhase::Prepared)!=!t.publication) {error="SSH publication phase/facts mismatch";return false;}
+    if(t.publication) {
+        const auto& pub=*t.publication;
+        if(!pub.inode||pub.mode>07777||pub.sha256!=t.targetSha256||
+           (t.phase==SshTransitionPhase::Published?pub.durable:!pub.durable)) {
+            error="SSH publication identity/durability unproven";return false;
+        }
+    }
+    if(t.phase==SshTransitionPhase::RuntimeVerified||t.phase==SshTransitionPhase::Completed) {
+        for(const auto* key:{"inputs","semantics","persistent"}) {
+            const auto fact=t.runtimeFacts.find(key);
+            if(fact==t.runtimeFacts.end()||fact->second!="Proven"){error="SSH verified activation facts incomplete";return false;}
+        }
+        for(const auto* key:{"unit","InvocationID","MainPID"})
+            if(!t.runtimeFacts.count(key)||t.runtimeFacts.at(key).empty()){error="SSH runtime identity missing";return false;}
+        if(!t.runtimeFacts.count("readiness")||t.runtimeFacts.at("readiness")!="true") {error="SSH readiness unproven";return false;}
+    }
+    const auto& expected=t.phase==SshTransitionPhase::Completed?t.target:t.previous;
+    if(serializeSshProjection(sshOwnedProjection(*p))!=serializeSshProjection(expected)||
+       (t.phase==SshTransitionPhase::Completed?record.status==MutationStatus::Prepared:record.status!=MutationStatus::Prepared)) {
+        error="SSH current permission/transition phase mismatch";return false;
+    }
+    return true;
+}
+
 json serializeUndoAction(const UndoAction& action) {
     json value;
     value["action"] = undoActionTypeName(action);
@@ -486,6 +613,12 @@ json serializeUndoAction(const UndoAction& action) {
             disabledIds.push_back(id);
         }
         value["disabled_mutation_ids"] = std::move(disabledIds);
+        if(sshPolicy->ownershipVersion||sshPolicy->operationSequence||sshPolicy->transition) {
+            value["ownership_version"]=sshPolicy->ownershipVersion;
+            value["wrapper_fingerprints"]=sshPolicy->wrapperFingerprints;
+            value["operation_sequence"]=sshPolicy->operationSequence;
+        }
+        if(sshPolicy->transition)value["transition"]=serializeSshTransition(*sshPolicy->transition);
     } else if (const auto* userCreation = std::get_if<
                    UndoRemoveUserCreationManagedPolicy>(&action.payload)) {
         value["policy"] = userCreation->policyName;
@@ -1417,6 +1550,22 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
                 payload.disabledMutationIds.push_back(item.get<std::string>());
             }
         }
+        try {
+        if(value.contains("ownership_version")) {
+            if(!value.at("ownership_version").is_number_unsigned()||value.at("ownership_version")>1||
+               !value.at("operation_sequence").is_number_unsigned()) {error="unsupported SSH ownership version";return false;}
+            payload.ownershipVersion=value.at("ownership_version").get<std::uint32_t>();
+            payload.wrapperFingerprints=value.at("wrapper_fingerprints").get<std::map<std::string,std::string>>();
+            payload.operationSequence=value.at("operation_sequence").get<std::uint64_t>();
+        } else if(value.contains("wrapper_fingerprints")||value.contains("transition")||value.contains("operation_sequence")) {
+            error="SSH ownership version missing";return false;
+        }
+        if(value.contains("transition")) {
+            SshOwnershipTransition transition;
+            if(!deserializeSshTransition(value.at("transition"),transition,error))return false;
+            payload.transition=std::move(transition);
+        }
+        } catch(const std::exception&) { error="malformed SSH typed ownership contract";return false; }
         action.payload = std::move(payload);
         return true;
     }
@@ -1989,6 +2138,7 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
         return false;
     }
     record.status = status;
+    if(!validSshRecord(record,error))return false;
     if ((record.undo.backend == MutationBackend::Desktop ||
          (std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload) ||
           std::holds_alternative<UndoOwnDesktopArtifact>(record.undo.payload))) &&
@@ -2692,7 +2842,7 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
             "Mutation journal не содержит schema_version (fail closed)",
             error);
     }
-    if (schemaIt->get<std::uint32_t>() != kSchemaVersion) {
+    if (*schemaIt != kSchemaVersion && *schemaIt != 2) {
         return failLoad("Неподдерживаемая schema_version mutation journal: " +
                             schemaIt->dump(),
                         error);
@@ -2727,6 +2877,11 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
         parsed.push_back(std::move(record));
     }
 
+    if(schemaIt->get<std::uint32_t>()==2)for(const auto& record:parsed) {
+        if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&
+           (ssh->ownershipVersion||ssh->operationSequence||ssh->transition))
+            return failLoad("SSH typed operations require journal schema 3",error);
+    }
     const MutationId parsedNextId = nextIdIt->get<MutationId>();
     for (const MutationRecord& record : parsed) {
         if (record.id >= parsedNextId) {
@@ -2948,7 +3103,10 @@ MutationJournal::PersistOutcome MutationJournal::persist(std::string& error) {
 bool MutationJournal::prepareMutation(MutationRecord record,
                                       MutationId& id,
                                       std::string& error) {
-    if (!validateSudoGlobalRecord(record, error)) return false;
+    if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)) return false;
+    if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&ssh->transition) {
+        error="SSH transitions require the typed journal API";return false;
+    }
     if (!loaded_) {
         error = "Mutation journal не загружен";
         return false;
@@ -3155,7 +3313,7 @@ bool MutationJournal::prepareMutation(MutationRecord record,
         }
     }
     if (record.undo.backend == MutationBackend::Sudo) {
-        if (!validateSudoGlobalRecord(record, error)) return false;
+        if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)) return false;
         if (const auto* auth = std::get_if<UndoReleaseSudoAuthentication>(&record.undo.payload)) {
             const bool existing = std::any_of(records_.begin(), records_.end(), [&](const auto& current) {
                 return current.isActive() && current.policy == record.policy && current.resource == record.resource;
@@ -3352,6 +3510,12 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             existing.policy == record.policy &&
             existing.undo.backend == record.undo.backend &&
             existing.resource == record.resource) {
+            if(record.undo.backend==MutationBackend::Ssh) {
+                if(existing.status==MutationStatus::Prepared && serializeUndoAction(existing.undo)==serializeUndoAction(record.undo)) {
+                    id=existing.id;return true;
+                }
+                error="active SSH ownership requires typed transition; generic reprepare refused";return false;
+            }
             if (record.undo.backend == MutationBackend::UserCreation) {
                 const auto* oldUserCreation = std::get_if<
                     UndoRemoveUserCreationManagedPolicy>(
@@ -3887,6 +4051,116 @@ bool MutationJournal::normalizeSudoAuthenticationPreparedToPrevious(
     return false;
 }
 
+bool MutationJournal::persistSshChange(const MutationRecord& previous,std::string& error) {
+    auto* record=find(previous.id);
+    if(!record||!validSshRecord(*record,error)) {
+        if(record)*record=previous;
+        return false;
+    }
+    record->updatedAtEpoch=currentEpochSeconds();
+    const auto outcome=persist(error);
+    if(outcome==PersistOutcome::Persisted)return true;
+    if(outcome==PersistOutcome::NotInstalled)*record=previous;
+    else health_=JournalHealth::Indeterminate;
+    return false;
+}
+bool MutationJournal::beginSshRefresh(MutationId id,const UndoRemoveSshManagedPolicy& target,
+    const std::string& before,const std::string& after,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSH transition requires healthy initialized journal/witness";return false;}
+    auto* record=find(id);
+    auto* old=record?std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload):nullptr;
+    if(!old||record->status!=MutationStatus::Applied||sshTransitionPending(*old)||
+       target.policyName!=old->policyName||target.directive!=old->directive||target.transition||
+       old->operationSequence==std::numeric_limits<std::uint64_t>::max()) {
+        error="SSH refresh requires one proven Applied predecessor";return false;
+    }
+    const auto split=record->resource.rfind(':');
+    const auto prefix=record->resource.substr(0,split+1);
+    for(const auto& other:records_) {
+        const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&other.undo.payload);
+        if(ssh&&other.resource.rfind(prefix,0)==0&&
+           (other.status==MutationStatus::Prepared||sshTransitionPending(*ssh))) {
+            error="SSH recovery required: unresolved shared-resource transition";return false;
+        }
+    }
+    const MutationRecord previous=*record;
+    SshOwnershipTransition t;t.sequence=old->operationSequence+1;
+    t.previous=sshOwnedProjection(*old);t.target=sshOwnedProjection(target);
+    t.beforeSha256=before;t.targetSha256=after;
+    old->operationSequence=t.sequence;old->transition=std::move(t);
+    record->status=MutationStatus::Prepared;record->error.clear();
+    return persistSshChange(previous,error);
+}
+bool MutationJournal::noteSshPublication(MutationId id,const AtomicTargetState& installed,bool durable,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSH publication facts require healthy journal";return false;}
+    auto* record=find(id);auto* p=record?std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload):nullptr;
+    if(!p||!p->transition||record->status!=MutationStatus::Prepared||
+       static_cast<int>(p->transition->phase)>static_cast<int>(SshTransitionPhase::DurablePublished)) {
+        error="SSH publication checkpoint has no Prepared transition";return false;
+    }
+    const MutationRecord previous=*record;
+    SshPublicationProof proof{static_cast<std::uint64_t>(installed.identity.device),static_cast<std::uint64_t>(installed.identity.inode),
+        static_cast<std::uint32_t>(installed.mode&07777),installed.owner,installed.group,
+        fic::core::ContentDigest::sha256Hex(installed.content),durable};
+    if(p->transition->publication) {
+        const auto& old=*p->transition->publication;
+        if(old.device!=proof.device||old.inode!=proof.inode||old.sha256!=proof.sha256||
+           old.mode!=proof.mode||old.owner!=proof.owner||old.group!=proof.group|| (old.durable&&!durable)) {
+            error="SSH publication proof changed during transition";return false;
+        }
+    }
+    p->transition->publication=std::move(proof);
+    p->transition->phase=durable?SshTransitionPhase::DurablePublished:SshTransitionPhase::Published;
+    return persistSshChange(previous,error);
+}
+bool MutationJournal::noteSshRuntime(MutationId id,bool verified,
+    const std::map<std::string,std::string>& facts,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSH activation facts require healthy journal";return false;}
+    auto* record=find(id);auto* p=record?std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload):nullptr;
+    if(!p||!p->transition||record->status!=MutationStatus::Prepared||p->transition->phase!=SshTransitionPhase::DurablePublished) {
+        error="SSH runtime checkpoint requires durable publication";return false;
+    }
+    const MutationRecord previous=*record;
+    p->transition->runtimeFacts=facts;
+    if(verified)p->transition->phase=SshTransitionPhase::RuntimeVerified;
+    return persistSshChange(previous,error);
+}
+bool MutationJournal::commitSshRefresh(MutationId id,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSH finalization requires healthy journal";return false;}
+    auto* record=find(id);auto* p=record?std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload):nullptr;
+    if(!p||!p->transition||record->status!=MutationStatus::Prepared||p->transition->phase!=SshTransitionPhase::RuntimeVerified||!record->error.empty()) {
+        error="SSH refresh cannot commit without verified runtime";return false;
+    }
+    const MutationRecord previous=*record;
+    const auto target=p->transition->target;
+    p->appliedValue=target.value;p->disabledMutationIds=target.disabledIds;
+    p->ownershipVersion=target.ownershipVersion;p->wrapperFingerprints=target.wrapperFingerprints;
+    p->transition->phase=SshTransitionPhase::Completed;record->status=MutationStatus::Applied;record->error.clear();
+    return persistSshChange(previous,error);
+}
+bool MutationJournal::failSshRefresh(MutationId id,const std::string& diagnostic,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSH failure checkpoint requires healthy journal";return false;}
+    auto* record=find(id);const auto* p=record?std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload):nullptr;
+    if(!p||!sshTransitionPending(*p)||record->status!=MutationStatus::Prepared||diagnostic.empty()||diagnostic.size()>4096) {
+        error="SSH failure checkpoint has no unresolved transition";return false;
+    }
+    const MutationRecord previous=*record;record->error=diagnostic;
+    return persistSshChange(previous,error);
+}
+bool MutationJournal::abortSshRefreshNoEffect(MutationId id,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSH no-effect abort requires healthy journal";return false;}
+    auto* record=find(id);auto* p=record?std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload):nullptr;
+    if(!p||!p->transition||record->status!=MutationStatus::Prepared||p->transition->phase!=SshTransitionPhase::Prepared||
+       p->transition->publication||!p->transition->runtimeFacts.empty()) {
+        error="SSH abort refused: publication/service effect is possible; manual recovery required";return false;
+    }
+    const MutationRecord previous=*record;
+    // Clear only the no-effect attempted transition; old permission/record ID
+    // remains. Never infer a previous value from current filesystem bytes.
+    p->transition.reset();record->status=MutationStatus::Applied;record->error.clear();
+    return persistSshChange(previous,error);
+}
+
 bool MutationJournal::setStatus(MutationId id, MutationStatus status,
                                 std::string& error) {
     return setStatusWithMessage(id, status, std::string(), error);
@@ -3910,6 +4184,9 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
         error = "Mutation record не найден: " + std::to_string(id);
         return false;
     }
+    if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload);ssh&&sshTransitionPending(*ssh)) {
+        error="SSH transition requires typed completion/no-effect abort; manual recovery for unresolved effects";return false;
+    }
     const MutationRecord previous = *record;
     record->status = status;
     if (status == MutationStatus::Applied) {
@@ -3930,6 +4207,7 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
     }
     if ((record->undo.backend == MutationBackend::DisplayManager || std::holds_alternative<UndoRemoveDisplayManagerBlock>(record->undo.payload)) &&
         !validDmRecord(*record, error)) { *record = previous; return false; }
+    if(!validSshRecord(*record,error)){*record=previous;return false;}
     record->error = message;
     record->updatedAtEpoch = currentEpochSeconds();
     const PersistOutcome outcome = persist(error);
@@ -3964,6 +4242,9 @@ bool MutationJournal::discard(MutationId id, std::string& error) {
     }
     for (std::size_t index = 0; index < records_.size(); ++index) {
         if (records_[index].id == id) {
+            if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&records_[index].undo.payload);ssh&&sshTransitionPending(*ssh)) {
+                error="cannot discard unresolved SSH ownership transition";return false;
+            }
             const MutationRecord removed = records_[index];
             records_.erase(records_.begin() +
                            static_cast<std::ptrdiff_t>(index));

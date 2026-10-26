@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <string>
 #include <vector>
+#include <map>
+#include <cstdint>
 
 // Explicit FIC ownership model of the main sshd_config.
 //
@@ -144,6 +146,7 @@ bool restoreSshDisabledLines(std::vector<std::string>& lines,
 // disappeared externally are treated as already released. Missing wrappers
 // are never reconstructed and never make the check fail.
 struct SshDisabledProvenanceCheck {
+    std::vector<std::string> bodyMismatchIds;
     bool payloadMalformed = false; // duplicate ids in the journal payload
     bool fileDuplicate = false;    // duplicate mutation id among the file wrappers
     std::vector<std::string> unknownIds; // actual ids absent from the payload
@@ -155,14 +158,15 @@ struct SshDisabledProvenanceCheck {
     // proven by it. Wrappers that disappeared externally (releasedIds) do
     // not affect the result: ownership-release rollback ignores them.
     bool safeToRelease() const {
-        return !payloadMalformed && !fileDuplicate && unknownIds.empty();
+        return !payloadMalformed && !fileDuplicate && unknownIds.empty() && bodyMismatchIds.empty();
     }
 };
 
 SshDisabledProvenanceCheck checkSshDisabledProvenance(
     const SshManagedModel& model,
     const std::string& policyName,
-    const std::vector<std::string>& expectedMutationIds);
+    const std::vector<std::string>& expectedMutationIds,
+    const std::map<std::string,std::string>& fingerprints = {}, std::uint32_t ownershipVersion = 0);
 
 // Human-readable description of a failed provenance check (for logs and
 // apply/rollback error messages). Returns an empty string when

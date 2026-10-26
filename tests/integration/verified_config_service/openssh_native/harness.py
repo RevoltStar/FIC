@@ -114,7 +114,13 @@ def request(include_dir=True):
 def drive(action, req, allow_crash=False):
     p = WORK / 'request.json'
     p.write_text(json.dumps(req))
-    process = run([DRIVER, action, str(p)], check=not allow_crash, timeout=150 if action == 'module' else 35)
+    # A module request contains several independent bounded production
+    # operations (admission/reference/activation each have their own deadline).
+    # A fixed 150s aggregate deadline truncated valid multi-operation ALT runs.
+    operations=len(req.get('operations', []))
+    assert action!='module' or 0<operations<=64
+    process = run([DRIVER, action, str(p)], check=not allow_crash,
+                  timeout=30+240*operations if action == 'module' else 35)
     if allow_crash and process.returncode == -9:
         return {'status': 'SIGKILL', 'readinessConfirmed': False}
     data = json.loads(process.stdout.splitlines()[-1])

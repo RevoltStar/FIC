@@ -22,6 +22,8 @@ struct SshVerifiedActivationResult {
     ProofState persistent = ProofState::NotProven;
     bool activationAttempted = false;
     ActivationResult activation;
+    // Observed identity/facts from the same verified operation, not ownership.
+    std::map<std::string,std::string> runtimeEvidence;
     std::string diagnostic;
     bool success() const { return status == SshActivationStatus::Success; }
 };

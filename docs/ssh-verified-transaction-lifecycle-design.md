@@ -2,9 +2,11 @@
 
 ## 1. Executive summary
 
-**Статус: проект расширенного lifecycle; Stage 1/2 и bounded Debian integration
-описаны в §22/23 и последнем разделе. Проектные durable restart intent/REFRESH
-не реализованы текущим schema 2 и не заявляются как готовые.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
+**Статус: исторический проект расширенного lifecycle с последующими дополнениями.
+Stage 1/2 и bounded Debian integration описаны в §22/23 и последнем разделе.
+Текущий typed REFRESH/schema 3
+описан в [контракте adapter](ssh-verified-activation-adapter.md#crash-consistent-ownership-refresh);
+автоматического recovery Prepared по-прежнему нет.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
 Production, API, journal schema и поведение политик этим документом не изменяются.
 
 Рекомендация: отдельный **SSH transaction coordinator** (вариант B), переиспользующий

@@ -95,12 +95,14 @@ bool FileHandler::loadFile(){
     return true;
 }
 
-bool FileHandler::saveFile(){
+std::string FileHandler::pendingContent() const {
     std::string content;
-    for (const std::string& line : original_lines_) {
-        content += line;
-        content.push_back('\n');
-    }
+    for(const auto& line:original_lines_){content+=line;content.push_back('\n');}
+    return content;
+}
+
+bool FileHandler::saveFile(){
+    const std::string content=pendingContent();
 
     std::string error;
     if (!AtomicFileWriter::write(filepath_, content, options_.writeOptions, &error)) {
@@ -118,11 +120,7 @@ FileHandler::FileSaveOutcome FileHandler::saveFileIfUnchanged(
                 filepath_;
         return outcome;
     }
-    std::string content;
-    for (const std::string& line : original_lines_) {
-        content += line;
-        content.push_back('\n');
-    }
+    const std::string content=pendingContent();
 
     AtomicWriteOptions options = options_.writeOptions;
     options.expectedTargetState = loadSnapshot_;

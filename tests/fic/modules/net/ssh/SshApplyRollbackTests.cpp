@@ -26,6 +26,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <nlohmann/json.hpp>
+#include <fic/core/integrity/ContentDigest.h>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -963,8 +965,8 @@ void testPreparedAfterCrashRequiresResolution() {
             }
         }
     }
-    recordPreparedSsh(kSshPortPolicy,
-                      "ssh:" + tree.configPath().string() + ":Port", stale);
+    {std::string e;auto* journal=DaemonMutationJournal::instance().tryGet(e);require(journal,e);
+     require(journal->setStatus(journal->activeRecords(kSshPortPolicy).back().id,MutationStatus::Prepared,e),e);}
 
     const int calls=tree.runtime()->tCalls, reloads=tree.runtime()->reloadCalls;
     const auto journalBefore=readFile(tree.journalPath());
@@ -1033,8 +1035,13 @@ void testPreparedWithDriftedBlockFailsClosed() {
     drifted.policyName = "ssh_port";
     drifted.directive = "Port";
     drifted.appliedValue = "9999";
-    recordPreparedSsh(kSshPortPolicy,
-                      "ssh:" + tree.configPath().string() + ":Port", drifted);
+    // Inject a persisted crash fixture directly; the generic production
+    // reprepare API now correctly refuses to overwrite an Applied SSH owner.
+    auto document=nlohmann::json::parse(readFile(tree.journalPath()));
+    document["records"][0]["status"]="prepared";
+    document["records"][0]["undo"]["applied_value"]="9999";
+    writeFile(tree.journalPath(),document.dump());
+    DaemonMutationJournal::instance().setOverridePath(tree.journalPath());
 
     require(!policy->apply(),
             "a drifted prepared mutation must fail closed");
@@ -1924,6 +1931,44 @@ void testSharedApplyDisableResourceLock() {
 
 } // namespace
 
+void testCreationFingerprintsAndLegacyBoundary() {
+    SshApplyTree tree;tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port","2222");
+    JournalOverride guard(tree.journalPath());auto policy=tree.makePolicy<NET_ssh_port>();
+    require(policy->apply(),"fresh creation must apply");
+    std::string error;auto* journal=DaemonMutationJournal::instance().tryGet(error);require(journal,error);
+    const auto undo=std::get<UndoRemoveSshManagedPolicy>(journal->records().back().undo.payload);
+    require(undo.ownershipVersion==1&&undo.wrapperFingerprints.size()==1&&
+        undo.wrapperFingerprints.at(undo.disabledMutationIds[0])==fic::core::ContentDigest::sha256Hex("Port 22"),"new wrapper must bind its creation bytes");
+    SshConfigFileHandler handler(tree.configPath().string());require(handler.loadConfig(),"load fingerprint fixture");
+    SshManagedModel model;require(parseSshManagedModel(handler.lines(),model,error)==SshManagedParseStatus::Ok,error);
+    const auto wrapper=model.disabled.front();
+    auto& lines=handler.lines();lines.erase(lines.begin()+wrapper.beginLine,lines.begin()+wrapper.endLine+1);
+    lines.insert(lines.begin()+wrapper.beginLine,"Port 23");
+    disableSshLine(lines,wrapper.beginLine,"ssh_port",wrapper.mutationId);
+    require(handler.saveFileIfUnchanged(error).installed,error);
+    const auto drifted=readFile(tree.configPath());
+    require(!policy->apply()&&readFile(tree.configPath())==drifted,"new body drift preserving ID must refuse without adoption");
+    tree.writePolicyValue("ssh_port","2323");auto refresh=tree.makePolicy<NET_ssh_port>();
+    require(!refresh->apply()&&readFile(tree.configPath())==drifted,"REFRESH adopted edited version1 wrapper body");
+    tree.writePolicyValue("ssh_port","2222");
+    require(!undoSshManagedPolicyMutation(tree.rollbackOptions(),undo).ok,"new rollback must reject mismatched body fingerprint");
+    // Actual old schema2 permission remains ID-based; never fabricate hashes.
+    auto doc=nlohmann::json::parse(readFile(tree.journalPath()));doc["schema_version"]=2;
+    for(auto& record:doc["records"])for(const auto* key:{"ownership_version","wrapper_fingerprints","operation_sequence","transition"})record["undo"].erase(key);
+    writeFile(tree.journalPath(),doc.dump());DaemonMutationJournal::instance().setOverridePath(tree.journalPath());
+    const auto legacyBytes=readFile(tree.journalPath());
+    require(policy->apply(),"legacy same-value apply must keep old permission semantics");
+    require(readFile(tree.journalPath())==legacyBytes,"legacy apply must not invent fingerprints or migrate journal");
+    journal=DaemonMutationJournal::instance().tryGet(error);require(journal,error);
+    const auto legacy=std::get<UndoRemoveSshManagedPolicy>(journal->records().back().undo.payload);
+    require(legacy.ownershipVersion==0&&legacy.wrapperFingerprints.empty(),"legacy ID-only proof was silently promoted");
+    auto target=legacy;target.appliedValue="2323";target.ownershipVersion=1;
+    require(!journal->beginSshRefresh(journal->records().back().id,target,std::string(64,'a'),std::string(64,'b'),error),"legacy wrappers cannot refresh without historical fingerprints");
+    require(readFile(tree.journalPath())==legacyBytes,"rejected legacy refresh changed provenance");
+    const auto released=undoSshManagedPolicyMutation(tree.rollbackOptions(),legacy);
+    require(released.ok&&readFile(tree.configPath()).find("Port 23")!=std::string::npos,"legacy release contract changed silently");
+}
+
 int main() {
     // Policy::log() requires initialized FIC runtime paths (logger output).
     TempTree runtimeTree("/tmp/fic-ssh-apply-runtime-XXXXXX");
@@ -2031,6 +2076,7 @@ int main() {
         {"apply concurrent modification is refused",
          testApplyConcurrentModificationIsRefused},
         {"R1 fresh failed compensation retains provenance", testFailedCompensationRetainsFreshPrepared},
+        {"creation fingerprints and legacy boundary",testCreationFingerprintsAndLegacyBoundary},
         {"R1b refresh preinstall failure retains Applied", testAppliedRefreshPreinstallFailure},
         {"R1b refresh postinstall failure retains Applied", testAppliedRefreshPostinstallFailure},
         {"typed SSH transaction fault matrix", testTypedTransactionFaultMatrix},

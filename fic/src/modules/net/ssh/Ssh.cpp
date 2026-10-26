@@ -72,7 +72,7 @@ SshOwnershipState analyzeOwnership(const std::vector<std::string>& lines,
     // wrapper absent from the payload is an error.
     state.wrappersValid = true;
     const SshDisabledProvenanceCheck provenance = checkSshDisabledProvenance(
-        model, undo.policyName, undo.disabledMutationIds);
+        model, undo.policyName, undo.disabledMutationIds,undo.wrapperFingerprints,undo.ownershipVersion);
     if (!provenance.safeToRelease()) {
         state.wrappersValid = false;
         state.error =
@@ -218,7 +218,9 @@ bool Ssh::apply() {
     // including attempts by another SSH policy, before runtime commands.
     for (const auto& record : journal->records()) {
         if (record.undo.backend == fic::rollback::MutationBackend::Ssh &&
-            record.status == fic::rollback::MutationStatus::Prepared &&
+            (record.status == fic::rollback::MutationStatus::Prepared ||
+             (std::get_if<fic::rollback::UndoRemoveSshManagedPolicy>(&record.undo.payload) &&
+              fic::rollback::sshTransitionPending(std::get<fic::rollback::UndoRemoveSshManagedPolicy>(record.undo.payload)))) &&
             record.resource.rfind("ssh:" + sshPath + ":", 0) == 0) {
             this->log("SSH recovery required: unresolved Prepared mutation " +
                       std::to_string(record.id) + "; автоматическое применение запрещено", logLevel::ERROR);
@@ -291,9 +293,8 @@ bool Ssh::apply() {
             return false;
         }
     }
-    // A value change requires the previous owned state to be rolled back
-    // first: the managed block line must match the undo payload's applied
-    // value for ownership to be provable.
+    // Legacy test contract keeps its old explicit release path. Verified
+    // profiles retain the predecessor and plan a single atomic REFRESH.
     if (hasExistingRecord) {
         bool valueChanged = false;
         for (const fic::rollback::MutationRecord& record : activeRecords) {
@@ -304,11 +305,7 @@ bool Ssh::apply() {
                 valueChanged = true;
             }
         }
-        if (valueChanged && verified) {
-            this->log("SSH REFRESH unsupported: existing ownership retained; explicit release/recovery required", logLevel::ERROR);
-            return false;
-        }
-        if (valueChanged) {
+        if (valueChanged && !verified) {
             SshRollbackOptions rollbackOptions = makeRollbackOptions();
             for (const fic::rollback::MutationRecord& record : activeRecords) {
                 const auto* recordPayload = std::get_if<
@@ -510,27 +507,40 @@ bool Ssh::apply() {
                   logLevel::ERROR);
         return false;
     }
-    // Do not re-prepare an existing active identity: schema 2 cannot retain
-    // previous/target ownership for REFRESH or safely abort it after a crash.
-    if (hasExistingRecord) {
-        this->log("SSH REFRESH requires ownership transition recovery support; existing mutation preserved", logLevel::ERROR);
+    const bool refresh=verified&&hasExistingRecord;
+    const fic::rollback::UndoRemoveSshManagedPolicy* previousPayload=hasExistingRecord?
+        std::get_if<fic::rollback::UndoRemoveSshManagedPolicy>(&activeRecords.back().undo.payload):nullptr;
+    if(hasExistingRecord && (!refresh||activeRecords.size()!=1||activeRecords.back().resource!=resource||
+       activeRecords.back().status!=fic::rollback::MutationStatus::Applied||!ownership.blockPresent||!ownership.blockOwned||
+       !previousPayload || (previousPayload->ownershipVersion==0&&!previousPayload->disabledMutationIds.empty()))) {
+        this->log("SSH REFRESH refused: exact Applied ownership required; legacy ID-only wrappers need manual resolution",logLevel::ERROR);
         return false;
     }
-    // ---- Journal: prepare BEFORE touching the system (crash consistency) ----
-
-    payload.disabledMutationIds = newWrapperIds;
+    // Retain all prior wrapper identities and their historical fingerprints.
+    // Newly planned wrappers bind their original bytes at creation, never by
+    // promoting observed legacy wrapper bodies into historical authority.
+    payload.ownershipVersion=1;
+    if(previousPayload) {
+        payload.disabledMutationIds=previousPayload->disabledMutationIds;
+        payload.wrapperFingerprints=previousPayload->wrapperFingerprints;
+    }
+    payload.disabledMutationIds.insert(payload.disabledMutationIds.end(),newWrapperIds.begin(),newWrapperIds.end());
+    SshManagedModel targetModel;
+    if(parseSshManagedModel(planned,targetModel,planError)!=SshManagedParseStatus::Ok)return false;
+    for(const auto& wrapper:targetModel.disabled)
+        if(wrapper.policy==this->policyName && std::find(newWrapperIds.begin(),newWrapperIds.end(),wrapper.mutationId)!=newWrapperIds.end())
+            payload.wrapperFingerprints.emplace(wrapper.mutationId,fic::core::ContentDigest::sha256Hex(wrapper.originalLine));
+    // Get the exact writer serialization from the shared writer itself.
+    SshConfigFileHandler target(sshPath);target.lines()=planned;
     std::string recordError;
-    if (!fic::rollback::recordPreparedMutation(this->policyRef(), resource,
-                                               fic::rollback::UndoAction{
-                                                   fic::rollback::MutationBackend::Ssh,
-                                                   payload},
-                                               mutationId, recordError)) {
-        this->log("Не удалось подготовить запись mutation journal: " +
-                      recordError,
-                  logLevel::ERROR);
-        return false;
-    }
-    newRecord = true;
+    const bool prepared=refresh?
+        journal->beginSshRefresh(mutationId,payload,
+            fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content),
+            fic::core::ContentDigest::sha256Hex(target.pendingContent()),recordError):
+        fic::rollback::recordPreparedMutation(this->policyRef(),resource,
+            fic::rollback::UndoAction{fic::rollback::MutationBackend::Ssh,payload},mutationId,recordError);
+    if(!prepared) {this->log("SSH ownership prepare failed: "+recordError,logLevel::ERROR);return false;}
+    newRecord=!refresh;
 
     // ---- Transaction: conditional atomic write -> durability -> verify ->
     //      reload; compensation restores the exact pre-attempt snapshot ----
@@ -550,6 +560,7 @@ bool Ssh::apply() {
         };
         hooks.verifiedActivation = [&](const AtomicTargetState& installed, std::string& error) {
             try {
+                if(refresh&&!journal->noteSshPublication(mutationId,installed,true,error))return false;
                 if (!AtomicFileWriter::targetStateMatches(sshPath, installed, &error)) return false;
                 if (Adapter::serviceAdmission()!=serviceBaseline) throw std::runtime_error("SSH runtime/launch changed after save");
                 auto next = Adapter::captureReference(selected, fic::core::ContentDigest::sha256Hex(installed.content));
@@ -558,6 +569,15 @@ bool Ssh::apply() {
                 next.expectedService=serviceBaseline;
                 next.additionalPolicies=additionalPolicies;
                 const auto result=Adapter::activate(next);
+                if(refresh) {
+                    const auto name=[](fic::service::ssh::ProofState p){return p==fic::service::ssh::ProofState::Proven?"Proven":p==fic::service::ssh::ProofState::NonCompliant?"NonCompliant":"NotProven";};
+                    auto facts=result.runtimeEvidence;
+                    facts["inputs"]=name(result.inputs);facts["semantics"]=name(result.semantics);facts["persistent"]=name(result.persistent);
+                    facts["readiness"]=result.activation.readinessConfirmed?"true":"false";
+                    facts["status"]=fic::service::activationStatusName(result.activation.status);
+                    facts["adapter_status"]=std::to_string(static_cast<int>(result.status));
+                    if(!journal->noteSshRuntime(mutationId,result.success(),facts,error))return false;
+                }
                 if (!result.success()) { error="Persistent configuration saved; verified activation failed; provenance retained: " + result.diagnostic; return false; }
                 return true;
             } catch (const std::exception& e) { error=e.what(); return false; }
@@ -603,11 +623,31 @@ bool Ssh::apply() {
         "Политика '" + this->policyName + "' применена к sshd_config");
 
     if (!transaction.ok) {
+        bool refreshAbortedNoEffect=false;
+        if(refresh) {
+            std::string checkpoint;
+            if(transaction.provesNoEffect()) {
+                refreshAbortedNoEffect=journal->abortSshRefreshNoEffect(mutationId,checkpoint);
+                if(!refreshAbortedNoEffect)
+                    this->log("SSH no-effect abort failed; ownership retained: "+checkpoint,logLevel::ERROR);
+            } else {
+                if(transaction.installedTargetState&&journal->usable()) {
+                    for(const auto& current:journal->records())if(current.id==mutationId) {
+                        const auto* p=std::get_if<fic::rollback::UndoRemoveSshManagedPolicy>(&current.undo.payload);
+                        if(p&&p->transition&&static_cast<int>(p->transition->phase)<=static_cast<int>(fic::rollback::SshTransitionPhase::DurablePublished))
+                            journal->noteSshPublication(mutationId,*transaction.installedTargetState,
+                                transaction.persistentEffect==SshPersistentEffect::DurableInstalled,checkpoint);
+                        break;
+                    }
+                }
+                if(journal->usable())journal->failSshRefresh(mutationId,transaction.message.substr(0,4096),checkpoint);
+            }
+        }
         if (transaction.mayDiscardPrepared(newRecord)) {
             std::string discardError;
             if (!fic::rollback::discardMutation(mutationId, discardError))
                 this->log("Ошибка удаления no-effect Prepared: " + discardError, logLevel::WARN);
-        } else {
+        } else if(!refreshAbortedNoEffect) {
             this->log("SSH recovery required: unresolved Prepared provenance retained", logLevel::ERROR);
         }
         this->log("Применение политики '" + this->policyName +
@@ -617,7 +657,7 @@ bool Ssh::apply() {
     }
 
     std::string commitError;
-    if (!fic::rollback::commitMutation(mutationId, commitError)) {
+    if (!(refresh?journal->commitSshRefresh(mutationId,commitError):fic::rollback::commitMutation(mutationId, commitError))) {
         this->log("SSH-мутация применена, но запись mutation journal не "
                   "зафиксирована: " + commitError,
               logLevel::ERROR);

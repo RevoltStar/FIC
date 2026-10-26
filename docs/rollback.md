@@ -173,59 +173,27 @@ Crash-consistency: запись создаётся в состоянии `Prepar
 (restore исходного содержимого при провале postcondition) сохранены;
 persistent-запись коммитится только после успешного apply.
 
-### Prepared recovery (SSH backend)
+### SSH Prepared и REFRESH
 
-`Ssh::apply()` разрешает provenance (journal lookup) ДО проверки effective
-compliance: compliance fast-path никогда не обходит `Prepared`-запись,
-иначе крэш между записью файла и reload дал бы ложный успешный apply без
-runtime-перезагрузки. Для активной `Prepared`-записи выполняется recovery
-state machine (текущий файл классифицируется production-моделью
-`classifyRecordedMutation`, файл при recovery никогда не перезаписывается):
+Любая незавершённая SSH Prepared блокирует новые apply и release для общего
+main SSH resource. Автоматического semantic recovery нет, в том числе если
+текущие байты соответствуют предполагаемому целевому состоянию. Reload journal
+не является подтверждением активации или разрешением незавершённого intent.
 
-```text
-Prepared + AFTER
-→ verifyPolicyValue(recorded parameter, recorded appliedValue)
-  (та же policy postcondition, что и у original apply: effective value,
-   scalar match, Match/Include conditional overrides, audit overrides;
-   используется recorded appliedValue — recovery сначала завершает старую
-   persisted-транзакцию, а не новый desired value)
-→ durability barrier (ensureTargetDurableIfCurrentState: re-prove exact
-   classified snapshot, затем fsync каталога)
-→ reload (если сервис активен)
-→ commit Prepared → Applied
-Prepared + BEFORE
-→ sshd -T validate
-→ durability barrier (ensureTargetDurableIfCurrentState: re-prove exact
-   classified snapshot, затем fsync каталога)
-→ reload (если сервис активен)
-→ discard устаревшей Prepared
-→ продолжение обычного fresh apply нового desired value
-Prepared + ни AFTER, ни BEFORE (drift)
-→ conflict, fail closed; apply false, файл не изменён, Prepared остаётся
-```
+Verified REFRESH заменяет собственный блок одной conditional atomic replacement,
+не освобождая предварительно старое ограничение. Schema 3 существующего journal
+хранит previous/target ownership, публикацию, durability и verified runtime facts.
+Только durable finalization заменяет прежнее appliedValue. При доказанном no-effect
+текущая попытка снимается с сохранением старого Applied ownership; после возможного
+OS effect сохраняется Prepared. Подробный контракт и ограничения legacy schema 2:
+[SSH adapter](ssh-verified-activation-adapter.md#crash-consistent-ownership-refresh).
 
-Recovery не имеет права коммитить mutation с более слабой postcondition, чем
-original apply: `validateConfiguration()` доказывает только, что sshd может
-разобрать effective config, поэтому для AFTER обязательна
-`runtime.verifyPolicyValue()` (effective value, Port semantics, scalar match,
-условные Match overrides, audit overrides). Любая неудача
-verify/validate/barrier/reload/commit/discard оставляет `Prepared` активной и
-завершает apply ошибкой (generic repair не выполняется). После recovery
-`Applied`-записи проверка active value change применяется как к обычной
-активной мутации.
-
-### Active value changes (SSH, MVP)
-
-Изменение желаемого значения при активной SSH-мутации выполняется внутри
-apply по ownership-release семантике: предыдущее owned состояние откатывается
-(снимаются только существующие доказанные wrapper'ы, удаляется существующий
-owned managed block), journal-запись помечается `RolledBack`, файл
-перечитывается, и новое значение применяется к фактическому текущему
-состоянию конфига. Исчезнувшие извне артефакты предыдущей мутации (вплоть
-до `NothingToDo` полного отката) не блокируют смену значения и не
-реконструируются. `Conflict` предыдущего отката (неизвестный или
-дублирующийся wrapper, ручная правка блока, malformed маркеры) отказывает
-apply fail-closed: файл и journal не изменяются.
+Новые wrappers имеют creation-bound body fingerprints; подмена тела с прежним ID
+отказывает release. Legacy ID-only wrappers блокируют REFRESH, но прежний release
+контракт намеренно сохранён: он проверяет ID/структуру и не обнаруживает валидную
+перекодировку тела при сохранении ID. Текущие байты старого wrapper никогда не
+превращаются автоматически в историческое доказательство ownership. Исчезнувшие
+артефакты не восстанавливаются, чужие блоки не принимаются во владение.
 
 ### Plan identity preflight (planner → classifier)
 

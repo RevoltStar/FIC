@@ -1,3 +1,4 @@
+#include <fic/core/integrity/ContentDigest.h>
 #include "modules/net/ssh/SshManagedBlock.h"
 
 #include "modules/net/ssh/SshConfigSyntax.h"
@@ -358,7 +359,8 @@ SshManagedParseStatus parseSshManagedModel(const std::vector<std::string>& lines
 SshDisabledProvenanceCheck checkSshDisabledProvenance(
     const SshManagedModel& model,
     const std::string& policyName,
-    const std::vector<std::string>& expectedMutationIds) {
+    const std::vector<std::string>& expectedMutationIds,
+    const std::map<std::string,std::string>& fingerprints,std::uint32_t ownershipVersion) {
     SshDisabledProvenanceCheck result;
 
     std::vector<std::string> expected = expectedMutationIds;
@@ -368,6 +370,19 @@ SshDisabledProvenanceCheck checkSshDisabledProvenance(
         result.payloadMalformed = true;
     }
 
+    if(ownershipVersion>1||(ownershipVersion==0&&!fingerprints.empty()))result.payloadMalformed=true;
+    if(ownershipVersion==1) {
+        if(fingerprints.size()!=expected.size())result.payloadMalformed=true;
+        for(const auto& id:expected) {
+            const auto found=fingerprints.find(id);
+            if(found==fingerprints.end()||!fic::core::ContentDigest::isCanonicalSha256Hex(found->second))result.payloadMalformed=true;
+        }
+        for(const auto& block:model.disabled)if(block.policy==policyName) {
+            const auto found=fingerprints.find(block.mutationId);
+            if(found==fingerprints.end()||found->second!=fic::core::ContentDigest::sha256Hex(block.originalLine))
+                result.bodyMismatchIds.push_back(block.mutationId);
+        }
+    }
     std::vector<std::string> actual;
     for (const SshDisabledBlock& block : model.disabled) {
         if (block.policy == policyName) {
@@ -414,6 +429,7 @@ std::string describeSshDisabledProvenance(
     if (check.payloadMalformed) {
         description += "journal payload содержит дублирующийся mutation id; ";
     }
+    if(!check.bodyMismatchIds.empty())description+="wrapper body fingerprint mismatch; ";
     if (check.fileDuplicate) {
         description += "в файле несколько FIC_DISABLED блоков с одним mutation id; ";
     }

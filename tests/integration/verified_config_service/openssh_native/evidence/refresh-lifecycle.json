@@ -1,0 +1,1685 @@
+{
+  "task": "SSH lifecycle stage 2 verified REFRESH",
+  "journal_schema": 3,
+  "ownership_version": 1,
+  "native": {
+    "debian-12": {
+      "status": "PASS",
+      "groups": {
+        "five-policies-refresh-and-idempotence": {
+          "result": "PASS",
+          "operations": 21,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "legacy-wrapper-boundary-and-wrapper-free-refresh": {
+          "result": "PASS",
+          "operations": 8,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "ownership-refusal-owned-drift": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-malformed-marker": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-missing-owner": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "refresh-fault-main-cas": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "refresh-fault-after-save-input": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-stop": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-main": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-durability": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-unknown-writer": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-journal-commit": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-cleanup": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "crash-setup-before-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-before-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-after-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-after-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-runtime-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-runtime-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "release-current-refreshed-owner": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "group_count": 20,
+      "port_refresh_listener_evidence": [
+        {
+          "old_listeners": {
+            "127.0.0.1:2222": [
+              340706
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2323": [
+              343431
+            ]
+          },
+          "old_inodes_absent": true
+        },
+        {
+          "old_listeners": {
+            "127.0.0.1:2323": [
+              343431
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2222": [
+              334620
+            ]
+          },
+          "old_inodes_absent": true
+        }
+      ],
+      "clean_runner_release_recheck": "PASS",
+      "main_positive_operation_durations_ms": [
+        11585,
+        1449,
+        1483,
+        1410,
+        1421,
+        3847,
+        418,
+        401,
+        413,
+        410,
+        1408,
+        1498,
+        1604,
+        1449,
+        1574,
+        5365,
+        437,
+        436,
+        462,
+        506,
+        425
+      ]
+    },
+    "debian-13": {
+      "status": "PASS",
+      "groups": {
+        "five-policies-refresh-and-idempotence": {
+          "result": "PASS",
+          "operations": 21,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "legacy-wrapper-boundary-and-wrapper-free-refresh": {
+          "result": "PASS",
+          "operations": 8,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "ownership-refusal-owned-drift": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-malformed-marker": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-missing-owner": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "refresh-fault-main-cas": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "refresh-fault-after-save-input": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-stop": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-main": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-durability": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-unknown-writer": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-journal-commit": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-cleanup": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "crash-setup-before-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-before-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-after-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-after-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-runtime-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-runtime-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "release-current-refreshed-owner": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "group_count": 20,
+      "port_refresh_listener_evidence": [
+        {
+          "old_listeners": {
+            "127.0.0.1:2222": [
+              128426
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2323": [
+              126356
+            ]
+          },
+          "old_inodes_absent": true
+        },
+        {
+          "old_listeners": {
+            "127.0.0.1:2323": [
+              126356
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2222": [
+              133162
+            ]
+          },
+          "old_inodes_absent": true
+        }
+      ],
+      "clean_runner_release_recheck": "PASS",
+      "main_positive_operation_durations_ms": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    "ubuntu-24.04": {
+      "status": "PASS",
+      "groups": {
+        "five-policies-refresh-and-idempotence": {
+          "result": "PASS",
+          "operations": 21,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "legacy-wrapper-boundary-and-wrapper-free-refresh": {
+          "result": "PASS",
+          "operations": 8,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "ownership-refusal-owned-drift": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-malformed-marker": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-missing-owner": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "refresh-fault-main-cas": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "refresh-fault-after-save-input": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-stop": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-main": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-durability": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-unknown-writer": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-journal-commit": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-cleanup": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "crash-setup-before-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-before-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-after-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-after-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-runtime-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-runtime-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "release-current-refreshed-owner": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "group_count": 20,
+      "port_refresh_listener_evidence": [
+        {
+          "old_listeners": {
+            "127.0.0.1:2222": [
+              355390
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2323": [
+              353086
+            ]
+          },
+          "old_inodes_absent": true,
+          "pid1_fds": [
+            325281,
+            325282,
+            325283,
+            325284,
+            325286,
+            325289,
+            325294,
+            325309,
+            325312,
+            325376,
+            326320,
+            326352,
+            326392,
+            328170,
+            331889,
+            331980,
+            332925,
+            353086,
+            364207
+          ],
+          "sshd_fds": [
+            353086,
+            363057
+          ]
+        },
+        {
+          "old_listeners": {
+            "127.0.0.1:2323": [
+              353086
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2222": [
+              368830
+            ]
+          },
+          "old_inodes_absent": true,
+          "pid1_fds": [
+            325281,
+            325282,
+            325283,
+            325284,
+            325286,
+            325289,
+            325294,
+            325309,
+            325312,
+            325376,
+            326320,
+            326352,
+            326392,
+            328170,
+            331889,
+            331980,
+            332925,
+            363170,
+            368830
+          ],
+          "sshd_fds": [
+            368830,
+            369704
+          ]
+        }
+      ],
+      "clean_runner_release_recheck": "PASS",
+      "main_positive_operation_durations_ms": [
+        12585,
+        2590,
+        2942,
+        4083,
+        3116,
+        1040,
+        2302,
+        1350,
+        1372,
+        1857,
+        3069,
+        2599,
+        2117,
+        2231,
+        2777,
+        2967,
+        1082,
+        1257,
+        1249,
+        1322,
+        1133
+      ]
+    },
+    "ubuntu-26.04": {
+      "status": "PASS",
+      "groups": {
+        "five-policies-refresh-and-idempotence": {
+          "result": "PASS",
+          "operations": 21,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "legacy-wrapper-boundary-and-wrapper-free-refresh": {
+          "result": "PASS",
+          "operations": 8,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "ownership-refusal-owned-drift": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-malformed-marker": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-missing-owner": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "refresh-fault-main-cas": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "refresh-fault-after-save-input": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-stop": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-main": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-durability": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-unknown-writer": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-journal-commit": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-cleanup": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "crash-setup-before-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-before-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-after-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-after-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-runtime-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-runtime-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "release-current-refreshed-owner": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "group_count": 20,
+      "port_refresh_listener_evidence": [
+        {
+          "old_listeners": {
+            "127.0.0.1:2222": [
+              167210
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2323": [
+              179838
+            ]
+          },
+          "old_inodes_absent": true,
+          "pid1_fds": [
+            135868,
+            135869,
+            135870,
+            135871,
+            135872,
+            135873,
+            135874,
+            135875,
+            135879,
+            135884,
+            135885,
+            141158,
+            142698,
+            144079,
+            144081,
+            144083,
+            144084,
+            144088,
+            144089,
+            144090,
+            144133,
+            144174,
+            144218,
+            145528,
+            148545,
+            148615,
+            148616,
+            148643,
+            179838,
+            184409
+          ],
+          "sshd_fds": [
+            178892,
+            179838
+          ]
+        },
+        {
+          "old_listeners": {
+            "127.0.0.1:2323": [
+              179838
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2222": [
+              184547
+            ]
+          },
+          "old_inodes_absent": true,
+          "pid1_fds": [
+            135868,
+            135869,
+            135870,
+            135871,
+            135872,
+            135873,
+            135874,
+            135875,
+            135879,
+            135884,
+            135885,
+            141158,
+            142698,
+            144079,
+            144081,
+            144083,
+            144084,
+            144088,
+            144089,
+            144090,
+            144133,
+            144174,
+            144218,
+            145528,
+            148545,
+            148615,
+            148616,
+            148643,
+            179107,
+            184547
+          ],
+          "sshd_fds": [
+            184547,
+            187687
+          ]
+        }
+      ],
+      "clean_runner_release_recheck": "PASS",
+      "main_positive_operation_durations_ms": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    "alt-p11": {
+      "status": "PASS",
+      "groups": {
+        "five-policies-refresh-and-idempotence": {
+          "result": "PASS",
+          "operations": 21,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "legacy-wrapper-boundary-and-wrapper-free-refresh": {
+          "result": "PASS",
+          "operations": 8,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "ownership-refusal-owned-drift": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-malformed-marker": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "ownership-refusal-missing-owner": {
+          "result": "PASS",
+          "operations": 6,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false
+          ]
+        },
+        "refresh-fault-main-cas": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            true
+          ]
+        },
+        "refresh-fault-after-save-input": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-stop": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-after-save-main": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-durability": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-unknown-writer": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-journal-commit": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "refresh-fault-cleanup": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            false,
+            false
+          ]
+        },
+        "crash-setup-before-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-before-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-after-save-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-after-save-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "crash-setup-runtime-crash": {
+          "result": "PASS",
+          "operations": 5,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        },
+        "crash-restart-gate-runtime-crash": {
+          "result": "PASS",
+          "operations": 1,
+          "applied": [
+            false
+          ]
+        },
+        "release-current-refreshed-owner": {
+          "result": "PASS",
+          "operations": 7,
+          "applied": [
+            true,
+            true,
+            true,
+            true,
+            true,
+            true,
+            true
+          ]
+        }
+      },
+      "group_count": 20,
+      "port_refresh_listener_evidence": [
+        {
+          "old_listeners": {
+            "127.0.0.1:2222": [
+              378859
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2323": [
+              395683
+            ]
+          },
+          "old_inodes_absent": true
+        },
+        {
+          "old_listeners": {
+            "127.0.0.1:2323": [
+              395683
+            ]
+          },
+          "new_listeners": {
+            "127.0.0.1:2222": [
+              399094
+            ]
+          },
+          "old_inodes_absent": true
+        }
+      ],
+      "clean_runner_release_recheck": "PASS",
+      "main_positive_operation_durations_ms": [
+        24041,
+        14020,
+        14966,
+        15217,
+        15748,
+        3282,
+        2967,
+        2842,
+        2935,
+        2920,
+        17066,
+        15770,
+        18519,
+        27333,
+        28572,
+        28181,
+        6394,
+        6119,
+        6292,
+        5469,
+        4708
+      ]
+    }
+  },
+  "unit": {
+    "platform": "debian-12",
+    "full_project_build": "PASS",
+    "ctest_registered": 207,
+    "ctest_failed": 0,
+    "ctest_skipped": [
+      188,
+      193,
+      194,
+      199
+    ],
+    "ctest_log": "build-ssh-lifecycle/refresh-ctest-final-debian12.log",
+    "skip_reason": "explicit opt-in native gates; actual SSH engine exercised separately in five-platform matrix"
+  },
+  "limitations": [
+    "No automatic Prepared recovery.",
+    "Legacy ID-only wrappers refuse REFRESH; unchanged compliant apply and original ID/structure release remain supported.",
+    "Legacy release cannot detect valid body edits retaining wrapper ID.",
+    "Stage 3 active release/disable/uninstall/remote IPC proof is not part of this commit."
+  ],
+  "harness_notes": [
+    "ALT multi-operation run exceeded old fixed 150s aggregate harness budget; per-operation production deadlines unchanged. New aggregate bounded by <=64 independent operations. ALT measured 21-operation positive group 263361ms under concurrent build load.",
+    "Earlier stopped Debian fixture lacked /run/sshd after systemd removed RuntimeDirectory; stage2 fixture now explicitly supplies native -T prerequisite. Product offline preparation belongs to stage3.",
+    "Editing the shell runner while earlier tests were running produced a trailing shell-token error AFTER native PASS; all current runners separately rechecked with clean exit/cleanup. Native semantic assertions and runner transport outcome are kept distinct.",
+    "First full CTest failed only Git safe.directory check on read-only /src bind; rerun inside disposable container with exact safe.directory=/src passed."
+  ]
+}

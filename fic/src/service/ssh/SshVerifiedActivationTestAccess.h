@@ -10,5 +10,8 @@ struct AdapterTestHooks {
     fic::service::detail::TestHooks activation;
 };
 SshVerifiedActivationResult activateAdapterForTests(const SshVerifiedActivationRequest&, const AdapterTestHooks&);
+// Thread-scoped fault injection through the real policy caller. Compiled out
+// of installed executables; never an alternative activation implementation.
+void setPolicyAdapterHooksForTests(const AdapterTestHooks*);
 }
 #endif

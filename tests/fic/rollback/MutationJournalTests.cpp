@@ -5,6 +5,7 @@
 #include "modules/dac/sudo/SudoersDisabledWrapper.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/integrity/ContentDigest.h>
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -2990,11 +2991,129 @@ void testSudoGlobalJournalContract() {
     }
 }
 
+void testSshTypedRefreshPreviousTargetAndAbort() {
+    TempFile file;MutationJournal journal(file.path);std::string error;
+    require(journal.initializeOrLoad(error),error);
+    auto record=preparedSshRecord();auto& old=std::get<UndoRemoveSshManagedPolicy>(record.undo.payload);
+    old.disabledMutationIds.clear();MutationId id=0;
+    require(journal.prepareMutation(record,id,error)&&journal.setStatus(id,MutationStatus::Applied,error),error);
+    auto target=old;target.appliedValue="2323";target.ownershipVersion=1;
+    require(journal.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),error),error);
+    const auto& p=std::get<UndoRemoveSshManagedPolicy>(journal.records().front().undo.payload);
+    require(journal.records().front().status==MutationStatus::Prepared&&p.appliedValue==old.appliedValue&&
+        p.transition&&p.transition->previous.value==old.appliedValue&&p.transition->target.value=="2323","prepared refresh replaced old permission");
+    const auto bytes=file.read();
+    require(!journal.setStatus(id,MutationStatus::Applied,error)&&!journal.discard(id,error)&&
+        !journal.commitSshRefresh(id,error)&&!journal.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),error),"unresolved transition escaped typed gate");
+    require(file.read()==bytes,"rejected transition operation changed journal");
+    MutationJournal reloaded(file.path);require(reloaded.initializeOrLoad(error),error);
+    require(reloaded.records().front().status==MutationStatus::Prepared,"restart automatically resolved Prepared");
+    require(journal.abortSshRefreshNoEffect(id,error),error);
+    const auto& restored=std::get<UndoRemoveSshManagedPolicy>(journal.records().front().undo.payload);
+    require(journal.records().front().id==id&&journal.records().size()==1&&journal.records().front().status==MutationStatus::Applied&&
+        restored.appliedValue==old.appliedValue&&!restored.transition&&restored.ownershipVersion==0,"no-effect abort lost/adopted old ownership");
+}
+void testSshTypedRefreshPublicationRuntimeCommit() {
+    TempFile file;MutationJournal j(file.path);std::string e;require(j.initializeOrLoad(e),e);
+    auto r=preparedSshRecord();auto& p=std::get<UndoRemoveSshManagedPolicy>(r.undo.payload);p.disabledMutationIds.clear();
+    MutationId id=0;require(j.prepareMutation(r,id,e)&&j.setStatus(id,MutationStatus::Applied,e),e);
+    auto target=p;target.appliedValue="2323";target.ownershipVersion=1;
+    AtomicTargetState installed;installed.content="owned target\n";installed.identity={1,2};installed.mode=0644;
+    require(j.beginSshRefresh(id,target,std::string(64,'a'),fic::core::ContentDigest::sha256Hex(installed.content),e),e);
+    require(j.noteSshPublication(id,installed,false,e),e);
+    require(!j.abortSshRefreshNoEffect(id,e)&&!j.commitSshRefresh(id,e),"published transition was discarded or committed");
+    const auto checkRestartGate=[&] {
+        MutationJournal restarted(file.path);require(restarted.initializeOrLoad(e),e);
+        const auto& saved=std::get<UndoRemoveSshManagedPolicy>(restarted.records()[0].undo.payload);
+        require(restarted.records()[0].status==MutationStatus::Prepared&&saved.appliedValue==p.appliedValue&&
+            saved.transition&&saved.transition->publication&&
+            !restarted.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),e)&&
+            !restarted.setStatus(id,MutationStatus::RolledBack,e)&&!restarted.discard(id,e),
+            "restart or generic writer resolved uncertain publication");
+    };
+    checkRestartGate();
+    require(j.noteSshPublication(id,installed,true,e),e);
+    checkRestartGate();
+    require(!j.noteSshRuntime(id,true,{},e),"missing runtime facts accepted");
+    const std::map<std::string,std::string> facts{{"inputs","Proven"},{"semantics","Proven"},{"persistent","Proven"},
+        {"readiness","true"},{"unit","ssh.service"},{"InvocationID","fixture-invocation"},{"MainPID","42"}};
+    require(j.noteSshRuntime(id,true,facts,e),e);
+    require(std::get<UndoRemoveSshManagedPolicy>(j.records()[0].undo.payload).appliedValue==p.appliedValue,"runtime checkpoint prematurely replaced old ownership");
+    const auto verifiedBytes=file.read();
+    breakPersist(file);
+    require(!j.commitSshRefresh(id,e),"failed final journal write reported success");
+    restorePersist(file);
+    require(file.read()==verifiedBytes&&j.records()[0].status==MutationStatus::Prepared&&
+        std::get<UndoRemoveSshManagedPolicy>(j.records()[0].undo.payload).appliedValue==p.appliedValue,
+        "failed finalization replaced old authority");
+    MutationJournal crashed(file.path);require(crashed.initializeOrLoad(e),e);
+    require(crashed.records()[0].status==MutationStatus::Prepared&&
+        !crashed.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),e),
+        "restart automatically completed runtime-verified but uncommitted transition");
+    require(j.commitSshRefresh(id,e),e);
+    MutationJournal again(file.path);require(again.initializeOrLoad(e),e);
+    const auto& now=std::get<UndoRemoveSshManagedPolicy>(again.records()[0].undo.payload);
+    require(again.records()[0].id==id&&again.records()[0].status==MutationStatus::Applied&&now.appliedValue=="2323"&&
+        now.transition->phase==SshTransitionPhase::Completed&&now.transition->previous.value==p.appliedValue&&now.ownershipVersion==1,"atomic refresh finalization lost previous/target facts");
+    auto document=nlohmann::json::parse(file.read());const auto valid=document;
+    for(const auto* field:{"phase","intent","version"}) {
+        document=valid;document["records"][0]["undo"]["transition"][field]="unknown";
+        file.write(document.dump());MutationJournal bad(file.path);require(!bad.load(e),"malformed operation contract loaded");
+    }
+    for(const auto* corruption:{"identity","target-value","old-permission","publication-sha","durability","readiness","runtime-identity"}) {
+        document=valid;auto& record=document["records"][0];auto& undo=record["undo"];auto& t=undo["transition"];
+        const std::string kind=corruption;
+        if(kind=="identity")record["policy"]["policy"]="ssh_other";
+        if(kind=="target-value")t["target"]["value"]="24";
+        if(kind=="old-permission")undo["applied_value"]=p.appliedValue;
+        if(kind=="publication-sha")t["publication"]["sha256"]=std::string(64,'c');
+        if(kind=="durability")t["publication"]["durable"]=false;
+        if(kind=="readiness")t["runtime_facts"]["readiness"]="false";
+        if(kind=="runtime-identity")t["runtime_facts"].erase("InvocationID");
+        file.write(document.dump());MutationJournal bad(file.path);require(!bad.load(e),"inconsistent SSH transition loaded: "+kind);
+    }
+    document=valid;document["schema_version"]=2;file.write(document.dump());MutationJournal disguised(file.path);
+    require(!disguised.load(e),"schema2 accepted schema3 ownership extension");
+    document=valid;document["schema_version"]=4294967299ULL;file.write(document.dump());MutationJournal truncatedVersion(file.path);
+    require(!truncatedVersion.load(e),"unknown 64-bit schema version truncated into schema3");
+}
+void testSshTypedRefreshLegacyAndFailureBoundaries() {
+    TempFile file;MutationJournal j(file.path);std::string e;require(j.initializeOrLoad(e),e);MutationId id=0;
+    auto r=preparedSshRecord();require(j.prepareMutation(r,id,e)&&j.setStatus(id,MutationStatus::Applied,e),e);
+    auto target=std::get<UndoRemoveSshManagedPolicy>(r.undo.payload);target.appliedValue="2323";target.ownershipVersion=1;
+    target.wrapperFingerprints[target.disabledMutationIds[0]]=std::string(64,'a');
+    const auto before=file.read();
+    require(!j.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),e)&&file.read()==before,"legacy bodies were silently fingerprint-enrolled");
+    auto legacy=nlohmann::json::parse(before);legacy["schema_version"]=2;file.write(legacy.dump());
+    MutationJournal old(file.path);const auto oldBytes=file.read();require(old.initializeOrLoad(e),e);
+    require(file.read()==oldBytes&&std::get<UndoRemoveSshManagedPolicy>(old.records()[0].undo.payload).wrapperFingerprints.empty(),"legacy read rewrote/enrolled proof");
+}
+void testSshTypedRefreshPersistFailure() {
+    TempFile file;MutationJournal j(file.path);std::string e;require(j.initializeOrLoad(e),e);
+    auto r=preparedSshRecord();auto& p=std::get<UndoRemoveSshManagedPolicy>(r.undo.payload);p.disabledMutationIds.clear();
+    MutationId id=0;require(j.prepareMutation(r,id,e)&&j.setStatus(id,MutationStatus::Applied,e),e);
+    auto target=p;target.appliedValue="2323";target.ownershipVersion=1;const auto bytes=file.read();
+    breakPersist(file);
+    require(!j.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),e),"begin must report failed persist");
+    restorePersist(file);
+    require(file.read()==bytes&&j.records()[0].status==MutationStatus::Applied,"failed begin changed old permission");
+    AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){return path!=file.path.string();});
+    const bool result=j.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),e);
+    AtomicFileWriter::setDirectoryFsyncHookForTests({});
+    require(!result&&!j.usable(),"post-rename uncertainty must poison journal");
+    require(j.initializeOrLoad(e),e);
+    require(j.records()[0].status==MutationStatus::Prepared&&!j.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),e),"restart bypassed unresolved transition");
+}
+
 int main() {
     const struct {
         const char* name;
         void (*test)();
     } tests[] = {
+        {"SSH typed previous target/no-effect abort",testSshTypedRefreshPreviousTargetAndAbort},
+        {"SSH typed publication runtime commit",testSshTypedRefreshPublicationRuntimeCommit},
+        {"SSH legacy/failure boundary",testSshTypedRefreshLegacyAndFailureBoundaries},
+        {"SSH typed persist failure",testSshTypedRefreshPersistFailure},
         {"SUDO global journal contract", testSudoGlobalJournalContract},
         {"scope checkpoint lifecycle", testScopeCheckpointLifecycle},
         {"DE artifact creation contract", testDesktopArtifactJournalContract},

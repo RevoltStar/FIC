@@ -45,15 +45,16 @@ struct SshConfigTransactionResult {
     std::optional<AtomicTargetState> installedTargetState;
     std::optional<AtomicTargetState> restoredTargetState;
 
-    bool mayDiscardPrepared(bool freshRecord) const {
+    bool provesNoEffect() const {
         // Stage 1 cannot prove runtime resolution through legacy reload. Even
         // a durable restore retains provenance after any installed/unknown write.
-        return freshRecord && !ok && persistentEffect == SshPersistentEffect::NotInstalled &&
+        return !ok && persistentEffect == SshPersistentEffect::NotInstalled &&
                !installedTargetState && !restoredTargetState &&
                compensation == SshCompensationEffect::NotAttempted &&
                activation == SshRuntimeReconciliation::NotAttempted &&
                restoredRuntime == SshRuntimeReconciliation::NotAttempted;
     }
+    bool mayDiscardPrepared(bool freshRecord) const { return freshRecord && provesNoEffect(); }
 };
 
 // Shared conditional transaction over the main sshd_config used by both the

@@ -169,7 +169,7 @@ SshRollbackResult undoSshManagedPolicyMutation(
     // nor-wrapper case below is the already-rolled-back / never-applied /
     // externally cleaned recovery state).
     const SshDisabledProvenanceCheck provenance = checkSshDisabledProvenance(
-        model, undo.policyName, undo.disabledMutationIds);
+        model, undo.policyName, undo.disabledMutationIds,undo.wrapperFingerprints,undo.ownershipVersion);
     if (provenance.payloadMalformed) {
         result.conflict = true;
         result.message = "Journal payload политики '" + undo.policyName +

@@ -55,6 +55,9 @@ docker cp "$repo/tests/integration/verified_config_service/openssh_native/harnes
 if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == match ]]; then
  docker cp "$repo/tests/integration/verified_config_service/openssh_native/match_cases.py" "$name:/usr/local/bin/fic-ssh-match.py"
  docker exec "$name" python3 /usr/local/bin/fic-ssh-match.py "$platform"
+elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == refresh ]]; then
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/lifecycle_cases.py" "$name:/usr/local/bin/fic-ssh-lifecycle.py"
+ docker exec "$name" python3 /usr/local/bin/fic-ssh-lifecycle.py "$platform" refresh "${FIC_SSH_NATIVE_REFRESH_GROUP:-all}"
 elif [[ "$platform" == ubuntu-* ]]; then
  docker cp "$repo/tests/integration/verified_config_service/openssh_native/ubuntu_socket.py" "$name:/usr/local/bin/fic-ubuntu-socket.py"
  docker exec "$name" python3 /usr/local/bin/fic-ubuntu-socket.py

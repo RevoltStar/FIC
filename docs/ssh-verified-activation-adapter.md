@@ -323,9 +323,10 @@ real Debian gate проверяет фактический adapter/sshd, а не
 ## Debian policy lifecycle
 
 1. Один process-local `sshResourceMutex` сериализует apply и всю rollback/disable
-   decision; отдельного SSH flock или нового journal schema нет.
+   decision; отдельного SSH flock нет. REFRESH использует schema 3 существующего
+   MutationJournal (reader продолжает принимать schema 2).
 2. Ubuntu 24.04/26.04 использует verified socket profile без legacy fallback.
-   ALT p11 сохраняет legacy activation/compensation; общий mutex и
+   ALT p11 использует verified service profile; общий mutex и
    shared-file Prepared gate также защищают его SSH resource.
 3. Admission требует persistent `enabled` и доказанный ready runtime. Disabled,
    masked, static, enabled-runtime, failed и inactive без Job дают отказ до записи.
@@ -339,8 +340,9 @@ real Debian gate проверяет фактический adapter/sshd, а не
    Unit и лимиты не меняются. Чужие privileged restart вне контрольных точек
    не сериализуются этим локальным ledger.
 5. Любой Prepared для того же main SSH resource блокирует apply и disable другой
-   SSH-политики. Нет автоматического восстановления Prepared. Изменение уже
-   owned value/REFRESH пока явно отвергается без rollback старого состояния.
+   SSH-политики. Нет автоматического восстановления Prepared. REFRESH использует
+   типизированный переход предыдущего и целевого ownership, описанный ниже;
+   промежуточного освобождения прежнего ограничения нет.
 6. У уже compliant foreign configuration не появляется ownership. При отсутствии
    актуального receipt всё равно нужен verified restart. Durable save проходит
    через существующий CAS; затем adapter доказывает A/B/C, cleanup и P, а caller
@@ -397,3 +399,36 @@ Active Ubuntu rollback отказывает с сохранением ownership:
 подтвердить восстановление listener. Offline service+socket допускают только
 ownership release, с проверками до/после CAS и явным `runtime NOT activated`.
 См. authoritative [матрицу, proof, ограничения и эксплуатационные эффекты](ubuntu-ssh-socket-activation-spec.md).
+
+## Crash-consistent ownership REFRESH
+
+Изменение уже принадлежащего FIC значения — один переход в существующей записи
+SSH, без промежуточного rollback. Planner сохраняет сторонние строки и прежние
+wrapper IDs; конечные байты публикуются одной conditional atomic replacement.
+
+Schema 3 хранит версионированные previous/target projections и последовательность
+операции. Фазы: `prepared`, `published`, `durable_published`, `runtime_verified`,
+`completed`. До durable finalization `applied_value` и текущее разрешение ownership
+остаются прежними; целевая проекция становится текущей только в одной финальной
+записи journal. Факты публикации включают inode/device/metadata/SHA и durability,
+факты активации — input/semantic/persistent proof, readiness и identity службы.
+Сам факт сохранения или READY не разрешает finalization при cleanup failure.
+
+После возможного OS effect ошибка оставляет Prepared с previous/target и известными
+фактами. Она блокирует apply и release всего общего SSH-файла, включая после
+перезапуска. Автоматического recovery нет. Только доказанный no-effect текущей
+попытки позволяет снять её intent, сохранив прежнюю Applied-запись. Indeterminate
+journal запрещает новые операции до успешного reload; reload не завершает Prepared.
+
+Новые wrappers при создании получают SHA-256 исходной строки (`ownership_version=1`).
+Изменение тела при сохранённом ID отклоняется apply/release. Reader schema 2 сохраняет
+ID-only provenance (`ownership_version=0`) без переписывания и без вычисления
+исторического proof из текущих байтов. Legacy wrappers блокируют REFRESH; legacy
+политика без wrappers может перейти на новый контракт при REFRESH своего доказанного
+блока. Compliant same-value apply не отказывает только из-за legacy формата.
+
+Ограничение legacy release намеренно сохранено: старый ID/structure proof не может
+обнаружить корректно перекодированное чужое тело wrapper с прежним ID; такой rollback
+восстановит текущее тело, а не доказанную историческую строку. Это ограничение старого
+разрешения, не гарантия fingerprint-based ownership. Автоматической миграции,
+adoption или восстановления исчезнувших артефактов нет.

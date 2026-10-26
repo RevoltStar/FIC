@@ -1419,7 +1419,9 @@ RollbackReport rollbackPolicyBeforeDisable(
         const auto prefix = "ssh:" + options.configPath.string() + ":";
         for (const auto& record : journal->records()) {
             if (record.undo.backend == MutationBackend::Ssh &&
-                record.status == MutationStatus::Prepared && record.resource.rfind(prefix, 0) == 0) {
+                (record.status == MutationStatus::Prepared ||
+                 (std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload) &&
+                  sshTransitionPending(std::get<UndoRemoveSshManagedPolicy>(record.undo.payload)))) && record.resource.rfind(prefix, 0) == 0) {
                 blocked.message = "SSH recovery required: unresolved Prepared mutation " + std::to_string(record.id);
                 return blocked;
             }

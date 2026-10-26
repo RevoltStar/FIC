@@ -86,6 +86,8 @@ public:
     // installed state, but the rename is not crash-durable until the parent
     // directory fsync succeeds).
     FileSaveOutcome saveFileIfUnchanged(std::string& error);
+    // Exact bytes the conditional writer would publish from current lines.
+    std::string pendingContent() const;
 
     // Target state (identity, metadata, content) captured by the last load,
     // when the concrete handler captures it; empty otherwise.

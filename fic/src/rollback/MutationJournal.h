@@ -2,6 +2,7 @@
 #define FIC_ROLLBACK_MUTATION_JOURNAL_H
 
 #include "rollback/MutationRecord.h"
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <filesystem>
 #include <functional>
@@ -51,7 +52,7 @@ enum class JournalHealth {
 
 class MutationJournal {
 public:
-    static constexpr std::uint32_t kSchemaVersion = 2;
+    static constexpr std::uint32_t kSchemaVersion = 3;
     // Independent version identifier of the initialization witness document;
     // the journal JSON schema itself is unchanged.
     static constexpr std::uint32_t kWitnessSchemaVersion = 1;
@@ -189,6 +190,16 @@ public:
     bool normalizeSudoAuthenticationPreparedToPrevious(
         MutationId id, const std::vector<fic::sudoers::AuthenticationProof>& provenPrevious,
         std::string& error);
+    // Typed in-place SSH ownership transition. The previous permission/value
+    // remains in the record until runtime-verified atomic finalization. No
+    // automatic Prepared recovery; only a proven no-effect attempt may abort.
+    bool beginSshRefresh(MutationId,const UndoRemoveSshManagedPolicy& target,
+        const std::string& beforeSha256,const std::string& targetSha256,std::string&);
+    bool noteSshPublication(MutationId,const AtomicTargetState&,bool durable,std::string&);
+    bool noteSshRuntime(MutationId,bool verified,const std::map<std::string,std::string>& facts,std::string&);
+    bool commitSshRefresh(MutationId,std::string&);
+    bool abortSshRefreshNoEffect(MutationId,std::string&);
+    bool failSshRefresh(MutationId,const std::string& diagnostic,std::string&);
     bool setStatus(MutationId id, MutationStatus status, std::string& error);
     bool setStatusWithMessage(MutationId id, MutationStatus status,
                               const std::string& message, std::string& error);
@@ -268,6 +279,7 @@ private:
         Indeterminate
     };
 
+    bool persistSshChange(const MutationRecord& previous, std::string& error);
     PersistOutcome persist(std::string& error);
     // Centralized failed-load handling: revoke operational trust (health =
     // Indeterminate, usable() == false) WITHOUT touching records_/nextId_/
