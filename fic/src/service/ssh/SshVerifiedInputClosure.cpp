@@ -24,8 +24,9 @@ InputProfile inputProfile() {
     const auto profile=fic::platform::makeBuildPlatformProfile();const auto& ssh=profile.ssh;
     return {ssh.serviceUnits.at(0),ssh.configPath.string(),ssh.includeBasePath.string(),ssh.verifiedIncludeDirectory.string(),ssh.optionFile.string(),ssh.optionVariable,profile.id=="alt-p11"};
 }
-void validatePolicies(const std::map<std::string, std::string>& policies) {
-    if (policies.empty() || policies.size() > 5) unsupported("selected SSH policies required");
+void validatePolicies(const std::map<std::string, std::string>& policies,SshActivationIntent intent) {
+    if(intent!=SshActivationIntent::SelectedPolicies&&intent!=SshActivationIntent::ConfigurationRelease)unsupported("unknown SSH activation intent");
+    if ((policies.empty()&&intent==SshActivationIntent::SelectedPolicies) || policies.size() > 5) unsupported("selected SSH policies required");
     for (const auto& [id, value] : policies) {
         if (sshPolicyDirectiveSemantics(id) == SshDirectiveSemantics::Unsupported)
             unsupported("unknown selected SSH policy");
@@ -73,8 +74,8 @@ void validateEmptyOptions(const std::string& bytes, const std::string& variable)
     }
     if (assignments != 1) unsupported("explicit empty "+variable+" required");
 }
-static Closure classifyClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies, bool requireKeys, const InputProfile& profile) {
-    validatePolicies(policies);
+static Closure classifyClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies, bool requireKeys, const InputProfile& profile,SshActivationIntent intent) {
+    validatePolicies(policies,intent);
     fic::service::detail::validateRequest(r);
     if (r.unit != profile.unit) unsupported("canonical platform SSH unit required");
     std::set<std::string> directories;
@@ -202,10 +203,10 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
         if(!bytes.count(key)||!bytes.count(key+".pub"))unsupported("HostKey inputs require complete trusted reference coverage");
     return result;
 }
-Closure validateClosure(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies,const InputProfile& profile) {
-    return classifyClosure(r,bytes,policies,true,profile);
+Closure validateClosure(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies,const InputProfile& profile,SshActivationIntent intent) {
+    return classifyClosure(r,bytes,policies,true,profile,intent);
 }
-std::set<std::string> discoverHostKeys(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies) {
-    return classifyClosure(r,bytes,policies,false,inputProfile()).hostKeys;
+std::set<std::string> discoverHostKeys(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies,SshActivationIntent intent) {
+    return classifyClosure(r,bytes,policies,false,inputProfile(),intent).hostKeys;
 }
 } // namespace fic::service::ssh::detail

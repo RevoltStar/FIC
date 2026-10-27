@@ -1,6 +1,65 @@
 #include "modules/net/ssh/SshConfigTransaction.h"
-#include "modules/net/ssh/SshRollback.h"
 #include <fic/core/fs/AtomicFileWriter.h>
+
+SshRestoreOutcome restoreSshConfigContentIfCurrentState(
+    const std::filesystem::path& path,
+    const std::string& content,
+    const AtomicTargetState& expectedTargetState,
+    std::string& error) {
+    // Conditional restore: the replacement happens only when the target is
+    // still exactly the state FIC proved to install (expectedTargetState —
+    // the state captured at rename time, never a fresh capture, which could
+    // silently legitimize an external modification made after the FIC write).
+    AtomicWriteOptions options;
+    options.createIfMissing = false;
+    options.rejectSymlink = true;
+    options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
+    options.expectedTargetState = expectedTargetState;
+    SshRestoreOutcome outcome;
+    AtomicWriteResult result;
+    if (!AtomicFileWriter::writeWithResult(
+            path.string(), content, options, &error, &result)) {
+        if (result.installed) {
+            // The replacement itself succeeded (rename published the target);
+            // only a later durability step (directory fsync) failed.
+            outcome.installed = true;
+            outcome.durable = false;
+            outcome.installedState = result.installedTargetState;
+            return outcome;
+        }
+        if (result.preconditionFailed) {
+            outcome.preconditionFailed = true;
+            error = "Файл изменился после FIC-записи; восстановление отменено, "
+                    "внешнее содержимое сохранено: " + error;
+        }
+        return outcome;
+    }
+    outcome.installed = true;
+    outcome.durable = result.durabilityConfirmed;
+    outcome.installedState = result.installedTargetState;
+    return outcome;
+}
+
+bool ensureSshConfigDurableIfCurrentState(
+    const std::filesystem::path& path,
+    const AtomicTargetState& installedState,
+    std::string& error) {
+    // Re-prove ownership before the barrier: the durability confirmation
+    // applies to the exact FIC-installed state, never to whatever happens to
+    // occupy the path now (an external replacement must not be fsynced into
+    // legitimacy).
+    if (!AtomicFileWriter::targetStateMatches(path.string(), installedState,
+                                              &error)) {
+        error = "Текущее состояние sshd_config не соответствует "
+                "FIC-installed state; durability не подтверждается: " + error;
+        return false;
+    }
+    if (!AtomicFileWriter::ensureTargetDurable(path.string(), &error)) {
+        error = "Durability-барьер sshd_config не выполнен: " + error;
+        return false;
+    }
+    return true;
+}
 
 namespace {
 #ifdef FIC_SSH_TRANSACTION_TESTING

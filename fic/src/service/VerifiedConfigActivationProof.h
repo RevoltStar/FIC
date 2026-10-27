@@ -25,8 +25,23 @@ struct ActivationProof {
 // Performs no mkdir/mount/restart and grants no later activation authority.
 void validatePublicationEnvironment(const ActivationRequest&, std::vector<std::string>* residualPaths = nullptr);
 ActivationResult activateWithProof(const ActivationRequest&, const ActivationProof&);
+// Separate internal result/entrypoint; SUCCESS here proves validation under
+// pinned CURRENT inputs and clean cleanup, never readiness or activation.
+struct SnapshotValidationProof {
+    ActivationProfile profile=ActivationProfile::ActiveNotifyService;
+    LaunchContract expectedConfiguration;
+    std::map<std::string,Identity> sourceRoots;
+    std::map<std::string,std::map<std::string,struct stat>> sourceAttributes;
+    std::function<void(std::chrono::steady_clock::time_point)> validate;
+};
+struct SnapshotValidationResult {
+    ActivationResult snapshot;
+    bool success() const {return snapshot.success()&&!snapshot.readinessConfirmed;}
+};
+SnapshotValidationResult validateSnapshotWithProof(const ActivationRequest&,const SnapshotValidationProof&);
 #ifdef FIC_ACTIVATOR_TESTING
 struct TestHooks;
 ActivationResult activateWithProofForTests(const ActivationRequest&, const ActivationProof&, const TestHooks&);
+SnapshotValidationResult validateSnapshotWithProofForTests(const ActivationRequest&,const SnapshotValidationProof&,const TestHooks&);
 #endif
 } // namespace fic::service::detail

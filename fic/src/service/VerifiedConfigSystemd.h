@@ -21,6 +21,9 @@ public:
                       ActivationProfile profile = ActivationProfile::ActiveNotifyService);
     std::chrono::milliseconds remaining() const;
     ServiceState preflight();
+    // Closed configuration-validation path: stable active OR proven stopped,
+    // never permission to restart/start a stopped service.
+    ServiceState preflightSnapshotValidation();
     void restart();
     ServiceState current() const;
     bool ready(const ServiceState&) const;

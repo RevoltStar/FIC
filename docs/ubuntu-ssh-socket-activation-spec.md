@@ -151,14 +151,14 @@ identity; при сбое сбрасывается. Изменение foreign s
 
 ### Rollback граница
 
-Prepared gate/ownership-safe CAS сохраняются. Активный Ubuntu socket rollback
-нельзя выдавать за legacy reload success: до доказанной поддерживаемой release
-activation разрешён явный safe refusal с сохранённым ownership. Для доказанно
-offline socket **и** service допускается release только FIC artifacts без runtime
-claim; повторные offline checks до/после write и отсутствие blind compensation
-обязательны. Оба состояния проверяются native; release/runtime сообщаются отдельно.
-Если typed manager state недоступен (включая выгруженный socket unit), offline
-proof не считается полученным: release также отказывает без adoption/запуска unit.
+Prepared gate/ownership-safe CAS сохраняются. Текущее active release выполняет
+предварительный native syntax/effective proof результирующего образа и всех оставшихся
+ENABLE требований; затем CAS и тот же Ubuntu socket/service/generator/listener-FD engine.
+Legacy reload success не используется. Offline требует остановленных socket **и** service
+до/во время/после проверки и не запускает/не включает их. Fixed-unit RefUnit предотвращает
+GC выгрузку, не создавая start job. Unknown/failed/pending state отказывает.
+Disable ACK и неопределённые эффекты: [актуальный release contract](ssh-verified-activation-adapter.md#verified-configuration-release).
+Исторические результаты B ниже не заменяют [новую release matrix](../tests/integration/verified_config_service/openssh_native/evidence/release-lifecycle.json).
 
 ## Итоговая validation B
 

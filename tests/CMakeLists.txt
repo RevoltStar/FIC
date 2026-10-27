@@ -2591,7 +2591,6 @@ add_executable(ssh_runtime_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshManagedBlock.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
 )
 target_include_directories(ssh_runtime_tests PRIVATE

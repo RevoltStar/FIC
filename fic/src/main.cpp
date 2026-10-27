@@ -44,6 +44,7 @@
 #include "daemon/UninstallLifecycle.h"
 #include "daemon/InstallationProof.h"
 #include "daemon/UninstallRollback.h"
+#include "modules/net/ssh/SshRollback.h"
 #include "daemon/PackageWritersQuiescence.h"
 #include <fic/core/process/ExclusivePidLock.h>
 #include "daemon/MaintenanceAdmission.h"
@@ -950,13 +951,22 @@ json handle_request(json request,
                         "policy was disabled in configuration, but reconciliation failed: " +
                         reloadError.value());
                 }
+                Policy* const changed=getPolicyClass(policyRegistry,module,policy);
+                if(changed&&changed->moduleName=="NET"&&changed->submoduleName=="SshEdit") {
+                    const auto deps=fic::rollback::productionRollbackDeps(platform,executables,&policyRegistry);
+                    const auto verified=fic::rollback::rollbackPolicyBeforeDisable(changed->policyRef(),{},deps);
+                    std::string acknowledgement;
+                    if(!verified.rollbackCompleted()||!acknowledgeSshPolicyDisable(changed->policyRef(),policyRegistry,acknowledgement))
+                        return fic::ipc::make_error_response("DISABLE saved, but SSH release finalization failed; intent retained: "+
+                            (verified.rollbackCompleted()?acknowledgement:verified.message));
+                }
                 if (auto failure = regenerateDevicePolicyIfNeeded(module == "DC")) {
                     return failure.value();
                 }
             }
             return fic::daemon::policyMutationResponse(
                 mutation,
-                "policy disabled",
+                "policy disabled"+(mutation.detail.empty()?std::string():": "+mutation.detail),
                 "failed to disable " + policy);
         }
         if (command == "reload_config") {

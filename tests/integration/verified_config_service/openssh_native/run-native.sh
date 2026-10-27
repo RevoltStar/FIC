@@ -5,7 +5,7 @@ set -euo pipefail
 image=$1 platform=$2
 case "$platform" in debian-12|debian-13|ubuntu-24.04|ubuntu-26.04|alt-p11) ;; *) exit 2;; esac
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../.." && pwd)
-build="$repo/build-openssh-native/$platform"
+build="${FIC_SSH_NATIVE_BUILD_DIR:-$repo/build-openssh-native/$platform}"
 mkdir -p "$build/evidence"
 docker run --rm --network none -v "$repo:/src:ro" -v "$build:/build" "$image" \
  sh -ec 'cmake -S /src/tests/integration/verified_config_service/openssh_native -B /build -DFIC_TARGET_PLATFORM="$1"; cmake --build /build --target openssh_native_driver ssh_verified_activation_tests -j2; ctest --test-dir /build -R ssh_verified_activation_tests --output-on-failure' sh "$platform"
@@ -52,7 +52,13 @@ docker exec "$name" timeout 60 sh -ec '
 '
 docker cp "$build/openssh_native_driver" "$name:/usr/local/bin/fic-openssh-driver"
 docker cp "$repo/tests/integration/verified_config_service/openssh_native/harness.py" "$name:/usr/local/bin/fic-openssh-harness.py"
-if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == match ]]; then
+if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == release-plan ]]; then
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/release_plan_cases.py" "$name:/usr/local/bin/fic-ssh-release-plan.py"
+ docker exec "$name" python3 /usr/local/bin/fic-ssh-release-plan.py "$platform"
+elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == release ]]; then
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/release_cases.py" "$name:/usr/local/bin/fic-ssh-release.py"
+ docker exec "$name" python3 /usr/local/bin/fic-ssh-release.py "$platform" "${FIC_SSH_NATIVE_RELEASE_GROUP:-all}"
+elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == match ]]; then
  docker cp "$repo/tests/integration/verified_config_service/openssh_native/match_cases.py" "$name:/usr/local/bin/fic-ssh-match.py"
  docker exec "$name" python3 /usr/local/bin/fic-ssh-match.py "$platform"
 elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == refresh ]]; then

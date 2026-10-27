@@ -114,8 +114,7 @@ SshRuntime::SshRuntime(
     }
 }
 
-bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuration,
-                                            std::string& error) const {
+bool SshRuntime::configurationProbe(const std::string& mode,ProcessResult& result,std::string& error) const {
     std::filesystem::path sshd;
     if (!executables_.resolve(
             fic::platform::ExecutableId::Sshd, sshd, error)) {
@@ -125,19 +124,29 @@ bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuratio
 
     ProcessOptions processOptions;
     processOptions.clearEnvironment = true;
-    std::vector<std::string> arguments{"-T"};
-    if (options_.useLaunchArguments) {
+    std::vector<std::string> arguments{mode};
+    if(options_.plannedMain) {
+        if(!options_.launchArguments.empty()) {error="stdin configuration proof requires empty stock launch options";return false;}
+        arguments.insert(arguments.end(),{"-f","/dev/stdin"});processOptions.standardInput=*options_.plannedMain;
+    } else if (options_.useLaunchArguments) {
         arguments.insert(arguments.end(), options_.launchArguments.begin(),
                          options_.launchArguments.end());
     } else {
         arguments.insert(arguments.end(), {"-f", options_.configPath.string()});
     }
-    const ProcessResult result = runner_(sshd.string(), arguments, processOptions);
+    result = runner_(sshd.string(), arguments, processOptions);
     if (!result.success()) {
         error = "sshd effective configuration check failed: " + processFailure(result);
         return false;
     }
 
+    error.clear();return true;
+}
+bool SshRuntime::validateSyntax(std::string& error) const {
+    ProcessResult result;return configurationProbe("-t",result,error);
+}
+bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuration,std::string& error) const {
+    ProcessResult result;if(!configurationProbe("-T",result,error))return false;
     configuration.clear();
     std::istringstream lines(result.standardOutput);
     std::string line;
@@ -194,6 +203,7 @@ SshComplianceResult SshRuntime::auditConditionalOverrides(
     auditOptions.configPath = options_.configPath;
     auditOptions.includeBasePath = includeBase.lexically_normal();
     auditOptions.requireTrustedInputs = options_.requireTrustedInputs;
+    auditOptions.plannedMain=options_.plannedMain;
     SshConfigAudit audit(std::move(auditOptions));
 
     std::vector<SshConditionalOccurrence> occurrences;

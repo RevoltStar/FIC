@@ -118,9 +118,9 @@ void SystemdActivation::verifyConfiguration(const ServiceState& s) const {
     for (const auto& p : emptyProperties) if (!s.at(p).empty())
         throw Failure(ActivationStatus::UnsupportedConfiguration, "unsupported service path sandbox: " + p);
 }
-ServiceState SystemdActivation::preflight() {
+ServiceState SystemdActivation::preflightSnapshotValidation() {
     auto s = query(remaining()); verifyConfiguration(s);
-    const bool inactive=profile_==ActivationProfile::UbuntuSshSocket && s.at("ActiveState")=="inactive" && s.at("SubState")=="dead" && s.at("MainPID")=="0";
+    const bool inactive=s.at("ActiveState")=="inactive" && s.at("SubState")=="dead" && s.at("MainPID")=="0";
     if ((!inactive && (s.at("ActiveState") != "active" || s.at("SubState") != "running")) || !s.at("Job").empty())
         throw Failure(ActivationStatus::UnsupportedConfiguration, "service must be stable in supported activation profile");
     if(!inactive) processToken(s, namespace_);
@@ -130,6 +130,12 @@ ServiceState SystemdActivation::preflight() {
         throw Failure(ActivationStatus::UnsupportedConfiguration, "service InvocationID is unavailable");
     configuration_ = s.properties;
     for (const auto& key : {"ActiveState", "SubState", "MainPID", "InvocationID", "Job", "Result"}) configuration_.erase(key);
+    return s;
+}
+ServiceState SystemdActivation::preflight() {
+    auto s=preflightSnapshotValidation();
+    if(profile_!=ActivationProfile::UbuntuSshSocket&&s.at("ActiveState")!="active")
+        throw Failure(ActivationStatus::UnsupportedConfiguration,"service must be stable in supported activation profile");
     return s;
 }
 void SystemdActivation::restart() {

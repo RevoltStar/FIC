@@ -23,3 +23,7 @@ res.log
 !tests/integration/verified_config_service/openssh_native/match_cases.py
 !tests/integration/verified_config_service/openssh_native/lifecycle_cases.py
 **/__pycache__/
+
+!tests/integration/verified_config_service/openssh_native/release_plan_cases.py
+!tests/integration/verified_config_service/openssh_native/release_cases.py
+!tests/integration/verified_config_service/openssh_native/remote_package_cases.py

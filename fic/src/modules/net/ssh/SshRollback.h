@@ -11,12 +11,16 @@
 #include <optional>
 #include <string>
 #include <vector>
+class PolicyRegistry;
+namespace fic::rollback {class MutationJournal;}
 
 // Options for the SSH rollback backend: shared main sshd_config location,
 // service units and the executable resolver. The runner hook exists for unit
 // tests; an empty runner falls back to VerifiedProcessExecutor. The
 // beforeWrite / beforeRestore hooks are deterministic test seams.
 enum class SshOfflineReleaseProfile { None, UbuntuSocket, AltService };
+enum class SshReleaseContext { PolicyDisable, Uninstall };
+enum class SshReleaseDisposition { None, RuntimeVerified, ReleasedOffline, RecoveryRequired };
 struct SshRollbackOptions {
     // Metadata enforcement for read-only unrecorded ownership inspection.
     // Production keeps true; isolated filesystem unit fixtures may opt out.
@@ -29,6 +33,11 @@ struct SshRollbackOptions {
     SshCommandRunner runner;
     std::function<void()> beforeWrite;
     std::function<void()> beforeRestore;
+    bool verifiedRelease=false;
+    fic::rollback::MutationJournal* journal=nullptr;
+    fic::rollback::MutationId mutationId=0;
+    SshReleaseContext releaseContext=SshReleaseContext::PolicyDisable;
+    std::function<bool(std::map<std::string,std::string>&,std::string&)> remainingRequestedState;
 };
 
 struct SshRollbackResult {
@@ -36,6 +45,7 @@ struct SshRollbackResult {
     bool conflict = false;       // FIC-controlled state drifted; nothing was written
     bool nothingToDo = false;    // the mutation is already factually rolled back
     std::string message;
+    SshReleaseDisposition disposition=SshReleaseDisposition::None;
 };
 
 // Rolls back one SSH policy mutation under the explicit FIC ownership model
@@ -57,38 +67,8 @@ struct SshRollbackResult {
 SshRollbackResult undoSshManagedPolicyMutation(
     const SshRollbackOptions& options,
     const fic::rollback::UndoRemoveSshManagedPolicy& undo);
-
-// Outcome of a conditional compensation restore. installed means the
-// replacement was published by rename(2); durable means the replacement is
-// additionally confirmed crash-durable. A proven compensation requires BOTH.
-struct SshRestoreOutcome {
-    bool installed = false;
-    bool durable = false;
-    // True when the restore was refused because the target is no longer the
-    // exact expected FIC-installed state: an external modification was
-    // preserved and nothing was replaced.
-    bool preconditionFailed = false;
-    std::optional<AtomicTargetState> installedState;
-};
-
-// Conditional content restore shared by apply-time and rollback-time
-// compensation writes. The expectedTargetState must be the last proven
-// FIC-installed state of the target: the replacement is performed only when
-// the target still is exactly that state (identity, metadata, content).
-// Refuses symlinks, preserves existing file metadata.
-SshRestoreOutcome restoreSshConfigContentIfCurrentState(
-    const std::filesystem::path& path,
-    const std::string& content,
-    const AtomicTargetState& expectedTargetState,
-    std::string& error);
-
-// Confirms the crash-durability of an already installed FIC state: first
-// re-proves that the target still is exactly the installed state, then
-// fsyncs the parent directory. Returns false (fail closed) when the target
-// drifted or the durability barrier fails.
-bool ensureSshConfigDurableIfCurrentState(
-    const std::filesystem::path& path,
-    const AtomicTargetState& installedState,
-    std::string& error);
+// Called ONLY after an explicit disable saved DISABLE and rebuilt its registry.
+// Unknown Prepared is never resolved; only verified ReleasedAwaitingDisable.
+bool acknowledgeSshPolicyDisable(const PolicyRef&,const PolicyRegistry&,std::string&);
 
 #endif // SSHROLLBACK_H

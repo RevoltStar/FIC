@@ -6,6 +6,9 @@
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
 #include <fic/core/fs/AtomicFileWriter.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include "policy/registry/PolicyRegistry.h"
+#include "service/ssh/SshVerifiedInputClosure.h"
 
 #include "modules/dac/sudo/SudoersConfiguration.h"
 #include "modules/dac/sudo/SudoersGlobalDefaultsTransaction.h"
@@ -458,6 +461,15 @@ MutationRollbackOutcome undoSshManagedPolicy(
         return outcome;
     }
     SshRollbackOptions options = deps.sshOptions();
+    if(options.verifiedRelease) {
+        std::string error;
+        options.journal=DaemonMutationJournal::instance().tryGet(error);
+        options.mutationId=record.id;options.releaseContext=deps.sshReleaseContext;
+        options.remainingRequestedState=[&deps,name=record.policy.policyName](auto& selections,auto& detail) {
+            if(!deps.sshRequestedState){detail="authoritative remaining SSH selections unavailable";return false;}
+            return deps.sshRequestedState(name,selections,detail);
+        };
+    }
     if (options.executables == nullptr || options.configPath.empty()) {
         outcome.status = RollbackStatus::Failed;
         outcome.message = "SSH rollback backend настроен неполно: путь к "
@@ -466,6 +478,7 @@ MutationRollbackOutcome undoSshManagedPolicy(
     }
 
     const SshRollbackResult result = undoSshManagedPolicyMutation(options, undo);
+    outcome.awaitingPolicyDisable=result.ok&&options.verifiedRelease&&options.releaseContext==SshReleaseContext::PolicyDisable;
     outcome.message = result.message;
     if (result.ok) {
         outcome.status = RollbackStatus::Success;
@@ -1422,6 +1435,8 @@ RollbackReport rollbackPolicyBeforeDisable(
                 (record.status == MutationStatus::Prepared ||
                  (std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload) &&
                   sshTransitionPending(std::get<UndoRemoveSshManagedPolicy>(record.undo.payload)))) && record.resource.rfind(prefix, 0) == 0) {
+                const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);
+                if(options.verifiedRelease&&record.policy==policy&&ssh&&sshReleaseAwaitingDisable(*ssh)&&record.error.empty())continue;
                 blocked.message = "SSH recovery required: unresolved Prepared mutation " + std::to_string(record.id);
                 return blocked;
             }
@@ -1462,6 +1477,23 @@ RollbackReport rollbackPolicyBeforeDisable(
     for (const MutationRecord& record : active) {
         MutationRollbackOutcome outcome = undoMutation(deps, record);
         report.outcomes.push_back(outcome);
+
+        const MutationRecord* current=nullptr;
+        for(const auto& candidate:journal->records())if(candidate.id==record.id){current=&candidate;break;}
+        const auto* ssh=current?std::get_if<UndoRemoveSshManagedPolicy>(&current->undo.payload):nullptr;
+        if(ssh&&ssh->transition&&ssh->transition->intent==SshTransitionIntent::Release) {
+            const bool succeededOutcome=outcome.status==RollbackStatus::Success||outcome.status==RollbackStatus::NothingToDo;
+            const bool closed=current->status==MutationStatus::RolledBack&&ssh->transition->phase==SshTransitionPhase::Completed;
+            const bool awaiting=current->status==MutationStatus::Prepared&&sshReleaseAwaitingDisable(*ssh)&&outcome.awaitingPolicyDisable;
+            if(succeededOutcome&&journal->usable()&&(closed||awaiting))++succeeded;
+            else {
+                ++failed;
+                if(succeededOutcome){report.outcomes.back().status=RollbackStatus::Failed;report.outcomes.back().message+="; typed SSH release not finalized/acknowledgeable";}
+            }
+            // Neither generic RolledBack nor RollbackFailed may replace typed
+            // partial-release provenance, including journal uncertainty.
+            continue;
+        }
 
         std::string journalUpdateError;
         if (outcome.status == RollbackStatus::Success ||
@@ -1526,7 +1558,7 @@ RollbackReport rollbackPolicyBeforeDisable(
 
 RollbackExecutorDeps productionRollbackDeps(
     const fic::platform::PlatformProfile& platform,
-    const fic::platform::PlatformExecutableResolver& executables) {
+    const fic::platform::PlatformExecutableResolver& executables,PolicyRegistry* registry) {
     RollbackExecutorDeps deps;
     deps.userCreationPlatform = platform.userCreation;
     deps.passwordAgingPlatform = platform.passwordAging;
@@ -1568,6 +1600,7 @@ RollbackExecutorDeps productionRollbackDeps(
     const fic::platform::SshPlatformConfig sshConfig = platform.ssh;
     deps.sshOptions = [sshConfig, &executables]() {
         SshRollbackOptions options;
+        options.verifiedRelease=sshConfig.applyContract!=fic::platform::SshApplyContract::Legacy;
         options.offlineRelease=sshConfig.applyContract==fic::platform::SshApplyContract::AltVerified?SshOfflineReleaseProfile::AltService:
             sshConfig.applyContract==fic::platform::SshApplyContract::UbuntuSocketVerified?SshOfflineReleaseProfile::UbuntuSocket:SshOfflineReleaseProfile::None;
         options.configPath = sshConfig.configPath;
@@ -1575,6 +1608,41 @@ RollbackExecutorDeps productionRollbackDeps(
         options.serviceUnits = sshConfig.serviceUnits;
         options.executables = &executables;
         return options;
+    };
+    if(registry)deps.sshRequestedState=[registry](const std::string& excluded,auto& selected,std::string& error) {
+        selected.clear();
+        for(const auto* id:{"ssh_root_login","ssh_pubkey_auth","ssh_use_pam","ssh_max_auth_tries","ssh_port"})
+            if(!registry->findPolicy({"NET","SshEdit",id})){error="complete SSH registry unavailable";return false;}
+        const auto path=(fic::core::FicRuntimePaths::get().configDir/"NET.conf").string();
+        AtomicTargetState generation;
+        if(!AtomicFileWriter::captureTargetState(path,generation,&error)||generation.owner!=0||(generation.mode&0022)) {
+            error="trusted current NET configuration unavailable: "+error;return false;
+        }
+        FileHandlerOptions readonly;readonly.writeOptions.createIfMissing=false;readonly.writeOptions.rejectSymlink=true;
+        ConfigFileHandler current(path,"=",readonly);
+        if(!current.loadConfig()){error="current NET configuration unreadable";return false;}
+        for(const auto& ref:registry->policyRefs()) {
+            if(ref.moduleName!="NET"||ref.submoduleName!="SshEdit"||ref.policyName==excluded)continue;
+            auto* policy=registry->findPolicy(ref);if(!policy){error="remaining SSH policy unavailable";return false;}
+            const auto statusKey=ref.policyName+".status";
+            const auto status=current.isParameterExists(statusKey)?current.getValue(statusKey):"DISABLE";
+            if(status!="ENABLE"&&status!="DISABLE"){error="invalid remaining SSH status: "+ref.policyName;return false;}
+            std::string capturedPath;AtomicTargetState cached;
+            if(!policy->captureConfigurationVersion(capturedPath,cached,error)||capturedPath!=path||
+               cached.identity.device!=generation.identity.device||cached.identity.inode!=generation.identity.inode||
+               cached.mode!=generation.mode||cached.owner!=generation.owner||cached.group!=generation.group||cached.content!=generation.content||
+               policy->isEnabled()!=(status=="ENABLE")) {
+                error="remaining SSH policy registry/configuration generation changed: "+ref.policyName+"; "+error;return false;
+            }
+            if(status=="DISABLE")continue;
+            if(!isSupportedSshPolicy(ref.policyName)){error="unsupported enabled remaining SSH policy: "+ref.policyName;return false;}
+            const auto value=policy->getValue();if(!value){error="remaining SSH value unavailable: "+ref.policyName;return false;}
+            selected.emplace(ref.policyName,*value);
+        }
+        if(!AtomicFileWriter::targetStateMatches(path,generation,&error))return false;
+        try {fic::service::ssh::detail::validatePolicies(selected,fic::service::ssh::SshActivationIntent::ConfigurationRelease);}
+        catch(const std::exception& failure){error=failure.what();return false;}
+        return true;
     };
 
     // GRUB ownership-release rollback: the CURRENT platform topology (owned

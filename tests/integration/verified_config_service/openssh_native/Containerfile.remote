@@ -1,0 +1,4 @@
+# Test-only SSH client; never a dependency or implicit installation by FIC.
+ARG BASE_IMAGE=fic-ssh-lifecycle-native:alt-p11
+FROM ${BASE_IMAGE}
+RUN if ! command -v ssh >/dev/null 2>&1; then apt-get update && apt-get install -y openssh-clients && apt-get clean; fi

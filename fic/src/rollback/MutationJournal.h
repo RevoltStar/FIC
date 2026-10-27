@@ -198,8 +198,14 @@ public:
     bool noteSshPublication(MutationId,const AtomicTargetState&,bool durable,std::string&);
     bool noteSshRuntime(MutationId,bool verified,const std::map<std::string,std::string>& facts,std::string&);
     bool commitSshRefresh(MutationId,std::string&);
-    bool abortSshRefreshNoEffect(MutationId,std::string&);
-    bool failSshRefresh(MutationId,const std::string& diagnostic,std::string&);
+    bool abortSshTransitionNoEffect(MutationId,std::string&);
+    bool failSshTransition(MutationId,const std::string& diagnostic,std::string&);
+    bool beginSshRelease(MutationId,const std::string& beforeSha,const std::string& targetSha,
+        bool fileReplacement,std::string&);
+    bool finishSshReleaseVerification(MutationId,std::string&);
+    // Only the caller proving durable DISABLE + successful registry rebuild,
+    // or the admitted UNINSTALLING coordinator, may acknowledge this intent.
+    bool commitSshRelease(MutationId,std::string&);
     bool setStatus(MutationId id, MutationStatus status, std::string& error);
     bool setStatusWithMessage(MutationId id, MutationStatus status,
                               const std::string& message, std::string& error);

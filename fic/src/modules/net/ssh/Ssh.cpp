@@ -149,6 +149,20 @@ bool Ssh::apply() {
     }
 
     const std::lock_guard<std::mutex> lock(sshResourceMutex());
+    const bool verified = platformConfig_.applyContract != fic::platform::SshApplyContract::Legacy;
+    std::optional<AtomicTargetState> configuredGeneration;
+    std::string configuredPath;
+    if(verified) {
+        AtomicTargetState state;std::string error;
+        if(!this->isEnabled()||!this->captureConfigurationVersion(configuredPath,state,error)||state.owner!=0||(state.mode&0022)) {
+            this->log("SSH cached policy intent is not current trusted ENABLE configuration; reload required: "+error,logLevel::ERROR);
+            return false;
+        }
+        configuredGeneration=std::move(state);
+    }
+    const auto currentConfiguredIntent=[&](std::string& error) {
+        return !verified||AtomicFileWriter::targetStateMatches(configuredPath,*configuredGeneration,&error);
+    };
 
     const std::optional valueOpt = this->getValue();
     if(!valueOpt){
@@ -179,7 +193,6 @@ bool Ssh::apply() {
 
     using Adapter = fic::service::ssh::SshVerifiedActivationAdapter;
     using Reference = fic::service::ssh::SshVerifiedActivationRequest;
-    const bool verified = platformConfig_.applyContract != fic::platform::SshApplyContract::Legacy;
     std::map<std::string,std::string> serviceBaseline;
     if (verified) {
         try { serviceBaseline = Adapter::serviceAdmission(); }
@@ -401,19 +414,7 @@ bool Ssh::apply() {
     }
     // Every foreign input must remain the exact captured reference. Only the
     // main file may change, and only when separately bound to our CAS receipt.
-    const auto sameInputs = [&](const Reference& next, bool ownMainChanged) {
-        if (baseline.reference.paths.size() != next.reference.paths.size()) return false;
-        auto metadata = next.observedMetadata;
-        auto expectedMetadata = baseline.observedMetadata;
-        if (ownMainChanged) { metadata.erase(sshPath); expectedMetadata.erase(sshPath); }
-        if (metadata != expectedMetadata) return false;
-        for (std::size_t i=0; i<baseline.reference.paths.size(); ++i) {
-            const auto& a=baseline.reference.paths[i]; const auto& b=next.reference.paths[i];
-            if (a.path!=b.path || a.kind!=b.kind || a.manifest!=b.manifest ||
-                (!(ownMainChanged && a.path==sshPath) && a.sha256!=b.sha256)) return false;
-        }
-        return true;
-    };
+
 
     // Compliance fast-path: a configuration that already satisfies the
     // policy must not be rewritten (idempotent re-apply).
@@ -425,8 +426,10 @@ bool Ssh::apply() {
     }
     if (compliance.compliance == SshCompliance::Compliant) {
         if (verified) {
+            std::string intentError;if(!currentConfiguredIntent(intentError)){this->log(intentError,logLevel::ERROR);return false;}
             const auto result = Adapter::activate(baseline);
             if (!result.success()) { this->log(result.diagnostic, logLevel::ERROR); return false; }
+            if(!currentConfiguredIntent(intentError)){this->log(intentError,logLevel::ERROR);return false;}
         }
         this->log(LocalizationManager::getLang(
                       "[module:NET][submodule:SshEdit][message:already_configured]") +
@@ -551,10 +554,11 @@ bool Ssh::apply() {
     if (verified) {
         hooks.verifiedAdmission = [&](std::string& error) {
             try {
+                if(!currentConfiguredIntent(error))return false;
                 if (Adapter::serviceAdmission() != serviceBaseline) throw std::runtime_error("SSH runtime/launch changed before CAS");
                 const auto current = Adapter::captureReference(selected,
                     fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content));
-                if (!sameInputs(current, false)) throw std::runtime_error("SSH inputs changed before CAS");
+                if (!Adapter::sameInputGeneration(baseline,current,false)) throw std::runtime_error("SSH inputs changed before CAS");
                 return true;
             } catch (const std::exception& e) { error=e.what(); return false; }
         };
@@ -562,23 +566,20 @@ bool Ssh::apply() {
             try {
                 if(refresh&&!journal->noteSshPublication(mutationId,installed,true,error))return false;
                 if (!AtomicFileWriter::targetStateMatches(sshPath, installed, &error)) return false;
+                if(!currentConfiguredIntent(error))return false;
                 if (Adapter::serviceAdmission()!=serviceBaseline) throw std::runtime_error("SSH runtime/launch changed after save");
                 auto next = Adapter::captureReference(selected, fic::core::ContentDigest::sha256Hex(installed.content));
-                if (!sameInputs(next, true)) throw std::runtime_error("foreign SSH input changed after save; provenance retained");
+                if (!Adapter::sameInputGeneration(baseline,next,true)) throw std::runtime_error("foreign SSH input changed after save; provenance retained");
                 if (!AtomicFileWriter::targetStateMatches(sshPath, installed, &error)) return false;
                 next.expectedService=serviceBaseline;
                 next.additionalPolicies=additionalPolicies;
                 const auto result=Adapter::activate(next);
                 if(refresh) {
-                    const auto name=[](fic::service::ssh::ProofState p){return p==fic::service::ssh::ProofState::Proven?"Proven":p==fic::service::ssh::ProofState::NonCompliant?"NonCompliant":"NotProven";};
-                    auto facts=result.runtimeEvidence;
-                    facts["inputs"]=name(result.inputs);facts["semantics"]=name(result.semantics);facts["persistent"]=name(result.persistent);
-                    facts["readiness"]=result.activation.readinessConfirmed?"true":"false";
-                    facts["status"]=fic::service::activationStatusName(result.activation.status);
-                    facts["adapter_status"]=std::to_string(static_cast<int>(result.status));
+                    const auto facts=result.observedFacts();
                     if(!journal->noteSshRuntime(mutationId,result.success(),facts,error))return false;
                 }
                 if (!result.success()) { error="Persistent configuration saved; verified activation failed; provenance retained: " + result.diagnostic; return false; }
+                if(!currentConfiguredIntent(error))return false;
                 return true;
             } catch (const std::exception& e) { error=e.what(); return false; }
         };
@@ -627,7 +628,7 @@ bool Ssh::apply() {
         if(refresh) {
             std::string checkpoint;
             if(transaction.provesNoEffect()) {
-                refreshAbortedNoEffect=journal->abortSshRefreshNoEffect(mutationId,checkpoint);
+                refreshAbortedNoEffect=journal->abortSshTransitionNoEffect(mutationId,checkpoint);
                 if(!refreshAbortedNoEffect)
                     this->log("SSH no-effect abort failed; ownership retained: "+checkpoint,logLevel::ERROR);
             } else {
@@ -640,7 +641,7 @@ bool Ssh::apply() {
                         break;
                     }
                 }
-                if(journal->usable())journal->failSshRefresh(mutationId,transaction.message.substr(0,4096),checkpoint);
+                if(journal->usable())journal->failSshTransition(mutationId,transaction.message.substr(0,4096),checkpoint);
             }
         }
         if (transaction.mayDiscardPrepared(newRecord)) {

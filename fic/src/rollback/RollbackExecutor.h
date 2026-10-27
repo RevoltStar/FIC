@@ -18,6 +18,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+class PolicyRegistry;
 
 namespace fic::rollback {
 
@@ -37,6 +38,7 @@ struct MutationRollbackOutcome {
     std::string resource;
     RollbackStatus status = RollbackStatus::NothingToDo;
     std::string message;
+    bool awaitingPolicyDisable=false;
 };
 
 struct RollbackReport {
@@ -93,6 +95,8 @@ struct RollbackExecutorDeps {
     // SSH backend configuration: shared main sshd_config, service units and
     // the executable resolver used for sshd -T validation and service reload.
     std::function<SshRollbackOptions()> sshOptions;
+    std::function<bool(const std::string& excluded,std::map<std::string,std::string>&,std::string&)> sshRequestedState;
+    SshReleaseContext sshReleaseContext=SshReleaseContext::PolicyDisable;
     // GRUB backend configuration: the platform profile GRUB topology is the
     // single source of truth for the managed artifact location.
     std::function<GrubRollbackOptions()> grubOptions;
@@ -126,7 +130,8 @@ RollbackEnrollment effectiveRollbackEnrollment(const PolicyRef& policy,
 // platform executable resolver.
 RollbackExecutorDeps productionRollbackDeps(
     const fic::platform::PlatformProfile& platform,
-    const fic::platform::PlatformExecutableResolver& executables);
+    const fic::platform::PlatformExecutableResolver& executables,
+    PolicyRegistry* registry=nullptr);
 
 // Rolls back all active mutations of the given policy. Must be called while
 // the policy is still ENABLE and before the policy status flips to DISABLE.

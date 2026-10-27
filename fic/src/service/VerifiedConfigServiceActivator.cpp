@@ -192,7 +192,7 @@ struct Operation {
         mounts.back().expected = now;
     }
 };
-ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, const detail::ActivationProof* proof = nullptr) {
+ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, const detail::ActivationProof* proof = nullptr, bool validationOnly = false) {
     ActivationResult result;
     try { validateRequest(request); } catch (const Failure& e) {
         result.status = result.primaryStatus = e.status; result.diagnostic = e.what(); return result;
@@ -205,14 +205,15 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         const auto deadline = std::chrono::steady_clock::now() + request.timeout;
         const auto workspace = fic::core::FicRuntimePaths::get().runtimeDir / "verified-config-activator";
         const auto profile=proof?proof->profile:ActivationProfile::ActiveNotifyService;
-        if(proof && ((profile==ActivationProfile::UbuntuSshSocket)!=bool(proof->sshSocketActivation)))
+        if(!validationOnly && proof && ((profile==ActivationProfile::UbuntuSshSocket)!=bool(proof->sshSocketActivation)))
             throw Failure(ActivationStatus::UnsupportedConfiguration,"incomplete closed SSH socket proof");
-        if(proof && ((profile==ActivationProfile::AltSshSimple)!=bool(proof->altSshReadiness)))
+        if(!validationOnly && proof && ((profile==ActivationProfile::AltSshSimple)!=bool(proof->altSshReadiness)))
             throw Failure(ActivationStatus::UnsupportedConfiguration,"incomplete closed ALT SSH readiness proof");
         service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths, profile);
-        const auto launch = service->preflight();
+        const auto launch = validationOnly ? service->preflightSnapshotValidation() : service->preflight();
+        const auto validationBaseline=launch.properties;
         if (proof) {
-            if (proof->expectedConfiguration.empty() || !proof->published || !proof->ready ||
+            if (proof->expectedConfiguration.empty() || !proof->published || (!validationOnly && !proof->ready) ||
                 proof->sourceRoots.size() != request.paths.size() || proof->sourceAttributes.size() != request.paths.size())
                 throw Failure(ActivationStatus::UnsupportedConfiguration, "incomplete activation proof");
             for (const auto& [key, expected] : proof->expectedConfiguration)
@@ -309,31 +310,40 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
 #endif
         if (proof) { proof->published(deadline); verifyPublished(); }
         if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace changed after publication");
-        if(proof && proof->profile==ActivationProfile::UbuntuSshSocket) proof->sshSocketActivation(deadline);
-        else service->restart();
-#ifdef FIC_ACTIVATOR_TESTING
-        hooks.checkpoint(detail::TestPhase::RestartQueued, operation.directory);
-#endif
-        ServiceState ready;
-        while (true) {
-            if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace event during activation");
-            auto state = service->current();
-            if (service->ready(state) && (!proof || !proof->altSshReadiness || proof->altSshReadiness(state,deadline))) { service->confirm(state); ready = std::move(state); break; }
-            observer.changed(std::min<std::int64_t>(20, service->remaining().count()));
+        if(validationOnly) {
+            if(service->current().properties!=validationBaseline)
+                throw Failure(ActivationStatus::InterferenceDetected,"service changed during configuration validation");
+            verifyPublished();
+            if(observer.changed())throw Failure(ActivationStatus::InterferenceDetected,"mount event during configuration validation");
+            result.status=result.primaryStatus=ActivationStatus::Success;
+            result.diagnostic="configuration validated under current pinned inputs; no activation/readiness";
+        } else {
+            if(proof && proof->profile==ActivationProfile::UbuntuSshSocket) proof->sshSocketActivation(deadline);
+            else service->restart();
+    #ifdef FIC_ACTIVATOR_TESTING
+            hooks.checkpoint(detail::TestPhase::RestartQueued, operation.directory);
+    #endif
+            ServiceState ready;
+            while (true) {
+                if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace event during activation");
+                auto state = service->current();
+                if (service->ready(state) && (!proof || !proof->altSshReadiness || proof->altSshReadiness(state,deadline))) { service->confirm(state); ready = std::move(state); break; }
+                observer.changed(std::min<std::int64_t>(20, service->remaining().count()));
+            }
+            verifyPublished(); service->confirm(ready);
+            if (proof) { proof->ready(ready, deadline); verifyPublished(); service->confirm(ready); }
+            if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace event before commit");
+            result.readinessConfirmed = true;
+            result.status = result.primaryStatus = ActivationStatus::Success;
+            result.diagnostic = profile==ActivationProfile::AltSshSimple ? "ALT SSH runtime/listener readiness and pinned inputs confirmed" : "notify readiness and pinned configuration confirmed within documented observation model";
         }
-        verifyPublished(); service->confirm(ready);
-        if (proof) { proof->ready(ready, deadline); verifyPublished(); service->confirm(ready); }
-        if (observer.changed()) throw Failure(ActivationStatus::InterferenceDetected, "mount namespace event before commit");
-        result.readinessConfirmed = true;
-        result.status = result.primaryStatus = ActivationStatus::Success;
-        result.diagnostic = profile==ActivationProfile::AltSshSimple ? "ALT SSH runtime/listener readiness and pinned inputs confirmed" : "notify readiness and pinned configuration confirmed within documented observation model";
     } catch (const Failure& e) {
         result.status = result.primaryStatus = e.status; result.diagnostic = e.what();
     } catch (const std::exception& e) {
         result.status = result.primaryStatus = ActivationStatus::UnsupportedConfiguration; result.diagnostic = e.what();
     }
     // Primary outcome is fixed BEFORE our own namespace changes.
-    if (!result.success() && service) {
+    if (!validationOnly && !result.success() && service) {
         const auto canceled = service->cancelPendingJob(); if (!canceled.empty()) result.diagnostic += "; " + canceled;
     }
 #ifdef FIC_ACTIVATOR_TESTING
@@ -369,8 +379,21 @@ ActivationResult VerifiedConfigServiceActivator::activate(const ActivationReques
 ActivationResult detail::activateWithProof(const ActivationRequest& request, const detail::ActivationProof& proof) {
     return perform(request, {}, &proof);
 }
+namespace {
+ActivationProof validationProof(const SnapshotValidationProof& input) {
+    ActivationProof proof;proof.profile=input.profile;proof.expectedConfiguration=input.expectedConfiguration;
+    proof.sourceRoots=input.sourceRoots;proof.sourceAttributes=input.sourceAttributes;proof.published=input.validate;
+    return proof;
+}
+}
+SnapshotValidationResult detail::validateSnapshotWithProof(const ActivationRequest& request,const SnapshotValidationProof& input) {
+    const auto proof=validationProof(input);return {perform(request,{},&proof,true)};
+}
 #ifdef FIC_ACTIVATOR_TESTING
 namespace detail {
+SnapshotValidationResult validateSnapshotWithProofForTests(const ActivationRequest& request,const SnapshotValidationProof& input,const TestHooks& hooks) {
+    const auto proof=validationProof(input);return {perform(request,Hooks{&hooks},&proof,true)};
+}
 ActivationResult activateForTests(const ActivationRequest& r, const TestHooks& hooks) { return perform(r, Hooks{&hooks}); }
 ActivationResult activateWithProofForTests(const ActivationRequest& r, const ActivationProof& proof, const TestHooks& hooks) {
     return perform(r, Hooks{&hooks}, &proof);

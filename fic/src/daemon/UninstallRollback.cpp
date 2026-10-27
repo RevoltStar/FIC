@@ -86,10 +86,12 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
     for(const auto& [name,node]:nodes)edges[name]=node.dependents;
     std::vector<std::string> releaseOrder;
     if(!uninstallReleaseOrder(edges,releaseOrder,error))return failure(error+"; no rollback attempted");
-    auto deps=productionRollbackDeps(platform,executables);
+    auto deps=productionRollbackDeps(platform,executables,&registry);
     // Joint rollback sees the uninstall target, never the saved ENABLE values.
     deps.sudoRequestedState=[](bool& auth,bool& scoped,std::string&){auth=false;scoped=false;return true;};
     deps.pamPasswordRequestedState=[](bool& quality,bool& history,std::string&){quality=false;history=false;return true;};
+    deps.sshRequestedState=[](const std::string&,auto& selected,std::string&){selected.clear();return true;};
+    deps.sshReleaseContext=SshReleaseContext::Uninstall;
     deps.pamManagerFactory=[&](const fic::platform::PamCapabilityConfig& capability,
         const std::vector<std::string>& services,std::string& detail){
         return fic::identity::pam::createPamTopologyManager(platform.pam,capability,services,executables,detail);

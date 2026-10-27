@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,6 +20,9 @@ struct SshConfigAuditOptions {
     std::size_t maximumIncludeDepth = 16;
     std::size_t maximumIncludedFiles = 256;
     bool requireTrustedInputs = false;
+    // Prospective main image ONLY, consumed under the caller's current pinned
+    // snapshot. Includes still use their canonical trusted paths and limits.
+    std::optional<std::string> plannedMain;
 };
 
 class SshConfigAudit {

@@ -1,5 +1,15 @@
 # Debian SSH verified policy validation
 
+## Текущее состояние и исторические результаты
+
+Результаты ниже описывают первоначальный Debian этап. Последующие Match, owned REFRESH
+и active/offline release реализованы для всех пяти профилей; старые утверждения ниже
+о неподдерживаемых REFRESH/ALT/Ubuntu больше не являются текущим контрактом.
+См. [актуальный adapter contract](ssh-verified-activation-adapter.md) и
+[release evidence](../tests/integration/verified_config_service/openssh_native/evidence/release-lifecycle.json).
+Real package/CLI/IPC gate дополнительно измеряет сохранение уже аутентифицированного
+SSH TCP connection при disable, REFRESH, изменении порта и remove/purge.
+
 ## Проверенная реализация
 
 Debian12/13 production `Ssh::apply()` → CAS/durability → существующий SSH adapter

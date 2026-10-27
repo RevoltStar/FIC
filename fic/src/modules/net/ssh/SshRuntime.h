@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,6 +21,7 @@ struct SshRuntimeOptions {
     bool useLaunchArguments = false;
     std::vector<std::string> launchArguments;
     bool requireTrustedInputs = false;
+    std::optional<std::string> plannedMain;
 };
 
 struct SshActivationResult {
@@ -70,6 +72,7 @@ public:
     // sshd -T acceptance check: the configuration is syntactically valid and
     // semantically accepted by sshd.
     bool validateConfiguration(std::string& error) const;
+    bool validateSyntax(std::string& error) const;
     SshActivationResult activateIfRunning() const;
 
 private:
@@ -78,6 +81,7 @@ private:
     SshRuntimeOptions options_;
     const fic::platform::PlatformExecutableResolver& executables_;
     SshCommandRunner runner_;
+    bool configurationProbe(const std::string& mode,ProcessResult&,std::string&) const;
 
     bool loadEffectiveConfiguration(EffectiveConfiguration& configuration,
                                     std::string& error) const;

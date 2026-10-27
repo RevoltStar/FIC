@@ -149,6 +149,27 @@ SshRuntimeOptions options(const TemporaryTree& tree) {
     return value;
 }
 
+void testPlannedMainUsesExactStdinAndConditionalImage() {
+    TemporaryTree tree;
+    const std::string original="MaxAuthTries 3\n";
+    tree.write("sshd_config",original);
+    auto configured=options(tree);configured.plannedMain="MaxAuthTries 3\nMatch User root\nMaxAuthTries 4\n";
+    std::vector<std::string> modes;
+    const auto runner=[&](const std::string&,const std::vector<std::string>& args,const ProcessOptions& process) {
+        require(args.size()==3&&args[1]=="-f"&&args[2]=="/dev/stdin","planned verifier must use stdin, never live pathname");
+        require(process.standardInput==configured.plannedMain&&process.clearEnvironment,"exact planned bytes/environment lost");
+        modes.push_back(args[0]);return success("maxauthtries 3\n");
+    };
+    SshRuntime runtime(configured,tree.executables(),runner);std::string error;
+    require(runtime.validateSyntax(error),error);
+    require(!runtime.verifyPolicyValue("MaxAuthTries","3",error),"planned weaker Match must be audited instead of live compliant main");
+    require(modes==std::vector<std::string>({"-t","-T"}),"native syntax and effective probes must remain distinct");
+    require(tree.read("sshd_config")==original,"preview must not publish main");
+    configured.launchArguments={"-oMaxAuthTries=3"};modes.clear();
+    SshRuntime unsupported(configured,tree.executables(),runner);
+    require(!unsupported.validateSyntax(error)&&modes.empty(),"planned proof cannot silently substitute custom launch options");
+}
+
 void testFixedPubkeyValueRejectsOtherValues() {
     FixedPolicyTypeValue type("yes");
 
@@ -1293,6 +1314,7 @@ void testExternallyRestoredUnitDoesNotRestart() {
 
 int main() {
     const std::vector<std::pair<const char*, void (*)()>> tests = {
+        {"planned main stdin proof", testPlannedMainUsesExactStdinAndConditionalImage},
         {"fixed pubkey value", testFixedPubkeyValueRejectsOtherValues},
         {"existing config pubkey value", testFixedPubkeyValueSupportsExistingConfigs},
         {"equals directive syntax", testDirectiveSyntaxSupportsEqualsSeparators},

@@ -11,8 +11,11 @@
 class ModuleConfigFileHandler : public ConfigFileHandler {
 public:
     ModuleConfigFileHandler(const std::string& module);
+    ModuleConfigFileHandler(const std::string& module,FileHandlerOptions options);
     ModuleConfigFileHandler(const std::filesystem::path& configDirectory,
                             const std::string& module);
+    ModuleConfigFileHandler(const std::filesystem::path& configDirectory,
+                            const std::string& module,FileHandlerOptions options);
 
     bool hasPolicyStatus(const std::string& policy) const;
     bool hasConfiguredValue(const std::string& policy) const;

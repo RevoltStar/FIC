@@ -55,6 +55,7 @@ public:
         path = moduleConf->path();
         if (!AtomicFileWriter::captureTargetState(path, state, &error)) return false;
         FileHandlerOptions options; options.writeOptions.rejectSymlink = true;
+        options.writeOptions.createIfMissing = false;
         ConfigFileHandler current(path, "=", options);
         if (!current.loadConfig() || current.entries() != moduleConf->entries() ||
             !AtomicFileWriter::targetStateMatches(path, state, &error)) {

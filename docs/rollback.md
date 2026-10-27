@@ -147,8 +147,8 @@ executor отклоняется (fail-closed).
 * `fic/src/rollback/RollbackExecutor.{h,cpp}` — `rollbackPolicyBeforeDisable`,
   enrollment матрица, production deps wiring.
 * `fic/src/modules/net/ssh/SshRollback.{h,cpp}` — SSH undo: применение reverse
-  delta главного `sshd_config`, валидация `sshd -T`, reload сервиса,
-  transactional restore.
+  delta главного `sshd_config`, planned syntax/effective proof и verified
+  active/offline release; legacy transaction остаётся только для legacy profile.
 * `tests/fic/rollback/` — тесты journal и executor.
 
 ## Жизненный цикл мутации
@@ -169,14 +169,27 @@ Crash-consistency: запись создаётся в состоянии `Prepar
 запись при disable приводит к проверке фактического состояния
 (nothing-to-do / conflict), а не к слепому откату.
 
-Существующие apply-time восстановительные механизмы backend'ов
+Существующие apply-time восстановительные механизмы остальных backend'ов
 (restore исходного содержимого при провале postcondition) сохранены;
+verified SSH после возможного эффекта сохраняет provenance без blind compensation;
 persistent-запись коммитится только после успешного apply.
+
+### Verified SSH release
+
+На Debian12/13, Ubuntu24/26 и ALT p11 active SSH release проходит существующий
+verified platform engine. До CAS native planned-result validation проверяет синтаксис
+и все оставшиеся ENABLE SSH requirements; отключённая policy не является требованием.
+Доказанный остановленный SSH получает отдельный ReleasedOffline без start/enable.
+Known released_awaiting_disable сохраняет provenance до durable DISABLE, свежего
+registry/reproof и typed journal acknowledgement. Uncertain Prepared не разрешается
+автоматически. Uninstall target пуст и не меняет сохранённые policy values/status.
+Подробный контракт: [adapter](ssh-verified-activation-adapter.md#verified-configuration-release).
 
 ### SSH Prepared и REFRESH
 
-Любая незавершённая SSH Prepared блокирует новые apply и release для общего
-main SSH resource. Автоматического semantic recovery нет, в том числе если
+Неопределённая SSH Prepared блокирует новые apply и release для общего
+main SSH resource. Исключение — явно доказанная released_awaiting_disable без
+ошибки для повторного explicit disable/reproof/ACK этой же политики, описанного выше. Автоматического semantic recovery нет, в том числе если
 текущие байты соответствуют предполагаемому целевому состоянию. Reload journal
 не является подтверждением активации или разрешением незавершённого intent.
 

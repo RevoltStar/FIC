@@ -3,6 +3,15 @@
 #include "modules/net/ssh/SshConfigFile.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
 #include "modules/net/ssh/SshManagedBlock.h"
+#include "modules/net/ssh/SshConfigSyntax.h"
+#include "service/ssh/SshVerifiedActivationAdapter.h"
+#include "rollback/MutationJournal.h"
+#include "rollback/DaemonMutationJournal.h"
+#include "modules/net/ssh/SshResourceLock.h"
+#include "policy/registry/PolicyRegistry.h"
+#include <fic/core/integrity/ContentDigest.h>
+#include <fic/core/runtime/FicRuntimePaths.h>
+#include <mutex>
 
 #include <fic/core/fs/AtomicFileWriter.h>
 
@@ -44,67 +53,163 @@ SshConfigTransactionHooks makeHooks(const SshRollbackOptions& options) {
     return hooks;
 }
 
+bool publicationMatches(const fic::rollback::SshPublicationProof& proof,const AtomicTargetState& state) {
+    return proof.device==static_cast<std::uint64_t>(state.identity.device)&&proof.inode==static_cast<std::uint64_t>(state.identity.inode)&&
+        proof.mode==(state.mode&07777)&&proof.owner==state.owner&&proof.group==state.group&&
+        proof.sha256==fic::core::ContentDigest::sha256Hex(state.content);
+}
+SshRollbackResult runVerifiedRelease(const SshRollbackOptions& options,
+    const fic::rollback::UndoRemoveSshManagedPolicy& permission,SshConfigFileHandler& handler,bool hasArtifacts) {
+    using namespace fic::rollback;
+    using Adapter=fic::service::ssh::SshVerifiedActivationAdapter;
+    using Intent=fic::service::ssh::SshActivationIntent;
+    SshRollbackResult result;auto* journal=options.journal;bool pending=false,retry=false;
+    const auto currentRecord=[&]() -> const MutationRecord* {
+        if(journal)for(const auto& record:journal->records())if(record.id==options.mutationId)return &record;
+        return nullptr;
+    };
+    const auto fail=[&](const std::string& message) {
+        result.message=message;
+        if(pending) {
+            result.disposition=SshReleaseDisposition::RecoveryRequired;
+            std::string checkpoint;if(journal&&journal->usable())journal->failSshTransition(options.mutationId,message.substr(0,4096),checkpoint);
+            if(!checkpoint.empty())result.message+="; "+checkpoint;
+        }
+    };
+    const auto abortNoEffect=[&](const std::string& message) {
+        std::string error;
+        if(!retry&&journal->abortSshTransitionNoEffect(options.mutationId,error)) {
+            pending=false;result.message=message+"; no SSH replacement/activation by this attempt; predecessor retained";
+        } else fail(message+"; "+error);
+    };
+    try {
+        if(!journal||!journal->usable()||!options.mutationId||!options.remainingRequestedState||!handler.loadSnapshot()) {
+            result.message="verified SSH release context/journal unavailable";return result;
+        }
+        const auto* record=currentRecord();const auto* owned=record?std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload):nullptr;
+        const auto resource="ssh:"+options.configPath.string()+":"+permission.directive;
+        if(!owned||record->policy!=PolicyRef{"NET","SshEdit",permission.policyName}||record->resource!=resource||
+           owned->policyName!=permission.policyName||owned->directive!=permission.directive||owned->appliedValue!=permission.appliedValue||
+           owned->disabledMutationIds!=permission.disabledMutationIds||owned->ownershipVersion!=permission.ownershipVersion||
+           owned->wrapperFingerprints!=permission.wrapperFingerprints||
+           normalizeSshKeyword(permission.directive)!=normalizeSshKeyword(sshPolicyDirectiveKeyword(permission.policyName))) {
+            result.conflict=true;result.message="SSH release identity/permission mismatch";return result;
+        }
+        retry=sshReleaseAwaitingDisable(*owned)&&record->error.empty();pending=retry;
+        if((record->status==MutationStatus::Prepared||sshTransitionPending(*owned))&&!retry) {
+            result.disposition=SshReleaseDisposition::RecoveryRequired;
+            result.message="RecoveryRequired: unresolved SSH operation; no automatic recovery";return result;
+        }
+        const auto prefix="ssh:"+options.configPath.string()+":";
+        for(const auto& other:journal->records()) {
+            const auto* p=std::get_if<UndoRemoveSshManagedPolicy>(&other.undo.payload);
+            if(p&&other.id!=options.mutationId&&other.resource.rfind(prefix,0)==0&&
+               (other.status==MutationStatus::Prepared||sshTransitionPending(*p))) {
+                result.message="RecoveryRequired: another SSH shared-resource operation pending";
+                result.disposition=SshReleaseDisposition::RecoveryRequired;return result;
+            }
+        }
+        const auto before=*handler.loadSnapshot();
+        if(retry&&(hasArtifacts||!owned->transition->publication||!publicationMatches(*owned->transition->publication,before))) {
+            result.conflict=true;fail("recorded released SSH image changed/reappeared; no adoption or historical restoration");return result;
+        }
+        std::map<std::string,std::string> selected;std::string error;
+        if(!options.remainingRequestedState(selected,error)){fail("remaining SSH intent unproven: "+error);return result;}
+        const auto sameIntent=[&](std::string& detail) {
+            std::map<std::string,std::string> fresh;
+            if(!options.remainingRequestedState(fresh,detail))return false;
+            if(fresh!=selected){detail="remaining SSH selections changed";return false;}
+            return true;
+        };
+        auto planned=handler.lines();bool removed=false,restored=false;
+        if(!removeSshManagedPolicyBlock(planned,permission.policyName,sshManagedDirectiveLine(permission.directive,permission.appliedValue),removed,error)||
+           !restoreSshDisabledLines(planned,permission.policyName,permission.disabledMutationIds,restored,error)) {
+            result.conflict=true;fail(error);return result;
+        }
+        SshConfigFileHandler image(options.configPath.string());image.lines()=planned;
+        const auto target=hasArtifacts?image.pendingContent():before.content;
+        const bool replacing=target!=before.content;
+        auto baseline=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(before.content),Intent::ConfigurationRelease);
+        const auto admission=Adapter::releaseAdmission(baseline);
+        if(!retry) {
+            if(!journal->beginSshRelease(options.mutationId,fic::core::ContentDigest::sha256Hex(before.content),
+                fic::core::ContentDigest::sha256Hex(target),replacing,error)) {
+                if(!journal->usable())result.disposition=SshReleaseDisposition::RecoveryRequired;
+                result.message="SSH release prepare failed; ownership retained: "+error;return result;
+            }
+            pending=true;
+        }
+        const auto preview=Adapter::validateReleasePlan(baseline,admission,target);
+        if(!preview.success()) {
+            const bool cleaned=preview.snapshot.cleanupErrors.empty()&&preview.snapshot.residualPaths.empty()&&
+                preview.snapshot.status!=fic::service::ActivationStatus::CleanupFailed;
+            if(!retry&&cleaned)abortNoEffect("planned SSH release refused before CAS: "+preview.diagnostic);
+            else fail("planned SSH release unproven: "+preview.diagnostic);
+            return result;
+        }
+        SshConfigTransactionHooks hooks;hooks.beforeWrite=options.beforeWrite;hooks.offlineOwnershipRelease=admission.offline;
+        hooks.verifiedAdmission=[&](std::string& detail) {
+            if(!sameIntent(detail))return false;
+            const auto current=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(before.content),Intent::ConfigurationRelease);
+            if(!Adapter::sameInputGeneration(baseline,current,false)){detail="SSH inputs changed before release CAS";return false;}
+            const auto service=Adapter::releaseAdmission(current);
+            if(service.offline!=admission.offline||service.service!=admission.service){detail="SSH service changed before release CAS";return false;}
+            return true;
+        };
+        hooks.verifiedActivation=[&](const AtomicTargetState& installed,std::string& detail) {
+            if(!retry&&!journal->noteSshPublication(options.mutationId,installed,true,detail))return false;
+            if(!sameIntent(detail)||!AtomicFileWriter::targetStateMatches(options.configPath.string(),installed,&detail))return false;
+            auto next=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(installed.content),Intent::ConfigurationRelease);
+            if(!Adapter::sameInputGeneration(baseline,next,replacing)){detail="foreign SSH input changed during release";return false;}
+            const auto activated=Adapter::releaseConfiguration(next,admission);
+            if(!journal->noteSshRuntime(options.mutationId,activated.success(),activated.observedFacts(),detail))return false;
+            if(!activated.success()){detail="saved release; runtime/persistent result unproven: "+activated.diagnostic;return false;}
+            return sameIntent(detail);
+        };
+        std::optional<AtomicTargetState> installed;
+        if(replacing) {
+            SshRuntime runtime=makeRuntime(options);
+            const auto transaction=runSshConfigTransaction(handler,runtime,hooks,
+                [&](std::string&){handler.lines()=planned;return true;},[](std::string&){return true;},"SSH ownership released");
+            installed=transaction.installedTargetState;
+            if(!transaction.ok) {
+                if(transaction.provesNoEffect())abortNoEffect(transaction.message);
+                else {
+                    if(installed&&journal->usable()) {
+                        const auto* r=currentRecord();const auto* p=r?std::get_if<UndoRemoveSshManagedPolicy>(&r->undo.payload):nullptr;
+                        if(p&&p->transition&&static_cast<int>(p->transition->phase)<=static_cast<int>(SshTransitionPhase::DurablePublished))
+                            journal->noteSshPublication(options.mutationId,*installed,transaction.persistentEffect==SshPersistentEffect::DurableInstalled,error);
+                    }
+                    fail(transaction.message);
+                }
+                return result;
+            }
+        } else {
+            if(hooks.beforeWrite)hooks.beforeWrite();
+            if(!hooks.verifiedAdmission(error)){if(retry)fail(error);else abortNoEffect(error);return result;}
+            if(!AtomicFileWriter::ensureTargetDurableIfCurrentState(options.configPath.string(),before,&error)||
+               !hooks.verifiedActivation(before,error)){fail(error);return result;}
+            installed=before;
+        }
+        if(!installed||!AtomicFileWriter::targetStateMatches(options.configPath.string(),*installed,&error)||!sameIntent(error)) {
+            fail("released SSH persistent/intent recheck failed: "+error);return result;
+        }
+        SshConfigFileHandler final(options.configPath.string());SshManagedModel model;
+        if(!final.loadConfig()||parseSshManagedModel(final.lines(),model,error)!=SshManagedParseStatus::Ok||
+           sshManagedModelHasPolicy(model,permission.policyName)||sshManagedModelHasDisabledForPolicy(model,permission.policyName)||
+           !AtomicFileWriter::targetStateMatches(options.configPath.string(),*installed,&error)) {
+            fail("physical SSH owner absence unproven: "+error);return result;
+        }
+        if(!retry&&!journal->finishSshReleaseVerification(options.mutationId,error)){fail(error);return result;}
+        if(options.releaseContext==SshReleaseContext::Uninstall&&!journal->commitSshRelease(options.mutationId,error)){fail(error);return result;}
+        result.ok=true;result.disposition=admission.offline?SshReleaseDisposition::ReleasedOffline:SshReleaseDisposition::RuntimeVerified;
+        result.message=admission.offline?"ReleasedOffline; runtime NOT activated":"RuntimeVerified; released SSH configuration active";
+        pending=false;
+    } catch(const std::exception& error){fail(std::string("verified SSH release failed: ")+error.what());}
+    return result;
+}
+
 } // namespace
-
-SshRestoreOutcome restoreSshConfigContentIfCurrentState(
-    const std::filesystem::path& path,
-    const std::string& content,
-    const AtomicTargetState& expectedTargetState,
-    std::string& error) {
-    // Conditional restore: the replacement happens only when the target is
-    // still exactly the state FIC proved to install (expectedTargetState —
-    // the state captured at rename time, never a fresh capture, which could
-    // silently legitimize an external modification made after the FIC write).
-    AtomicWriteOptions options;
-    options.createIfMissing = false;
-    options.rejectSymlink = true;
-    options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
-    options.expectedTargetState = expectedTargetState;
-    SshRestoreOutcome outcome;
-    AtomicWriteResult result;
-    if (!AtomicFileWriter::writeWithResult(
-            path.string(), content, options, &error, &result)) {
-        if (result.installed) {
-            // The replacement itself succeeded (rename published the target);
-            // only a later durability step (directory fsync) failed.
-            outcome.installed = true;
-            outcome.durable = false;
-            outcome.installedState = result.installedTargetState;
-            return outcome;
-        }
-        if (result.preconditionFailed) {
-            outcome.preconditionFailed = true;
-            error = "Файл изменился после FIC-записи; восстановление отменено, "
-                    "внешнее содержимое сохранено: " + error;
-        }
-        return outcome;
-    }
-    outcome.installed = true;
-    outcome.durable = result.durabilityConfirmed;
-    outcome.installedState = result.installedTargetState;
-    return outcome;
-}
-
-bool ensureSshConfigDurableIfCurrentState(
-    const std::filesystem::path& path,
-    const AtomicTargetState& installedState,
-    std::string& error) {
-    // Re-prove ownership before the barrier: the durability confirmation
-    // applies to the exact FIC-installed state, never to whatever happens to
-    // occupy the path now (an external replacement must not be fsynced into
-    // legitimacy).
-    if (!AtomicFileWriter::targetStateMatches(path.string(), installedState,
-                                              &error)) {
-        error = "Текущее состояние sshd_config не соответствует "
-                "FIC-installed state; durability не подтверждается: " + error;
-        return false;
-    }
-    if (!AtomicFileWriter::ensureTargetDurable(path.string(), &error)) {
-        error = "Durability-барьер sshd_config не выполнен: " + error;
-        return false;
-    }
-    return true;
-}
 
 SshRollbackResult undoSshManagedPolicyMutation(
     const SshRollbackOptions& options,
@@ -118,7 +223,7 @@ SshRollbackResult undoSshManagedPolicyMutation(
         return result;
     }
 
-    if(options.offlineRelease!=SshOfflineReleaseProfile::None) {
+    if(!options.verifiedRelease&&options.offlineRelease!=SshOfflineReleaseProfile::None) {
         try {requireOffline(options);}
         catch(const std::exception& e) {result.message=e.what();return result;}
     }
@@ -187,6 +292,12 @@ SshRollbackResult undoSshManagedPolicyMutation(
         }
     }
 
+    if(options.verifiedRelease) {
+        if(blockPresent&&!blockOwned) {
+            result.conflict=true;result.message="SSH owned block differs from recorded permission; no release";return result;
+        }
+        return runVerifiedRelease(options,undo,handler,blockPresent||wrappersPresent);
+    }
     if(options.offlineRelease==SshOfflineReleaseProfile::UbuntuSocket)fic::service::ssh::detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();
     if (!blockPresent && !wrappersPresent) {
         // Nothing FIC-owned remains for this policy: the mutation was never
@@ -287,4 +398,44 @@ SshRollbackResult undoSshManagedPolicyMutation(
     result.conflict = transaction.conflict;
     result.message = transaction.message;
     return result;
+}
+
+bool acknowledgeSshPolicyDisable(const PolicyRef& policy,const PolicyRegistry& registry,std::string& error) {
+    using namespace fic::rollback;
+    if(policy.moduleName!="NET"||policy.submoduleName!="SshEdit")return true;
+    const std::lock_guard<std::mutex> lock(sshResourceMutex());
+    auto* journal=DaemonMutationJournal::instance().tryGet(error);if(!journal)return false;
+    const auto active=journal->activeRecords(policy);if(active.empty())return true;
+    const auto* configured=registry.findPolicy(policy);
+    std::string configPath;AtomicTargetState configState;
+    if(!configured||configured->isEnabled()||!configured->captureConfigurationVersion(configPath,configState,error)||
+       configPath!=(fic::core::FicRuntimePaths::get().configDir/"NET.conf").string()||configState.owner!=0||(configState.mode&0022)) {
+        error="current disabled SSH registry/configuration proof unavailable: "+error;return false;
+    }
+    FileHandlerOptions readonly;readonly.writeOptions.createIfMissing=false;readonly.writeOptions.rejectSymlink=true;
+    ConfigFileHandler config(configPath,"=",readonly);
+    if(!config.loadConfig()||!config.isParameterExists(policy.policyName+".status")||
+       config.getValue(policy.policyName+".status")!="DISABLE"||
+       !AtomicFileWriter::ensureTargetDurableIfCurrentState(configPath,configState,&error)) {
+        error="durable explicit SSH DISABLE unproven; release intent retained: "+error;return false;
+    }
+    const auto main=fic::platform::makeBuildPlatformProfile().ssh.configPath;
+    for(const auto& record:active) {
+        const auto* p=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);
+        if(!p||!sshReleaseAwaitingDisable(*p)||record.status!=MutationStatus::Prepared||
+           record.resource!="ssh:"+main.string()+":"+p->directive||!p->transition->publication||!record.error.empty()) {
+            error="SSH release is not explicitly verified/awaiting acknowledgement";return false;
+        }
+        SshConfigFileHandler handler(main.string());SshManagedModel model;
+        if(!handler.loadConfig()||!handler.loadSnapshot()||!publicationMatches(*p->transition->publication,*handler.loadSnapshot())||
+           parseSshManagedModel(handler.lines(),model,error)!=SshManagedParseStatus::Ok||
+           sshManagedModelHasPolicy(model,policy.policyName)||sshManagedModelHasDisabledForPolicy(model,policy.policyName)||
+           !AtomicFileWriter::targetStateMatches(main.string(),*handler.loadSnapshot(),&error)||
+           !AtomicFileWriter::targetStateMatches(configPath,configState,&error)) {
+            std::string checkpoint;journal->failSshTransition(record.id,"physical/configuration drift before DISABLE acknowledgement",checkpoint);
+            error="released SSH physical/configuration state changed; intent retained: "+error;return false;
+        }
+        if(!journal->commitSshRelease(record.id,error))return false;
+    }
+    return true;
 }

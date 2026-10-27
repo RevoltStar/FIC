@@ -215,6 +215,58 @@ std::string fingerprintUnitSource(int root, const std::string& name, std::uint64
         before.st_size, before.st_mtim.tv_sec, before.st_mtim.tv_nsec, before.st_ctim.tv_sec, before.st_ctim.tv_nsec,
         fic::core::ContentDigest::sha256Hex(bytes)})}}.dump();
 }
+struct SshUnitReferences {
+    std::unique_ptr<sd_bus,decltype(&sd_bus_unref)> bus{nullptr,sd_bus_unref};
+    std::string manager;
+    ~SshUnitReferences(){if(bus)sd_bus_close(bus.get());}
+};
+namespace {
+std::string referencedManager(sd_bus* bus,std::chrono::steady_clock::time_point deadline) {
+    timeout(bus,deadline);sd_bus_creds* raw=nullptr;
+    const auto code=sd_bus_get_name_creds(bus,"org.freedesktop.systemd1",SD_BUS_CREDS_PID|SD_BUS_CREDS_EUID|SD_BUS_CREDS_UNIQUE_NAME,&raw);
+    std::unique_ptr<sd_bus_creds,decltype(&sd_bus_creds_unref)> credentials(raw,sd_bus_creds_unref);
+    pid_t pid=0;uid_t uid=static_cast<uid_t>(-1);const char* owner=nullptr;
+    if(code<0||!credentials||sd_bus_creds_get_pid(credentials.get(),&pid)<0||sd_bus_creds_get_euid(credentials.get(),&uid)<0||
+       sd_bus_creds_get_unique_name(credentials.get(),&owner)<0||pid!=1||uid!=0||!owner||owner[0]!=':'||std::strlen(owner)>255)
+        throw Failure(ActivationStatus::UnsupportedConfiguration,"SSH unit GC-reference manager identity unavailable");
+    return owner;
+}
+}
+std::shared_ptr<const SshUnitReferences> retainSshUnitsForValidation(ActivationProfile profile,std::chrono::steady_clock::time_point deadline) {
+    if(profile!=ActivationProfile::ActiveNotifyService&&profile!=ActivationProfile::UbuntuSshSocket&&profile!=ActivationProfile::AltSshSimple)
+        throw Failure(ActivationStatus::UnsupportedConfiguration,"unknown SSH unit-reference profile");
+    // Fixed root-controlled system bus endpoint. The broker may run as
+    // messagebus: its credentials are not confused with PID1 credentials.
+    // RefUnit requires the API-bus sender, whereas authoritative launch queries
+    // below remain on the direct /run/systemd/private root-PID1 connection.
+    for(const auto& path:{"/run","/run/dbus"}) {
+        auto fd=openAbsolute(path,O_PATH|O_DIRECTORY);const auto st=identity(fd.get());
+        if(st.uid!=0||(st.mode&0022))throw Failure(ActivationStatus::UnsupportedConfiguration,"untrusted unit-reference bus directory");
+    }
+    auto socket=openAbsolute("/run/dbus/system_bus_socket",O_PATH);const auto st=identity(socket.get());
+    if(st.uid!=0||!S_ISSOCK(st.mode))throw Failure(ActivationStatus::UnsupportedConfiguration,"untrusted unit-reference bus socket");
+    auto refs=std::make_shared<SshUnitReferences>();sd_bus* raw=nullptr;
+    if(sd_bus_new(&raw)<0)throw Failure(ActivationStatus::UnsupportedConfiguration,"unit-reference bus allocation failed");
+    refs->bus.reset(raw);timeout(raw,deadline);
+    if(sd_bus_set_address(raw,"unix:path=/run/dbus/system_bus_socket")<0||sd_bus_set_bus_client(raw,1)<0||sd_bus_start(raw)<0)
+        throw Failure(ActivationStatus::UnsupportedConfiguration,"unit-reference API bus unavailable");
+    refs->manager=referencedManager(raw,deadline);
+    std::vector<std::string> names{profile==ActivationProfile::AltSshSimple?"sshd.service":"ssh.service"};
+    if(profile==ActivationProfile::UbuntuSshSocket)names.push_back("ssh.socket");
+    for(const auto& name:names) {
+        timeout(raw,deadline);
+        // systemd v252 method_ref_unit: GENERIC_UNIT_LOAD |
+        // GENERIC_UNIT_VALIDATE_LOADED, then bus_unit_method_ref, in one call.
+        // https://github.com/systemd/systemd/blob/v252/src/core/dbus-manager.c
+        requireBus(sd_bus_call_method(raw,refs->manager.c_str(),"/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager","RefUnit",nullptr,nullptr,"s",name.c_str()),"retain installed SSH unit");
+    }
+    verifySshUnitReferences(*refs,deadline);return refs;
+}
+void verifySshUnitReferences(const SshUnitReferences& refs,std::chrono::steady_clock::time_point deadline) {
+    if(!refs.bus||referencedManager(refs.bus.get(),deadline)!=refs.manager)
+        throw Failure(ActivationStatus::InterferenceDetected,"unit-reference systemd owner changed");
+}
 static LaunchContract readContract(const std::string& unit, std::chrono::steady_clock::time_point deadline, bool socket, bool runtime=false) {
     sd_bus* rawBus = nullptr;
     if (sd_bus_new(&rawBus) < 0) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot allocate systemd connection");

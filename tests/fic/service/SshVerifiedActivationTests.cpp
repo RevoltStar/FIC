@@ -42,6 +42,19 @@ int main() {
         require(refused, "unsupported input accepted"); ++checks;
     };
     const d::InputProfile debianInput{"ssh.service",mainFile,"/etc/ssh",dir,"/etc/default/ssh","SSHD_OPTS",false};
+    deny([&]{d::validatePolicies({});});
+    d::validatePolicies({},s::SshActivationIntent::ConfigurationRelease);++checks;
+    deny([&]{d::validatePolicies({{"ssh_root_login","yes"}},s::SshActivationIntent::ConfigurationRelease);});
+    deny([&]{d::validatePolicies({},static_cast<s::SshActivationIntent>(99));});
+    {
+        Fixture released;released.bytes[mainFile]="HostKey "+host+"\nPermitRootLogin yes\n";released.sync();
+        deny([&]{released.closure({});});
+        d::validateClosure(released.reference,released.bytes,{},debianInput,s::SshActivationIntent::ConfigurationRelease);++checks;
+        s::SshConfigurationValidationResult validation;validation.validated=true;validation.snapshot.status=ActivationStatus::Success;
+        require(validation.success(),"clean snapshot validation refused");++checks;
+        validation.snapshot.readinessConfirmed=true;
+        require(!validation.success(),"configuration validation conflated with runtime readiness");++checks;
+    }
     using J = nlohmann::json;
     std::map<std::string,std::string> launch;
     auto put = [&](const char* name, const J& v) { launch[std::string("launch.")+name] = J{{"value",v}}.dump(); };

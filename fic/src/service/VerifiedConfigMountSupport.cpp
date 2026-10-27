@@ -18,6 +18,7 @@
 #include <sys/vfs.h>
 #include <poll.h>
 #include <sstream>
+#include <locale>
 #include <sys/syscall.h>
 #include <sys/xattr.h>
 #include <unistd.h>
@@ -198,7 +199,11 @@ bool mountOption(const std::string& options, const std::string& flag) {
 std::vector<MountRecord> parseMountInfo(const std::string& text) {
     std::vector<MountRecord> out; std::istringstream input(text); std::string line;
     while (std::getline(input, line)) {
-        std::istringstream in(line); MountRecord r; std::string field;
+        std::istringstream in(line);
+        // Kernel fields are ASCII protocol, independent of daemon UI locale.
+        // ru_RU uses a space thousands separator and can consume field gaps.
+        in.imbue(std::locale::classic());
+        MountRecord r; std::string field;
         if (!(in >> r.id >> r.parent >> r.device >> r.root >> r.target >> r.options))
             throw Failure(ActivationStatus::UnsupportedConfiguration, "invalid mountinfo record");
         bool separator = false;

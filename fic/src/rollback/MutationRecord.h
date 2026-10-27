@@ -85,7 +85,8 @@ struct UndoRemoveGrubManagedSetting {
 // manual edits of the FIC block) and the provenance ids of the disabled
 // blocks FIC created for this mutation. No reverse delta and no historical
 // file content is recorded; old SSH payloads are not migrated.
-enum class SshTransitionPhase { Prepared, Published, DurablePublished, RuntimeVerified, Completed };
+enum class SshTransitionPhase { Prepared, Published, DurablePublished, RuntimeVerified, Completed, OfflineVerified, ReleasedAwaitingDisable };
+enum class SshTransitionIntent { Refresh, Release };
 struct SshOwnedProjection {
     std::string value;
     std::vector<std::string> disabledIds;
@@ -106,6 +107,10 @@ struct SshOwnershipTransition {
     std::string beforeSha256, targetSha256;
     std::optional<SshPublicationProof> publication;
     std::map<std::string,std::string> runtimeFacts;
+    SshTransitionIntent intent=SshTransitionIntent::Refresh;
+    bool fileReplacement=true;
+    MutationStatus predecessorStatus=MutationStatus::Applied;
+    std::string predecessorError;
 };
 struct UndoRemoveSshManagedPolicy {
     std::string policyName;   // FIC policy name (e.g. ssh_root_login)
@@ -127,6 +132,10 @@ inline SshOwnedProjection sshOwnedProjection(const UndoRemoveSshManagedPolicy& p
 }
 inline bool sshTransitionPending(const UndoRemoveSshManagedPolicy& p) {
     return p.transition && p.transition->phase!=SshTransitionPhase::Completed;
+}
+inline bool sshReleaseAwaitingDisable(const UndoRemoveSshManagedPolicy& p) {
+    return p.transition&&p.transition->intent==SshTransitionIntent::Release&&
+        p.transition->phase==SshTransitionPhase::ReleasedAwaitingDisable;
 }
 
 // Explicit FIC ownership payload for the SUDO scoped-Defaults blocker

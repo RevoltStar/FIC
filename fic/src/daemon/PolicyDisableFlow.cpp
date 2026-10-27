@@ -3,6 +3,7 @@
 #include <fic/core/config/ModuleConfigFileHandler.h>
 
 #include <iostream>
+#include <algorithm>
 
 namespace fic::daemon {
 
@@ -30,11 +31,17 @@ PolicyMutationResult disablePolicyAfterLookup(
         std::cout << "Rollback выполнен: " << rollbackReport.message << '\n';
     }
 
-    ModuleConfigFileHandler config(policy.moduleName);
+    const bool ssh=policy.moduleName=="NET"&&policy.submoduleName=="SshEdit"&&
+        rollbackDeps.sshOptions&&rollbackDeps.sshOptions().verifiedRelease;
+    const bool awaiting=std::any_of(rollbackReport.outcomes.begin(),rollbackReport.outcomes.end(),
+        [](const auto& outcome){return outcome.awaitingPolicyDisable;});
+    FileHandlerOptions options;
+    if(ssh){options.writeOptions.createIfMissing=false;options.writeOptions.rejectSymlink=true;}
+    ModuleConfigFileHandler config(policy.moduleName,options);
     if (!config.loadConfig()) {
         std::cout << "Не удалось загрузить конфигурационный файл" << '\n';
         return PolicyMutationResult::failure(
-            "could not load module configuration");
+            awaiting?"SSH ownership released; current configuration unavailable; DISABLE unconfirmed, release intent retained":"could not load module configuration");
     }
     if (!config.disablePolicy(policy.policyName)) {
         std::cout << "Не удалось отключить параметр" << '\n';
@@ -45,10 +52,15 @@ PolicyMutationResult disablePolicyAfterLookup(
     if (!config.saveConfig()) {
         std::cout << "Не удалось отключить политику" << '\n';
         return PolicyMutationResult::failure(
-            "could not save module configuration");
+            awaiting?"SSH ownership released; DISABLE save/durability unconfirmed; release intent retained":"could not save module configuration");
     }
     std::cout << "Политика была успешно дезактивирована" << '\n';
-    return PolicyMutationResult::success();
+    std::string detail;
+    if(ssh)for(const auto& outcome:rollbackReport.outcomes) {
+        if(!detail.empty())detail+="; ";
+        detail+=outcome.message;
+    }
+    return {true,std::move(detail)};
 }
 
 } // namespace fic::daemon

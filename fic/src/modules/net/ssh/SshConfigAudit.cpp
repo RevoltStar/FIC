@@ -89,13 +89,15 @@ bool auditConfigFile(const std::filesystem::path& path,
             return false;
         }
     }
+    const bool planned=options.plannedMain&&path.lexically_normal()==options.configPath.lexically_normal();
+    if(planned)trustedContent=*options.plannedMain;
     std::istringstream trustedStream(trustedContent);
     if (state.collectSources) {
         const std::string sourcePath = path.string();
         state.sources += std::to_string(sourcePath.size()) + ":" + sourcePath +
             fic::core::ContentDigest::sha256Hex(trustedContent);
     }
-    std::istream& stream = options.requireTrustedInputs
+    std::istream& stream = options.requireTrustedInputs||planned
         ? static_cast<std::istream&>(trustedStream)
         : static_cast<std::istream&>(ordinaryStream);
 

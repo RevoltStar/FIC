@@ -120,7 +120,7 @@ def drive(action, req, allow_crash=False):
     operations=len(req.get('operations', []))
     assert action!='module' or 0<operations<=64
     process = run([DRIVER, action, str(p)], check=not allow_crash,
-                  timeout=30+240*operations if action == 'module' else 35)
+                  timeout=30+240*operations if action == 'module' else 240 if action=='plan-release' else 35)
     if allow_crash and process.returncode == -9:
         return {'status': 'SIGKILL', 'readinessConfirmed': False}
     data = json.loads(process.stdout.splitlines()[-1])
@@ -669,6 +669,10 @@ def main():
 
 def self_test():
     # No subprocess, root, system mutation or Docker required for CTest.
+    import ast
+    for name in ("release_cases.py", "release_plan_cases.py", "remote_package_cases.py"):
+        path=Path(__file__).with_name(name)
+        ast.parse(path.read_text(),filename=str(path))
     assert not covered('/etc/ssh-extra.conf', [{'path': '/etc/ssh', 'directory': True}])
     assert covered('/etc/ssh/sshd_config.d/new.conf', [{'path': '/etc/ssh/sshd_config.d', 'directory': True}])
     assert not covered('/etc/ssh/sshd_config.d', [{'path': '/etc/ssh/sshd_config.d'}], directory=True)

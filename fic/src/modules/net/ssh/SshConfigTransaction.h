@@ -7,6 +7,39 @@
 #include <functional>
 #include <string>
 
+// Outcome of a conditional compensation restore. installed means the
+// replacement was published by rename(2); durable means the replacement is
+// additionally confirmed crash-durable. A proven compensation requires BOTH.
+struct SshRestoreOutcome {
+    bool installed = false;
+    bool durable = false;
+    // True when the restore was refused because the target is no longer the
+    // exact expected FIC-installed state: an external modification was
+    // preserved and nothing was replaced.
+    bool preconditionFailed = false;
+    std::optional<AtomicTargetState> installedState;
+};
+
+// Conditional content restore shared by apply-time and rollback-time
+// compensation writes. The expectedTargetState must be the last proven
+// FIC-installed state of the target: the replacement is performed only when
+// the target still is exactly that state (identity, metadata, content).
+// Refuses symlinks, preserves existing file metadata.
+SshRestoreOutcome restoreSshConfigContentIfCurrentState(
+    const std::filesystem::path& path,
+    const std::string& content,
+    const AtomicTargetState& expectedTargetState,
+    std::string& error);
+
+// Confirms the crash-durability of an already installed FIC state: first
+// re-proves that the target still is exactly the installed state, then
+// fsyncs the parent directory. Returns false (fail closed) when the target
+// drifted or the durability barrier fails.
+bool ensureSshConfigDurableIfCurrentState(
+    const std::filesystem::path& path,
+    const AtomicTargetState& installedState,
+    std::string& error);
+
 struct SshConfigTransactionHooks {
     bool offlineOwnershipRelease = false;
     // Deterministic test seam invoked right before the conditional atomic

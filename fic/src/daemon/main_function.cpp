@@ -268,7 +268,7 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
         }
 
         fic::rollback::RollbackExecutorDeps rollbackDeps =
-            fic::rollback::productionRollbackDeps(platform, executables);
+            fic::rollback::productionRollbackDeps(platform, executables, &policyRegistry);
         rollbackDeps.releaseDisplayManagers = [&platform,&executables](fic::rollback::MutationJournal& journal, std::string& error, bool preview) {
             return DisplayManagerConfigTransaction(executables,platform.displayManager).releaseAll(journal,error,preview);
         };

@@ -4,8 +4,9 @@
 
 **Статус: исторический проект расширенного lifecycle с последующими дополнениями.
 Stage 1/2 и bounded Debian integration описаны в §22/23 и последнем разделе.
-Текущий typed REFRESH/schema 3
-описан в [контракте adapter](ssh-verified-activation-adapter.md#crash-consistent-ownership-refresh);
+Текущий typed REFRESH/schema 3 и verified active/offline release с disable acknowledgement
+описаны в [контракте adapter](ssh-verified-activation-adapter.md#crash-consistent-ownership-refresh);
+раздел release — [здесь](ssh-verified-activation-adapter.md#verified-configuration-release);
 автоматического recovery Prepared по-прежнему нет.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
 Production, API, journal schema и поведение политик этим документом не изменяются.
 

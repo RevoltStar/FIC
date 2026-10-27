@@ -3008,7 +3008,7 @@ void testSshTypedRefreshPreviousTargetAndAbort() {
     require(file.read()==bytes,"rejected transition operation changed journal");
     MutationJournal reloaded(file.path);require(reloaded.initializeOrLoad(error),error);
     require(reloaded.records().front().status==MutationStatus::Prepared,"restart automatically resolved Prepared");
-    require(journal.abortSshRefreshNoEffect(id,error),error);
+    require(journal.abortSshTransitionNoEffect(id,error),error);
     const auto& restored=std::get<UndoRemoveSshManagedPolicy>(journal.records().front().undo.payload);
     require(journal.records().front().id==id&&journal.records().size()==1&&journal.records().front().status==MutationStatus::Applied&&
         restored.appliedValue==old.appliedValue&&!restored.transition&&restored.ownershipVersion==0,"no-effect abort lost/adopted old ownership");
@@ -3021,7 +3021,7 @@ void testSshTypedRefreshPublicationRuntimeCommit() {
     AtomicTargetState installed;installed.content="owned target\n";installed.identity={1,2};installed.mode=0644;
     require(j.beginSshRefresh(id,target,std::string(64,'a'),fic::core::ContentDigest::sha256Hex(installed.content),e),e);
     require(j.noteSshPublication(id,installed,false,e),e);
-    require(!j.abortSshRefreshNoEffect(id,e)&&!j.commitSshRefresh(id,e),"published transition was discarded or committed");
+    require(!j.abortSshTransitionNoEffect(id,e)&&!j.commitSshRefresh(id,e),"published transition was discarded or committed");
     const auto checkRestartGate=[&] {
         MutationJournal restarted(file.path);require(restarted.initializeOrLoad(e),e);
         const auto& saved=std::get<UndoRemoveSshManagedPolicy>(restarted.records()[0].undo.payload);
@@ -3105,11 +3105,95 @@ void testSshTypedRefreshPersistFailure() {
     require(j.records()[0].status==MutationStatus::Prepared&&!j.beginSshRefresh(id,target,std::string(64,'a'),std::string(64,'b'),e),"restart bypassed unresolved transition");
 }
 
+void testSshReleaseRequiresDisableAcknowledgement() {
+    TempFile file;MutationJournal j(file.path);std::string e;require(j.initializeOrLoad(e),e);
+    auto r=preparedSshRecord();const auto old=std::get<UndoRemoveSshManagedPolicy>(r.undo.payload);
+    MutationId id=0;require(j.prepareMutation(r,id,e)&&j.setStatus(id,MutationStatus::Applied,e),e);
+    AtomicTargetState target;target.content="foreign configuration after release\n";target.identity={1,2};target.mode=0644;
+    require(j.beginSshRelease(id,std::string(64,'a'),fic::core::ContentDigest::sha256Hex(target.content),true,e),e);
+    require(!j.commitSshRelease(id,e)&&!j.setStatus(id,MutationStatus::RolledBack,e),"unverified release resolved");
+    require(j.noteSshPublication(id,target,true,e),e);
+    const std::map<std::string,std::string> facts{{"inputs","Proven"},{"semantics","Proven"},{"persistent","Proven"},
+        {"readiness","true"},{"status","Success"},{"unit","ssh.service"},{"InvocationID",std::string(32,'a')},{"MainPID","42"},{"offline","false"}};
+    require(j.noteSshRuntime(id,true,facts,e)&&j.finishSshReleaseVerification(id,e),e);
+    require(!j.commitSshRefresh(id,e)&&!j.discard(id,e)&&!j.setStatus(id,MutationStatus::RolledBack,e),"awaiting DISABLE bypassed typed gate");
+    MutationJournal restarted(file.path);require(restarted.initializeOrLoad(e),e);
+    const auto& awaiting=std::get<UndoRemoveSshManagedPolicy>(restarted.records()[0].undo.payload);
+    require(sshReleaseAwaitingDisable(awaiting)&&restarted.records()[0].status==MutationStatus::Prepared&&awaiting.appliedValue==old.appliedValue&&
+        awaiting.ownershipVersion==0&&awaiting.wrapperFingerprints.empty(),"restart/adoption changed legacy release intent");
+    const auto bytes=file.read();breakPersist(file);require(!j.commitSshRelease(id,e),"failed acknowledgement write accepted");restorePersist(file);
+    require(file.read()==bytes&&sshReleaseAwaitingDisable(std::get<UndoRemoveSshManagedPolicy>(j.records()[0].undo.payload)),"failed ack lost pending intent");
+    require(j.commitSshRelease(id,e),e);MutationJournal final(file.path);require(final.initializeOrLoad(e),e);
+    require(final.records()[0].status==MutationStatus::RolledBack&&!sshTransitionPending(std::get<UndoRemoveSshManagedPolicy>(final.records()[0].undo.payload)),"verified+acknowledged release not finalized");
+    auto doc=nlohmann::json::parse(file.read());doc["records"][0]["undo"]["transition"]["target"]=nlohmann::json::object();
+    file.write(doc.dump());MutationJournal malformed(file.path);require(!malformed.load(e),"release accepted non-null ownership target");
+}
+void testSshReleaseOfflineAndNoEffectAbort() {
+    TempFile file;MutationJournal j(file.path);std::string e;require(j.initializeOrLoad(e),e);
+    auto r=preparedSshRecord();MutationId id=0;require(j.prepareMutation(r,id,e)&&j.setStatusWithMessage(id,MutationStatus::RollbackFailed,"older failure",e),e);
+    const auto digest=std::string(64,'a');require(j.beginSshRelease(id,digest,digest,false,e),e);
+    require(j.abortSshTransitionNoEffect(id,e),e);
+    require(j.records()[0].status==MutationStatus::RollbackFailed&&j.records()[0].error=="older failure","no-effect release abort changed predecessor status/error");
+    AtomicTargetState target;target.content="already absent owned artifacts\n";target.identity={1,2};target.mode=0644;
+    const auto sha=fic::core::ContentDigest::sha256Hex(target.content);
+    require(j.beginSshRelease(id,sha,sha,false,e)&&j.noteSshPublication(id,target,true,e),e);
+    const std::map<std::string,std::string> facts{{"inputs","Proven"},{"semantics","Proven"},{"persistent","Proven"},
+        {"readiness","false"},{"status","Success"},{"unit","ssh.service"},{"MainPID","0"},{"offline","true"}};
+    require(j.noteSshRuntime(id,true,facts,e),e);
+    require(std::get<UndoRemoveSshManagedPolicy>(j.records()[0].undo.payload).transition->phase==SshTransitionPhase::OfflineVerified,"offline proof conflated with runtime readiness");
+    require(!j.abortSshTransitionNoEffect(id,e)&&!j.commitSshRefresh(id,e),"offline release bypassed typed lifecycle");
+    require(j.finishSshReleaseVerification(id,e)&&j.commitSshRelease(id,e),e);
+    MutationJournal restarted(file.path);require(restarted.initializeOrLoad(e),e);
+    auto doc=nlohmann::json::parse(file.read());doc["records"][0]["undo"]["transition"]["runtime_facts"]["readiness"]="true";
+    file.write(doc.dump());MutationJournal inconsistent(file.path);require(!inconsistent.load(e),"offline record claims runtime readiness");
+}
+void testSshReleaseUncertainEffectStaysPending() {
+    TempFile file;MutationJournal j(file.path);std::string e;require(j.initializeOrLoad(e),e);
+    auto r=preparedSshRecord();MutationId id=0;require(j.prepareMutation(r,id,e)&&j.setStatus(id,MutationStatus::Applied,e),e);
+    AtomicTargetState target;target.content="released target\n";target.identity={1,2};target.mode=0644;
+    const auto digest=fic::core::ContentDigest::sha256Hex(target.content);
+    require(j.beginSshRelease(id,std::string(64,'a'),digest,true,e)&&j.noteSshPublication(id,target,true,e),e);
+    require(j.noteSshRuntime(id,false,{{"status","CleanupFailed"},{"readiness","true"}},e)&&j.failSshTransition(id,"unconfirmed cleanup",e),e);
+    MutationJournal restarted(file.path);require(restarted.initializeOrLoad(e),e);
+    require(restarted.records()[0].status==MutationStatus::Prepared&&
+        !restarted.beginSshRelease(id,std::string(64,'a'),digest,true,e)&&!restarted.finishSshReleaseVerification(id,e)&&
+        !restarted.commitSshRelease(id,e)&&!restarted.setStatus(id,MutationStatus::RolledBack,e)&&!restarted.abortSshTransitionNoEffect(id,e),
+        "uncertain release recovered automatically or discarded old permission");
+}
+
+
+void testFailedSshTransitionCannotBePromoted() {
+    for(const bool release:{false,true}) {
+        TempFile file;MutationJournal j(file.path);std::string e;require(j.initializeOrLoad(e),e);
+        auto r=preparedSshRecord();auto& original=std::get<UndoRemoveSshManagedPolicy>(r.undo.payload);original.disabledMutationIds.clear();
+        MutationId id=0;require(j.prepareMutation(r,id,e)&&j.setStatus(id,MutationStatus::Applied,e),e);
+        AtomicTargetState installed;installed.content="next image\n";installed.identity={1,2};installed.mode=0644;
+        const auto digest=fic::core::ContentDigest::sha256Hex(installed.content);
+        auto target=original;target.ownershipVersion=1;target.appliedValue="2323";
+        require(release?j.beginSshRelease(id,std::string(64,'a'),digest,true,e):j.beginSshRefresh(id,target,std::string(64,'a'),digest,e),e);
+        require(j.noteSshPublication(id,installed,true,e),e);
+        const std::map<std::string,std::string> facts{{"inputs","Proven"},{"semantics","Proven"},{"persistent","Proven"},
+            {"readiness","true"},{"status","Success"},{"unit","ssh.service"},{"InvocationID",std::string(32,'a')},{"MainPID","42"},{"offline","false"}};
+        if(release)require(j.noteSshRuntime(id,true,facts,e)&&j.finishSshReleaseVerification(id,e),e);
+        require(j.failSshTransition(id,"unproven subsequent effect",e),e);
+        const auto bytes=file.read();
+        require(!j.noteSshRuntime(id,true,facts,e)&&!j.commitSshRefresh(id,e)&&!j.commitSshRelease(id,e)&&file.read()==bytes,
+            "verified checkpoint cleared failure/recovered unknown Prepared");
+        MutationJournal restarted(file.path);require(restarted.initializeOrLoad(e),e);
+        const auto& p=std::get<UndoRemoveSshManagedPolicy>(restarted.records()[0].undo.payload);
+        require(restarted.records()[0].status==MutationStatus::Prepared&&!sshReleaseAwaitingDisable(p),"failed recheck retained retryable completed-release permission");
+    }
+}
+
 int main() {
     const struct {
         const char* name;
         void (*test)();
     } tests[] = {
+        {"failed SSH transition cannot promote",testFailedSshTransitionCannotBePromoted},
+        {"SSH release waits for DISABLE",testSshReleaseRequiresDisableAcknowledgement},
+        {"SSH offline release/no-effect abort",testSshReleaseOfflineAndNoEffectAbort},
+        {"SSH uncertain release stays pending",testSshReleaseUncertainEffectStaysPending},
         {"SSH typed previous target/no-effect abort",testSshTypedRefreshPreviousTargetAndAbort},
         {"SSH typed publication runtime commit",testSshTypedRefreshPublicationRuntimeCommit},
         {"SSH legacy/failure boundary",testSshTypedRefreshLegacyAndFailureBoundaries},

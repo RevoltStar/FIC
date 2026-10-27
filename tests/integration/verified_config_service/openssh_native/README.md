@@ -165,3 +165,39 @@ phase PASS is not full acceptance. Production has no corresponding bypass.
 The runner also builds/runs portable pure adapter contract tests on each platform.
 ALT contract, image/package observations, readiness, rollback limitations and
 sanitized production evidence: [ALT p11](../../../../docs/alt-p11-ssh-verified-activation.md).
+
+## Verified release and real package/SSH administration
+
+The current lifecycle release gate is separate from the historical adapter/module
+experiments above. It runs the production five-policy registry, DisableFlow,
+MutationJournal and verified engines. `release` has 30 groups (5 positive,
+20 fault/crash/disable-ACK, 5 admission/legacy); `release-plan` exercises preview
+without CAS. Group selection is a harness option, never a production bypass.
+
+```sh
+FIC_SSH_NATIVE_SCENARIO=release FIC_SSH_NATIVE_RELEASE_GROUP=all \
+  bash tests/integration/verified_config_service/openssh_native/run-native.sh \
+  fic-ssh-lifecycle-native:debian12 debian-12
+bash tests/integration/verified_config_service/openssh_native/run-remote-package.sh \
+  fic-ssh-lifecycle-native:debian12 debian-12 /absolute/path/to/deb-artifacts
+```
+
+Repeat with debian13/debian-13, ubuntu2404/ubuntu-24.04,
+ubuntu2604/ubuntu-26.04, alt-p11/alt-p11. ALT remote uses derivative image
+`Containerfile.remote` with test-only openssh-clients and the RPM artifact directory.
+The package runner installs real artifacts, uses actual daemon admission and
+CLI/IPC, and removes them (DEB also purges). No installed-state forging. A single
+previously authenticated loopback SSH ControlMaster performs all commands;
+ProxyCommand=false prevents reconnect after Port changes. Its survival is measured,
+not inferred from vendor KillMode. Fixture keys are never exported.
+
+Only the isolated test namespace provisions private directory mount boundaries,
+trusted keys, daemon config, service startup and test udev readiness. Production
+never prepares those boundaries or installs/enables/starts missing SSH providers.
+No host SSH files, ports, systemd, PAM or security state are changed. These five
+userlands share the Docker/WSL kernel, and loopback connection evidence is not a
+promise for arbitrary external networks or custom unit topologies.
+
+Current contract: [adapter](../../../../docs/ssh-verified-activation-adapter.md#verified-configuration-release).
+Sanitized results, case composition, actual packages and limitations:
+[evidence](evidence/release-lifecycle.json). Raw logs remain in ignored build dirs.

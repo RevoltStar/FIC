@@ -104,9 +104,9 @@ unknown launch overrides дают отказ. Vendor unit не изменяет�
 * Повторить runtime/launch/listener proof после cleanup и P. Receipt включает эти
   identities и trusted inputs, без нового restart при неизменности. Existing
   shared mutex/Prepared/CAS/durability/ownership/A-B-C-P используются без fallback.
-* Active rollback v1 conservatively refuses before write, retaining ownership;
-  positive offline service proof permits only owned artifacts release and сообщает
-  runtime NotAttempted. Legacy reload SUCCESS на ALT больше не допускается.
+* Текущее active release использует тот же verified ALT engine; отдельный offline
+  release не запускает службу. Контракт и отличие от прежнего v1 refusal:
+  [Verified configuration release](ssh-verified-activation-adapter.md#verified-configuration-release).
 
 ## Reproduce / ограничения
 
@@ -119,7 +119,7 @@ Docker inspect запрещают host binds/network/ports. Only sanitized repor
 package installation отсутствуют, используются настоящие установленные ALT RPMs.
 Общий WSL2 kernel6.6.87.2; не VM/kernel matrix, не PAM/login/daemon/package acceptance.
 Root ABA/изменения после последней проверки не устраняются. Общая deployment boundary
-private mount parents и существующее ограничение owned REFRESH сохраняются.
+private mount parents сохраняются. Текущий owned REFRESH описан в [adapter contract](ssh-verified-activation-adapter.md#crash-consistent-ownership-refresh).
 
 ## Policy apply и rollback
 
@@ -147,12 +147,18 @@ SUCCESS требует всех необходимых proofs и успешно�
 после save возвращает failure с фактом записи и сохранённым Prepared/provenance;
 blind compensation и legacy fallback не добавлены. CleanupFailed не становится SUCCESS.
 
-Active rollback отказывает **до записи**, сохраняя ownership. Offline release
-положительно подтверждает loaded canonical service inactive/dead, MainPID=0,
-Job=0, отсутствие triggers до/во время/после conditional restore. Unknown/unloaded,
-failed/active/pending state отказывает. Release удаляет только доказанные FIC-owned
-артефакты через существующий CAS/journal lifecycle, выполняет native syntax check
-и сообщает **runtime NOT activated**. Это не обещание вернуть старый runtime/порт.
+Active rollback теперь проверяет результирующий конфиг до CAS и активирует его
+через verified ALT service flow, включая readiness/listener proof. Offline release
+подтверждает inactive/dead, MainPID=0, Job=0 и отсутствие triggers; службу не запускает.
+Fixed-unit RefUnit удерживает безопасно загруженную unit без start job. Unknown,
+failed/pending или неподдерживаемое состояние отказывает. Disable требует durable
+DISABLE → свежий registry → повторный proof → journal ACK. Подробности и актуальная
+матрица: [release contract](ssh-verified-activation-adapter.md#verified-configuration-release),
+[release evidence](../tests/integration/verified_config_service/openssh_native/evidence/release-lifecycle.json).
+
+Разбор kernel mountinfo использует classic locale независимо от русского UI locale.
+Native ALT daemon выявил, что ru_RU с пробелом-разделителем тысяч ломал numeric stream
+extraction; синтетический locale regression и настоящий RPM/SSH/IPC gate проверяют исправление.
 
 ## Validation B
 

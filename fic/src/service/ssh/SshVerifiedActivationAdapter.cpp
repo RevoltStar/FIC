@@ -43,10 +43,13 @@ bool ubuntuSocket() {
 bool altService() {return fic::platform::makeBuildPlatformProfile().id=="alt-p11";}
 d::ActivationProfile activationProfile() {return ubuntuSocket()?d::ActivationProfile::UbuntuSshSocket:altService()?d::ActivationProfile::AltSshSimple:d::ActivationProfile::ActiveNotifyService;}
 bool supportedProfile(const std::string& id) {return id=="debian-12"||id=="debian-13"||id=="ubuntu-24.04"||id=="ubuntu-26.04"||id=="alt-p11";}
-void validateLaunch(const d::LaunchContract& launch, const detail::InputProfile& input=detail::inputProfile(), bool socketProfile=ubuntuSocket()) {
+void validateLaunch(const d::LaunchContract& launch, const detail::InputProfile& input=detail::inputProfile(), bool socketProfile=ubuntuSocket(),bool stopped=false) {
     if(socketProfile) {
         const auto state=value(launch,"UnitFileState");
         if(state!="enabled"&&state!="disabled"&&state!="indirect") unsupported("Ubuntu SSH service enablement unsupported");
+    } else if(stopped) {
+        const auto state=value(launch,"UnitFileState");
+        if(state!="enabled"&&state!="disabled")unsupported("offline SSH service enablement unsupported");
     } else if(value(launch,"UnitFileState")!="enabled") unsupported("SSH RuntimeNotReady: service must be persistently enabled");
     const Json command = Json::array({Json::array({"/usr/sbin/sshd", Json::array({"/usr/sbin/sshd", "-D", "$"+input.optionVariable}), Json::array()})});
     Json pre = Json::array({Json::array({"/usr/sbin/sshd", Json::array({"/usr/sbin/sshd", "-t"}), Json::array()})});
@@ -179,7 +182,7 @@ Capture capture(const ActivationRequest& request, bool published = false, bool p
     return out;
 }
 void validateCaptured(const SshVerifiedActivationRequest& request, const Capture& observed) {
-    const auto closure = detail::validateClosure(request.reference, observed.bytes, request.policies);
+    const auto closure = detail::validateClosure(request.reference, observed.bytes, request.policies,detail::inputProfile(),request.intent);
     for (const auto& [root, entries] : observed.attributes) {
         for (const auto& [name, st] : entries) {
             if (st.st_uid != 0 || (st.st_mode & 0022)) unsupported("SSH tree requires root-controlled metadata");
@@ -202,6 +205,7 @@ RuntimeReceipt runtimeReceipt;
 std::mutex receiptMutex;
 std::string referenceIdentity(const SshVerifiedActivationRequest& request, const Capture& observed) {
     Json paths=Json::array();
+    paths.push_back({"intent",static_cast<int>(request.intent)});
     for(const auto& p:request.reference.paths) paths.push_back({p.path.string(),static_cast<int>(p.kind),p.sha256,p.manifest});
     auto boot=d::openAbsolute("/proc/sys/kernel/random/boot_id",O_RDONLY);
     // procfs virtual files have zero st_size; bounded descriptor read, no path fallback.
@@ -228,7 +232,9 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
     if(tests) receiptEligible=false;
 #endif
     try {
-        d::validateRequest(request.reference); detail::validatePolicies(request.policies);
+        d::validateRequest(request.reference); detail::validatePolicies(request.policies,request.intent);
+        if(request.intent==SshActivationIntent::ConfigurationRelease&&!request.additionalPolicies.empty())
+            unsupported("release requires all remaining selections as mandatory policies");
         for(auto it=request.additionalPolicies.begin();it!=request.additionalPolicies.end();) {
             try { detail::validatePolicies({*it}); ++it; }
             catch(const d::Failure&) { it=request.additionalPolicies.erase(it); }
@@ -468,15 +474,15 @@ void SshVerifiedActivationAdapter::prepareRuntimeProbe(const SshVerifiedActivati
     detail::listener::effectiveEndpoints(runtime);
 }
 SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
-    const std::map<std::string,std::string>& policies,const std::string& expectedMainSha) {
+    const std::map<std::string,std::string>& policies,const std::string& expectedMainSha,SshActivationIntent intent) {
     if(::geteuid()!=0||!fic::core::ContentDigest::isCanonicalSha256Hex(expectedMainSha))
         unsupported("trusted reference requires root and explicit expected main-file identity");
-    detail::validatePolicies(policies);
+    detail::validatePolicies(policies,intent);
     const auto profile=fic::platform::makeBuildPlatformProfile();std::string error;
     if(!supportedProfile(profile.id)||
        !fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))
         unsupported("trusted SSH reference supports Debian12/13, Ubuntu24/26 or ALT p11 only");
-    SshVerifiedActivationRequest out;out.policies=policies;out.reference.unit=detail::inputProfile().unit;
+    SshVerifiedActivationRequest out;out.intent=intent;out.policies=policies;out.reference.unit=detail::inputProfile().unit;
     out.reference.timeout=std::chrono::seconds(60);
     detail::InputBytes bytes;detail::PersistentMetadata initial;
     std::uint64_t budget=out.reference.maxSnapshotBytes;
@@ -505,7 +511,7 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     if(::lstat(input.fragments.c_str(),&fragments)==0) add(input.fragments,ControlledPathKind::Directory);
     else if(errno!=ENOENT||!input.alt) unsupported("SSH fragment directory unavailable");
     add(input.environment,ControlledPathKind::File);
-    const auto keys=detail::discoverHostKeys(out.reference,bytes,policies);
+    const auto keys=detail::discoverHostKeys(out.reference,bytes,policies,intent);
     for(const auto& key:keys) {add(key,ControlledPathKind::File);add(key+".pub",ControlledPathKind::File);}
     // Re-read through the actual adapter's metadata/manifest checks. A changed
     // source is refused; discovery is never authority to bless later bytes.
@@ -518,6 +524,183 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
 #ifdef FIC_ACTIVATOR_TESTING
 namespace { thread_local const detail::AdapterTestHooks* policyTestHooks=nullptr; }
 #endif
+namespace {
+SshReleaseAdmission releaseAdmissionImpl(const SshVerifiedActivationRequest& request) {
+    if(request.intent!=SshActivationIntent::ConfigurationRelease||!request.additionalPolicies.empty())
+        unsupported("explicit mandatory configuration release required");
+    const auto profile=fic::platform::makeBuildPlatformProfile();std::string error;
+    if(::geteuid()!=0||!supportedProfile(profile.id)||!fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))
+        unsupported("unsupported SSH release caller/platform");
+    detail::validatePolicies(request.policies,request.intent);
+    const auto observed=capture(request.reference);validateCaptured(request,observed);
+    if(request.observedMetadata.empty()||request.observedMetadata!=metadataIdentities(observed))
+        throw d::Failure(ActivationStatus::InterferenceDetected,"release input metadata differs from authorized reference");
+    const auto deadline=std::chrono::steady_clock::now()+request.reference.timeout;
+    const auto references=d::retainSshUnitsForValidation(activationProfile(),deadline);
+    d::SystemdActivation service(request.reference.unit,deadline,request.reference.paths,activationProfile());
+    auto state=service.preflightSnapshotValidation();
+    bool stopped=state.at("ActiveState")=="inactive";
+    if(ubuntuSocket()) {
+        const auto socket=d::readSshSocketContract(deadline);
+        if(value(socket,"ActiveState")!="inactive")stopped=false;
+        else if(state.at("ActiveState")!="inactive")
+            unsupported("unsupported active service with inactive Ubuntu socket");
+    }
+    validateLaunch(state.properties,detail::inputProfile(),ubuntuSocket(),stopped);
+    SshReleaseAdmission result;result.offline=stopped;result.unitReferences=references;
+    if(stopped) {
+        if(ubuntuSocket())detail::UbuntuSshSocketFlow::requireOffline(deadline);
+        else if(altService())detail::AltSshServiceFlow::requireOffline(deadline);
+        result.service=state.properties;
+        if(ubuntuSocket())for(const auto& [key,text]:d::readSshSocketContract(deadline))result.service.emplace("socket:"+key,text);
+    } else {
+        state=admit(service);awaitRestartBudget(service,state,false);
+        result.service=ubuntuSocket()?detail::UbuntuSshSocketFlow(deadline).combined(state):
+            altService()?detail::AltSshServiceFlow::combined(state,deadline):state.properties;
+    }
+    return result;
+}
+}
+SshReleaseAdmission SshVerifiedActivationAdapter::releaseAdmission(const SshVerifiedActivationRequest& request) {
+    const std::lock_guard<std::mutex> lock(receiptMutex);return releaseAdmissionImpl(request);
+}
+SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePlan(
+    const SshVerifiedActivationRequest& request,const SshReleaseAdmission& expected,const std::string& plannedMain) {
+    const std::lock_guard<std::mutex> lock(receiptMutex);
+    SshConfigurationValidationResult result;
+    try {
+        if(plannedMain.size()>request.reference.maxSnapshotBytes||plannedMain.find('\0')!=std::string::npos)
+            unsupported("planned main exceeds bounded SSH snapshot grammar");
+        const auto deadline=std::chrono::steady_clock::now()+request.reference.timeout;
+        if(!expected.unitReferences)unsupported("release unit reference lifetime absent");
+        d::verifySshUnitReferences(*expected.unitReferences,deadline);
+        const auto admitted=releaseAdmissionImpl(request);
+        if(admitted.offline!=expected.offline||admitted.service!=expected.service)
+            throw d::Failure(ActivationStatus::InterferenceDetected,"release service changed before planned validation");
+        const auto observed=capture(request.reference);validateCaptured(request,observed);
+        const auto input=detail::inputProfile();
+        auto planned=request;auto projected=observed;
+        projected.bytes.at(input.mainFile)=plannedMain;
+        for(auto& path:planned.reference.paths)if(path.path==input.mainFile)
+            path.sha256=fic::core::ContentDigest::sha256Hex(plannedMain);
+        validateCaptured(planned,projected);
+        const auto profile=fic::platform::makeBuildPlatformProfile();
+        fic::platform::PlatformExecutableResolver resolver(profile.executables);std::string error;
+        std::filesystem::path binary;
+        if(!resolver.resolve(fic::platform::ExecutableId::Sshd,binary,error)||binary!="/usr/sbin/sshd"||!CommandHashStore::verifyHash(binary,error))
+            unsupported("planned SSH executable trust unproven");
+        auto executable=d::openAbsolute(binary,O_RDONLY);const auto identity=d::identity(executable.get());
+        const auto checkBinary=[&] {
+            auto current=d::openAbsolute(binary,O_RDONLY);
+            if(!d::sameObject(d::identity(current.get()),identity)||!CommandHashStore::verifyHash(binary,error))
+                throw d::Failure(ActivationStatus::InterferenceDetected,"planned verifier executable changed");
+        };
+        // The stock Debian/Ubuntu ExecStartPre requires this ephemeral probe
+        // directory even while stopped. This never starts/enables the service.
+        if(!altService())detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();
+        SshRuntimeOptions options;options.configPath=input.mainFile;options.includeBasePath=input.base;
+        options.requireTrustedInputs=true;options.useLaunchArguments=true;options.plannedMain=plannedMain;
+        SshRuntime runtime(options,resolver,[&](const auto& path,const auto& args,const ProcessOptions& original) {
+            auto bounded=original;bounded.timeout=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now());
+            if(bounded.timeout.count()<=0)throw d::Failure(ActivationStatus::TimedOut,"planned SSH verifier deadline exceeded");
+            bounded.clearEnvironment=true;bounded.environment={{"LANG","C"},{"LC_ALL","C"}};bounded.maxOutputBytes=1024*1024;
+            return VerifiedProcessExecutor::execute(path,args,bounded);
+        });
+        d::SnapshotValidationProof proof;proof.profile=activationProfile();
+        proof.expectedConfiguration=expected.service;
+        for(auto it=proof.expectedConfiguration.begin();it!=proof.expectedConfiguration.end();)
+            if(it->first.rfind("socket:",0)==0||it->first=="alt:keygen"||it->first=="alt:listeners")
+                it=proof.expectedConfiguration.erase(it);else ++it;
+        proof.sourceRoots=observed.roots;proof.sourceAttributes=observed.attributes;
+        proof.validate=[&](auto) {
+            d::verifySshUnitReferences(*expected.unitReferences,deadline);
+            const auto protectedInputs=capture(request.reference,true);validateCaptured(request,protectedInputs);
+            auto candidate=protectedInputs;candidate.bytes.at(input.mainFile)=plannedMain;validateCaptured(planned,candidate);
+            checkBinary();
+            if(!runtime.validateSyntax(error)||!runtime.validateConfiguration(error))throw SemanticFailure(false);
+            for(const auto& [id,value]:request.policies) {
+                const auto compliance=runtime.policyValueCompliance(sshPolicyDirectiveKeyword(id),value);
+                if(compliance.compliance!=SshCompliance::Compliant)throw SemanticFailure(compliance.compliance==SshCompliance::NonCompliant);
+            }
+            checkBinary();
+        };
+        auto snapshot=request.reference;
+        snapshot.timeout=std::chrono::duration_cast<std::chrono::milliseconds>(deadline-std::chrono::steady_clock::now());
+#ifdef FIC_ACTIVATOR_TESTING
+        if(policyTestHooks)result.snapshot=d::validateSnapshotWithProofForTests(snapshot,proof,policyTestHooks->activation).snapshot;
+        else
+#endif
+        result.snapshot=d::validateSnapshotWithProof(snapshot,proof).snapshot;
+        if(!result.snapshot.success()){result.diagnostic=result.snapshot.diagnostic;return result;}
+        if(detail::persistentProof(observed,[&]{return capture(request.reference,false,true);},
+            [&](const Capture& current){validateCaptured(request,current);})!=ProofState::Proven)
+            throw d::Failure(ActivationStatus::InterferenceDetected,"baseline persistent inputs changed during planned validation");
+        const auto final=releaseAdmissionImpl(request);
+        if(final.offline!=expected.offline||final.service!=expected.service)
+            throw d::Failure(ActivationStatus::InterferenceDetected,"service changed during planned validation");
+        d::verifySshUnitReferences(*expected.unitReferences,deadline);
+        checkBinary();result.validated=true;
+        result.diagnostic="planned release syntax/effective remaining policies validated before CAS; no activation";
+    } catch(const std::exception& error) {result.diagnostic=error.what();}
+    return result;
+}
+SshVerifiedActivationResult SshVerifiedActivationAdapter::releaseConfiguration(
+    const SshVerifiedActivationRequest& request,const SshReleaseAdmission& admission) {
+    SshVerifiedActivationResult refused;
+    if(request.intent!=SshActivationIntent::ConfigurationRelease||!admission.unitReferences||admission.service.empty()||request.observedMetadata.empty()) {
+        refused.diagnostic="complete closed SSH release admission/reference required";return refused;
+    }
+    try {d::verifySshUnitReferences(*admission.unitReferences,std::chrono::steady_clock::now()+std::chrono::seconds(5));}
+    catch(const std::exception& error){refused.diagnostic=error.what();return refused;}
+    if(!admission.offline) {
+        auto active=request;active.expectedService=admission.service;
+        if(active.intent!=SshActivationIntent::ConfigurationRelease) {
+            SshVerifiedActivationResult failed;failed.diagnostic="explicit configuration release required";return failed;
+        }
+        auto result=activate(active);
+        try {
+            if(!admission.unitReferences)unsupported("release unit reference lifetime absent");
+            d::verifySshUnitReferences(*admission.unitReferences,std::chrono::steady_clock::now()+std::chrono::seconds(5));
+        } catch(const std::exception& error) {result.status=SshActivationStatus::ActivationFailed;result.diagnostic=error.what();}
+        return result;
+    }
+    SshVerifiedActivationResult result;
+    try {
+        const auto input=detail::inputProfile();const auto observed=capture(request.reference);
+        const auto validation=validateReleasePlan(request,admission,observed.bytes.at(input.mainFile));
+        result.activation=validation.snapshot;
+        if(!validation.success()){result.diagnostic=validation.diagnostic;return result;}
+        result.inputs=result.semantics=result.persistent=ProofState::Proven;
+        result.status=SshActivationStatus::ReleasedOffline;
+        result.runtimeEvidence={{"unit",request.reference.unit},{"MainPID","0"},{"offline","true"}};
+        result.diagnostic="ReleasedOffline: ownership configuration verified; runtime not activated";
+    } catch(const std::exception& error){result.diagnostic=error.what();}
+    return result;
+}
+std::map<std::string,std::string> SshVerifiedActivationResult::observedFacts() const {
+    const auto name=[](ProofState state){return state==ProofState::Proven?"Proven":state==ProofState::NonCompliant?"NonCompliant":"NotProven";};
+    auto facts=runtimeEvidence;
+    facts["inputs"]=name(inputs);facts["semantics"]=name(semantics);facts["persistent"]=name(persistent);
+    facts["readiness"]=activation.readinessConfirmed?"true":"false";
+    facts["status"]=activationStatusName(activation.status);facts["adapter_status"]=std::to_string(static_cast<int>(status));
+    facts["offline"]=status==SshActivationStatus::ReleasedOffline?"true":"false";
+    facts["activation_attempted"]=activationAttempted?"true":"false";
+    return facts;
+}
+bool SshVerifiedActivationAdapter::sameInputGeneration(const SshVerifiedActivationRequest& before,
+    const SshVerifiedActivationRequest& after,bool mainMayDiffer) {
+    if(before.intent!=after.intent||before.policies!=after.policies||before.reference.unit!=after.reference.unit||
+       before.reference.paths.empty()||before.observedMetadata.empty()||
+       before.reference.paths.size()!=after.reference.paths.size())return false;
+    auto expected=before.observedMetadata,actual=after.observedMetadata;const auto main=detail::inputProfile().mainFile;
+    if(mainMayDiffer){expected.erase(main);actual.erase(main);}
+    if(expected!=actual)return false;
+    for(std::size_t i=0;i<before.reference.paths.size();++i) {
+        const auto& a=before.reference.paths[i];const auto& b=after.reference.paths[i];
+        if(a.path!=b.path||a.kind!=b.kind||a.manifest!=b.manifest||(!(mainMayDiffer&&a.path==main)&&a.sha256!=b.sha256))return false;
+    }
+    return true;
+}
 SshVerifiedActivationResult SshVerifiedActivationAdapter::activate(const SshVerifiedActivationRequest& r) {
     return perform(r
 #ifdef FIC_ACTIVATOR_TESTING

@@ -3,6 +3,7 @@
 #include "service/VerifiedConfigLaunchContract.h"
 #include <fic/core/integrity/ContentDigest.h>
 #include <iostream>
+#include <locale>
 #include <cerrno>
 #include <cstring>
 #include <linux/limits.h>
@@ -47,8 +48,27 @@ void xattrEnumerationCases() {
     }
     detail::setXattrTestHooks({});
 }
+void mountInfoLocaleCase() {
+    struct Grouped : std::numpunct<char> {
+        char do_thousands_sep() const override{return ' ';}
+        std::string do_grouping() const override{return "\3";}
+    };
+    struct Restore {
+        std::locale previous=std::locale();
+        ~Restore(){std::locale::global(previous);}
+    } restore;
+    std::locale::global(std::locale(std::locale::classic(),new Grouped));
+    const auto mounts=detail::parseMountInfo("12345 10001 0:2 / /safe rw - tmpfs test rw\n");
+    require(mounts.size()==1&&mounts[0].id==12345&&mounts[0].parent==10001,
+            "daemon locale must not merge kernel mountinfo numeric fields");
+    bool refused=false;
+    try {detail::parseMountInfo("12,345 10001 0:2 / /safe rw - tmpfs test rw\n");}
+    catch(const detail::Failure&){refused=true;}
+    require(refused,"locale-independent mountinfo parser accepted grouped numeric input");
+}
 int main() {
     xattrEnumerationCases();
+    mountInfoLocaleCase();
     ActivationRequest valid;
     valid.unit = "example.service";
     valid.paths = {{"/etc/example.conf", ControlledPathKind::File, fic::core::ContentDigest::sha256Hex("config"), {}}};

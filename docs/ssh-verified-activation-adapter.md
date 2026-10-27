@@ -5,7 +5,7 @@
 `fic/src/service/ssh/SshVerifiedActivationAdapter.h` — самостоятельный production
 компонент, вызываемый Debian 12/13, Ubuntu 24.04/26.04 и ALT p11 SSH policy apply. Сам adapter не пишет
 persistent конфигурацию, не получает ownership и не выполняет rollback/compensation.
-`Ssh::apply()` отвечает за provenance, CAS/save и journal finalization.
+`Ssh::apply()` и существующий `SshRollback` отвечают за provenance, CAS/save и journal finalization.
 
 ```cpp
 using namespace fic::service;
@@ -49,8 +49,8 @@ Build profiles **Debian 12/13, Ubuntu 24.04/26.04 и ALT p11**, подтверж
 inactive service при persistently enabled/active socket и проверяющий listener/FD.
 ALT использует закрытый AltSshSimple profile в том же engine: stock simple/none,
 sshd-owned listeners и local protocol readiness; [точный ALT contract](alt-p11-ssh-verified-activation.md).
-Следующие Debian-specific paths/argv не переносятся на ALT. Active ALT rollback
-консервативно отказывает; доказанный offline release не заявляет runtime activation.
+Следующие Debian-specific paths/argv не переносятся на ALT. Active release использует
+тот же platform engine; доказанный offline release не заявляет runtime activation.
 Подготовка private boundaries не входит в adapter. На shared publication parent
 без безопасной границы generic engine продолжает отказывать.
 
@@ -377,8 +377,8 @@ deadline. Виртуальный admission state matrix проверяет ос�
 Повторяемые команды и версии: [validation](ssh-debian-verified-policy-validation.md).
 Старый linked native report описывает самостоятельный adapter.
 
-Ubuntu socket activation: [отдельное ТЗ](ubuntu-ssh-socket-activation-spec.md).
-Это будущая работа, не часть Debian completion.
+Последующая Ubuntu socket activation реализована: [платформенный контракт](ubuntu-ssh-socket-activation-spec.md).
+Результаты исходного Debian completion выше — исторический отдельный gate.
 
 ## Ubuntu socket policy lifecycle
 
@@ -395,9 +395,9 @@ service start и изменения administrative enablement.
 restart существующего active socket с kernel/FD proof; остальные изменения —
 refresh service либо normal local socket trigger. Snapshot/cleanup engine общий.
 
-Active Ubuntu rollback отказывает с сохранением ownership: legacy reload не может
-подтвердить восстановление listener. Offline service+socket допускают только
-ownership release, с проверками до/после CAS и явным `runtime NOT activated`.
+Active Ubuntu rollback использует тот же verified socket/generator/listener-FD
+engine. Offline service+socket допускают ownership release, с проверками до/после
+CAS и явным `ReleasedOffline; runtime NOT activated`. Disable ACK описан ниже.
 См. authoritative [матрицу, proof, ограничения и эксплуатационные эффекты](ubuntu-ssh-socket-activation-spec.md).
 
 ## Crash-consistent ownership REFRESH
@@ -432,3 +432,80 @@ ID-only provenance (`ownership_version=0`) без переписывания и 
 восстановит текущее тело, а не доказанную историческую строку. Это ограничение старого
 разрешения, не гарантия fingerprint-based ownership. Автоматической миграции,
 adoption или восстановления исчезнувших артефактов нет.
+
+## Verified configuration release
+
+`SshActivationIntent::SelectedPolicies` сохраняет строгий непустой набор выбранных
+ограничений обычного apply. `ConfigurationRelease` разрешает пустой набор, но
+проверяет все оставшиеся ENABLE SSH policies. Их значения и статусы берутся из
+свежего доверенного NET.conf и полного текущего registry; cached generation должна
+совпадать с файлом. Disabled policy больше не является требованием. Поэтому release
+root-login может законно открыть стороннее `PermitRootLogin yes`. Повреждённые или
+неприменённые оставшиеся требования отклоняются до CAS.
+
+План строится существующим ownership parser/release planner из текущего файла и
+исторических permissions; пропавшие элементы не восстанавливаются. До CAS закрытый
+validation-only entrypoint **того же** generic engine публикует RO snapshot текущих
+Include/HostKey/environment inputs, а проверенный sshd читает planned main через
+`-t/-T -f /dev/stdin`. Main заменяется в bounded closure analysis только в памяти.
+Произвольные -f/launch options, внешние Include и multi-file Port wrappers не
+добавлены. Snapshot validation не является readiness/activation proof.
+
+Под process-local SSH mutex сохраняется schema3 release transition version2:
+`previous` permission, null `target`, исходный/целевой digest, факт необходимости
+replacement, predecessor status/error. Затем одна conditional replacement,
+durability и exact installed-state receipt, verified platform activation, cleanup,
+persistent proof и физическое отсутствие освобождённых artifacts. После publication
+failure нет legacy reload или компенсации старым whole-file снимком. Неопределённая
+операция остаётся Prepared и блокирует весь общий SSH resource, включая reboot.
+
+Active Debian использует notify/process identity proof; Ubuntu — существующий
+socket/generator/kernel/PID1+sshd FD proof (socket restart только при смене endpoints);
+ALT — существующий simple-service invocation/executable/listener/banner proof.
+Результат `RuntimeVerified` отличается от `ReleasedOffline`: последний допускается
+только для доказанного inactive/dead, MainPID0, отсутствующего job (также остановленного
+socket на Ubuntu), не запускает/не включает SSH и не заявляет readiness. Failed,
+переходное или неподтверждённое состояние отказывается. Для native verifier на
+Debian/Ubuntu переиспользуется проверенная штатная подготовка `/run/sshd`; это не
+persistent ownership и не service start.
+
+Остановленный systemd unit может быть GC-unloaded. Закрытые fixed-unit `RefUnit`
+через доверенный system API bus удерживают только его загрузку на срок proof, без
+jobs/start/enable; manager unique owner и root PID1 credentials перепроверяются.
+Все authoritative launch checks сохраняют прежний root-PID1 private D-Bus peer.
+Unit references не заменяют ни launch, ни process proof, и снимаются закрытием bus.
+
+### Disable acknowledgement и uninstall
+
+После verified release record остаётся Prepared в явно известной фазе
+`released_awaiting_disable`. Только эта фаза без ошибки допускает повтор того же
+явного disable: exact опубликованный main должен сохраниться, ownership artifacts
+не должны появиться снова, остальные selections/runtime перепроверяются. Это
+**не recovery неопределённого Prepared**. Любая ошибка перепроверки сохраняет intent
+как unresolved transition, без автоматического повторного promotion.
+
+PolicyDisableFlow сохраняет DISABLE; daemon заново строит registry, выполняет
+release reproof и подтверждает durable explicit DISABLE/physical absence перед
+единственным typed journal commit (RolledBack). При ошибке save/reload/final commit
+сообщается, что physical release состоялся, а finalization не доказана; ENABLE не
+объявляется успешно отключённым. Если save успел опубликовать DISABLE, это также не
+выдаётся за атомарный откат. Старый Policy object не может заново создать блок:
+verified apply требует актуальный trusted ENABLE configuration generation.
+
+Daemon-owned UNINSTALLING использует тот же backend с пустым uninstall target,
+не меняя сохранённые ENABLE/value. Terminal release commit выполняется только после
+тех же proofs. Package lifecycle, admission и MutationJournal ownership engine не
+заменены. Ошибка required release запрещает обычное удаление. ID-only legacy wrappers
+сохраняют описанную выше ограниченную ID/structure permission; исторические body
+fingerprints из текущих байтов не достраиваются.
+
+Native evidence этого этапа отделяет backend fixture, реальные SSH/IPC/packages и
+предыдущую REFRESH matrix; PASS одного слоя не служит доказательством другого.
+
+Итоговая воспроизводимая матрица release и package/SSH administration:
+[санитизированные результаты](../tests/integration/verified_config_service/openssh_native/evidence/release-lifecycle.json),
+[команды и границы test environment](../tests/integration/verified_config_service/openssh_native/README.md#verified-release-and-real-packagessh-administration).
+Пять userlands используют общий Docker/WSL kernel. Private mount boundaries в
+fixture не означают их автоматической подготовки на обычном shared-root хосте.
+Сохранение существующего loopback SSH connection на stock units измерено отдельно
+от listener proof и не гарантируется для произвольной сети/custom KillMode.

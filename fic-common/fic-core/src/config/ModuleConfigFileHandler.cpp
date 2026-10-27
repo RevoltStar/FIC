@@ -4,12 +4,16 @@
 ModuleConfigFileHandler::ModuleConfigFileHandler(const std::string& module)
     : ModuleConfigFileHandler(fic::core::FicRuntimePaths::get().configDir, module) {
 }
+ModuleConfigFileHandler::ModuleConfigFileHandler(const std::string& module,FileHandlerOptions options)
+    : ModuleConfigFileHandler(fic::core::FicRuntimePaths::get().configDir,module,std::move(options)) {}
 
 ModuleConfigFileHandler::ModuleConfigFileHandler(
     const std::filesystem::path& configDirectory,
     const std::string& module)
-    : ConfigFileHandler((configDirectory / (module + ".conf")).string(), "=") {
-}
+    : ModuleConfigFileHandler(configDirectory,module,FileHandlerOptions{}) {}
+ModuleConfigFileHandler::ModuleConfigFileHandler(const std::filesystem::path& configDirectory,
+    const std::string& module,FileHandlerOptions options)
+    : ConfigFileHandler((configDirectory/(module+".conf")).string(),"=",std::move(options)) {}
 
 std::string ModuleConfigFileHandler::statusKey(const std::string& policy) {
     return policy + ".status";
