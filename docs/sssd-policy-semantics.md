@@ -9,6 +9,13 @@ provenance is in source-r1.json; numbered consumer/provider/manpage excerpts and
 call references in [source-r2.json](../tests/integration/sssd-research/source-r2.json).
 All five versions were inspected, including ALT's applied distribution patch.
 
+The [activation design](sssd-verified-activation-design.md) defines separate
+service admission, A=Inputs, B=Activation, C=Semantics, P=Persistent and journal
+finalization. The evidence levels below describe the research observations;
+they do not turn a generic ActivationResult into policy-level Success. Evidence
+validation reads recorded JSON/scripts; native runtime validation executes the
+opt-in systemd/SSSD/LDAP/PAM runner. No new native run occurred in this follow-up.
+
 ## Defaults and values
 
 | Parameter | Section | Native default | Zero | Future FIC value contract |
@@ -44,6 +51,13 @@ ConfigDB is `/var/lib/sss/db/config.ldb`, not the credential cache
 their own ConfigDB contexts and in-memory domains/options. LDB dump is not proof
 that all children re-read changed values. Directly editing ConfigDB is neither
 a supported activation route nor proposed for FIC. No ConfigDB adoption.
+
+The matrix's restart requirements apply when new INI values must be consumed.
+A valid, current runtime receipt may avoid a repeated restart if admission,
+input/launch/process identity, scope and selected effective values are re-proven.
+Stopped SSSD still fails apply before mutation; files or a stale receipt alone
+cannot prove C. No implicit service install/enable/start or cache_credentials=true
+enablement is authorized by these semantics.
 
 Socket-activated PAM may start **after** monitor READY. Native `services=nss`
 fixture captures absence of sssd_pam before the request, native PAM sockets and
@@ -139,3 +153,12 @@ Real trust discovery, cleanup and authentication there remain NOT_TESTED.
 Recommended offline→cache dependency is therefore semantically appropriate for
 password use, but must stay **Recommended**: the global age option is independently
 loadable, other mechanisms differ, and a dependency is not a cross-option validator.
+
+These findings limit future support: `sssd_cache_credentials` cannot return
+Success unless its whole declared domain scope has A/B/C/P proof. Unknown
+providers, unsupported topology or unproven trust inheritance fail closed for
+the affected policy. Partial roots are not global coverage; smartcard/passkey
+behavior must not be claimed from the password fixture. AD/IPA support remains
+possible after concrete provider/scope gates pass; source-only evidence does
+not currently authorize it. Domain changes invalidate the old receipt's coverage
+until rechecked under the [scope contract](sssd-domain-scope-design.md).

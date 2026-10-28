@@ -1,35 +1,34 @@
 # Current workspace
 
 ## Current base
-* Branch main; task base d1b00069aa9982fea3d7a34ea11eeaabe1c3604b.
-* R1 commit 696a4575e55b125617613fa212317c5b76636151. This snapshot belongs to the second R2 research commit; no push.
+* Branch main; follow-up base f181c0c4a421b2a5ef8b3e4bfc5464706ecb6cc8. Historical R1 696a4575e55b125617613fa212317c5b76636151 and R2 history preserved.
+* This snapshot belongs to the one docs(sssd) corrective follow-up commit; no push.
 
 ## Current task
-* SSSD research R1 + R2 (attachment b6926bcd) completed as bounded research. Production integration/policies/journal were not implemented. Do not begin I1–I6 automatically.
+* Attachment 206697cc: align R1/R2 research docs/evidence contracts with existing SSH verified activation. Follow-up completed; I1–I6 not started, production unchanged.
 
 ## Accepted architecture / invariants
-* Docker explicitly authorized instead of Podman; real stock SSSD/systemd PID1, disposable privileged runtime with network none/loopback only, no host binds/ports/security changes. Five userlands share WSL kernel.
-* Future integration reuses existing engine; one FIC-owned zzzz-fic.conf, per-policy keys, offline→cache Recommended, never Required. Generic snapshot/notify Success is not consumer/P proof. No adoption, uncertain Prepared promotion, foreign rollback restore or automatic cache deletion.
-* Preserve native config/runtime/functional vs source proof levels. Inconclusive/unsupported/unexecuted findings remain explicit.
+* Admission is read-only and separate. A=Inputs; B=Activation/runtime-readiness; C=selected effective Semantics; P=post-cleanup Persistent proof. Generic engine Success does not establish full SSSD C/P or policy Success. New transaction needs final journal proof too.
+* Stopped/unproven SSSD fails apply before persistent mutation; no install/enable/start. Current revalidated runtime receipt can avoid another restart; files/stale receipt cannot.
+* One own zzzz-fic.conf, per-policy section/key; matching foreign value still requires own key, never adoption. Any loaded later foreign snippet blocks apply/REFRESH regardless of content; alone does not block proven ownership release. REFRESH single transition, unresolved Prepared gates conflicts, no blind restore after unknown effects.
+* Offline→cache stays Recommended; no hidden cache enablement or automatic value alignment. Provider/scope must be proven for the affected policy; partial domain coverage is not global Success, parent flags do not prove discovered trusts. Domain-set changes require receipt recheck.
 
 ## Completed / changed areas
-* R1: native package/unit/input/READY/source audit all five, RO metadata, actual generic probes, admission and deterministic race counterexamples; 190 named observations. Debian13/Ubuntu26 demonstrate snapshot+notify success, older three reject nonempty stock PIDFile. TriggeredBy is empty on all five (precision clarified in R2).
-* R2: 273 observations, native six-combination LDAP/proxy relations all five, ranges/defaults/domain and lazy responder fixtures. Real TLS LDAP/native pam_sss online/offline password auth all five, wrong-password negative control, cache false/re-enable, synthetic aged expiry 1 reject/0 accept, online cached old password while LDAP rejects it, lastLogin vs lastOnlineAuth distinction.
-* LDAP rejects conflict with EINVAL despite config-check success; proxy accepts. AD/IPA source loads separate options, lacks the same LDAP relation check; failed no-directory constructors do not prove functional support. Source inheritance of cache bool is not a dynamic-trust runtime receipt.
-* ALT root monitor fixture leaves stock _sssd lazy responder failing while monitor active; packaged user=_sssd fixture succeeds. Both captured, no OS defect claimed. Discovery-based lazy tests account for absent priv socket on Debian13/Ubuntu26.
-* Authoritative docs: sssd-native-compatibility.md, sssd-verified-activation-design.md, sssd-policy-semantics.md, sssd-domain-scope-design.md, sssd-cross-policy-validation-design.md (detailed I1–I6 components/journal/tests/risks).
-* Evidence JSONs in docs; exact distro archive/patch hashes and numbered source excerpts in tests/integration/sssd-research/source-r1.json and source-r2.json. Repro README, native scripts and CI evidence guard there. No production changes.
+* All five SSSD design/compatibility/semantics/scope/validator docs and research README aligned. Canonical proof table and mandatory I1–I6 native acceptance catalogue: unit changes across admission/snapshot/activation/runtime/P, enumeration mutations, private/shared/shared-slave/topology changes, timeout/no READY/cleanup/residuals/unknown effects, REFRESH/crash/release/package integration.
+* Docker approval verified from primary task-conversation reply call_e6b52697b66e4bde805cf319106068f6 question 0, “Да, использовать Docker”. Real systemd PID1/stock packages on shared WSL kernel; Docker results do not prove Podman equivalence, bare metal, enforcing LSM or other kernels.
+* New research-contract.json and research_contract.py extend existing evidence guard: stable proof/gate identifiers, retained coverage/unsupported profiles, SHA256 of four historical evidence/source exports, five in-memory negative controls. No new production/native gate or privileged CTest execution.
+* Historical R1/R2 native experiments and source exports unchanged; no evidence regenerated, no new runtime outcomes or PASS claims. Validation in this follow-up is saved-evidence validation only.
 
 ## Validation
-* Actual generic research target built all five; R1/R1_MORE/R1_ABSENT and R2/R2_AUTH/R2_LAZY collected all five. Final negative-control auth and ALT root/user switch repeated successfully. All disposable runtime containers removed.
-* Debian12 full project configure PASS; affected identity_concrete_policies_tests, identity_policy_hierarchy_tests, rollback_executor_tests, sssd_uninstall_inspection_tests targets rebuilt/up-to-date. Targeted CTest plus sssd_research_evidence_checks PASS 5/5 (final 4.14s); final guard rerun after evidence export. Full project build/full CTest intentionally not repeated for research-only changes.
-* Python AST, shell syntax, JSON/evidence assertions and git diff --check PASS. Source exports regenerated from exact distro sources. Initial fixture EXDEV/config_file_version issues and concurrent runner-edit harness errors were corrected; final native runs replaced those failed collections.
+* python3 tests/integration/sssd-research/check-evidence.py PASS, including 5 negative controls, Python AST and bash -n for research scripts.
+* Existing CTest sssd_research_evidence_checks PASS 1/1 (final 0.15s) in unprivileged fic-followup-build:debian12 build container, network none, source read-only. This is not native runtime testing or rerunning SSSD/LDAP/PAM.
+* All five research JSON files parsed; historical four artifact hashes match the R2 base. Proof table and stage gate IDs validated structurally, not by full prose matching. git diff --check PASS; production/packaging paths unchanged.
 
 ## Remaining / limits
-* Research gaps: real AD/IPA/trust/smartcard/passkey, enforcing LSM, shared-peer propagation, concurrent enumeration/live unit race and days-long periodic cleanup not tested. Source findings are not native functional certification.
-* Frozen-monitor restart exceeded 20s outer harness deadline; cleanup/deadline result INCONCLUSIVE, not PASS. Cleanup may run past activator deadline by existing contract. No precise cause or production fix claimed. Native mount interference can correctly reject an attempt; independent successes do not promise unconditional availability.
-* Existing source-only production discrepancies documented, not fixed: inactive/same-value persistent-only apply, foreign override blocking release, uncertain Prepared recovery. Future implementation boundary and open product choices in I1–I6 plan; none started.
+* No research blocker to start bounded I1 source/closure/launch implementation under the documented gates; this turn does not start it. Account-policy default and wider provider support remain later explicit decisions.
+* Preserved NOT_TESTED: unit/enumeration races, shared-peer propagation, enforcing LSM, real AD/IPA/trust/token infrastructure, periodic cleanup and cached-timeout memory introspection. SIGSTOP-monitor timeout/cleanup and AD/IPA relation runtime remain INCONCLUSIVE. Older stock PIDFile profiles remain UNSUPPORTED by generic engine; no statuses upgraded.
+* Existing production SSSD apply/release/Prepared discrepancies are still source-audit findings only. No production fixes, journal schema changes, second engine, fallback or migration added.
 
 ## Environment
-* DOCKER_CONFIG=/tmp/fic-package-docker-config; fic-sssd-research:debian12/debian13/ubuntu2404/ubuntu2604/alt-p11; absent bases fic-ssh-lifecycle-native same tags. build-sssd-research/<platform> has ignored binaries/raw results/exact sources. Container runtimes have no host mounts.
-* Full configure/targeted CTest cache build-env-full-debian12 with fic-followup-build:debian12, source /src:ro, build cache /build:rw. Logs /tmp/fic-sssd-* and build/sssd-r2-target-build.log (inside cache).
+* Saved artifacts/repro scripts under tests/integration/sssd-research; authoritative native JSONs in docs, source-r1.json/source-r2.json unchanged.
+* DOCKER_CONFIG=/tmp/fic-package-docker-config. Existing CTest cache build-env-full-debian12 uses source /src and build /build. Opt-in native runner is separate; no reason to repeat the full native matrix for this docs-only correction.

@@ -52,12 +52,40 @@ Until then dynamic/trusted coverage is **UNSUPPORTED**, not silently excluded
 from a policy claiming whole-service coverage. Explicitly configured AD roots
 alone are insufficient proof of their dynamic children.
 
+## Support acceptance criteria
+
+`sssd_cache_credentials` may report policy Success only if every domain in its
+declared scope is covered by the full [A/B/C/P contract](sssd-verified-activation-design.md),
+after separate service admission. C=Semantics binds selected effective values
+to supported consumers/scope; B=Activation/readiness alone is insufficient.
+The declared scope is not silently narrowed to the subset that happened to pass.
+
+Configured roots and dynamically discovered/trusted subdomains are separate
+categories. Changing a parent's cache flag is not proof that all current or
+future children comply. Unknown provider, unsupported topology or unproven
+scope means unsupported/failure for the policy requiring it, not global Success.
+Never manufacture sections for undiscovered trusted domains. A changed root,
+enablement, provider or discovered-domain set requires rechecking the old runtime
+receipt before it can authorize another apply without restart.
+
+These are present evidence boundaries, not permanent bans on AD/IPA or other
+providers. Future implementations must either pass the concrete provider/scope
+native gates (including trust changes and claimed authentication mechanisms) or
+explicitly refuse that configuration. R2's proxy acceptance of option combinations
+does not prove LDAP cleanup semantics or proxy functional auth support.
+
 ## Ownership and rollback
 
 Existing journal resources identify section/option. Future one-to-many domain
 ownership must retain each exact section/key and whole-file CAS witness, sibling
 policy ownership, scope receipt and transition provenance. Do not capture every
 foreign setting as owned just because it was part of the merged proof.
+
+Even a matching foreign value requires the policy's own section/key in the
+FIC-owned file; never adopt the matching foreign file/value itself. Any loaded
+foreign snippet ordered later than zzzz-fic.conf blocks apply/REFRESH regardless
+of content. That admission/support restriction does not prevent releasing a
+proven own key merely because the late file exists.
 
 Reevaluation of scope is mandatory on REFRESH or changed launch/input graph;
 unresolved Prepared blocks new work. Do not construct historical scope from

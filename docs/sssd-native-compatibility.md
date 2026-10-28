@@ -5,6 +5,13 @@ Docker explicitly authorized instead of Podman. Five real distribution userlands
 stock SSSD packages and systemd PID 1 share the Docker/WSL Linux kernel. This is
 neither bare-metal certification nor a production SSSD adapter.
 
+Approval was verified in the task conversation during the follow-up audit:
+user reply to `call_e6b52697b66e4bde805cf319106068f6`, question 0,
+“Да, использовать Docker”. It authorized the Docker substitution for R1/R2.
+No Podman experiment is recorded. Docker success does not establish equivalent
+Podman behavior; mount propagation, enforcing LSM and kernel differences need
+separate deployment/native acceptance gates before claiming support there.
+
 Authoritative observations/commands: [evidence](sssd-native-research-evidence.json).
 Versioned distribution-source hashes and numbered excerpts:
 [`source-r1.json`](../tests/integration/sssd-research/source-r1.json).
@@ -21,7 +28,9 @@ Reproduction: [runner](../tests/integration/sssd-research/README.md).
 | ALT p11 | 2.9.8-alt3 | notify/main, unit root, PIDFile=/var/run/sssd.pid; packaged config has user=_sssd | UNSUPPORTED: nonempty PIDFile |
 
 PASS here means engine `Success`, readiness=true, no cleanup errors/residuals;
-it does **not** mean the future policy's runtime/effective/P proof is complete.
+it does **not** establish complete SSSD C (Semantics) or P (Persistent). A means
+Inputs and B means Activation; service admission is a separate prerequisite.
+See the [canonical proof table](sssd-verified-activation-design.md).
 Each experiment installs all providers/tools for research; it does not propose
 adding any of these packages as FIC dependencies. Define installed operationally:
 trusted monitor executable, native loaded unit, needed provider/responder
@@ -63,8 +72,11 @@ Monitor reads `/etc/sssd/sssd.conf`, then eligible non-hidden `*.conf` files fro
 compile-time `/etc/sssd/conf.d`. Native tests on all five loaded 33 from
 10-first=11 → zzzz-fic=22 → zzzzz-local=33; duplicate keys in one snippet loaded
 the last value 34. Hidden `.hidden.conf` and `.conf.bak` did not override 30.
-Preserve the **whole directory manifest**, not only FIC's file. Conflicting later
-snippets prevent proving the requested effective value, not releasing ownership.
+Preserve the **whole directory manifest**, not only FIC's file. Native SSSD merges
+later snippets as observed above; the future FIC support boundary is stricter:
+any loaded foreign snippet later than zzzz-fic.conf blocks apply/REFRESH regardless
+of its contents, including agreeing or unrelated settings. Its presence alone
+does not block releasing proven FIC ownership.
 
 Missing main + complete snippet loaded 44 on every profile. Source establishes
 an in-memory `[sssd]` parse seed, not a vendor configuration search. Newer sources
@@ -146,6 +158,11 @@ are recorded separately. Concurrent directory enumeration, live unit mutation,
 exact READY-boundary responder failures and peer mount propagation remain
 NOT_TESTED here. Engine checkpoint results do not substitute for those cases.
 No functional authentication claim is made in R1.
+
+These retained NOT_TESTED/INCONCLUSIVE cases are mandatory future acceptance
+gates in the [I1–I6 gate catalogue](sssd-cross-policy-validation-design.md#mandatory-native-acceptance-gates).
+Collection completeness and the saved-evidence CTest do not mean native runtime
+validation was rerun. That requires the separate opt-in container runner.
 
 ## Existing FIC discrepancies (read-only audit)
 

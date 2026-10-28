@@ -2,6 +2,7 @@
 """Cheap CI guard for research evidence completeness and scope, not a native gate."""
 import ast,json,subprocess
 from pathlib import Path
+from research_contract import check_contract
 ROOT=Path(__file__).resolve().parents[3];HERE=Path(__file__).resolve().parent
 for p in HERE.glob('*.py'):ast.parse(p.read_text(),filename=str(p))
 for p in HERE.glob('*.sh'):subprocess.run(['bash','-n',str(p)],check=True)
@@ -40,4 +41,5 @@ for profile,v in s['profiles'].items():
  for name in ('offline-cache-disabled-existing-db','aged-expiration-one-day','offline-wrong-password'):assert json.loads(a[name]['stdout'])['pam_authenticate']!=0
 assert s['coverage']['AD_IPA_functional']['status']=='NOT_TESTED'
 assert s['coverage']['smartcard_passkey']['status']=='NOT_TESTED'
+check_contract(ROOT,d,s)
 print('SSSD research evidence/syntax guard PASS (not a native runtime rerun)')

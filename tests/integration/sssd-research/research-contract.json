@@ -1,0 +1,128 @@
+{
+  "schema": "sssd-research-contract-v1",
+  "historical_base": "f181c0c4a421b2a5ef8b3e4bfc5464706ecb6cc8",
+  "native_reexecuted_in_followup": false,
+  "proofs": {
+    "A": "Inputs",
+    "B": "Activation",
+    "C": "Semantics",
+    "P": "Persistent"
+  },
+  "admission_is_separate": true,
+  "generic_success_is_policy_success": false,
+  "policy_success_requires_all_proofs": true,
+  "cleanup_failure_blocks_success": true,
+  "new_transaction_requires_journal_finalization": true,
+  "current_runtime_receipt_may_avoid_restart": true,
+  "environment": {
+    "engine": "Docker",
+    "pid1": "systemd",
+    "packages": "stock distribution SSSD",
+    "kernel": "shared WSL kernel",
+    "bare_metal_certification": false,
+    "podman_equivalence_proven": false,
+    "docker_approval": {
+      "verified_in_followup": true,
+      "source": "task conversation, user response to call_e6b52697b66e4bde805cf319106068f6 question 0",
+      "answer": "Да, использовать Docker"
+    }
+  },
+  "frozen_artifacts": {
+    "docs/sssd-native-research-evidence.json": "550ac0d1a4258e0664f8d8a10bd55c747c82b6aa12efa66cd241f8fdb6567ee3",
+    "docs/sssd-semantics-research-evidence.json": "b89457ac31b9acd5c9abb2210564b60ffa41e1a63b9fe38888d0090e7781f131",
+    "tests/integration/sssd-research/source-r1.json": "6066b0f1988831cb77c7b66582b8cbc856ecb001beadda606ed24a10099a7111",
+    "tests/integration/sssd-research/source-r2.json": "1ca4a86d15d1963efccb4c5188bbdeacf33eb1a47e4811367afa6ac0e39bf68c"
+  },
+  "retained_coverage": {
+    "R1": {
+      "functional_auth": {
+        "status": "NOT_TESTED",
+        "reason": "R1 proves configuration/launch only"
+      },
+      "enforcing_lsm": {
+        "status": "NOT_TESTED",
+        "reason": "No enforcing-label environment"
+      },
+      "peer_propagation": {
+        "status": "NOT_TESTED",
+        "reason": "Private container topology, existing engine guards retained"
+      },
+      "enumeration_race": {
+        "status": "NOT_TESTED",
+        "reason": "Late-after-snapshot checkpoint is not concurrent enumeration"
+      },
+      "unit_mutation": {
+        "status": "NOT_TESTED",
+        "reason": "Only environment-file mutation injected"
+      },
+      "readiness_timeout": {
+        "status": "INCONCLUSIVE",
+        "reason": "Stopped monitor restart exceeded outer harness deadline; no bounded cleanup claim"
+      }
+    },
+    "R2": {
+      "AD_IPA_functional": {
+        "status": "NOT_TESTED",
+        "reason": "No real realm, keytab, trust directory; failed constructors do not test valid AD/IPA behavior"
+      },
+      "AD_IPA_relation": {
+        "status": "INCONCLUSIVE",
+        "level": "SOURCE_CONFIRMED",
+        "reason": "Separate option-loading paths lack LDAP check; no valid native directory runtime"
+      },
+      "smartcard_passkey": {
+        "status": "NOT_TESTED",
+        "level": "SOURCE_CONFIRMED",
+        "reason": "Source differences only, no hardware/real token"
+      },
+      "cleanup_days": {
+        "status": "NOT_TESTED",
+        "level": "SOURCE_CONFIRMED",
+        "reason": "No periodic days-long account object deletion gate"
+      },
+      "cached_timeout_clamp_memory": {
+        "status": "NOT_TESTED",
+        "level": "SOURCE_CONFIRMED",
+        "reason": "Load/start tested; domain memory not introspected"
+      }
+    }
+  },
+  "required_unsupported_profiles": [
+    "debian-12",
+    "ubuntu-24.04",
+    "alt-p11"
+  ],
+  "future_native_gates": {
+    "I1": [
+      "launch-phase-change",
+      "conf-d-capture-race",
+      "late-foreign-snippet"
+    ],
+    "I2": [
+      "provider-scope-coverage",
+      "scope-receipt-change",
+      "effective-relation"
+    ],
+    "I3": [
+      "launch-phase-change",
+      "conf-d-capture-race",
+      "mount-topology",
+      "activation-timeouts",
+      "cleanup-outcomes",
+      "runtime-effect-unknown"
+    ],
+    "I4": [
+      "prepared-crash-recovery",
+      "refresh-ownership"
+    ],
+    "I5": [
+      "release-with-foreign-inputs",
+      "release-runtime-faults"
+    ],
+    "I6": [
+      "package-policy-e2e",
+      "deployment-native"
+    ]
+  },
+  "future_gates_status": "SPECIFIED_NOT_EXECUTED_BY_FOLLOWUP"
+}

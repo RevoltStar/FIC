@@ -8,6 +8,13 @@ namespaces, no host binds or ports. The build container alone reads source and
 writes its build cache. Never run Python fixtures directly on a host; root,
 Docker, PID1, namespace and loopback guards reject that route.
 
+The follow-up audit verified the primary task-conversation reply to
+`call_e6b52697b66e4bde805cf319106068f6`, question 0: “Да, использовать Docker”.
+Actual evidence is from Docker, stock distribution SSSD and real systemd PID 1;
+all five userspaces share the WSL kernel. It is not bare-metal certification or
+proof of equivalent Podman behavior. Mount propagation, enforcing LSM and kernel
+differences require separate target-environment gates; none were fabricated here.
+
 Measured image bases were the existing `fic-ssh-lifecycle-native` images. SSSD
 and tools were installed from native repos by Containerfile. For a fresh machine
 use Containerfile.base (equivalent compiler/systemd prerequisites, without SSH):
@@ -59,9 +66,25 @@ the existing test-only checkpoints, compiled out of production. Manual RO binds
 are clearly identified and are not another snapshot engine. Supplemental unit
 drop-in is a FIFO launch fixture, never reported as stock unit behavior.
 
-CI `sssd_research_evidence_checks` checks syntax, isolation metadata and key
-counterexamples in committed evidence; it is not a fresh privileged native run.
-The four precise coverage levels and NOT_TESTED/INCONCLUSIVE gaps are in docs.
+## Evidence validation versus native runtime validation
+
+**Evidence validation:** CI `sssd_research_evidence_checks` reads committed JSON,
+recorded observations, isolation metadata and script AST/shell syntax. It checks
+the small `research-contract.json`, stable A=Inputs/B=Activation/C=Semantics/
+P=Persistent table (admission separate), future gate IDs and retained
+NOT_TESTED/INCONCLUSIVE/UNSUPPORTED statuses. Historical evidence/source exports
+have fixed SHA-256 entries; the follow-up does not regenerate them. Five negative
+controls reject swapped proofs, upgraded limitation status, missing cleanup gate,
+omitted unsupported profile and accepting failed cleanup. Explanatory prose may
+change freely; guard checks use dedicated table identifiers, not full text.
+
+**Native runtime validation:** the separate opt-in `run-native.sh` starts the
+real systemd/SSSD containers and performs configuration/runtime, RO snapshot and
+LDAP/PAM fixtures. A passing evidence CTest is never a rerun of those experiments.
+Normal CTest does not launch privileged containers. No native experiments were
+reexecuted for the corrective follow-up; the former outcomes and four proof
+levels remain as recorded. Future mandatory native acceptance gates are in
+[the I1–I6 catalogue](../../../docs/sssd-cross-policy-validation-design.md#mandatory-native-acceptance-gates).
 
 ## R2 (only after R1 commit)
 
