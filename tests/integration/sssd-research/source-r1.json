@@ -1,0 +1,6458 @@
+{
+  "debian-12": {
+    "source_tree": "sssd-2.8.2",
+    "archives": {
+      "sssd_2.8.2-4+deb12u1.dsc": "09b0cad8f91467c61ca98e8db9429e905b7c8f427e5fb7318b276a369397ac3e",
+      "sssd_2.8.2-4+deb12u1.debian.tar.xz": "a42f0c505a0a9a7fda046fb48329f9b866b515b720b6031f23a05d29cfa4cfaa",
+      "sssd_2.8.2.orig.tar.gz": "ae16447d06bb725bfa9ccb47a9287135015f789ba7414f50cebcb62d52402fef"
+    },
+    "distribution_patches": "debian/patches applied by apt-get source",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "29a348784c42769baaa044f463311826fe4648156b0870699211a5075fe70caf",
+        "excerpts": [
+          {
+            "line": 113,
+            "text": ""
+          },
+          {
+            "line": 114,
+            "text": "    bool svc_started;"
+          },
+          {
+            "line": 115,
+            "text": "    bool socket_activated; /* also used for dbus-activated services */"
+          },
+          {
+            "line": 116,
+            "text": ""
+          },
+          {
+            "line": 117,
+            "text": "    int restarts;"
+          },
+          {
+            "line": 118,
+            "text": "    time_t last_restart;"
+          },
+          {
+            "line": 119,
+            "text": ""
+          },
+          {
+            "line": 120,
+            "text": "    int debug_level;"
+          },
+          {
+            "line": 228,
+            "text": ""
+          },
+          {
+            "line": 229,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 230,
+            "text": "errno_t socket_activated_service_not_found(struct mt_ctx *mt_ctx,"
+          },
+          {
+            "line": 231,
+            "text": "                                           const char *svc_name,"
+          },
+          {
+            "line": 232,
+            "text": "                                           bool is_provider,"
+          },
+          {
+            "line": 233,
+            "text": "                                           struct mt_svc **_svc)"
+          },
+          {
+            "line": 234,
+            "text": "{"
+          },
+          {
+            "line": 235,
+            "text": "    struct mt_svc *svc = NULL;"
+          },
+          {
+            "line": 261,
+            "text": "    }"
+          },
+          {
+            "line": 262,
+            "text": "    svc->restarts = 0;"
+          },
+          {
+            "line": 263,
+            "text": "    svc->socket_activated = true;"
+          },
+          {
+            "line": 264,
+            "text": ""
+          },
+          {
+            "line": 265,
+            "text": "    DLIST_ADD(mt_ctx->svc_list, svc);"
+          },
+          {
+            "line": 266,
+            "text": ""
+          },
+          {
+            "line": 267,
+            "text": "    *_svc = svc;"
+          },
+          {
+            "line": 268,
+            "text": "    return EOK;"
+          },
+          {
+            "line": 280,
+            "text": "    for (svc = mt_ctx->svc_list; svc != NULL; svc = svc->next) {"
+          },
+          {
+            "line": 281,
+            "text": "        if (strcasecmp(svc->identity, svc_name) == 0) {"
+          },
+          {
+            "line": 282,
+            "text": "            svc->socket_activated = false;"
+          },
+          {
+            "line": 283,
+            "text": "            *_svc = svc;"
+          },
+          {
+            "line": 284,
+            "text": "            return EOK;"
+          },
+          {
+            "line": 285,
+            "text": "        }"
+          },
+          {
+            "line": 286,
+            "text": "    }"
+          },
+          {
+            "line": 287,
+            "text": ""
+          },
+          {
+            "line": 288,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 289,
+            "text": "    return socket_activated_service_not_found(mt_ctx, svc_name, is_provider,"
+          },
+          {
+            "line": 290,
+            "text": "                                              _svc);"
+          },
+          {
+            "line": 291,
+            "text": "#else"
+          },
+          {
+            "line": 292,
+            "text": "    return service_not_found(svc_name, _svc);"
+          },
+          {
+            "line": 293,
+            "text": "#endif"
+          },
+          {
+            "line": 294,
+            "text": "}"
+          },
+          {
+            "line": 328,
+            "text": "     * from there and set the destructor back to NULL just before freeing"
+          },
+          {
+            "line": 329,
+            "text": "     * the service itself. */"
+          },
+          {
+            "line": 330,
+            "text": "    if (svc->socket_activated) {"
+          },
+          {
+            "line": 331,
+            "text": "        sbus_connection_set_destructor(svc->conn, monitor_service_shutdown, svc);"
+          },
+          {
+            "line": 332,
+            "text": "    }"
+          },
+          {
+            "line": 333,
+            "text": ""
+          },
+          {
+            "line": 334,
+            "text": "    ret = mark_service_as_started(svc);"
+          },
+          {
+            "line": 335,
+            "text": "    if (ret) {"
+          },
+          {
+            "line": 442,
+            "text": "}"
+          },
+          {
+            "line": 443,
+            "text": ""
+          },
+          {
+            "line": 444,
+            "text": "static int notify_startup(void)"
+          },
+          {
+            "line": 445,
+            "text": "{"
+          },
+          {
+            "line": 446,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 447,
+            "text": "    int ret;"
+          },
+          {
+            "line": 448,
+            "text": ""
+          },
+          {
+            "line": 449,
+            "text": "    DEBUG(SSSDBG_TRACE_FUNC, \"Sending startup notification to systemd\\n\");"
+          },
+          {
+            "line": 450,
+            "text": "    ret = sd_notify(0, \"READY=1\");"
+          },
+          {
+            "line": 451,
+            "text": "    if (ret < 0) {"
+          },
+          {
+            "line": 452,
+            "text": "        ret = -ret;"
+          },
+          {
+            "line": 453,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 454,
+            "text": "                \"Error sending notification to systemd %d: %s\\n\","
+          },
+          {
+            "line": 455,
+            "text": "                ret, sss_strerror(ret));"
+          },
+          {
+            "line": 513,
+            "text": ""
+          },
+          {
+            "line": 514,
+            "text": "    /* create the pid file if all services are alive */"
+          },
+          {
+            "line": 515,
+            "text": "    if (!ctx->pid_file_created && ctx->started_services == ctx->num_services) {"
+          },
+          {
+            "line": 516,
+            "text": "        if (svc->socket_activated) {"
+          },
+          {
+            "line": 517,
+            "text": "            /* There's no reason for trying to terminate the parent process"
+          },
+          {
+            "line": 518,
+            "text": "             * when the responder was socket-activated. */"
+          },
+          {
+            "line": 519,
+            "text": "            goto done;"
+          },
+          {
+            "line": 520,
+            "text": "        }"
+          },
+          {
+            "line": 521,
+            "text": ""
+          },
+          {
+            "line": 532,
+            "text": "        ctx->pid_file_created = true;"
+          },
+          {
+            "line": 533,
+            "text": ""
+          },
+          {
+            "line": 534,
+            "text": "        notify_startup();"
+          },
+          {
+            "line": 535,
+            "text": ""
+          },
+          {
+            "line": 536,
+            "text": "        /* Initialization is complete, terminate parent process if in daemon"
+          },
+          {
+            "line": 537,
+            "text": "         * mode. Make sure we send the signal to the right process */"
+          },
+          {
+            "line": 538,
+            "text": "        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 539,
+            "text": "            if (ctx->parent_pid <= 1 || ctx->parent_pid != getppid()) {"
+          },
+          {
+            "line": 1311,
+            "text": "}"
+          },
+          {
+            "line": 1312,
+            "text": ""
+          },
+          {
+            "line": 1313,
+            "text": "static void monitor_hup(struct tevent_context *ev,"
+          },
+          {
+            "line": 1314,
+            "text": "                        struct tevent_signal *se,"
+          },
+          {
+            "line": 1315,
+            "text": "                        int signum,"
+          },
+          {
+            "line": 1316,
+            "text": "                        int count,"
+          },
+          {
+            "line": 1317,
+            "text": "                        void *siginfo,"
+          },
+          {
+            "line": 1318,
+            "text": "                        void *private_data)"
+          },
+          {
+            "line": 1377,
+            "text": "    /* Kill all of our known children manually */"
+          },
+          {
+            "line": 1378,
+            "text": "    DLIST_FOR_EACH(svc, mt_ctx->svc_list) {"
+          },
+          {
+            "line": 1379,
+            "text": "        if (svc->socket_activated && svc->conn != NULL) {"
+          },
+          {
+            "line": 1380,
+            "text": "            /* Unset the sbus_connection destructor used to"
+          },
+          {
+            "line": 1381,
+            "text": "             * unregister the service from the monitor as"
+          },
+          {
+            "line": 1382,
+            "text": "             * it may lead to a double-free here. */"
+          },
+          {
+            "line": 1383,
+            "text": "            talloc_set_destructor(svc->conn, NULL);"
+          },
+          {
+            "line": 1384,
+            "text": "        }"
+          },
+          {
+            "line": 1591,
+            "text": "    }"
+          },
+          {
+            "line": 1592,
+            "text": ""
+          },
+          {
+            "line": 1593,
+            "text": "    ret = confdb_setup(ctx, cdb_file, config_file, config_dir, only_section,"
+          },
+          {
+            "line": 1594,
+            "text": "                       &ctx->cdb);"
+          },
+          {
+            "line": 1595,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 1596,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to setup ConfDB [%d]: %s\\n\","
+          },
+          {
+            "line": 1597,
+            "text": "             ret, sss_strerror(ret));"
+          },
+          {
+            "line": 1598,
+            "text": "        goto done;"
+          },
+          {
+            "line": 1939,
+            "text": "    /* Set up an event handler for a SIGHUP */"
+          },
+          {
+            "line": 1940,
+            "text": "    tes = tevent_add_signal(ctx->ev, ctx, SIGHUP, 0,"
+          },
+          {
+            "line": 1941,
+            "text": "                            monitor_hup, ctx);"
+          },
+          {
+            "line": 1942,
+            "text": "    if (tes == NULL) {"
+          },
+          {
+            "line": 1943,
+            "text": "        return EIO;"
+          },
+          {
+            "line": 1944,
+            "text": "    }"
+          },
+          {
+            "line": 1945,
+            "text": ""
+          },
+          {
+            "line": 1946,
+            "text": "    /* Set up an event handler for a SIGINT */"
+          },
+          {
+            "line": 2553,
+            "text": ""
+          },
+          {
+            "line": 2554,
+            "text": "    /* Parse config file, fail if cannot be done */"
+          },
+          {
+            "line": 2555,
+            "text": "    ret = load_configuration(tmp_ctx, config_file, CONFDB_DEFAULT_CONFIG_DIR,"
+          },
+          {
+            "line": 2556,
+            "text": "                             opt_genconf_section, &monitor);"
+          },
+          {
+            "line": 2557,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 2558,
+            "text": "        switch (ret) {"
+          },
+          {
+            "line": 2559,
+            "text": "        case EPERM:"
+          },
+          {
+            "line": 2560,
+            "text": "        case EACCES:"
+          }
+        ]
+      },
+      "src/util/sss_ini.c": {
+        "sha256": "45c2e035cfd84af9eeeb15b69c1ee19b6c18366f656868196e30edd551e869d7",
+        "excerpts": [
+          {
+            "line": 148,
+            "text": "/* Check configuration file permissions */"
+          },
+          {
+            "line": 149,
+            "text": ""
+          },
+          {
+            "line": 150,
+            "text": "static int sss_ini_access_check(struct sss_ini *self)"
+          },
+          {
+            "line": 151,
+            "text": "{"
+          },
+          {
+            "line": 152,
+            "text": "    if (!self->main_config_exists) {"
+          },
+          {
+            "line": 153,
+            "text": "        return EOK;"
+          },
+          {
+            "line": 154,
+            "text": "    }"
+          },
+          {
+            "line": 155,
+            "text": ""
+          },
+          {
+            "line": 234,
+            "text": "    ret = ini_config_parse(self->file,"
+          },
+          {
+            "line": 235,
+            "text": "                           INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 236,
+            "text": "                           INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 237,
+            "text": "                           INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 238,
+            "text": "                           self->sssd_config);"
+          },
+          {
+            "line": 239,
+            "text": ""
+          },
+          {
+            "line": 240,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 241,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 254,
+            "text": "}"
+          },
+          {
+            "line": 255,
+            "text": ""
+          },
+          {
+            "line": 256,
+            "text": "static int sss_ini_add_snippets(struct sss_ini *self,"
+          },
+          {
+            "line": 257,
+            "text": "                                const char *config_dir)"
+          },
+          {
+            "line": 258,
+            "text": "{"
+          },
+          {
+            "line": 259,
+            "text": "#ifdef HAVE_LIBINI_CONFIG_V1_3"
+          },
+          {
+            "line": 260,
+            "text": "    int ret;"
+          },
+          {
+            "line": 261,
+            "text": "    const char *patterns[] = { \"^[^\\\\.].*\\\\.conf$\", NULL };"
+          },
+          {
+            "line": 279,
+            "text": "    snip_check.mask = ALLPERMS & ~(S_IWUSR | S_IXUSR);"
+          },
+          {
+            "line": 280,
+            "text": ""
+          },
+          {
+            "line": 281,
+            "text": "    ret = ini_config_augment(self->sssd_config,"
+          },
+          {
+            "line": 282,
+            "text": "                             config_dir,"
+          },
+          {
+            "line": 283,
+            "text": "                             patterns,"
+          },
+          {
+            "line": 284,
+            "text": "                             sections,"
+          },
+          {
+            "line": 285,
+            "text": "                             &snip_check,"
+          },
+          {
+            "line": 286,
+            "text": "                             INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 287,
+            "text": "                             INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 288,
+            "text": "                             INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 289,
+            "text": "                             INI_MV2S_OVERWRITE,"
+          },
+          {
+            "line": 290,
+            "text": "                             &modified_sssd_config,"
+          },
+          {
+            "line": 291,
+            "text": "                             &self->ra_error_list,"
+          },
+          {
+            "line": 292,
+            "text": "                             &self->ra_success_list);"
+          },
+          {
+            "line": 293,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 294,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 832,
+            "text": "}"
+          },
+          {
+            "line": 833,
+            "text": ""
+          },
+          {
+            "line": 834,
+            "text": "int sss_ini_read_sssd_conf(struct sss_ini *self,"
+          },
+          {
+            "line": 835,
+            "text": "                           const char *config_file,"
+          },
+          {
+            "line": 836,
+            "text": "                           const char *config_dir)"
+          },
+          {
+            "line": 837,
+            "text": "{"
+          },
+          {
+            "line": 838,
+            "text": "    errno_t ret;"
+          },
+          {
+            "line": 839,
+            "text": ""
+          },
+          {
+            "line": 842,
+            "text": "    }"
+          },
+          {
+            "line": 843,
+            "text": ""
+          },
+          {
+            "line": 844,
+            "text": "    ret = sss_ini_open(self, config_file, CONFDB_FALLBACK_CONFIG);"
+          },
+          {
+            "line": 845,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 846,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 847,
+            "text": "              \"The sss_ini_open failed %s: %d\\n\","
+          },
+          {
+            "line": 848,
+            "text": "              config_file,"
+          },
+          {
+            "line": 849,
+            "text": "              ret);"
+          },
+          {
+            "line": 852,
+            "text": ""
+          },
+          {
+            "line": 853,
+            "text": "    if (sss_ini_exists(self)) {"
+          },
+          {
+            "line": 854,
+            "text": "        ret = sss_ini_access_check(self);"
+          },
+          {
+            "line": 855,
+            "text": "        if (ret != EOK) {"
+          },
+          {
+            "line": 856,
+            "text": "            DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 857,
+            "text": "                  \"Permission check on config file failed.\\n\");"
+          },
+          {
+            "line": 858,
+            "text": "            return ERR_INI_INVALID_PERMISSION;"
+          },
+          {
+            "line": 859,
+            "text": "        }"
+          },
+          {
+            "line": 871,
+            "text": "    }"
+          },
+          {
+            "line": 872,
+            "text": ""
+          },
+          {
+            "line": 873,
+            "text": "    ret = sss_ini_add_snippets(self, config_dir);"
+          },
+          {
+            "line": 874,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 875,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 876,
+            "text": "              \"Error while reading configuration directory.\\n\");"
+          },
+          {
+            "line": 877,
+            "text": "        return ERR_INI_ADD_SNIPPETS_FAILED;"
+          },
+          {
+            "line": 878,
+            "text": "    }"
+          }
+        ]
+      },
+      "src/confdb/confdb.h": {
+        "sha256": "d0c67bd347a3c8f7f4082f019411ac10bd4b183544a8fa8bf97f4a851f1a5358",
+        "excerpts": [
+          {
+            "line": 41,
+            "text": "#define CONFDB_DEFAULT_CFG_FILE_VER 2"
+          },
+          {
+            "line": 42,
+            "text": "#define CONFDB_FILE \"config.ldb\""
+          },
+          {
+            "line": 43,
+            "text": "#define SSSD_CONFIG_FILE_NAME \"sssd.conf\""
+          },
+          {
+            "line": 44,
+            "text": "#define SSSD_CONFIG_FILE SSSD_CONF_DIR\"/\"SSSD_CONFIG_FILE_NAME"
+          },
+          {
+            "line": 45,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR_NAME \"conf.d\""
+          },
+          {
+            "line": 46,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR SSSD_CONF_DIR\"/\"CONFDB_DEFAULT_CONFIG_DIR_NAME"
+          },
+          {
+            "line": 47,
+            "text": "#define SSSD_MIN_ID 1"
+          },
+          {
+            "line": 48,
+            "text": "#define CONFDB_DEFAULT_SHELL_FALLBACK \"/bin/sh\""
+          },
+          {
+            "line": 49,
+            "text": "#define CONFDB_FALLBACK_CONFIG \\"
+          },
+          {
+            "line": 50,
+            "text": "    \"[sssd]\\n\""
+          },
+          {
+            "line": 51,
+            "text": ""
+          },
+          {
+            "line": 52,
+            "text": ""
+          },
+          {
+            "line": 53,
+            "text": "/* Configuration options */"
+          },
+          {
+            "line": 54,
+            "text": ""
+          }
+        ]
+      },
+      "src/tools/sssctl/sssctl_config.c": {
+        "sha256": "184e68e638b24a7cfe68a00210832badde3ccf33cb028aa94d13da81f2041f3c",
+        "excerpts": [
+          {
+            "line": 36,
+            "text": "#ifdef HAVE_LIBINI_CONFIG_V1_3"
+          },
+          {
+            "line": 37,
+            "text": ""
+          },
+          {
+            "line": 38,
+            "text": "static char *sssctl_config_snippet_path(TALLOC_CTX *ctx, const char *path)"
+          },
+          {
+            "line": 39,
+            "text": "{"
+          },
+          {
+            "line": 40,
+            "text": "    char *tmp = NULL;"
+          },
+          {
+            "line": 41,
+            "text": "    const char delimiter = '/';"
+          },
+          {
+            "line": 42,
+            "text": "    char *dpos = NULL;"
+          },
+          {
+            "line": 43,
+            "text": ""
+          },
+          {
+            "line": 72,
+            "text": "    TALLOC_CTX *tmp_ctx = NULL;"
+          },
+          {
+            "line": 73,
+            "text": "    const char *config_path = NULL;"
+          },
+          {
+            "line": 74,
+            "text": "    const char *config_snippet_path = NULL;"
+          },
+          {
+            "line": 75,
+            "text": "    struct poptOption long_options[] = {"
+          },
+          {
+            "line": 76,
+            "text": "        {\"config\", 'c', POPT_ARG_STRING, &config_path,"
+          },
+          {
+            "line": 77,
+            "text": "            0, _(\"Specify a non-default config file\"), NULL},"
+          },
+          {
+            "line": 78,
+            "text": "        {\"snippet\", 's', POPT_ARG_STRING, &config_snippet_path,"
+          },
+          {
+            "line": 79,
+            "text": "            0, _(\"Specify a non-default snippet dir (The default is to look in \""
+          },
+          {
+            "line": 102,
+            "text": "    }"
+          },
+          {
+            "line": 103,
+            "text": ""
+          },
+          {
+            "line": 104,
+            "text": "    if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 105,
+            "text": "        config_snippet_path = sssctl_config_snippet_path(tmp_ctx, config_path);"
+          },
+          {
+            "line": 106,
+            "text": "        if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 107,
+            "text": "            DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to create snippet path\\n\");"
+          },
+          {
+            "line": 108,
+            "text": "            ret = ENOMEM;"
+          },
+          {
+            "line": 109,
+            "text": "            goto done;"
+          },
+          {
+            "line": 110,
+            "text": "        }"
+          },
+          {
+            "line": 111,
+            "text": "    }"
+          },
+          {
+            "line": 112,
+            "text": ""
+          },
+          {
+            "line": 113,
+            "text": "    ret = sss_ini_read_sssd_conf(init_data,"
+          },
+          {
+            "line": 114,
+            "text": "                                 config_path,"
+          },
+          {
+            "line": 115,
+            "text": "                                 config_snippet_path);"
+          },
+          {
+            "line": 116,
+            "text": ""
+          },
+          {
+            "line": 117,
+            "text": "    if (ret == ERR_INI_OPEN_FAILED) {"
+          },
+          {
+            "line": 118,
+            "text": "        PRINT(\"Failed to open %s\\n\", config_path);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "9cef261aa4ca1c2b99ee4e8c2cd94b5fa313eb8d32f72c1e09edcca5aecc2fd8",
+        "excerpts": [
+          {
+            "line": 26,
+            "text": "#include \"confdb.h\""
+          },
+          {
+            "line": 27,
+            "text": "#include \"confdb_private.h\""
+          },
+          {
+            "line": 28,
+            "text": "#include \"confdb_setup.h\""
+          },
+          {
+            "line": 29,
+            "text": "#include \"util/sss_ini.h\""
+          },
+          {
+            "line": 30,
+            "text": ""
+          },
+          {
+            "line": 31,
+            "text": "static int confdb_test(struct confdb_ctx *cdb)"
+          },
+          {
+            "line": 32,
+            "text": "{"
+          },
+          {
+            "line": 33,
+            "text": "    char **values;"
+          },
+          {
+            "line": 105,
+            "text": "}"
+          },
+          {
+            "line": 106,
+            "text": ""
+          },
+          {
+            "line": 107,
+            "text": "static int confdb_create_base(struct confdb_ctx *cdb)"
+          },
+          {
+            "line": 108,
+            "text": "{"
+          },
+          {
+            "line": 109,
+            "text": "    int ret;"
+          },
+          {
+            "line": 110,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 111,
+            "text": ""
+          },
+          {
+            "line": 112,
+            "text": "    const char *base_ldif = CONFDB_BASE_LDIF;"
+          },
+          {
+            "line": 138,
+            "text": "    int version;"
+          },
+          {
+            "line": 139,
+            "text": ""
+          },
+          {
+            "line": 140,
+            "text": "    ret = sss_ini_read_sssd_conf(init_data,"
+          },
+          {
+            "line": 141,
+            "text": "                                 config_file,"
+          },
+          {
+            "line": 142,
+            "text": "                                 config_dir);"
+          },
+          {
+            "line": 143,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 144,
+            "text": "        return ret;"
+          },
+          {
+            "line": 145,
+            "text": "    }"
+          },
+          {
+            "line": 210,
+            "text": "    }"
+          },
+          {
+            "line": 211,
+            "text": ""
+          },
+          {
+            "line": 212,
+            "text": "    ret = sss_confdb_create_ldif(mem_ctx, init_data, only_section, _ldif);"
+          },
+          {
+            "line": 213,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 214,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE, \"Could not create LDIF for confdb\\n\");"
+          },
+          {
+            "line": 215,
+            "text": "        return ret;"
+          },
+          {
+            "line": 216,
+            "text": "    }"
+          },
+          {
+            "line": 217,
+            "text": ""
+          },
+          {
+            "line": 224,
+            "text": "}"
+          },
+          {
+            "line": 225,
+            "text": ""
+          },
+          {
+            "line": 226,
+            "text": "static int confdb_write_ldif(struct confdb_ctx *cdb,"
+          },
+          {
+            "line": 227,
+            "text": "                             const char *config_ldif,"
+          },
+          {
+            "line": 228,
+            "text": "                             bool replace_whole_db)"
+          },
+          {
+            "line": 229,
+            "text": "{"
+          },
+          {
+            "line": 230,
+            "text": "    int ret;"
+          },
+          {
+            "line": 231,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 329,
+            "text": "    }"
+          },
+          {
+            "line": 330,
+            "text": ""
+          },
+          {
+            "line": 331,
+            "text": "    ret = confdb_write_ldif(cdb,"
+          },
+          {
+            "line": 332,
+            "text": "                            config_ldif,"
+          },
+          {
+            "line": 333,
+            "text": "                            only_section == NULL ? true : false);"
+          },
+          {
+            "line": 334,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 335,
+            "text": "        goto done;"
+          },
+          {
+            "line": 336,
+            "text": "    }"
+          },
+          {
+            "line": 368,
+            "text": "}"
+          },
+          {
+            "line": 369,
+            "text": ""
+          },
+          {
+            "line": 370,
+            "text": "errno_t confdb_setup(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 371,
+            "text": "                     const char *cdb_file,"
+          },
+          {
+            "line": 372,
+            "text": "                     const char *config_file,"
+          },
+          {
+            "line": 373,
+            "text": "                     const char *config_dir,"
+          },
+          {
+            "line": 374,
+            "text": "                     const char *only_section,"
+          },
+          {
+            "line": 375,
+            "text": "                     struct confdb_ctx **_cdb)"
+          },
+          {
+            "line": 417,
+            "text": ""
+          },
+          {
+            "line": 418,
+            "text": "        /* Load special entries */"
+          },
+          {
+            "line": 419,
+            "text": "        ret = confdb_create_base(cdb);"
+          },
+          {
+            "line": 420,
+            "text": "        if (ret != EOK) {"
+          },
+          {
+            "line": 421,
+            "text": "            DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 422,
+            "text": "                  \"Unable to load special entries into confdb\\n\");"
+          },
+          {
+            "line": 423,
+            "text": "            goto done;"
+          },
+          {
+            "line": 424,
+            "text": "        }"
+          }
+        ]
+      }
+    }
+  },
+  "debian-13": {
+    "source_tree": "sssd-2.10.1",
+    "archives": {
+      "sssd_2.10.1-2.debian.tar.xz": "3c70986bb7cdf2f5ba879307b7dc73e693771d4af733f78b0b5f124e3c3b6054",
+      "sssd_2.10.1-2.dsc": "8cbb566bd019861a3222e03f4b2b4944f7d0f03a9fbd2fd84ee45edff5ba74e7",
+      "sssd_2.10.1.orig.tar.gz": "ea6a690047cea1ecd50016aa30946f9348da37b46daa984f34bc72ddb767539f"
+    },
+    "distribution_patches": "debian/patches applied by apt-get source",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "e9efee7006ae83c5fb6064246d5fb882f53289a529d5f3b2c2c10aa8ef947657",
+        "excerpts": [
+          {
+            "line": 91,
+            "text": ""
+          },
+          {
+            "line": 92,
+            "text": "    bool svc_started;"
+          },
+          {
+            "line": 93,
+            "text": "    bool socket_activated; /* also used for dbus-activated services */"
+          },
+          {
+            "line": 94,
+            "text": ""
+          },
+          {
+            "line": 95,
+            "text": "    int restarts;"
+          },
+          {
+            "line": 96,
+            "text": "    time_t last_restart;"
+          },
+          {
+            "line": 97,
+            "text": ""
+          },
+          {
+            "line": 98,
+            "text": "    int debug_level;"
+          },
+          {
+            "line": 165,
+            "text": ""
+          },
+          {
+            "line": 166,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 167,
+            "text": "errno_t socket_activated_service_not_found(struct mt_ctx *mt_ctx,"
+          },
+          {
+            "line": 168,
+            "text": "                                           const char *svc_name,"
+          },
+          {
+            "line": 169,
+            "text": "                                           bool is_provider,"
+          },
+          {
+            "line": 170,
+            "text": "                                           struct mt_svc **_svc)"
+          },
+          {
+            "line": 171,
+            "text": "{"
+          },
+          {
+            "line": 172,
+            "text": "    struct mt_svc *svc = NULL;"
+          },
+          {
+            "line": 198,
+            "text": "    }"
+          },
+          {
+            "line": 199,
+            "text": "    svc->restarts = 0;"
+          },
+          {
+            "line": 200,
+            "text": "    svc->socket_activated = true;"
+          },
+          {
+            "line": 201,
+            "text": ""
+          },
+          {
+            "line": 202,
+            "text": "    DLIST_ADD(mt_ctx->svc_list, svc);"
+          },
+          {
+            "line": 203,
+            "text": ""
+          },
+          {
+            "line": 204,
+            "text": "    *_svc = svc;"
+          },
+          {
+            "line": 205,
+            "text": "    return EOK;"
+          },
+          {
+            "line": 223,
+            "text": ""
+          },
+          {
+            "line": 224,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 225,
+            "text": "    return socket_activated_service_not_found(mt_ctx, svc_name, is_provider,"
+          },
+          {
+            "line": 226,
+            "text": "                                              _svc);"
+          },
+          {
+            "line": 227,
+            "text": "#else"
+          },
+          {
+            "line": 228,
+            "text": "    return service_not_found(svc_name, _svc);"
+          },
+          {
+            "line": 229,
+            "text": "#endif"
+          },
+          {
+            "line": 230,
+            "text": "}"
+          },
+          {
+            "line": 269,
+            "text": "     * from there and set the destructor back to NULL just before freeing"
+          },
+          {
+            "line": 270,
+            "text": "     * the service itself. */"
+          },
+          {
+            "line": 271,
+            "text": "    if (svc->socket_activated) {"
+          },
+          {
+            "line": 272,
+            "text": "        DEBUG(SSSDBG_TRACE_FUNC, \"'%s' is a socket activated service\\n\", name);"
+          },
+          {
+            "line": 273,
+            "text": "        sbus_connection_set_destructor(svc->conn, monitor_service_shutdown, svc);"
+          },
+          {
+            "line": 274,
+            "text": "    }"
+          },
+          {
+            "line": 275,
+            "text": ""
+          },
+          {
+            "line": 276,
+            "text": "    ret = mark_service_as_started(svc);"
+          },
+          {
+            "line": 384,
+            "text": "}"
+          },
+          {
+            "line": 385,
+            "text": ""
+          },
+          {
+            "line": 386,
+            "text": "static int notify_startup(void)"
+          },
+          {
+            "line": 387,
+            "text": "{"
+          },
+          {
+            "line": 388,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 389,
+            "text": "    int ret;"
+          },
+          {
+            "line": 390,
+            "text": ""
+          },
+          {
+            "line": 391,
+            "text": "    DEBUG(SSSDBG_TRACE_FUNC, \"Sending startup notification to systemd\\n\");"
+          },
+          {
+            "line": 392,
+            "text": "    ret = sd_notify(0, \"READY=1\");"
+          },
+          {
+            "line": 393,
+            "text": "    if (ret < 0) {"
+          },
+          {
+            "line": 394,
+            "text": "        ret = -ret;"
+          },
+          {
+            "line": 395,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 396,
+            "text": "                \"Error sending notification to systemd %d: %s\\n\","
+          },
+          {
+            "line": 397,
+            "text": "                ret, sss_strerror(ret));"
+          },
+          {
+            "line": 455,
+            "text": ""
+          },
+          {
+            "line": 456,
+            "text": "    /* create the pid file if all services are alive */"
+          },
+          {
+            "line": 457,
+            "text": "    if (!ctx->pid_file_created && ctx->started_services == ctx->num_services) {"
+          },
+          {
+            "line": 458,
+            "text": "        if (svc->socket_activated) {"
+          },
+          {
+            "line": 459,
+            "text": "            /* There's no reason for trying to terminate the parent process"
+          },
+          {
+            "line": 460,
+            "text": "             * when the responder was socket-activated. */"
+          },
+          {
+            "line": 461,
+            "text": "            goto done;"
+          },
+          {
+            "line": 462,
+            "text": "        }"
+          },
+          {
+            "line": 463,
+            "text": ""
+          },
+          {
+            "line": 474,
+            "text": "        ctx->pid_file_created = true;"
+          },
+          {
+            "line": 475,
+            "text": ""
+          },
+          {
+            "line": 476,
+            "text": "        notify_startup();"
+          },
+          {
+            "line": 477,
+            "text": ""
+          },
+          {
+            "line": 478,
+            "text": "        /* Initialization is complete, terminate parent process if in daemon"
+          },
+          {
+            "line": 479,
+            "text": "         * mode. Make sure we send the signal to the right process */"
+          },
+          {
+            "line": 480,
+            "text": "        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 481,
+            "text": "            if (ctx->parent_pid <= 1 || ctx->parent_pid != getppid()) {"
+          },
+          {
+            "line": 1121,
+            "text": "}"
+          },
+          {
+            "line": 1122,
+            "text": ""
+          },
+          {
+            "line": 1123,
+            "text": "static void monitor_hup(struct tevent_context *ev,"
+          },
+          {
+            "line": 1124,
+            "text": "                        struct tevent_signal *se,"
+          },
+          {
+            "line": 1125,
+            "text": "                        int signum,"
+          },
+          {
+            "line": 1126,
+            "text": "                        int count,"
+          },
+          {
+            "line": 1127,
+            "text": "                        void *siginfo,"
+          },
+          {
+            "line": 1128,
+            "text": "                        void *private_data)"
+          },
+          {
+            "line": 1187,
+            "text": "    /* Kill all of our known children manually */"
+          },
+          {
+            "line": 1188,
+            "text": "    DLIST_FOR_EACH(svc, mt_ctx->svc_list) {"
+          },
+          {
+            "line": 1189,
+            "text": "        if (svc->socket_activated && svc->conn != NULL) {"
+          },
+          {
+            "line": 1190,
+            "text": "            /* Unset the sbus_connection destructor used to"
+          },
+          {
+            "line": 1191,
+            "text": "             * unregister the service from the monitor as"
+          },
+          {
+            "line": 1192,
+            "text": "             * it may lead to a double-free here. */"
+          },
+          {
+            "line": 1193,
+            "text": "            talloc_set_destructor(svc->conn, NULL);"
+          },
+          {
+            "line": 1194,
+            "text": "        }"
+          },
+          {
+            "line": 1391,
+            "text": "    /* Set up an event handler for a SIGHUP */"
+          },
+          {
+            "line": 1392,
+            "text": "    tes = tevent_add_signal(ctx->ev, ctx, SIGHUP, 0,"
+          },
+          {
+            "line": 1393,
+            "text": "                            monitor_hup, ctx);"
+          },
+          {
+            "line": 1394,
+            "text": "    if (tes == NULL) {"
+          },
+          {
+            "line": 1395,
+            "text": "        return EIO;"
+          },
+          {
+            "line": 1396,
+            "text": "    }"
+          },
+          {
+            "line": 1397,
+            "text": ""
+          },
+          {
+            "line": 1398,
+            "text": "    /* Set up an event handler for a SIGINT */"
+          },
+          {
+            "line": 1577,
+            "text": "    DEBUG(SSSDBG_CONF_SETTINGS,\"Queueing service %s for startup\\n\", svc->name);"
+          },
+          {
+            "line": 1578,
+            "text": ""
+          },
+          {
+            "line": 1579,
+            "text": "    svc->socket_activated = false;"
+          },
+          {
+            "line": 1580,
+            "text": ""
+          },
+          {
+            "line": 1581,
+            "text": "    tv = tevent_timeval_current();"
+          },
+          {
+            "line": 1582,
+            "text": ""
+          },
+          {
+            "line": 1583,
+            "text": "    /* Add a timed event to start up the service."
+          },
+          {
+            "line": 1584,
+            "text": "     * We have to do this in order to avoid a race"
+          },
+          {
+            "line": 1929,
+            "text": ""
+          },
+          {
+            "line": 1930,
+            "text": "    /* read/parse configuration (but don't save yet) */"
+          },
+          {
+            "line": 1931,
+            "text": "    ret = confdb_read_ini(tmp_ctx, config_file, CONFDB_DEFAULT_CONFIG_DIR, false,"
+          },
+          {
+            "line": 1932,
+            "text": "                          &config);"
+          },
+          {
+            "line": 1933,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 1934,
+            "text": "        ERROR(\"Can't read config: '%s'\\n\", sss_strerror(ret));"
+          },
+          {
+            "line": 1935,
+            "text": "        sss_log(SSS_LOG_ALERT,"
+          },
+          {
+            "line": 1936,
+            "text": "                \"Failed to read configuration: '%s'\", sss_strerror(ret));"
+          }
+        ]
+      },
+      "src/util/sss_ini.c": {
+        "sha256": "583be36e9c817839127e99520ead7e272bdcf7ef7357005ac19b5bf3cb5b0cb5",
+        "excerpts": [
+          {
+            "line": 186,
+            "text": "    ret = ini_config_parse(self->file,"
+          },
+          {
+            "line": 187,
+            "text": "                           INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 188,
+            "text": "                           INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 189,
+            "text": "                           INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 190,
+            "text": "                           self->sssd_config);"
+          },
+          {
+            "line": 191,
+            "text": ""
+          },
+          {
+            "line": 192,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 193,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 206,
+            "text": "}"
+          },
+          {
+            "line": 207,
+            "text": ""
+          },
+          {
+            "line": 208,
+            "text": "static int sss_ini_add_snippets(struct sss_ini *self,"
+          },
+          {
+            "line": 209,
+            "text": "                                const char *config_dir)"
+          },
+          {
+            "line": 210,
+            "text": "{"
+          },
+          {
+            "line": 211,
+            "text": "    int ret;"
+          },
+          {
+            "line": 212,
+            "text": "    const char *patterns[] = { \"^[^\\\\.].*\\\\.conf$\", NULL };"
+          },
+          {
+            "line": 213,
+            "text": "    const char *sections[] = { \".*\", NULL };"
+          },
+          {
+            "line": 222,
+            "text": "    sss_ini_free_ra_messages(self);"
+          },
+          {
+            "line": 223,
+            "text": ""
+          },
+          {
+            "line": 224,
+            "text": "    ret = ini_config_augment(self->sssd_config,"
+          },
+          {
+            "line": 225,
+            "text": "                             config_dir,"
+          },
+          {
+            "line": 226,
+            "text": "                             patterns,"
+          },
+          {
+            "line": 227,
+            "text": "                             sections,"
+          },
+          {
+            "line": 228,
+            "text": "                             NULL,"
+          },
+          {
+            "line": 229,
+            "text": "                             INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 230,
+            "text": "                             INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 231,
+            "text": "                             INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 232,
+            "text": "                             INI_MV2S_OVERWRITE,"
+          },
+          {
+            "line": 233,
+            "text": "                             &modified_sssd_config,"
+          },
+          {
+            "line": 234,
+            "text": "                             &self->ra_error_list,"
+          },
+          {
+            "line": 235,
+            "text": "                             &self->ra_success_list);"
+          },
+          {
+            "line": 236,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 237,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 448,
+            "text": ""
+          },
+          {
+            "line": 449,
+            "text": "    if (ldif == NULL) {"
+          },
+          {
+            "line": 450,
+            "text": "        ret = ERR_INI_EMPTY_CONFIG;"
+          },
+          {
+            "line": 451,
+            "text": "        goto error;"
+          },
+          {
+            "line": 452,
+            "text": "    }"
+          },
+          {
+            "line": 453,
+            "text": "    ldif[ldif_len] = '\\0';"
+          },
+          {
+            "line": 454,
+            "text": ""
+          },
+          {
+            "line": 455,
+            "text": "    free_section_list(sections);"
+          },
+          {
+            "line": 814,
+            "text": "}"
+          },
+          {
+            "line": 815,
+            "text": ""
+          },
+          {
+            "line": 816,
+            "text": "static int access_check_ini(struct sss_ini *self)"
+          },
+          {
+            "line": 817,
+            "text": "{"
+          },
+          {
+            "line": 818,
+            "text": "    int ret;"
+          },
+          {
+            "line": 819,
+            "text": "    const char *path;"
+          },
+          {
+            "line": 820,
+            "text": "    uint32_t i;"
+          },
+          {
+            "line": 821,
+            "text": "    const char **snippet;"
+          },
+          {
+            "line": 841,
+            "text": "}"
+          },
+          {
+            "line": 842,
+            "text": ""
+          },
+          {
+            "line": 843,
+            "text": "int sss_ini_read_sssd_conf(struct sss_ini *self,"
+          },
+          {
+            "line": 844,
+            "text": "                           const char *config_file,"
+          },
+          {
+            "line": 845,
+            "text": "                           const char *config_dir)"
+          },
+          {
+            "line": 846,
+            "text": "{"
+          },
+          {
+            "line": 847,
+            "text": "    errno_t ret;"
+          },
+          {
+            "line": 848,
+            "text": ""
+          },
+          {
+            "line": 853,
+            "text": "    /* \"[sssd]\\n\" is supplied to `sss_ini_open()` to create empty context"
+          },
+          {
+            "line": 854,
+            "text": "     * in case main config file ('sssd.conf') is missing. This is done in"
+          },
+          {
+            "line": 855,
+            "text": "     * order to be able to add config snippets later - sss_ini_add_snippets()"
+          },
+          {
+            "line": 856,
+            "text": "     * Take a note if both 'sssd.conf' and snippets are missing, then"
+          },
+          {
+            "line": 857,
+            "text": "     * sss_ini_read_sssd_conf() returns ERR_INI_EMPTY_CONFIG, so there is no"
+          },
+          {
+            "line": 858,
+            "text": "     * \"fallback config\" per se."
+          },
+          {
+            "line": 859,
+            "text": "     */"
+          },
+          {
+            "line": 860,
+            "text": "    ret = sss_ini_open(self, config_file, \"[sssd]\\n\");"
+          },
+          {
+            "line": 861,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 862,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 879,
+            "text": "    }"
+          },
+          {
+            "line": 880,
+            "text": ""
+          },
+          {
+            "line": 881,
+            "text": "    ret = sss_ini_add_snippets(self, config_dir);"
+          },
+          {
+            "line": 882,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 883,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 884,
+            "text": "              \"Error while reading configuration directory '%s' [%d]: %s\\n\","
+          },
+          {
+            "line": 885,
+            "text": "              config_dir, ret, sss_strerror(ret));"
+          },
+          {
+            "line": 886,
+            "text": "        return ERR_INI_ADD_SNIPPETS_FAILED;"
+          },
+          {
+            "line": 889,
+            "text": "    if ((!self->main_config_exists) &&"
+          },
+          {
+            "line": 890,
+            "text": "        (ref_array_len(sss_ini_get_ra_success_list(self)) == 0)) {"
+          },
+          {
+            "line": 891,
+            "text": "        return ERR_INI_EMPTY_CONFIG;"
+          },
+          {
+            "line": 892,
+            "text": "    }"
+          },
+          {
+            "line": 893,
+            "text": ""
+          },
+          {
+            "line": 894,
+            "text": "    ret = access_check_ini(self);"
+          },
+          {
+            "line": 895,
+            "text": ""
+          },
+          {
+            "line": 896,
+            "text": "    return ret;"
+          },
+          {
+            "line": 897,
+            "text": "}"
+          }
+        ]
+      },
+      "src/confdb/confdb.h": {
+        "sha256": "e3abbf00bcb4482ee8d13da1865ef9862b367d448739259483f4add18d2457b2",
+        "excerpts": [
+          {
+            "line": 42,
+            "text": "#define CONFDB_FILE \"config.ldb\""
+          },
+          {
+            "line": 43,
+            "text": "#define CONFDB_KCM_FILE \"config_kcm.ldb\""
+          },
+          {
+            "line": 44,
+            "text": "#define SSSD_CONFIG_FILE_NAME \"sssd.conf\""
+          },
+          {
+            "line": 45,
+            "text": "#define SSSD_CONFIG_FILE SSSD_CONF_DIR\"/\"SSSD_CONFIG_FILE_NAME"
+          },
+          {
+            "line": 46,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR_NAME \"conf.d\""
+          },
+          {
+            "line": 47,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR SSSD_CONF_DIR\"/\"CONFDB_DEFAULT_CONFIG_DIR_NAME"
+          },
+          {
+            "line": 48,
+            "text": "#define SSSD_MIN_ID 1"
+          },
+          {
+            "line": 49,
+            "text": "#define CONFDB_DEFAULT_SHELL_FALLBACK \"/bin/sh\""
+          },
+          {
+            "line": 50,
+            "text": ""
+          },
+          {
+            "line": 51,
+            "text": "/* Configuration options */"
+          },
+          {
+            "line": 52,
+            "text": ""
+          }
+        ]
+      },
+      "src/tools/sssctl/sssctl_config.c": {
+        "sha256": "7489d2b65a7f3e7ca0f16ec33ca187480250a525823d8c6e077861f3041f1455",
+        "excerpts": [
+          {
+            "line": 34,
+            "text": ""
+          },
+          {
+            "line": 35,
+            "text": ""
+          },
+          {
+            "line": 36,
+            "text": "static char *sssctl_config_snippet_path(TALLOC_CTX *ctx, const char *path)"
+          },
+          {
+            "line": 37,
+            "text": "{"
+          },
+          {
+            "line": 38,
+            "text": "    char *tmp = NULL;"
+          },
+          {
+            "line": 39,
+            "text": "    const char delimiter = '/';"
+          },
+          {
+            "line": 40,
+            "text": "    char *dpos = NULL;"
+          },
+          {
+            "line": 41,
+            "text": ""
+          },
+          {
+            "line": 69,
+            "text": "    TALLOC_CTX *tmp_ctx = NULL;"
+          },
+          {
+            "line": 70,
+            "text": "    const char *config_path = NULL;"
+          },
+          {
+            "line": 71,
+            "text": "    const char *config_snippet_path = NULL;"
+          },
+          {
+            "line": 72,
+            "text": "    struct poptOption long_options[] = {"
+          },
+          {
+            "line": 73,
+            "text": "        SSSD_CONFIG_OPTS(config_path)"
+          },
+          {
+            "line": 74,
+            "text": "        {\"snippet\", 's', POPT_ARG_STRING, &config_snippet_path,"
+          },
+          {
+            "line": 75,
+            "text": "            0, _(\"Specify a non-default snippet dir (The default is to look in \""
+          },
+          {
+            "line": 76,
+            "text": "                 \"the same place where the main config file is located. For \""
+          },
+          {
+            "line": 98,
+            "text": "    }"
+          },
+          {
+            "line": 99,
+            "text": ""
+          },
+          {
+            "line": 100,
+            "text": "    if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 101,
+            "text": "        config_snippet_path = sssctl_config_snippet_path(tmp_ctx, config_path);"
+          },
+          {
+            "line": 102,
+            "text": "        if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 103,
+            "text": "            DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to create snippet path\\n\");"
+          },
+          {
+            "line": 104,
+            "text": "            ret = ENOMEM;"
+          },
+          {
+            "line": 105,
+            "text": "            goto done;"
+          },
+          {
+            "line": 106,
+            "text": "        }"
+          },
+          {
+            "line": 107,
+            "text": "    }"
+          },
+          {
+            "line": 108,
+            "text": ""
+          },
+          {
+            "line": 109,
+            "text": "    ret = sss_ini_read_sssd_conf(init_data,"
+          },
+          {
+            "line": 110,
+            "text": "                                 config_path,"
+          },
+          {
+            "line": 111,
+            "text": "                                 config_snippet_path);"
+          },
+          {
+            "line": 112,
+            "text": ""
+          },
+          {
+            "line": 113,
+            "text": "    if (ret == ERR_INI_EMPTY_CONFIG) {"
+          },
+          {
+            "line": 114,
+            "text": "        PRINT(\"File %1$s does not exist.\\n\", config_path);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "044ba8a30737ca216ae815d12cc05180ed41714e56b0d8dd871f2a7ccf287f26",
+        "excerpts": [
+          {
+            "line": 26,
+            "text": "#include \"confdb.h\""
+          },
+          {
+            "line": 27,
+            "text": "#include \"confdb_private.h\""
+          },
+          {
+            "line": 28,
+            "text": "#include \"confdb_setup.h\""
+          },
+          {
+            "line": 29,
+            "text": "#include \"util/sss_ini.h\""
+          },
+          {
+            "line": 30,
+            "text": ""
+          },
+          {
+            "line": 31,
+            "text": "#define CONFDB_BASE_LDIF \\"
+          },
+          {
+            "line": 32,
+            "text": "     \"dn: @ATTRIBUTES\\n\" \\"
+          },
+          {
+            "line": 33,
+            "text": "     \"cn: CASE_INSENSITIVE\\n\" \\"
+          },
+          {
+            "line": 45,
+            "text": ""
+          },
+          {
+            "line": 46,
+            "text": ""
+          },
+          {
+            "line": 47,
+            "text": "errno_t confdb_read_ini(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 48,
+            "text": "                        const char *config_file,"
+          },
+          {
+            "line": 49,
+            "text": "                        const char *config_dir,"
+          },
+          {
+            "line": 50,
+            "text": "                        bool allow_missing_file,"
+          },
+          {
+            "line": 51,
+            "text": "                        struct sss_ini **_ini)"
+          },
+          {
+            "line": 52,
+            "text": "{"
+          },
+          {
+            "line": 58,
+            "text": "    }"
+          },
+          {
+            "line": 59,
+            "text": ""
+          },
+          {
+            "line": 60,
+            "text": "    ret = sss_ini_read_sssd_conf(*_ini, config_file, config_dir);"
+          },
+          {
+            "line": 61,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 62,
+            "text": "        if ((ret == ERR_INI_EMPTY_CONFIG) && allow_missing_file) {"
+          },
+          {
+            "line": 63,
+            "text": "            return EOK;"
+          },
+          {
+            "line": 64,
+            "text": "        }"
+          },
+          {
+            "line": 65,
+            "text": "        talloc_zfree(*_ini);"
+          },
+          {
+            "line": 70,
+            "text": "}"
+          },
+          {
+            "line": 71,
+            "text": ""
+          },
+          {
+            "line": 72,
+            "text": "static int confdb_create_base(struct confdb_ctx *cdb)"
+          },
+          {
+            "line": 73,
+            "text": "{"
+          },
+          {
+            "line": 74,
+            "text": "    int ret;"
+          },
+          {
+            "line": 75,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 76,
+            "text": ""
+          },
+          {
+            "line": 77,
+            "text": "    const char *base_ldif = CONFDB_BASE_LDIF;"
+          },
+          {
+            "line": 91,
+            "text": "}"
+          },
+          {
+            "line": 92,
+            "text": ""
+          },
+          {
+            "line": 93,
+            "text": "static int confdb_write_ldif(struct confdb_ctx *cdb, const char *config_ldif)"
+          },
+          {
+            "line": 94,
+            "text": "{"
+          },
+          {
+            "line": 95,
+            "text": "    int ret;"
+          },
+          {
+            "line": 96,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 97,
+            "text": ""
+          },
+          {
+            "line": 98,
+            "text": "    while ((ldif = ldb_ldif_read_string(cdb->ldb, &config_ldif))) {"
+          },
+          {
+            "line": 137,
+            "text": "    }"
+          },
+          {
+            "line": 138,
+            "text": ""
+          },
+          {
+            "line": 139,
+            "text": "    ret = sss_confdb_create_ldif(tmp_ctx, ini, only_section, &config_ldif);"
+          },
+          {
+            "line": 140,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 141,
+            "text": "        if ((ret == ERR_INI_EMPTY_CONFIG) && allow_missing_content) {"
+          },
+          {
+            "line": 142,
+            "text": "            DEBUG(SSSDBG_TRACE_FUNC, \"Empty configuration. Using the defaults.\\n\");"
+          },
+          {
+            "line": 143,
+            "text": "            ret = EOK;"
+          },
+          {
+            "line": 144,
+            "text": "            goto done;"
+          },
+          {
+            "line": 164,
+            "text": "    in_transaction = true;"
+          },
+          {
+            "line": 165,
+            "text": ""
+          },
+          {
+            "line": 166,
+            "text": "    ret = confdb_write_ldif(cdb, config_ldif);"
+          },
+          {
+            "line": 167,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 168,
+            "text": "        goto done;"
+          },
+          {
+            "line": 169,
+            "text": "    }"
+          },
+          {
+            "line": 170,
+            "text": ""
+          },
+          {
+            "line": 171,
+            "text": "    ret = ldb_transaction_commit(cdb->ldb);"
+          },
+          {
+            "line": 190,
+            "text": "}"
+          },
+          {
+            "line": 191,
+            "text": ""
+          },
+          {
+            "line": 192,
+            "text": "errno_t confdb_write_ini(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 193,
+            "text": "                         const struct sss_ini *ini,"
+          },
+          {
+            "line": 194,
+            "text": "                         const char *cdb_file,"
+          },
+          {
+            "line": 195,
+            "text": "                         const char *only_section,"
+          },
+          {
+            "line": 196,
+            "text": "                         bool allow_missing_content,"
+          },
+          {
+            "line": 197,
+            "text": "                         struct confdb_ctx **_cdb)"
+          },
+          {
+            "line": 222,
+            "text": ""
+          },
+          {
+            "line": 223,
+            "text": "    /* Load special entries */"
+          },
+          {
+            "line": 224,
+            "text": "    ret = confdb_create_base(cdb);"
+          },
+          {
+            "line": 225,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 226,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 227,
+            "text": "              \"Unable to load special entries into confdb\\n\");"
+          },
+          {
+            "line": 228,
+            "text": "        goto done;"
+          },
+          {
+            "line": 229,
+            "text": "    }"
+          },
+          {
+            "line": 246,
+            "text": "}"
+          },
+          {
+            "line": 247,
+            "text": ""
+          },
+          {
+            "line": 248,
+            "text": "errno_t confdb_setup(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 249,
+            "text": "                     const char *cdb_file,"
+          },
+          {
+            "line": 250,
+            "text": "                     const char *config_file,"
+          },
+          {
+            "line": 251,
+            "text": "                     const char *config_dir,"
+          },
+          {
+            "line": 252,
+            "text": "                     const char *only_section,"
+          },
+          {
+            "line": 253,
+            "text": "                     bool allow_missing_file,"
+          },
+          {
+            "line": 257,
+            "text": "    struct sss_ini *ini;"
+          },
+          {
+            "line": 258,
+            "text": ""
+          },
+          {
+            "line": 259,
+            "text": "    ret = confdb_read_ini(mem_ctx, config_file, config_dir, allow_missing_file,"
+          },
+          {
+            "line": 260,
+            "text": "                          &ini);"
+          },
+          {
+            "line": 261,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 262,
+            "text": "        return ret;"
+          },
+          {
+            "line": 263,
+            "text": "    }"
+          },
+          {
+            "line": 264,
+            "text": ""
+          },
+          {
+            "line": 265,
+            "text": "    ret = confdb_write_ini(mem_ctx, ini, cdb_file, only_section, allow_missing_file,"
+          },
+          {
+            "line": 266,
+            "text": "                           _cdb);"
+          },
+          {
+            "line": 267,
+            "text": ""
+          },
+          {
+            "line": 268,
+            "text": "    talloc_free(ini);"
+          },
+          {
+            "line": 269,
+            "text": ""
+          },
+          {
+            "line": 270,
+            "text": "    return ret;"
+          }
+        ]
+      }
+    }
+  },
+  "ubuntu-24.04": {
+    "source_tree": "sssd-2.9.4",
+    "archives": {
+      "sssd_2.9.4-1.1ubuntu6.8.debian.tar.xz": "9002144a4a5fbca85a1cea219c0f877b54f5744faed4e7fd2ab4237ba90ceb6a",
+      "sssd_2.9.4.orig.tar.gz": "82b5ef80be47c96d518de26cfb440000f1bc6b9e3441a8393a007d21af316b18",
+      "sssd_2.9.4-1.1ubuntu6.8.dsc": "707ab64fb5a44229a7d5e24af4fb1eb441a7694eb5145f9edb88495dcaca33c1"
+    },
+    "distribution_patches": "debian/patches applied by apt-get source",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "8fc6fb6a6572003725c9eef11bfe0f611711cee5140d7f74330240c1f2d4504e",
+        "excerpts": [
+          {
+            "line": 104,
+            "text": ""
+          },
+          {
+            "line": 105,
+            "text": "    bool svc_started;"
+          },
+          {
+            "line": 106,
+            "text": "    bool socket_activated; /* also used for dbus-activated services */"
+          },
+          {
+            "line": 107,
+            "text": ""
+          },
+          {
+            "line": 108,
+            "text": "    int restarts;"
+          },
+          {
+            "line": 109,
+            "text": "    time_t last_restart;"
+          },
+          {
+            "line": 110,
+            "text": ""
+          },
+          {
+            "line": 111,
+            "text": "    int debug_level;"
+          },
+          {
+            "line": 191,
+            "text": ""
+          },
+          {
+            "line": 192,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 193,
+            "text": "errno_t socket_activated_service_not_found(struct mt_ctx *mt_ctx,"
+          },
+          {
+            "line": 194,
+            "text": "                                           const char *svc_name,"
+          },
+          {
+            "line": 195,
+            "text": "                                           bool is_provider,"
+          },
+          {
+            "line": 196,
+            "text": "                                           struct mt_svc **_svc)"
+          },
+          {
+            "line": 197,
+            "text": "{"
+          },
+          {
+            "line": 198,
+            "text": "    struct mt_svc *svc = NULL;"
+          },
+          {
+            "line": 224,
+            "text": "    }"
+          },
+          {
+            "line": 225,
+            "text": "    svc->restarts = 0;"
+          },
+          {
+            "line": 226,
+            "text": "    svc->socket_activated = true;"
+          },
+          {
+            "line": 227,
+            "text": ""
+          },
+          {
+            "line": 228,
+            "text": "    DLIST_ADD(mt_ctx->svc_list, svc);"
+          },
+          {
+            "line": 229,
+            "text": ""
+          },
+          {
+            "line": 230,
+            "text": "    *_svc = svc;"
+          },
+          {
+            "line": 231,
+            "text": "    return EOK;"
+          },
+          {
+            "line": 249,
+            "text": ""
+          },
+          {
+            "line": 250,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 251,
+            "text": "    return socket_activated_service_not_found(mt_ctx, svc_name, is_provider,"
+          },
+          {
+            "line": 252,
+            "text": "                                              _svc);"
+          },
+          {
+            "line": 253,
+            "text": "#else"
+          },
+          {
+            "line": 254,
+            "text": "    return service_not_found(svc_name, _svc);"
+          },
+          {
+            "line": 255,
+            "text": "#endif"
+          },
+          {
+            "line": 256,
+            "text": "}"
+          },
+          {
+            "line": 290,
+            "text": "     * from there and set the destructor back to NULL just before freeing"
+          },
+          {
+            "line": 291,
+            "text": "     * the service itself. */"
+          },
+          {
+            "line": 292,
+            "text": "    if (svc->socket_activated) {"
+          },
+          {
+            "line": 293,
+            "text": "        sbus_connection_set_destructor(svc->conn, monitor_service_shutdown, svc);"
+          },
+          {
+            "line": 294,
+            "text": "    }"
+          },
+          {
+            "line": 295,
+            "text": ""
+          },
+          {
+            "line": 296,
+            "text": "    ret = mark_service_as_started(svc);"
+          },
+          {
+            "line": 297,
+            "text": "    if (ret) {"
+          },
+          {
+            "line": 404,
+            "text": "}"
+          },
+          {
+            "line": 405,
+            "text": ""
+          },
+          {
+            "line": 406,
+            "text": "static int notify_startup(void)"
+          },
+          {
+            "line": 407,
+            "text": "{"
+          },
+          {
+            "line": 408,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 409,
+            "text": "    int ret;"
+          },
+          {
+            "line": 410,
+            "text": ""
+          },
+          {
+            "line": 411,
+            "text": "    DEBUG(SSSDBG_TRACE_FUNC, \"Sending startup notification to systemd\\n\");"
+          },
+          {
+            "line": 412,
+            "text": "    ret = sd_notify(0, \"READY=1\");"
+          },
+          {
+            "line": 413,
+            "text": "    if (ret < 0) {"
+          },
+          {
+            "line": 414,
+            "text": "        ret = -ret;"
+          },
+          {
+            "line": 415,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 416,
+            "text": "                \"Error sending notification to systemd %d: %s\\n\","
+          },
+          {
+            "line": 417,
+            "text": "                ret, sss_strerror(ret));"
+          },
+          {
+            "line": 475,
+            "text": ""
+          },
+          {
+            "line": 476,
+            "text": "    /* create the pid file if all services are alive */"
+          },
+          {
+            "line": 477,
+            "text": "    if (!ctx->pid_file_created && ctx->started_services == ctx->num_services) {"
+          },
+          {
+            "line": 478,
+            "text": "        if (svc->socket_activated) {"
+          },
+          {
+            "line": 479,
+            "text": "            /* There's no reason for trying to terminate the parent process"
+          },
+          {
+            "line": 480,
+            "text": "             * when the responder was socket-activated. */"
+          },
+          {
+            "line": 481,
+            "text": "            goto done;"
+          },
+          {
+            "line": 482,
+            "text": "        }"
+          },
+          {
+            "line": 483,
+            "text": ""
+          },
+          {
+            "line": 494,
+            "text": "        ctx->pid_file_created = true;"
+          },
+          {
+            "line": 495,
+            "text": ""
+          },
+          {
+            "line": 496,
+            "text": "        notify_startup();"
+          },
+          {
+            "line": 497,
+            "text": ""
+          },
+          {
+            "line": 498,
+            "text": "        /* Initialization is complete, terminate parent process if in daemon"
+          },
+          {
+            "line": 499,
+            "text": "         * mode. Make sure we send the signal to the right process */"
+          },
+          {
+            "line": 500,
+            "text": "        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 501,
+            "text": "            if (ctx->parent_pid <= 1 || ctx->parent_pid != getppid()) {"
+          },
+          {
+            "line": 1252,
+            "text": "}"
+          },
+          {
+            "line": 1253,
+            "text": ""
+          },
+          {
+            "line": 1254,
+            "text": "static void monitor_hup(struct tevent_context *ev,"
+          },
+          {
+            "line": 1255,
+            "text": "                        struct tevent_signal *se,"
+          },
+          {
+            "line": 1256,
+            "text": "                        int signum,"
+          },
+          {
+            "line": 1257,
+            "text": "                        int count,"
+          },
+          {
+            "line": 1258,
+            "text": "                        void *siginfo,"
+          },
+          {
+            "line": 1259,
+            "text": "                        void *private_data)"
+          },
+          {
+            "line": 1318,
+            "text": "    /* Kill all of our known children manually */"
+          },
+          {
+            "line": 1319,
+            "text": "    DLIST_FOR_EACH(svc, mt_ctx->svc_list) {"
+          },
+          {
+            "line": 1320,
+            "text": "        if (svc->socket_activated && svc->conn != NULL) {"
+          },
+          {
+            "line": 1321,
+            "text": "            /* Unset the sbus_connection destructor used to"
+          },
+          {
+            "line": 1322,
+            "text": "             * unregister the service from the monitor as"
+          },
+          {
+            "line": 1323,
+            "text": "             * it may lead to a double-free here. */"
+          },
+          {
+            "line": 1324,
+            "text": "            talloc_set_destructor(svc->conn, NULL);"
+          },
+          {
+            "line": 1325,
+            "text": "        }"
+          },
+          {
+            "line": 1517,
+            "text": "    }"
+          },
+          {
+            "line": 1518,
+            "text": ""
+          },
+          {
+            "line": 1519,
+            "text": "    ret = confdb_setup(ctx, cdb_file, config_file, config_dir, only_section,"
+          },
+          {
+            "line": 1520,
+            "text": "                       &ctx->cdb);"
+          },
+          {
+            "line": 1521,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 1522,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to setup ConfDB [%d]: %s\\n\","
+          },
+          {
+            "line": 1523,
+            "text": "             ret, sss_strerror(ret));"
+          },
+          {
+            "line": 1524,
+            "text": "        goto done;"
+          },
+          {
+            "line": 1602,
+            "text": "    /* Set up an event handler for a SIGHUP */"
+          },
+          {
+            "line": 1603,
+            "text": "    tes = tevent_add_signal(ctx->ev, ctx, SIGHUP, 0,"
+          },
+          {
+            "line": 1604,
+            "text": "                            monitor_hup, ctx);"
+          },
+          {
+            "line": 1605,
+            "text": "    if (tes == NULL) {"
+          },
+          {
+            "line": 1606,
+            "text": "        return EIO;"
+          },
+          {
+            "line": 1607,
+            "text": "    }"
+          },
+          {
+            "line": 1608,
+            "text": ""
+          },
+          {
+            "line": 1609,
+            "text": "    /* Set up an event handler for a SIGINT */"
+          },
+          {
+            "line": 1810,
+            "text": "    DEBUG(SSSDBG_CONF_SETTINGS,\"Queueing service %s for startup\\n\", svc->name);"
+          },
+          {
+            "line": 1811,
+            "text": ""
+          },
+          {
+            "line": 1812,
+            "text": "    svc->socket_activated = false;"
+          },
+          {
+            "line": 1813,
+            "text": ""
+          },
+          {
+            "line": 1814,
+            "text": "    tv = tevent_timeval_current();"
+          },
+          {
+            "line": 1815,
+            "text": ""
+          },
+          {
+            "line": 1816,
+            "text": "    /* Add a timed event to start up the service."
+          },
+          {
+            "line": 1817,
+            "text": "     * We have to do this in order to avoid a race"
+          },
+          {
+            "line": 2212,
+            "text": ""
+          },
+          {
+            "line": 2213,
+            "text": "    /* Parse config file, fail if cannot be done */"
+          },
+          {
+            "line": 2214,
+            "text": "    ret = load_configuration(tmp_ctx, config_file, CONFDB_DEFAULT_CONFIG_DIR,"
+          },
+          {
+            "line": 2215,
+            "text": "                             opt_genconf_section, &monitor);"
+          },
+          {
+            "line": 2216,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 2217,
+            "text": "        switch (ret) {"
+          },
+          {
+            "line": 2218,
+            "text": "        case EPERM:"
+          },
+          {
+            "line": 2219,
+            "text": "        case EACCES:"
+          }
+        ]
+      },
+      "src/util/sss_ini.c": {
+        "sha256": "3c02aaeb2158e4256fdf8cfac04bf550731a3593bae57b8bd5b1f5f712aacf73",
+        "excerpts": [
+          {
+            "line": 148,
+            "text": "/* Check configuration file permissions */"
+          },
+          {
+            "line": 149,
+            "text": ""
+          },
+          {
+            "line": 150,
+            "text": "static int sss_ini_access_check(struct sss_ini *self)"
+          },
+          {
+            "line": 151,
+            "text": "{"
+          },
+          {
+            "line": 152,
+            "text": "    if (!self->main_config_exists) {"
+          },
+          {
+            "line": 153,
+            "text": "        return EOK;"
+          },
+          {
+            "line": 154,
+            "text": "    }"
+          },
+          {
+            "line": 155,
+            "text": ""
+          },
+          {
+            "line": 234,
+            "text": "    ret = ini_config_parse(self->file,"
+          },
+          {
+            "line": 235,
+            "text": "                           INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 236,
+            "text": "                           INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 237,
+            "text": "                           INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 238,
+            "text": "                           self->sssd_config);"
+          },
+          {
+            "line": 239,
+            "text": ""
+          },
+          {
+            "line": 240,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 241,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 254,
+            "text": "}"
+          },
+          {
+            "line": 255,
+            "text": ""
+          },
+          {
+            "line": 256,
+            "text": "static int sss_ini_add_snippets(struct sss_ini *self,"
+          },
+          {
+            "line": 257,
+            "text": "                                const char *config_dir)"
+          },
+          {
+            "line": 258,
+            "text": "{"
+          },
+          {
+            "line": 259,
+            "text": "#ifdef HAVE_LIBINI_CONFIG_V1_3"
+          },
+          {
+            "line": 260,
+            "text": "    int ret;"
+          },
+          {
+            "line": 261,
+            "text": "    const char *patterns[] = { \"^[^\\\\.].*\\\\.conf$\", NULL };"
+          },
+          {
+            "line": 279,
+            "text": "    snip_check.mask = ALLPERMS & ~(S_IWUSR | S_IXUSR);"
+          },
+          {
+            "line": 280,
+            "text": ""
+          },
+          {
+            "line": 281,
+            "text": "    ret = ini_config_augment(self->sssd_config,"
+          },
+          {
+            "line": 282,
+            "text": "                             config_dir,"
+          },
+          {
+            "line": 283,
+            "text": "                             patterns,"
+          },
+          {
+            "line": 284,
+            "text": "                             sections,"
+          },
+          {
+            "line": 285,
+            "text": "                             &snip_check,"
+          },
+          {
+            "line": 286,
+            "text": "                             INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 287,
+            "text": "                             INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 288,
+            "text": "                             INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 289,
+            "text": "                             INI_MV2S_OVERWRITE,"
+          },
+          {
+            "line": 290,
+            "text": "                             &modified_sssd_config,"
+          },
+          {
+            "line": 291,
+            "text": "                             &self->ra_error_list,"
+          },
+          {
+            "line": 292,
+            "text": "                             &self->ra_success_list);"
+          },
+          {
+            "line": 293,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 294,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 920,
+            "text": "}"
+          },
+          {
+            "line": 921,
+            "text": ""
+          },
+          {
+            "line": 922,
+            "text": "int sss_ini_read_sssd_conf(struct sss_ini *self,"
+          },
+          {
+            "line": 923,
+            "text": "                           const char *config_file,"
+          },
+          {
+            "line": 924,
+            "text": "                           const char *config_dir)"
+          },
+          {
+            "line": 925,
+            "text": "{"
+          },
+          {
+            "line": 926,
+            "text": "    errno_t ret;"
+          },
+          {
+            "line": 927,
+            "text": ""
+          },
+          {
+            "line": 930,
+            "text": "    }"
+          },
+          {
+            "line": 931,
+            "text": ""
+          },
+          {
+            "line": 932,
+            "text": "    ret = sss_ini_open(self, config_file, CONFDB_FALLBACK_CONFIG);"
+          },
+          {
+            "line": 933,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 934,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 935,
+            "text": "              \"The sss_ini_open failed %s: %d\\n\","
+          },
+          {
+            "line": 936,
+            "text": "              config_file,"
+          },
+          {
+            "line": 937,
+            "text": "              ret);"
+          },
+          {
+            "line": 940,
+            "text": ""
+          },
+          {
+            "line": 941,
+            "text": "    if (sss_ini_exists(self)) {"
+          },
+          {
+            "line": 942,
+            "text": "        ret = sss_ini_access_check(self);"
+          },
+          {
+            "line": 943,
+            "text": "        if (ret != EOK) {"
+          },
+          {
+            "line": 944,
+            "text": "            DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 945,
+            "text": "                  \"Permission check on config file failed.\\n\");"
+          },
+          {
+            "line": 946,
+            "text": "            return ERR_INI_INVALID_PERMISSION;"
+          },
+          {
+            "line": 947,
+            "text": "        }"
+          },
+          {
+            "line": 959,
+            "text": "    }"
+          },
+          {
+            "line": 960,
+            "text": ""
+          },
+          {
+            "line": 961,
+            "text": "    ret = sss_ini_add_snippets(self, config_dir);"
+          },
+          {
+            "line": 962,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 963,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 964,
+            "text": "              \"Error while reading configuration directory.\\n\");"
+          },
+          {
+            "line": 965,
+            "text": "        return ERR_INI_ADD_SNIPPETS_FAILED;"
+          },
+          {
+            "line": 966,
+            "text": "    }"
+          }
+        ]
+      },
+      "src/confdb/confdb.h": {
+        "sha256": "4995417e350e9a9fa4a3a0728b46d1ba92b4e19779077f8c89de3daf0358b1fa",
+        "excerpts": [
+          {
+            "line": 41,
+            "text": "#define CONFDB_DEFAULT_CFG_FILE_VER 2"
+          },
+          {
+            "line": 42,
+            "text": "#define CONFDB_FILE \"config.ldb\""
+          },
+          {
+            "line": 43,
+            "text": "#define SSSD_CONFIG_FILE_NAME \"sssd.conf\""
+          },
+          {
+            "line": 44,
+            "text": "#define SSSD_CONFIG_FILE SSSD_CONF_DIR\"/\"SSSD_CONFIG_FILE_NAME"
+          },
+          {
+            "line": 45,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR_NAME \"conf.d\""
+          },
+          {
+            "line": 46,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR SSSD_CONF_DIR\"/\"CONFDB_DEFAULT_CONFIG_DIR_NAME"
+          },
+          {
+            "line": 47,
+            "text": "#define SSSD_MIN_ID 1"
+          },
+          {
+            "line": 48,
+            "text": "#define CONFDB_DEFAULT_SHELL_FALLBACK \"/bin/sh\""
+          },
+          {
+            "line": 49,
+            "text": "#define CONFDB_FALLBACK_CONFIG \\"
+          },
+          {
+            "line": 50,
+            "text": "    \"[sssd]\\n\""
+          },
+          {
+            "line": 51,
+            "text": ""
+          },
+          {
+            "line": 52,
+            "text": ""
+          },
+          {
+            "line": 53,
+            "text": "/* Configuration options */"
+          },
+          {
+            "line": 54,
+            "text": ""
+          }
+        ]
+      },
+      "src/tools/sssctl/sssctl_config.c": {
+        "sha256": "d80b041e2137888df1d9a9b945e7709145332f3a9c6adbf496128ce5e323728e",
+        "excerpts": [
+          {
+            "line": 36,
+            "text": "#ifdef HAVE_LIBINI_CONFIG_V1_3"
+          },
+          {
+            "line": 37,
+            "text": ""
+          },
+          {
+            "line": 38,
+            "text": "static char *sssctl_config_snippet_path(TALLOC_CTX *ctx, const char *path)"
+          },
+          {
+            "line": 39,
+            "text": "{"
+          },
+          {
+            "line": 40,
+            "text": "    char *tmp = NULL;"
+          },
+          {
+            "line": 41,
+            "text": "    const char delimiter = '/';"
+          },
+          {
+            "line": 42,
+            "text": "    char *dpos = NULL;"
+          },
+          {
+            "line": 43,
+            "text": ""
+          },
+          {
+            "line": 72,
+            "text": "    TALLOC_CTX *tmp_ctx = NULL;"
+          },
+          {
+            "line": 73,
+            "text": "    const char *config_path = NULL;"
+          },
+          {
+            "line": 74,
+            "text": "    const char *config_snippet_path = NULL;"
+          },
+          {
+            "line": 75,
+            "text": "    struct poptOption long_options[] = {"
+          },
+          {
+            "line": 76,
+            "text": "        {\"config\", 'c', POPT_ARG_STRING, &config_path,"
+          },
+          {
+            "line": 77,
+            "text": "            0, _(\"Specify a non-default config file\"), NULL},"
+          },
+          {
+            "line": 78,
+            "text": "        {\"snippet\", 's', POPT_ARG_STRING, &config_snippet_path,"
+          },
+          {
+            "line": 79,
+            "text": "            0, _(\"Specify a non-default snippet dir (The default is to look in \""
+          },
+          {
+            "line": 102,
+            "text": "    }"
+          },
+          {
+            "line": 103,
+            "text": ""
+          },
+          {
+            "line": 104,
+            "text": "    if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 105,
+            "text": "        config_snippet_path = sssctl_config_snippet_path(tmp_ctx, config_path);"
+          },
+          {
+            "line": 106,
+            "text": "        if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 107,
+            "text": "            DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to create snippet path\\n\");"
+          },
+          {
+            "line": 108,
+            "text": "            ret = ENOMEM;"
+          },
+          {
+            "line": 109,
+            "text": "            goto done;"
+          },
+          {
+            "line": 110,
+            "text": "        }"
+          },
+          {
+            "line": 111,
+            "text": "    }"
+          },
+          {
+            "line": 112,
+            "text": ""
+          },
+          {
+            "line": 113,
+            "text": "    ret = sss_ini_read_sssd_conf(init_data,"
+          },
+          {
+            "line": 114,
+            "text": "                                 config_path,"
+          },
+          {
+            "line": 115,
+            "text": "                                 config_snippet_path);"
+          },
+          {
+            "line": 116,
+            "text": ""
+          },
+          {
+            "line": 117,
+            "text": "    if (ret == ERR_INI_OPEN_FAILED) {"
+          },
+          {
+            "line": 118,
+            "text": "        PRINT(\"Failed to open %s\\n\", config_path);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "9cef261aa4ca1c2b99ee4e8c2cd94b5fa313eb8d32f72c1e09edcca5aecc2fd8",
+        "excerpts": [
+          {
+            "line": 26,
+            "text": "#include \"confdb.h\""
+          },
+          {
+            "line": 27,
+            "text": "#include \"confdb_private.h\""
+          },
+          {
+            "line": 28,
+            "text": "#include \"confdb_setup.h\""
+          },
+          {
+            "line": 29,
+            "text": "#include \"util/sss_ini.h\""
+          },
+          {
+            "line": 30,
+            "text": ""
+          },
+          {
+            "line": 31,
+            "text": "static int confdb_test(struct confdb_ctx *cdb)"
+          },
+          {
+            "line": 32,
+            "text": "{"
+          },
+          {
+            "line": 33,
+            "text": "    char **values;"
+          },
+          {
+            "line": 105,
+            "text": "}"
+          },
+          {
+            "line": 106,
+            "text": ""
+          },
+          {
+            "line": 107,
+            "text": "static int confdb_create_base(struct confdb_ctx *cdb)"
+          },
+          {
+            "line": 108,
+            "text": "{"
+          },
+          {
+            "line": 109,
+            "text": "    int ret;"
+          },
+          {
+            "line": 110,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 111,
+            "text": ""
+          },
+          {
+            "line": 112,
+            "text": "    const char *base_ldif = CONFDB_BASE_LDIF;"
+          },
+          {
+            "line": 138,
+            "text": "    int version;"
+          },
+          {
+            "line": 139,
+            "text": ""
+          },
+          {
+            "line": 140,
+            "text": "    ret = sss_ini_read_sssd_conf(init_data,"
+          },
+          {
+            "line": 141,
+            "text": "                                 config_file,"
+          },
+          {
+            "line": 142,
+            "text": "                                 config_dir);"
+          },
+          {
+            "line": 143,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 144,
+            "text": "        return ret;"
+          },
+          {
+            "line": 145,
+            "text": "    }"
+          },
+          {
+            "line": 210,
+            "text": "    }"
+          },
+          {
+            "line": 211,
+            "text": ""
+          },
+          {
+            "line": 212,
+            "text": "    ret = sss_confdb_create_ldif(mem_ctx, init_data, only_section, _ldif);"
+          },
+          {
+            "line": 213,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 214,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE, \"Could not create LDIF for confdb\\n\");"
+          },
+          {
+            "line": 215,
+            "text": "        return ret;"
+          },
+          {
+            "line": 216,
+            "text": "    }"
+          },
+          {
+            "line": 217,
+            "text": ""
+          },
+          {
+            "line": 224,
+            "text": "}"
+          },
+          {
+            "line": 225,
+            "text": ""
+          },
+          {
+            "line": 226,
+            "text": "static int confdb_write_ldif(struct confdb_ctx *cdb,"
+          },
+          {
+            "line": 227,
+            "text": "                             const char *config_ldif,"
+          },
+          {
+            "line": 228,
+            "text": "                             bool replace_whole_db)"
+          },
+          {
+            "line": 229,
+            "text": "{"
+          },
+          {
+            "line": 230,
+            "text": "    int ret;"
+          },
+          {
+            "line": 231,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 329,
+            "text": "    }"
+          },
+          {
+            "line": 330,
+            "text": ""
+          },
+          {
+            "line": 331,
+            "text": "    ret = confdb_write_ldif(cdb,"
+          },
+          {
+            "line": 332,
+            "text": "                            config_ldif,"
+          },
+          {
+            "line": 333,
+            "text": "                            only_section == NULL ? true : false);"
+          },
+          {
+            "line": 334,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 335,
+            "text": "        goto done;"
+          },
+          {
+            "line": 336,
+            "text": "    }"
+          },
+          {
+            "line": 368,
+            "text": "}"
+          },
+          {
+            "line": 369,
+            "text": ""
+          },
+          {
+            "line": 370,
+            "text": "errno_t confdb_setup(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 371,
+            "text": "                     const char *cdb_file,"
+          },
+          {
+            "line": 372,
+            "text": "                     const char *config_file,"
+          },
+          {
+            "line": 373,
+            "text": "                     const char *config_dir,"
+          },
+          {
+            "line": 374,
+            "text": "                     const char *only_section,"
+          },
+          {
+            "line": 375,
+            "text": "                     struct confdb_ctx **_cdb)"
+          },
+          {
+            "line": 417,
+            "text": ""
+          },
+          {
+            "line": 418,
+            "text": "        /* Load special entries */"
+          },
+          {
+            "line": 419,
+            "text": "        ret = confdb_create_base(cdb);"
+          },
+          {
+            "line": 420,
+            "text": "        if (ret != EOK) {"
+          },
+          {
+            "line": 421,
+            "text": "            DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 422,
+            "text": "                  \"Unable to load special entries into confdb\\n\");"
+          },
+          {
+            "line": 423,
+            "text": "            goto done;"
+          },
+          {
+            "line": 424,
+            "text": "        }"
+          }
+        ]
+      }
+    }
+  },
+  "ubuntu-26.04": {
+    "source_tree": "sssd-2.12.0",
+    "archives": {
+      "sssd_2.12.0-1ubuntu5.5.debian.tar.xz": "f868d214da54fa234a848c51a6f272620ccf00239bd2ed65b2aa4f7001f75bd5",
+      "sssd_2.12.0-1ubuntu5.5.dsc": "a84b73a79bd2438a135f6ee2a52afeb114dc3adf68ff719f9ca45b01a6251cd2",
+      "sssd_2.12.0.orig.tar.gz": "5cef12b47fcb76f250bd9e00e5e5fea2df3b1ffc6d3d7e9ba1dbe753acac8880"
+    },
+    "distribution_patches": "debian/patches applied by apt-get source",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "2c35f53ba2a813fae930f09217a6cf768c77afc5e9b179b0d045008c4a0771ec",
+        "excerpts": [
+          {
+            "line": 91,
+            "text": ""
+          },
+          {
+            "line": 92,
+            "text": "    bool svc_started;"
+          },
+          {
+            "line": 93,
+            "text": "    bool socket_activated; /* also used for dbus-activated services */"
+          },
+          {
+            "line": 94,
+            "text": ""
+          },
+          {
+            "line": 95,
+            "text": "    int restarts;"
+          },
+          {
+            "line": 96,
+            "text": "    time_t last_restart;"
+          },
+          {
+            "line": 97,
+            "text": ""
+          },
+          {
+            "line": 98,
+            "text": "    int debug_level;"
+          },
+          {
+            "line": 159,
+            "text": ""
+          },
+          {
+            "line": 160,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 161,
+            "text": "errno_t socket_activated_service_not_found(struct mt_ctx *mt_ctx,"
+          },
+          {
+            "line": 162,
+            "text": "                                           const char *svc_name,"
+          },
+          {
+            "line": 163,
+            "text": "                                           bool is_provider,"
+          },
+          {
+            "line": 164,
+            "text": "                                           struct mt_svc **_svc)"
+          },
+          {
+            "line": 165,
+            "text": "{"
+          },
+          {
+            "line": 166,
+            "text": "    struct mt_svc *svc = NULL;"
+          },
+          {
+            "line": 192,
+            "text": "    }"
+          },
+          {
+            "line": 193,
+            "text": "    svc->restarts = 0;"
+          },
+          {
+            "line": 194,
+            "text": "    svc->socket_activated = true;"
+          },
+          {
+            "line": 195,
+            "text": ""
+          },
+          {
+            "line": 196,
+            "text": "    DLIST_ADD(mt_ctx->svc_list, svc);"
+          },
+          {
+            "line": 197,
+            "text": ""
+          },
+          {
+            "line": 198,
+            "text": "    *_svc = svc;"
+          },
+          {
+            "line": 199,
+            "text": "    return EOK;"
+          },
+          {
+            "line": 217,
+            "text": ""
+          },
+          {
+            "line": 218,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 219,
+            "text": "    return socket_activated_service_not_found(mt_ctx, svc_name, is_provider,"
+          },
+          {
+            "line": 220,
+            "text": "                                              _svc);"
+          },
+          {
+            "line": 221,
+            "text": "#else"
+          },
+          {
+            "line": 222,
+            "text": "    return service_not_found(svc_name, _svc);"
+          },
+          {
+            "line": 223,
+            "text": "#endif"
+          },
+          {
+            "line": 224,
+            "text": "}"
+          },
+          {
+            "line": 263,
+            "text": "     * from there and set the destructor back to NULL just before freeing"
+          },
+          {
+            "line": 264,
+            "text": "     * the service itself. */"
+          },
+          {
+            "line": 265,
+            "text": "    if (svc->socket_activated) {"
+          },
+          {
+            "line": 266,
+            "text": "        DEBUG(SSSDBG_TRACE_FUNC, \"'%s' is a socket activated service\\n\", name);"
+          },
+          {
+            "line": 267,
+            "text": "        sbus_connection_set_destructor(svc->conn, monitor_service_shutdown, svc);"
+          },
+          {
+            "line": 268,
+            "text": "    }"
+          },
+          {
+            "line": 269,
+            "text": ""
+          },
+          {
+            "line": 270,
+            "text": "    ret = mark_service_as_started(svc);"
+          },
+          {
+            "line": 378,
+            "text": "}"
+          },
+          {
+            "line": 379,
+            "text": ""
+          },
+          {
+            "line": 380,
+            "text": "static int notify_startup(void)"
+          },
+          {
+            "line": 381,
+            "text": "{"
+          },
+          {
+            "line": 382,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 383,
+            "text": "    int ret;"
+          },
+          {
+            "line": 384,
+            "text": ""
+          },
+          {
+            "line": 385,
+            "text": "    DEBUG(SSSDBG_TRACE_FUNC, \"Sending startup notification to systemd\\n\");"
+          },
+          {
+            "line": 386,
+            "text": "    ret = sd_notify(0, \"READY=1\");"
+          },
+          {
+            "line": 387,
+            "text": "    if (ret < 0) {"
+          },
+          {
+            "line": 388,
+            "text": "        ret = -ret;"
+          },
+          {
+            "line": 389,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 390,
+            "text": "                \"Error sending notification to systemd %d: %s\\n\","
+          },
+          {
+            "line": 391,
+            "text": "                ret, sss_strerror(ret));"
+          },
+          {
+            "line": 449,
+            "text": ""
+          },
+          {
+            "line": 450,
+            "text": "    /* create the pid file if all services are alive */"
+          },
+          {
+            "line": 451,
+            "text": "    if (!ctx->pid_file_created && ctx->started_services == ctx->num_services) {"
+          },
+          {
+            "line": 452,
+            "text": "        if (svc->socket_activated) {"
+          },
+          {
+            "line": 453,
+            "text": "            /* There's no reason for trying to terminate the parent process"
+          },
+          {
+            "line": 454,
+            "text": "             * when the responder was socket-activated. */"
+          },
+          {
+            "line": 455,
+            "text": "            goto done;"
+          },
+          {
+            "line": 456,
+            "text": "        }"
+          },
+          {
+            "line": 457,
+            "text": ""
+          },
+          {
+            "line": 468,
+            "text": "        ctx->pid_file_created = true;"
+          },
+          {
+            "line": 469,
+            "text": ""
+          },
+          {
+            "line": 470,
+            "text": "        notify_startup();"
+          },
+          {
+            "line": 471,
+            "text": ""
+          },
+          {
+            "line": 472,
+            "text": "        /* Initialization is complete, terminate parent process if in daemon"
+          },
+          {
+            "line": 473,
+            "text": "         * mode. Make sure we send the signal to the right process */"
+          },
+          {
+            "line": 474,
+            "text": "        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 475,
+            "text": "            if (ctx->parent_pid <= 1 || ctx->parent_pid != getppid()) {"
+          },
+          {
+            "line": 1058,
+            "text": "}"
+          },
+          {
+            "line": 1059,
+            "text": ""
+          },
+          {
+            "line": 1060,
+            "text": "static void monitor_hup(struct tevent_context *ev,"
+          },
+          {
+            "line": 1061,
+            "text": "                        struct tevent_signal *se,"
+          },
+          {
+            "line": 1062,
+            "text": "                        int signum,"
+          },
+          {
+            "line": 1063,
+            "text": "                        int count,"
+          },
+          {
+            "line": 1064,
+            "text": "                        void *siginfo,"
+          },
+          {
+            "line": 1065,
+            "text": "                        void *private_data)"
+          },
+          {
+            "line": 1124,
+            "text": "    /* Kill all of our known children manually */"
+          },
+          {
+            "line": 1125,
+            "text": "    DLIST_FOR_EACH(svc, mt_ctx->svc_list) {"
+          },
+          {
+            "line": 1126,
+            "text": "        if (svc->socket_activated && svc->conn != NULL) {"
+          },
+          {
+            "line": 1127,
+            "text": "            /* Unset the sbus_connection destructor used to"
+          },
+          {
+            "line": 1128,
+            "text": "             * unregister the service from the monitor as"
+          },
+          {
+            "line": 1129,
+            "text": "             * it may lead to a double-free here. */"
+          },
+          {
+            "line": 1130,
+            "text": "            talloc_set_destructor(svc->conn, NULL);"
+          },
+          {
+            "line": 1131,
+            "text": "        }"
+          },
+          {
+            "line": 1328,
+            "text": "    /* Set up an event handler for a SIGHUP */"
+          },
+          {
+            "line": 1329,
+            "text": "    tes = tevent_add_signal(ctx->ev, ctx, SIGHUP, 0,"
+          },
+          {
+            "line": 1330,
+            "text": "                            monitor_hup, ctx);"
+          },
+          {
+            "line": 1331,
+            "text": "    if (tes == NULL) {"
+          },
+          {
+            "line": 1332,
+            "text": "        return EIO;"
+          },
+          {
+            "line": 1333,
+            "text": "    }"
+          },
+          {
+            "line": 1334,
+            "text": ""
+          },
+          {
+            "line": 1335,
+            "text": "    /* Set up an event handler for a SIGINT */"
+          },
+          {
+            "line": 1514,
+            "text": "    DEBUG(SSSDBG_CONF_SETTINGS,\"Queueing service %s for startup\\n\", svc->name);"
+          },
+          {
+            "line": 1515,
+            "text": ""
+          },
+          {
+            "line": 1516,
+            "text": "    svc->socket_activated = false;"
+          },
+          {
+            "line": 1517,
+            "text": ""
+          },
+          {
+            "line": 1518,
+            "text": "    tv = tevent_timeval_current();"
+          },
+          {
+            "line": 1519,
+            "text": ""
+          },
+          {
+            "line": 1520,
+            "text": "    /* Add a timed event to start up the service."
+          },
+          {
+            "line": 1521,
+            "text": "     * We have to do this in order to avoid a race"
+          },
+          {
+            "line": 1859,
+            "text": ""
+          },
+          {
+            "line": 1860,
+            "text": "    /* read/parse configuration (but don't save yet) */"
+          },
+          {
+            "line": 1861,
+            "text": "    ret = confdb_read_ini(tmp_ctx, config_file, CONFDB_DEFAULT_CONFIG_DIR, false,"
+          },
+          {
+            "line": 1862,
+            "text": "                          &config);"
+          },
+          {
+            "line": 1863,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 1864,
+            "text": "        ERROR(\"Can't read config: '%s'\\n\", sss_strerror(ret));"
+          },
+          {
+            "line": 1865,
+            "text": "        sss_log(SSS_LOG_ALERT,"
+          },
+          {
+            "line": 1866,
+            "text": "                \"Failed to read configuration: '%s'\", sss_strerror(ret));"
+          }
+        ]
+      },
+      "src/util/sss_ini.c": {
+        "sha256": "b01d5fa895de40be70326e6802946944920a7111d0ac1e734cd5148600422386",
+        "excerpts": [
+          {
+            "line": 186,
+            "text": "    ret = ini_config_parse(self->file,"
+          },
+          {
+            "line": 187,
+            "text": "                           INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 188,
+            "text": "                           INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 189,
+            "text": "                           INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 190,
+            "text": "                           self->sssd_config);"
+          },
+          {
+            "line": 191,
+            "text": ""
+          },
+          {
+            "line": 192,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 193,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 206,
+            "text": "}"
+          },
+          {
+            "line": 207,
+            "text": ""
+          },
+          {
+            "line": 208,
+            "text": "static int sss_ini_add_snippets(struct sss_ini *self,"
+          },
+          {
+            "line": 209,
+            "text": "                                const char *config_dir)"
+          },
+          {
+            "line": 210,
+            "text": "{"
+          },
+          {
+            "line": 211,
+            "text": "    int ret;"
+          },
+          {
+            "line": 212,
+            "text": "    const char *patterns[] = { \"^[^\\\\.].*\\\\.conf$\", NULL };"
+          },
+          {
+            "line": 213,
+            "text": "    const char *sections[] = { \".*\", NULL };"
+          },
+          {
+            "line": 222,
+            "text": "    sss_ini_free_ra_messages(self);"
+          },
+          {
+            "line": 223,
+            "text": ""
+          },
+          {
+            "line": 224,
+            "text": "    ret = ini_config_augment(self->sssd_config,"
+          },
+          {
+            "line": 225,
+            "text": "                             config_dir,"
+          },
+          {
+            "line": 226,
+            "text": "                             patterns,"
+          },
+          {
+            "line": 227,
+            "text": "                             sections,"
+          },
+          {
+            "line": 228,
+            "text": "                             NULL,"
+          },
+          {
+            "line": 229,
+            "text": "                             INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 230,
+            "text": "                             INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 231,
+            "text": "                             INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 232,
+            "text": "                             INI_MV2S_OVERWRITE,"
+          },
+          {
+            "line": 233,
+            "text": "                             &modified_sssd_config,"
+          },
+          {
+            "line": 234,
+            "text": "                             &self->ra_error_list,"
+          },
+          {
+            "line": 235,
+            "text": "                             &self->ra_success_list);"
+          },
+          {
+            "line": 236,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 237,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 448,
+            "text": ""
+          },
+          {
+            "line": 449,
+            "text": "    if (ldif == NULL) {"
+          },
+          {
+            "line": 450,
+            "text": "        ret = ERR_INI_EMPTY_CONFIG;"
+          },
+          {
+            "line": 451,
+            "text": "        goto error;"
+          },
+          {
+            "line": 452,
+            "text": "    }"
+          },
+          {
+            "line": 453,
+            "text": "    ldif[ldif_len] = '\\0';"
+          },
+          {
+            "line": 454,
+            "text": ""
+          },
+          {
+            "line": 455,
+            "text": "    free_section_list(sections);"
+          },
+          {
+            "line": 810,
+            "text": "}"
+          },
+          {
+            "line": 811,
+            "text": ""
+          },
+          {
+            "line": 812,
+            "text": "static int access_check_ini(struct sss_ini *self)"
+          },
+          {
+            "line": 813,
+            "text": "{"
+          },
+          {
+            "line": 814,
+            "text": "    int ret;"
+          },
+          {
+            "line": 815,
+            "text": "    const char *path;"
+          },
+          {
+            "line": 816,
+            "text": "    uint32_t i;"
+          },
+          {
+            "line": 817,
+            "text": "    const char **snippet;"
+          },
+          {
+            "line": 837,
+            "text": "}"
+          },
+          {
+            "line": 838,
+            "text": ""
+          },
+          {
+            "line": 839,
+            "text": "int sss_ini_read_sssd_conf(struct sss_ini *self,"
+          },
+          {
+            "line": 840,
+            "text": "                           const char *config_file,"
+          },
+          {
+            "line": 841,
+            "text": "                           const char *config_dir)"
+          },
+          {
+            "line": 842,
+            "text": "{"
+          },
+          {
+            "line": 843,
+            "text": "    errno_t ret;"
+          },
+          {
+            "line": 844,
+            "text": ""
+          },
+          {
+            "line": 849,
+            "text": "    /* \"[sssd]\\n\" is supplied to `sss_ini_open()` to create empty context"
+          },
+          {
+            "line": 850,
+            "text": "     * in case main config file ('sssd.conf') is missing. This is done in"
+          },
+          {
+            "line": 851,
+            "text": "     * order to be able to add config snippets later - sss_ini_add_snippets()"
+          },
+          {
+            "line": 852,
+            "text": "     * Take a note if both 'sssd.conf' and snippets are missing, then"
+          },
+          {
+            "line": 853,
+            "text": "     * sss_ini_read_sssd_conf() returns ERR_INI_EMPTY_CONFIG, so there is no"
+          },
+          {
+            "line": 854,
+            "text": "     * \"fallback config\" per se."
+          },
+          {
+            "line": 855,
+            "text": "     */"
+          },
+          {
+            "line": 856,
+            "text": "    ret = sss_ini_open(self, config_file, \"[sssd]\\n\");"
+          },
+          {
+            "line": 857,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 858,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 875,
+            "text": "    }"
+          },
+          {
+            "line": 876,
+            "text": ""
+          },
+          {
+            "line": 877,
+            "text": "    ret = sss_ini_add_snippets(self, config_dir);"
+          },
+          {
+            "line": 878,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 879,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 880,
+            "text": "              \"Error while reading configuration directory '%s' [%d]: %s\\n\","
+          },
+          {
+            "line": 881,
+            "text": "              config_dir, ret, sss_strerror(ret));"
+          },
+          {
+            "line": 882,
+            "text": "        return ERR_INI_ADD_SNIPPETS_FAILED;"
+          },
+          {
+            "line": 885,
+            "text": "    if ((!self->main_config_exists) &&"
+          },
+          {
+            "line": 886,
+            "text": "        (ref_array_len(sss_ini_get_ra_success_list(self)) == 0)) {"
+          },
+          {
+            "line": 887,
+            "text": "        return ERR_INI_EMPTY_CONFIG;"
+          },
+          {
+            "line": 888,
+            "text": "    }"
+          },
+          {
+            "line": 889,
+            "text": ""
+          },
+          {
+            "line": 890,
+            "text": "    ret = access_check_ini(self);"
+          },
+          {
+            "line": 891,
+            "text": ""
+          },
+          {
+            "line": 892,
+            "text": "    return ret;"
+          },
+          {
+            "line": 893,
+            "text": "}"
+          }
+        ]
+      },
+      "src/confdb/confdb.h": {
+        "sha256": "86784416dd69783a47cfeb0d3585b7604ae0fc8bcb3fc44cb0701bc99b514b0f",
+        "excerpts": [
+          {
+            "line": 42,
+            "text": "#define CONFDB_FILE \"config.ldb\""
+          },
+          {
+            "line": 43,
+            "text": "#define CONFDB_KCM_FILE \"config_kcm.ldb\""
+          },
+          {
+            "line": 44,
+            "text": "#define SSSD_CONFIG_FILE_NAME \"sssd.conf\""
+          },
+          {
+            "line": 45,
+            "text": "#define SSSD_CONFIG_FILE SSSD_CONF_DIR\"/\"SSSD_CONFIG_FILE_NAME"
+          },
+          {
+            "line": 46,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR_NAME \"conf.d\""
+          },
+          {
+            "line": 47,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR SSSD_CONF_DIR\"/\"CONFDB_DEFAULT_CONFIG_DIR_NAME"
+          },
+          {
+            "line": 48,
+            "text": "#define SSSD_MIN_ID 1"
+          },
+          {
+            "line": 49,
+            "text": "#define CONFDB_DEFAULT_SHELL_FALLBACK \"/bin/sh\""
+          },
+          {
+            "line": 50,
+            "text": ""
+          },
+          {
+            "line": 51,
+            "text": "/* Configuration options */"
+          },
+          {
+            "line": 52,
+            "text": ""
+          }
+        ]
+      },
+      "src/tools/sssctl/sssctl_config.c": {
+        "sha256": "a56add724381f1468d6eb86cf80b26943ce29317837f84e69541f87fbcb267eb",
+        "excerpts": [
+          {
+            "line": 34,
+            "text": ""
+          },
+          {
+            "line": 35,
+            "text": ""
+          },
+          {
+            "line": 36,
+            "text": "static char *sssctl_config_snippet_path(TALLOC_CTX *ctx, const char *path)"
+          },
+          {
+            "line": 37,
+            "text": "{"
+          },
+          {
+            "line": 38,
+            "text": "    char *tmp = NULL;"
+          },
+          {
+            "line": 39,
+            "text": "    const char delimiter = '/';"
+          },
+          {
+            "line": 40,
+            "text": "    char *dpos = NULL;"
+          },
+          {
+            "line": 41,
+            "text": ""
+          },
+          {
+            "line": 69,
+            "text": "    TALLOC_CTX *tmp_ctx = NULL;"
+          },
+          {
+            "line": 70,
+            "text": "    const char *config_path = NULL;"
+          },
+          {
+            "line": 71,
+            "text": "    const char *config_snippet_path = NULL;"
+          },
+          {
+            "line": 72,
+            "text": "    struct poptOption long_options[] = {"
+          },
+          {
+            "line": 73,
+            "text": "        SSSD_CONFIG_OPTS(config_path)"
+          },
+          {
+            "line": 74,
+            "text": "        {\"snippet\", 's', POPT_ARG_STRING, &config_snippet_path,"
+          },
+          {
+            "line": 75,
+            "text": "            0, _(\"Specify a non-default snippet dir (The default is to look in \""
+          },
+          {
+            "line": 76,
+            "text": "                 \"the same place where the main config file is located. For \""
+          },
+          {
+            "line": 98,
+            "text": "    }"
+          },
+          {
+            "line": 99,
+            "text": ""
+          },
+          {
+            "line": 100,
+            "text": "    if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 101,
+            "text": "        config_snippet_path = sssctl_config_snippet_path(tmp_ctx, config_path);"
+          },
+          {
+            "line": 102,
+            "text": "        if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 103,
+            "text": "            DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to create snippet path\\n\");"
+          },
+          {
+            "line": 104,
+            "text": "            ret = ENOMEM;"
+          },
+          {
+            "line": 105,
+            "text": "            goto done;"
+          },
+          {
+            "line": 106,
+            "text": "        }"
+          },
+          {
+            "line": 107,
+            "text": "    }"
+          },
+          {
+            "line": 108,
+            "text": ""
+          },
+          {
+            "line": 109,
+            "text": "    ret = sss_ini_read_sssd_conf(init_data,"
+          },
+          {
+            "line": 110,
+            "text": "                                 config_path,"
+          },
+          {
+            "line": 111,
+            "text": "                                 config_snippet_path);"
+          },
+          {
+            "line": 112,
+            "text": ""
+          },
+          {
+            "line": 113,
+            "text": "    if (ret == ERR_INI_EMPTY_CONFIG) {"
+          },
+          {
+            "line": 114,
+            "text": "        PRINT(\"File %1$s does not exist.\\n\", config_path);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "044ba8a30737ca216ae815d12cc05180ed41714e56b0d8dd871f2a7ccf287f26",
+        "excerpts": [
+          {
+            "line": 26,
+            "text": "#include \"confdb.h\""
+          },
+          {
+            "line": 27,
+            "text": "#include \"confdb_private.h\""
+          },
+          {
+            "line": 28,
+            "text": "#include \"confdb_setup.h\""
+          },
+          {
+            "line": 29,
+            "text": "#include \"util/sss_ini.h\""
+          },
+          {
+            "line": 30,
+            "text": ""
+          },
+          {
+            "line": 31,
+            "text": "#define CONFDB_BASE_LDIF \\"
+          },
+          {
+            "line": 32,
+            "text": "     \"dn: @ATTRIBUTES\\n\" \\"
+          },
+          {
+            "line": 33,
+            "text": "     \"cn: CASE_INSENSITIVE\\n\" \\"
+          },
+          {
+            "line": 45,
+            "text": ""
+          },
+          {
+            "line": 46,
+            "text": ""
+          },
+          {
+            "line": 47,
+            "text": "errno_t confdb_read_ini(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 48,
+            "text": "                        const char *config_file,"
+          },
+          {
+            "line": 49,
+            "text": "                        const char *config_dir,"
+          },
+          {
+            "line": 50,
+            "text": "                        bool allow_missing_file,"
+          },
+          {
+            "line": 51,
+            "text": "                        struct sss_ini **_ini)"
+          },
+          {
+            "line": 52,
+            "text": "{"
+          },
+          {
+            "line": 58,
+            "text": "    }"
+          },
+          {
+            "line": 59,
+            "text": ""
+          },
+          {
+            "line": 60,
+            "text": "    ret = sss_ini_read_sssd_conf(*_ini, config_file, config_dir);"
+          },
+          {
+            "line": 61,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 62,
+            "text": "        if ((ret == ERR_INI_EMPTY_CONFIG) && allow_missing_file) {"
+          },
+          {
+            "line": 63,
+            "text": "            return EOK;"
+          },
+          {
+            "line": 64,
+            "text": "        }"
+          },
+          {
+            "line": 65,
+            "text": "        talloc_zfree(*_ini);"
+          },
+          {
+            "line": 70,
+            "text": "}"
+          },
+          {
+            "line": 71,
+            "text": ""
+          },
+          {
+            "line": 72,
+            "text": "static int confdb_create_base(struct confdb_ctx *cdb)"
+          },
+          {
+            "line": 73,
+            "text": "{"
+          },
+          {
+            "line": 74,
+            "text": "    int ret;"
+          },
+          {
+            "line": 75,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 76,
+            "text": ""
+          },
+          {
+            "line": 77,
+            "text": "    const char *base_ldif = CONFDB_BASE_LDIF;"
+          },
+          {
+            "line": 91,
+            "text": "}"
+          },
+          {
+            "line": 92,
+            "text": ""
+          },
+          {
+            "line": 93,
+            "text": "static int confdb_write_ldif(struct confdb_ctx *cdb, const char *config_ldif)"
+          },
+          {
+            "line": 94,
+            "text": "{"
+          },
+          {
+            "line": 95,
+            "text": "    int ret;"
+          },
+          {
+            "line": 96,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 97,
+            "text": ""
+          },
+          {
+            "line": 98,
+            "text": "    while ((ldif = ldb_ldif_read_string(cdb->ldb, &config_ldif))) {"
+          },
+          {
+            "line": 137,
+            "text": "    }"
+          },
+          {
+            "line": 138,
+            "text": ""
+          },
+          {
+            "line": 139,
+            "text": "    ret = sss_confdb_create_ldif(tmp_ctx, ini, only_section, &config_ldif);"
+          },
+          {
+            "line": 140,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 141,
+            "text": "        if ((ret == ERR_INI_EMPTY_CONFIG) && allow_missing_content) {"
+          },
+          {
+            "line": 142,
+            "text": "            DEBUG(SSSDBG_TRACE_FUNC, \"Empty configuration. Using the defaults.\\n\");"
+          },
+          {
+            "line": 143,
+            "text": "            ret = EOK;"
+          },
+          {
+            "line": 144,
+            "text": "            goto done;"
+          },
+          {
+            "line": 164,
+            "text": "    in_transaction = true;"
+          },
+          {
+            "line": 165,
+            "text": ""
+          },
+          {
+            "line": 166,
+            "text": "    ret = confdb_write_ldif(cdb, config_ldif);"
+          },
+          {
+            "line": 167,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 168,
+            "text": "        goto done;"
+          },
+          {
+            "line": 169,
+            "text": "    }"
+          },
+          {
+            "line": 170,
+            "text": ""
+          },
+          {
+            "line": 171,
+            "text": "    ret = ldb_transaction_commit(cdb->ldb);"
+          },
+          {
+            "line": 190,
+            "text": "}"
+          },
+          {
+            "line": 191,
+            "text": ""
+          },
+          {
+            "line": 192,
+            "text": "errno_t confdb_write_ini(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 193,
+            "text": "                         const struct sss_ini *ini,"
+          },
+          {
+            "line": 194,
+            "text": "                         const char *cdb_file,"
+          },
+          {
+            "line": 195,
+            "text": "                         const char *only_section,"
+          },
+          {
+            "line": 196,
+            "text": "                         bool allow_missing_content,"
+          },
+          {
+            "line": 197,
+            "text": "                         struct confdb_ctx **_cdb)"
+          },
+          {
+            "line": 222,
+            "text": ""
+          },
+          {
+            "line": 223,
+            "text": "    /* Load special entries */"
+          },
+          {
+            "line": 224,
+            "text": "    ret = confdb_create_base(cdb);"
+          },
+          {
+            "line": 225,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 226,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 227,
+            "text": "              \"Unable to load special entries into confdb\\n\");"
+          },
+          {
+            "line": 228,
+            "text": "        goto done;"
+          },
+          {
+            "line": 229,
+            "text": "    }"
+          },
+          {
+            "line": 246,
+            "text": "}"
+          },
+          {
+            "line": 247,
+            "text": ""
+          },
+          {
+            "line": 248,
+            "text": "errno_t confdb_setup(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 249,
+            "text": "                     const char *cdb_file,"
+          },
+          {
+            "line": 250,
+            "text": "                     const char *config_file,"
+          },
+          {
+            "line": 251,
+            "text": "                     const char *config_dir,"
+          },
+          {
+            "line": 252,
+            "text": "                     const char *only_section,"
+          },
+          {
+            "line": 253,
+            "text": "                     bool allow_missing_file,"
+          },
+          {
+            "line": 257,
+            "text": "    struct sss_ini *ini;"
+          },
+          {
+            "line": 258,
+            "text": ""
+          },
+          {
+            "line": 259,
+            "text": "    ret = confdb_read_ini(mem_ctx, config_file, config_dir, allow_missing_file,"
+          },
+          {
+            "line": 260,
+            "text": "                          &ini);"
+          },
+          {
+            "line": 261,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 262,
+            "text": "        return ret;"
+          },
+          {
+            "line": 263,
+            "text": "    }"
+          },
+          {
+            "line": 264,
+            "text": ""
+          },
+          {
+            "line": 265,
+            "text": "    ret = confdb_write_ini(mem_ctx, ini, cdb_file, only_section, allow_missing_file,"
+          },
+          {
+            "line": 266,
+            "text": "                           _cdb);"
+          },
+          {
+            "line": 267,
+            "text": ""
+          },
+          {
+            "line": 268,
+            "text": "    talloc_free(ini);"
+          },
+          {
+            "line": 269,
+            "text": ""
+          },
+          {
+            "line": 270,
+            "text": "    return ret;"
+          }
+        ]
+      }
+    }
+  },
+  "alt-p11": {
+    "source_tree": "sssd-2.9.8",
+    "archives": {
+      "sssd-2.9.8.tar": "bfcc82fd47fa49dda47df1c0dfb2cb784888de009f2045b118a7180a139229c6",
+      "sssd-2.9.8-alt3.src.rpm": "0f2593817124830290015876bae8bbc3fc286b5aff0c0935d573a99353a05320",
+      "sssd-2.9.8-alt.patch": "3d159b0453c066cf16f21e5c02c99367ff0bd2fd33fe546d256c8e82a8ca729c"
+    },
+    "distribution_patches": "sssd.spec %prep: %setup; %patch -p1 (applied)",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "8fc6fb6a6572003725c9eef11bfe0f611711cee5140d7f74330240c1f2d4504e",
+        "excerpts": [
+          {
+            "line": 104,
+            "text": ""
+          },
+          {
+            "line": 105,
+            "text": "    bool svc_started;"
+          },
+          {
+            "line": 106,
+            "text": "    bool socket_activated; /* also used for dbus-activated services */"
+          },
+          {
+            "line": 107,
+            "text": ""
+          },
+          {
+            "line": 108,
+            "text": "    int restarts;"
+          },
+          {
+            "line": 109,
+            "text": "    time_t last_restart;"
+          },
+          {
+            "line": 110,
+            "text": ""
+          },
+          {
+            "line": 111,
+            "text": "    int debug_level;"
+          },
+          {
+            "line": 191,
+            "text": ""
+          },
+          {
+            "line": 192,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 193,
+            "text": "errno_t socket_activated_service_not_found(struct mt_ctx *mt_ctx,"
+          },
+          {
+            "line": 194,
+            "text": "                                           const char *svc_name,"
+          },
+          {
+            "line": 195,
+            "text": "                                           bool is_provider,"
+          },
+          {
+            "line": 196,
+            "text": "                                           struct mt_svc **_svc)"
+          },
+          {
+            "line": 197,
+            "text": "{"
+          },
+          {
+            "line": 198,
+            "text": "    struct mt_svc *svc = NULL;"
+          },
+          {
+            "line": 224,
+            "text": "    }"
+          },
+          {
+            "line": 225,
+            "text": "    svc->restarts = 0;"
+          },
+          {
+            "line": 226,
+            "text": "    svc->socket_activated = true;"
+          },
+          {
+            "line": 227,
+            "text": ""
+          },
+          {
+            "line": 228,
+            "text": "    DLIST_ADD(mt_ctx->svc_list, svc);"
+          },
+          {
+            "line": 229,
+            "text": ""
+          },
+          {
+            "line": 230,
+            "text": "    *_svc = svc;"
+          },
+          {
+            "line": 231,
+            "text": "    return EOK;"
+          },
+          {
+            "line": 249,
+            "text": ""
+          },
+          {
+            "line": 250,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 251,
+            "text": "    return socket_activated_service_not_found(mt_ctx, svc_name, is_provider,"
+          },
+          {
+            "line": 252,
+            "text": "                                              _svc);"
+          },
+          {
+            "line": 253,
+            "text": "#else"
+          },
+          {
+            "line": 254,
+            "text": "    return service_not_found(svc_name, _svc);"
+          },
+          {
+            "line": 255,
+            "text": "#endif"
+          },
+          {
+            "line": 256,
+            "text": "}"
+          },
+          {
+            "line": 290,
+            "text": "     * from there and set the destructor back to NULL just before freeing"
+          },
+          {
+            "line": 291,
+            "text": "     * the service itself. */"
+          },
+          {
+            "line": 292,
+            "text": "    if (svc->socket_activated) {"
+          },
+          {
+            "line": 293,
+            "text": "        sbus_connection_set_destructor(svc->conn, monitor_service_shutdown, svc);"
+          },
+          {
+            "line": 294,
+            "text": "    }"
+          },
+          {
+            "line": 295,
+            "text": ""
+          },
+          {
+            "line": 296,
+            "text": "    ret = mark_service_as_started(svc);"
+          },
+          {
+            "line": 297,
+            "text": "    if (ret) {"
+          },
+          {
+            "line": 404,
+            "text": "}"
+          },
+          {
+            "line": 405,
+            "text": ""
+          },
+          {
+            "line": 406,
+            "text": "static int notify_startup(void)"
+          },
+          {
+            "line": 407,
+            "text": "{"
+          },
+          {
+            "line": 408,
+            "text": "#ifdef HAVE_SYSTEMD"
+          },
+          {
+            "line": 409,
+            "text": "    int ret;"
+          },
+          {
+            "line": 410,
+            "text": ""
+          },
+          {
+            "line": 411,
+            "text": "    DEBUG(SSSDBG_TRACE_FUNC, \"Sending startup notification to systemd\\n\");"
+          },
+          {
+            "line": 412,
+            "text": "    ret = sd_notify(0, \"READY=1\");"
+          },
+          {
+            "line": 413,
+            "text": "    if (ret < 0) {"
+          },
+          {
+            "line": 414,
+            "text": "        ret = -ret;"
+          },
+          {
+            "line": 415,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 416,
+            "text": "                \"Error sending notification to systemd %d: %s\\n\","
+          },
+          {
+            "line": 417,
+            "text": "                ret, sss_strerror(ret));"
+          },
+          {
+            "line": 475,
+            "text": ""
+          },
+          {
+            "line": 476,
+            "text": "    /* create the pid file if all services are alive */"
+          },
+          {
+            "line": 477,
+            "text": "    if (!ctx->pid_file_created && ctx->started_services == ctx->num_services) {"
+          },
+          {
+            "line": 478,
+            "text": "        if (svc->socket_activated) {"
+          },
+          {
+            "line": 479,
+            "text": "            /* There's no reason for trying to terminate the parent process"
+          },
+          {
+            "line": 480,
+            "text": "             * when the responder was socket-activated. */"
+          },
+          {
+            "line": 481,
+            "text": "            goto done;"
+          },
+          {
+            "line": 482,
+            "text": "        }"
+          },
+          {
+            "line": 483,
+            "text": ""
+          },
+          {
+            "line": 494,
+            "text": "        ctx->pid_file_created = true;"
+          },
+          {
+            "line": 495,
+            "text": ""
+          },
+          {
+            "line": 496,
+            "text": "        notify_startup();"
+          },
+          {
+            "line": 497,
+            "text": ""
+          },
+          {
+            "line": 498,
+            "text": "        /* Initialization is complete, terminate parent process if in daemon"
+          },
+          {
+            "line": 499,
+            "text": "         * mode. Make sure we send the signal to the right process */"
+          },
+          {
+            "line": 500,
+            "text": "        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 501,
+            "text": "            if (ctx->parent_pid <= 1 || ctx->parent_pid != getppid()) {"
+          },
+          {
+            "line": 1252,
+            "text": "}"
+          },
+          {
+            "line": 1253,
+            "text": ""
+          },
+          {
+            "line": 1254,
+            "text": "static void monitor_hup(struct tevent_context *ev,"
+          },
+          {
+            "line": 1255,
+            "text": "                        struct tevent_signal *se,"
+          },
+          {
+            "line": 1256,
+            "text": "                        int signum,"
+          },
+          {
+            "line": 1257,
+            "text": "                        int count,"
+          },
+          {
+            "line": 1258,
+            "text": "                        void *siginfo,"
+          },
+          {
+            "line": 1259,
+            "text": "                        void *private_data)"
+          },
+          {
+            "line": 1318,
+            "text": "    /* Kill all of our known children manually */"
+          },
+          {
+            "line": 1319,
+            "text": "    DLIST_FOR_EACH(svc, mt_ctx->svc_list) {"
+          },
+          {
+            "line": 1320,
+            "text": "        if (svc->socket_activated && svc->conn != NULL) {"
+          },
+          {
+            "line": 1321,
+            "text": "            /* Unset the sbus_connection destructor used to"
+          },
+          {
+            "line": 1322,
+            "text": "             * unregister the service from the monitor as"
+          },
+          {
+            "line": 1323,
+            "text": "             * it may lead to a double-free here. */"
+          },
+          {
+            "line": 1324,
+            "text": "            talloc_set_destructor(svc->conn, NULL);"
+          },
+          {
+            "line": 1325,
+            "text": "        }"
+          },
+          {
+            "line": 1517,
+            "text": "    }"
+          },
+          {
+            "line": 1518,
+            "text": ""
+          },
+          {
+            "line": 1519,
+            "text": "    ret = confdb_setup(ctx, cdb_file, config_file, config_dir, only_section,"
+          },
+          {
+            "line": 1520,
+            "text": "                       &ctx->cdb);"
+          },
+          {
+            "line": 1521,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 1522,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to setup ConfDB [%d]: %s\\n\","
+          },
+          {
+            "line": 1523,
+            "text": "             ret, sss_strerror(ret));"
+          },
+          {
+            "line": 1524,
+            "text": "        goto done;"
+          },
+          {
+            "line": 1602,
+            "text": "    /* Set up an event handler for a SIGHUP */"
+          },
+          {
+            "line": 1603,
+            "text": "    tes = tevent_add_signal(ctx->ev, ctx, SIGHUP, 0,"
+          },
+          {
+            "line": 1604,
+            "text": "                            monitor_hup, ctx);"
+          },
+          {
+            "line": 1605,
+            "text": "    if (tes == NULL) {"
+          },
+          {
+            "line": 1606,
+            "text": "        return EIO;"
+          },
+          {
+            "line": 1607,
+            "text": "    }"
+          },
+          {
+            "line": 1608,
+            "text": ""
+          },
+          {
+            "line": 1609,
+            "text": "    /* Set up an event handler for a SIGINT */"
+          },
+          {
+            "line": 1810,
+            "text": "    DEBUG(SSSDBG_CONF_SETTINGS,\"Queueing service %s for startup\\n\", svc->name);"
+          },
+          {
+            "line": 1811,
+            "text": ""
+          },
+          {
+            "line": 1812,
+            "text": "    svc->socket_activated = false;"
+          },
+          {
+            "line": 1813,
+            "text": ""
+          },
+          {
+            "line": 1814,
+            "text": "    tv = tevent_timeval_current();"
+          },
+          {
+            "line": 1815,
+            "text": ""
+          },
+          {
+            "line": 1816,
+            "text": "    /* Add a timed event to start up the service."
+          },
+          {
+            "line": 1817,
+            "text": "     * We have to do this in order to avoid a race"
+          },
+          {
+            "line": 2212,
+            "text": ""
+          },
+          {
+            "line": 2213,
+            "text": "    /* Parse config file, fail if cannot be done */"
+          },
+          {
+            "line": 2214,
+            "text": "    ret = load_configuration(tmp_ctx, config_file, CONFDB_DEFAULT_CONFIG_DIR,"
+          },
+          {
+            "line": 2215,
+            "text": "                             opt_genconf_section, &monitor);"
+          },
+          {
+            "line": 2216,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 2217,
+            "text": "        switch (ret) {"
+          },
+          {
+            "line": 2218,
+            "text": "        case EPERM:"
+          },
+          {
+            "line": 2219,
+            "text": "        case EACCES:"
+          }
+        ]
+      },
+      "src/util/sss_ini.c": {
+        "sha256": "b5d91d9793699d8a55fc0abb6caedb6ae9484acbaf76b3aa6ef1ff79766d00cc",
+        "excerpts": [
+          {
+            "line": 148,
+            "text": "/* Check configuration file permissions */"
+          },
+          {
+            "line": 149,
+            "text": ""
+          },
+          {
+            "line": 150,
+            "text": "static int sss_ini_access_check(struct sss_ini *self)"
+          },
+          {
+            "line": 151,
+            "text": "{"
+          },
+          {
+            "line": 152,
+            "text": "    if (!self->main_config_exists) {"
+          },
+          {
+            "line": 153,
+            "text": "        return EOK;"
+          },
+          {
+            "line": 154,
+            "text": "    }"
+          },
+          {
+            "line": 155,
+            "text": ""
+          },
+          {
+            "line": 234,
+            "text": "    ret = ini_config_parse(self->file,"
+          },
+          {
+            "line": 235,
+            "text": "                           INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 236,
+            "text": "                           INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 237,
+            "text": "                           INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 238,
+            "text": "                           self->sssd_config);"
+          },
+          {
+            "line": 239,
+            "text": ""
+          },
+          {
+            "line": 240,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 241,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 254,
+            "text": "}"
+          },
+          {
+            "line": 255,
+            "text": ""
+          },
+          {
+            "line": 256,
+            "text": "static int sss_ini_add_snippets(struct sss_ini *self,"
+          },
+          {
+            "line": 257,
+            "text": "                                const char *config_dir)"
+          },
+          {
+            "line": 258,
+            "text": "{"
+          },
+          {
+            "line": 259,
+            "text": "#ifdef HAVE_LIBINI_CONFIG_V1_3"
+          },
+          {
+            "line": 260,
+            "text": "    int ret;"
+          },
+          {
+            "line": 261,
+            "text": "    const char *patterns[] = { \"^[^\\\\.].*\\\\.conf$\", NULL };"
+          },
+          {
+            "line": 279,
+            "text": "    snip_check.mask = ALLPERMS & ~(S_IWUSR | S_IXUSR);"
+          },
+          {
+            "line": 280,
+            "text": ""
+          },
+          {
+            "line": 281,
+            "text": "    ret = ini_config_augment(self->sssd_config,"
+          },
+          {
+            "line": 282,
+            "text": "                             config_dir,"
+          },
+          {
+            "line": 283,
+            "text": "                             patterns,"
+          },
+          {
+            "line": 284,
+            "text": "                             sections,"
+          },
+          {
+            "line": 285,
+            "text": "                             &snip_check,"
+          },
+          {
+            "line": 286,
+            "text": "                             INI_STOP_ON_ANY,"
+          },
+          {
+            "line": 287,
+            "text": "                             INI_MV1S_OVERWRITE,"
+          },
+          {
+            "line": 288,
+            "text": "                             INI_PARSE_NOWRAP,"
+          },
+          {
+            "line": 289,
+            "text": "                             INI_MV2S_OVERWRITE,"
+          },
+          {
+            "line": 290,
+            "text": "                             &modified_sssd_config,"
+          },
+          {
+            "line": 291,
+            "text": "                             &self->ra_error_list,"
+          },
+          {
+            "line": 292,
+            "text": "                             &self->ra_success_list);"
+          },
+          {
+            "line": 293,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 294,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 920,
+            "text": "}"
+          },
+          {
+            "line": 921,
+            "text": ""
+          },
+          {
+            "line": 922,
+            "text": "int sss_ini_read_sssd_conf(struct sss_ini *self,"
+          },
+          {
+            "line": 923,
+            "text": "                           const char *config_file,"
+          },
+          {
+            "line": 924,
+            "text": "                           const char *config_dir)"
+          },
+          {
+            "line": 925,
+            "text": "{"
+          },
+          {
+            "line": 926,
+            "text": "    errno_t ret;"
+          },
+          {
+            "line": 927,
+            "text": ""
+          },
+          {
+            "line": 930,
+            "text": "    }"
+          },
+          {
+            "line": 931,
+            "text": ""
+          },
+          {
+            "line": 932,
+            "text": "    ret = sss_ini_open(self, config_file, CONFDB_FALLBACK_CONFIG);"
+          },
+          {
+            "line": 933,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 934,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 935,
+            "text": "              \"sss_ini_open on %s failed: %d\\n\","
+          },
+          {
+            "line": 936,
+            "text": "              config_file,"
+          },
+          {
+            "line": 937,
+            "text": "              ret);"
+          },
+          {
+            "line": 940,
+            "text": ""
+          },
+          {
+            "line": 941,
+            "text": "    if (sss_ini_exists(self)) {"
+          },
+          {
+            "line": 942,
+            "text": "        ret = sss_ini_access_check(self);"
+          },
+          {
+            "line": 943,
+            "text": "        if (ret != EOK) {"
+          },
+          {
+            "line": 944,
+            "text": "            DEBUG(SSSDBG_CRIT_FAILURE,"
+          },
+          {
+            "line": 945,
+            "text": "                  \"Permission check on config file %s failed: %d\\n\","
+          },
+          {
+            "line": 946,
+            "text": "                  config_file, ret);"
+          },
+          {
+            "line": 947,
+            "text": "            return ERR_INI_INVALID_PERMISSION;"
+          },
+          {
+            "line": 960,
+            "text": "    }"
+          },
+          {
+            "line": 961,
+            "text": ""
+          },
+          {
+            "line": 962,
+            "text": "    ret = sss_ini_add_snippets(self, config_dir);"
+          },
+          {
+            "line": 963,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 964,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 965,
+            "text": "              \"Error while reading configuration directory %s: %d\\n\","
+          },
+          {
+            "line": 966,
+            "text": "              config_dir, ret);"
+          },
+          {
+            "line": 967,
+            "text": "        return ERR_INI_ADD_SNIPPETS_FAILED;"
+          }
+        ]
+      },
+      "src/confdb/confdb.h": {
+        "sha256": "b82325b3128a9b69d82c4c026f2c90290d004e623b0f8174fe6c0a5aa39d2f04",
+        "excerpts": [
+          {
+            "line": 41,
+            "text": "#define CONFDB_DEFAULT_CFG_FILE_VER 2"
+          },
+          {
+            "line": 42,
+            "text": "#define CONFDB_FILE \"config.ldb\""
+          },
+          {
+            "line": 43,
+            "text": "#define SSSD_CONFIG_FILE_NAME \"sssd.conf\""
+          },
+          {
+            "line": 44,
+            "text": "#define SSSD_CONFIG_FILE SSSD_CONF_DIR\"/\"SSSD_CONFIG_FILE_NAME"
+          },
+          {
+            "line": 45,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR_NAME \"conf.d\""
+          },
+          {
+            "line": 46,
+            "text": "#define CONFDB_DEFAULT_CONFIG_DIR SSSD_CONF_DIR\"/\"CONFDB_DEFAULT_CONFIG_DIR_NAME"
+          },
+          {
+            "line": 47,
+            "text": "#define SSSD_MIN_ID 1"
+          },
+          {
+            "line": 48,
+            "text": "#define CONFDB_DEFAULT_SHELL_FALLBACK \"/bin/sh\""
+          },
+          {
+            "line": 49,
+            "text": "#define CONFDB_FALLBACK_CONFIG \\"
+          },
+          {
+            "line": 50,
+            "text": "    \"[sssd]\\n\" \\"
+          },
+          {
+            "line": 51,
+            "text": "    \"services = nss\\n\""
+          },
+          {
+            "line": 52,
+            "text": ""
+          },
+          {
+            "line": 53,
+            "text": ""
+          },
+          {
+            "line": 54,
+            "text": "/* Configuration options */"
+          }
+        ]
+      },
+      "src/tools/sssctl/sssctl_config.c": {
+        "sha256": "da5e1a64c4e54897ca316dd2cc5132f066990031721842484265e89b39e5bed2",
+        "excerpts": [
+          {
+            "line": 36,
+            "text": "#ifdef HAVE_LIBINI_CONFIG_V1_3"
+          },
+          {
+            "line": 37,
+            "text": ""
+          },
+          {
+            "line": 38,
+            "text": "static char *sssctl_config_snippet_path(TALLOC_CTX *ctx, const char *path)"
+          },
+          {
+            "line": 39,
+            "text": "{"
+          },
+          {
+            "line": 40,
+            "text": "    char *tmp = NULL;"
+          },
+          {
+            "line": 41,
+            "text": "    const char delimiter = '/';"
+          },
+          {
+            "line": 42,
+            "text": "    char *dpos = NULL;"
+          },
+          {
+            "line": 43,
+            "text": ""
+          },
+          {
+            "line": 72,
+            "text": "    TALLOC_CTX *tmp_ctx = NULL;"
+          },
+          {
+            "line": 73,
+            "text": "    const char *config_path = NULL;"
+          },
+          {
+            "line": 74,
+            "text": "    const char *config_snippet_path = NULL;"
+          },
+          {
+            "line": 75,
+            "text": "    struct poptOption long_options[] = {"
+          },
+          {
+            "line": 76,
+            "text": "        {\"config\", 'c', POPT_ARG_STRING, &config_path,"
+          },
+          {
+            "line": 77,
+            "text": "            0, _(\"Specify a non-default config file\"), NULL},"
+          },
+          {
+            "line": 78,
+            "text": "        {\"snippet\", 's', POPT_ARG_STRING, &config_snippet_path,"
+          },
+          {
+            "line": 79,
+            "text": "            0, _(\"Specify a non-default snippet dir (The default is to look in \""
+          },
+          {
+            "line": 102,
+            "text": "    }"
+          },
+          {
+            "line": 103,
+            "text": ""
+          },
+          {
+            "line": 104,
+            "text": "    if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 105,
+            "text": "        config_snippet_path = sssctl_config_snippet_path(tmp_ctx, config_path);"
+          },
+          {
+            "line": 106,
+            "text": "        if (config_snippet_path == NULL) {"
+          },
+          {
+            "line": 107,
+            "text": "            DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to create snippet path\\n\");"
+          },
+          {
+            "line": 108,
+            "text": "            ret = ENOMEM;"
+          },
+          {
+            "line": 109,
+            "text": "            goto done;"
+          },
+          {
+            "line": 110,
+            "text": "        }"
+          },
+          {
+            "line": 111,
+            "text": "    }"
+          },
+          {
+            "line": 112,
+            "text": ""
+          },
+          {
+            "line": 113,
+            "text": "    ret = sss_ini_read_sssd_conf(init_data,"
+          },
+          {
+            "line": 114,
+            "text": "                                 config_path,"
+          },
+          {
+            "line": 115,
+            "text": "                                 config_snippet_path);"
+          },
+          {
+            "line": 116,
+            "text": ""
+          },
+          {
+            "line": 117,
+            "text": "    if (ret == ERR_INI_OPEN_FAILED) {"
+          },
+          {
+            "line": 118,
+            "text": "        PRINT(\"Failed to open %s\\n\", config_path);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "9cef261aa4ca1c2b99ee4e8c2cd94b5fa313eb8d32f72c1e09edcca5aecc2fd8",
+        "excerpts": [
+          {
+            "line": 26,
+            "text": "#include \"confdb.h\""
+          },
+          {
+            "line": 27,
+            "text": "#include \"confdb_private.h\""
+          },
+          {
+            "line": 28,
+            "text": "#include \"confdb_setup.h\""
+          },
+          {
+            "line": 29,
+            "text": "#include \"util/sss_ini.h\""
+          },
+          {
+            "line": 30,
+            "text": ""
+          },
+          {
+            "line": 31,
+            "text": "static int confdb_test(struct confdb_ctx *cdb)"
+          },
+          {
+            "line": 32,
+            "text": "{"
+          },
+          {
+            "line": 33,
+            "text": "    char **values;"
+          },
+          {
+            "line": 105,
+            "text": "}"
+          },
+          {
+            "line": 106,
+            "text": ""
+          },
+          {
+            "line": 107,
+            "text": "static int confdb_create_base(struct confdb_ctx *cdb)"
+          },
+          {
+            "line": 108,
+            "text": "{"
+          },
+          {
+            "line": 109,
+            "text": "    int ret;"
+          },
+          {
+            "line": 110,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 111,
+            "text": ""
+          },
+          {
+            "line": 112,
+            "text": "    const char *base_ldif = CONFDB_BASE_LDIF;"
+          },
+          {
+            "line": 138,
+            "text": "    int version;"
+          },
+          {
+            "line": 139,
+            "text": ""
+          },
+          {
+            "line": 140,
+            "text": "    ret = sss_ini_read_sssd_conf(init_data,"
+          },
+          {
+            "line": 141,
+            "text": "                                 config_file,"
+          },
+          {
+            "line": 142,
+            "text": "                                 config_dir);"
+          },
+          {
+            "line": 143,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 144,
+            "text": "        return ret;"
+          },
+          {
+            "line": 145,
+            "text": "    }"
+          },
+          {
+            "line": 210,
+            "text": "    }"
+          },
+          {
+            "line": 211,
+            "text": ""
+          },
+          {
+            "line": 212,
+            "text": "    ret = sss_confdb_create_ldif(mem_ctx, init_data, only_section, _ldif);"
+          },
+          {
+            "line": 213,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 214,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE, \"Could not create LDIF for confdb\\n\");"
+          },
+          {
+            "line": 215,
+            "text": "        return ret;"
+          },
+          {
+            "line": 216,
+            "text": "    }"
+          },
+          {
+            "line": 217,
+            "text": ""
+          },
+          {
+            "line": 224,
+            "text": "}"
+          },
+          {
+            "line": 225,
+            "text": ""
+          },
+          {
+            "line": 226,
+            "text": "static int confdb_write_ldif(struct confdb_ctx *cdb,"
+          },
+          {
+            "line": 227,
+            "text": "                             const char *config_ldif,"
+          },
+          {
+            "line": 228,
+            "text": "                             bool replace_whole_db)"
+          },
+          {
+            "line": 229,
+            "text": "{"
+          },
+          {
+            "line": 230,
+            "text": "    int ret;"
+          },
+          {
+            "line": 231,
+            "text": "    struct ldb_ldif *ldif;"
+          },
+          {
+            "line": 329,
+            "text": "    }"
+          },
+          {
+            "line": 330,
+            "text": ""
+          },
+          {
+            "line": 331,
+            "text": "    ret = confdb_write_ldif(cdb,"
+          },
+          {
+            "line": 332,
+            "text": "                            config_ldif,"
+          },
+          {
+            "line": 333,
+            "text": "                            only_section == NULL ? true : false);"
+          },
+          {
+            "line": 334,
+            "text": "    if (ret != EOK) {"
+          },
+          {
+            "line": 335,
+            "text": "        goto done;"
+          },
+          {
+            "line": 336,
+            "text": "    }"
+          },
+          {
+            "line": 368,
+            "text": "}"
+          },
+          {
+            "line": 369,
+            "text": ""
+          },
+          {
+            "line": 370,
+            "text": "errno_t confdb_setup(TALLOC_CTX *mem_ctx,"
+          },
+          {
+            "line": 371,
+            "text": "                     const char *cdb_file,"
+          },
+          {
+            "line": 372,
+            "text": "                     const char *config_file,"
+          },
+          {
+            "line": 373,
+            "text": "                     const char *config_dir,"
+          },
+          {
+            "line": 374,
+            "text": "                     const char *only_section,"
+          },
+          {
+            "line": 375,
+            "text": "                     struct confdb_ctx **_cdb)"
+          },
+          {
+            "line": 417,
+            "text": ""
+          },
+          {
+            "line": 418,
+            "text": "        /* Load special entries */"
+          },
+          {
+            "line": 419,
+            "text": "        ret = confdb_create_base(cdb);"
+          },
+          {
+            "line": 420,
+            "text": "        if (ret != EOK) {"
+          },
+          {
+            "line": 421,
+            "text": "            DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 422,
+            "text": "                  \"Unable to load special entries into confdb\\n\");"
+          },
+          {
+            "line": 423,
+            "text": "            goto done;"
+          },
+          {
+            "line": 424,
+            "text": "        }"
+          }
+        ]
+      }
+    }
+  }
+}

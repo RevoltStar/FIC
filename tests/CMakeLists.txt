@@ -28,6 +28,9 @@ endif()
 include_directories(${CMAKE_BINARY_DIR}/fic/generated/include)
 
 if(Python3_Interpreter_FOUND)
+    add_test(NAME sssd_research_evidence_checks
+        COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/integration/sssd-research/check-evidence.py)
     add_test(NAME prelogin_package_lifecycle_tests
         COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/integration/prelogin/PackageLifecycleTests.py

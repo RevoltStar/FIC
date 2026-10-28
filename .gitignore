@@ -27,3 +27,4 @@ res.log
 !tests/integration/verified_config_service/openssh_native/release_plan_cases.py
 !tests/integration/verified_config_service/openssh_native/release_cases.py
 !tests/integration/verified_config_service/openssh_native/remote_package_cases.py
+!tests/integration/sssd-research/*.py

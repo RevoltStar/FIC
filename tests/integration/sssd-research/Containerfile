@@ -1,0 +1,12 @@
+# Research-only stock distribution packages. Never used by FIC packaging.
+ARG BASE_IMAGE=fic-ssh-lifecycle-native:debian12
+FROM ${BASE_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive container=docker
+RUN apt-get update && \
+    if test -f /etc/altlinux-release; then \
+      apt-get install -y sssd sssd-tools sssd-ldap sssd-ad sssd-ipa sssd-proxy sssd-client ldb-tools strace gdb acl attr openldap-clients openldap-servers; \
+    else \
+      apt-get install -y --no-install-recommends sssd sssd-tools sssd-ldap sssd-ad sssd-ipa sssd-proxy libnss-sss libpam-sss ldb-tools strace gdb acl attr ldap-utils slapd libpam0g-dev; \
+    fi
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
