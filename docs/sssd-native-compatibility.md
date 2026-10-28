@@ -14,11 +14,11 @@ Reproduction: [runner](../tests/integration/sssd-research/README.md).
 
 | Profile | SSSD package version | Stock launch | Existing public engine with complete request |
 |---|---|---|---|
-| Debian 12 | 2.8.2-4+deb12u1 | notify/main, root, PIDFile=/run/sssd.pid | UNSUPPORTED: PIDFile/trigger admission |
+| Debian 12 | 2.8.2-4+deb12u1 | notify/main, root, PIDFile=/run/sssd.pid | UNSUPPORTED: nonempty PIDFile |
 | Debian 13 | 2.10.1-2 | notify/main, root; privileged ignored chown/chmod precommands | PASS for bounded snapshot + notify proof on prepared fixture |
-| Ubuntu 24.04 | 2.9.4-1.1ubuntu6.8 | notify/main, root, PIDFile=/run/sssd.pid | UNSUPPORTED: PIDFile/trigger admission |
+| Ubuntu 24.04 | 2.9.4-1.1ubuntu6.8 | notify/main, root, PIDFile=/run/sssd.pid | UNSUPPORTED: nonempty PIDFile |
 | Ubuntu 26.04 | 2.12.0-1ubuntu5.5 | notify/main, User/Group=sssd; privileged ignored chown/chmod precommands | PASS for bounded snapshot + notify proof on prepared fixture |
-| ALT p11 | 2.9.8-alt3 | notify/main, unit root, PIDFile=/var/run/sssd.pid; packaged config has user=_sssd | UNSUPPORTED: PIDFile/trigger admission |
+| ALT p11 | 2.9.8-alt3 | notify/main, unit root, PIDFile=/var/run/sssd.pid; packaged config has user=_sssd | UNSUPPORTED: nonempty PIDFile |
 
 PASS here means engine `Success`, readiness=true, no cleanup errors/residuals;
 it does **not** mean the future policy's runtime/effective/P proof is complete.
@@ -27,6 +27,10 @@ adding any of these packages as FIC dependencies. Define installed operationally
 trusted monitor executable, native loaded unit, needed provider/responder
 executables/libraries and tools exist at the expected package versions. A
 metapackage name or `is-enabled` alone proves none of this.
+
+Precision note from the captured properties: all five parent units have empty
+TriggeredBy; the concrete rejecting field on the older three is PIDFile.
+systemd normalizes ALT’s /var/run/sssd.pid to /run/sssd.pid in its properties.
 
 ## Stock launch contract
 

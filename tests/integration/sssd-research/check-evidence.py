@@ -24,4 +24,20 @@ for profile,v in d['profiles'].items():
   assert m['engine-preopened-write']['engine']['result']['hook_observations'][0]['write_count']==1
   assert m['engine-preopened-write']['persistent_main_sha256']!=m['engine-preopened-write']['engine']['request']['paths'][0]['sha256']
 assert d['coverage']['functional_auth']['status']=='NOT_TESTED'
+r2=ROOT/'docs/sssd-semantics-research-evidence.json'
+s=json.loads(r2.read_text());assert set(s['profiles'])==set(d['profiles'])
+for profile,v in s['profiles'].items():
+ assert v['functional_password_fixture']['level']=='FUNCTIONAL_AUTH_CONFIRMED'
+ assert v['functional_password_fixture']['status']=='PASS'
+ assert len(v['matrix'])==6
+ for row in v['matrix']:
+  assert row['providers']['ldap']['config_check_exit']==0
+  assert row['providers']['proxy']['state']['ActiveState']=='active'
+ for stage,obs in v['stages'].items():
+  assert obs['collection_complete'] and obs['container']['network']=='none' and not obs['container']['binds']
+ a=v['stages']['R2_AUTH']['experiments']
+ for name in ('online-password','offline-password','aged-expiration-unlimited'):assert json.loads(a[name]['stdout'])['pam_authenticate']==0
+ for name in ('offline-cache-disabled-existing-db','aged-expiration-one-day','offline-wrong-password'):assert json.loads(a[name]['stdout'])['pam_authenticate']!=0
+assert s['coverage']['AD_IPA_functional']['status']=='NOT_TESTED'
+assert s['coverage']['smartcard_passkey']['status']=='NOT_TESTED'
 print('SSSD research evidence/syntax guard PASS (not a native runtime rerun)')

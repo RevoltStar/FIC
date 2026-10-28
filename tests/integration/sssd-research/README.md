@@ -62,3 +62,33 @@ drop-in is a FIFO launch fixture, never reported as stock unit behavior.
 CI `sssd_research_evidence_checks` checks syntax, isolation metadata and key
 counterexamples in committed evidence; it is not a fresh privileged native run.
 The four precise coverage levels and NOT_TESTED/INCONCLUSIVE gaps are in docs.
+
+## R2 (only after R1 commit)
+
+Run stages `R2`, `R2_AUTH`, `R2_LAZY` with the same runner/image/profile. R2
+tests six relations per LDAP/proxy provider, ranges/defaults, inactive/mixed
+domains and no-realm AD/IPA initialization. R2_AUTH runs an actual loopback TLS
+slapd, native SSSD and libpam/pam_sss with a test-only PAM service. Passwords in
+the script are public synthetic fixtures, never real credentials. It modifies
+only the container's NSS/PAM and test cache. Expiration uses a stopped-cache
+lastOnlineAuth fixture, not host time changes. R2_LAZY discovers actual PAM
+sockets, uses stock responder units and preserves ALT's packaged user=_sssd.
+The recorded ALT R2_LAZY_ROOT counterexample used a root monitor configuration:
+the stock _sssd responder failed independently while monitor stayed active.
+To reproduce that separate fixture, set `FIC_SSSD_ALT_ROOT_FIXTURE=1` when
+invoking the runner; it is not the supported ALT configured identity.
+
+```sh
+bash tests/integration/sssd-research/run-native.sh fic-sssd-research:debian12 debian-12 R2
+bash tests/integration/sssd-research/run-native.sh fic-sssd-research:debian12 debian-12 R2_AUTH
+bash tests/integration/sssd-research/run-native.sh fic-sssd-research:debian12 debian-12 R2_LAZY
+python3 tests/integration/sssd-research/source-semantics-audit.py
+python3 tests/integration/sssd-research/collect-semantics-evidence.py
+python3 tests/integration/sssd-research/check-evidence.py
+```
+
+Repeat all three stages on all five profiles. The export expects the preserved
+ALT root-fixture transcript too; copy R2_LAZY output to R2_LAZY_ROOT after that
+explicit root-fixture run, then run the normal configured-user fixture. Do not
+edit a runner while it is executing: bash can reread its changed tail; an early
+research run hit this harness error and all final stage runs were repeated.
