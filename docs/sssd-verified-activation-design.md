@@ -109,3 +109,74 @@ be promoted to applied/fully released.
 
 No production code, journal schema or policy dependencies changed in R1.
 R2 must refine consumer/domain/relation semantics before implementation.
+
+## Implemented I1 read-only API
+
+`service/sssd/SssdServiceAdmission` provides `admit(deadline)` and
+`revalidate(launchReference, deadline)`. `SssdVerifiedInputClosure` provides
+`capture(deadline)` and `revalidate(inputReference, deadline)`. Failures carry
+existing typed `detail::Failure/ActivationStatus`; a returned reference is an
+observation, never an activation result or authority to mutate. There are no
+production callers in policies yet. Existing SSSD apply/runtime/rollback stay
+unchanged. I2–I6 are not implemented by this API.
+
+Admission uses the same private root-PID1 typed D-Bus reader, with a narrow
+read-only SSSD entrypoint adding state, sandbox, InvocationID and Manager.UnitPath.
+No new activation profile or permission is added to the generic engine. Exact
+per-distribution commands/flags, native environment path, user/group, PIDFile,
+reviewed vendor-unit **content digest**, no unknown loaded overrides, and trusted
+unit-source fingerprints are required. Changing even unprojected vendor-unit
+bytes needs a new reviewed profile; an unchanged ExecStart alone is insufficient.
+
+The full native lookup negative set is rechecked for pending unit/type drop-ins
+and shadowing units too: NeedDaemonReload/DropInPaths alone missed an unloaded
+override in the Debian 12 native gate. An existing drop-in directory is allowed
+only when root-controlled and proven empty by the generic tree reader. MainPID
+executable, invocation, process start token, process/root/mount namespace,
+root-controlled executable byte/identity fingerprints and the compile-time host
+profile are checked. Native /bin aliases are bounded: usr-merge, stock sh→dash/
+bash and Ubuntu 26.04's exact chown/chmod uutils aliases. Configuration user and
+declared responder executables are observed without claiming consumer readiness.
+
+The closure reuses `openAbsolute`, `Fd`, `identity`, `readTree`,
+`fingerprintUnitSource`, `ContentDigest` and the existing `ActivationRequest` data
+model. It reads a bounded complete `/etc/sssd` tree (including all conf.d entries),
+then reconfirms it through fresh descriptor traversal, comparing bytes, mount/
+inode identities, size, mode, owner/group, nlink, mtime and ctime. A second launch
+proof and final graph reread close the interval spent checking consumers.
+Source bytes and full attributes remain available to I2 and ownership release;
+no enrollment is inferred for zzzz-fic.conf. Every later eligible foreign snippet
+marks `applyConflict()` independent of content; it does not destroy the reference.
+
+Existing main, complete conf.d and environment become `inputs.paths`. Absent
+main/conf.d/optional environment are explicit negative dependencies with pinned
+parent observations, never fabricated files. `engineNeedsNegativeDependencySupport`
+and `activationLimit` expose remaining I3 work; `genericActivationSupported` is
+always false in I1. Generic activation still rejects stock PIDFile profiles.
+No snapshot, mount, service job, persistent write, journal access or fallback to
+SssdRuntime occurs in production I1.
+
+Supported INI projection is deliberately narrow: ASCII section/key assignments,
+whole-line comments, repeated sections/keys and last-wins ordered merge. Values
+are uninterpreted text with source provenance. Unknown syntax, continuation,
+quoting, inline comments, invalid control/encoding and empty values are Unsupported,
+not guessed effective semantics. Provider/default/domain/relation interpretation
+belongs to I2. File aliases/hardlinks, unsafe ownership/modes, xattrs/ACL/labels,
+nested conf.d directories/mounts and unknown launch executable/env indirection fail
+closed. Group-readable config is admitted only by the newer Debian13/Ubuntu26
+profiles; native metadata preparation for activation remains I3's responsibility.
+
+The reused reader requires root/CAP_SYS_ADMIN with xattr visibility in the
+initial user namespace, even though I1 does not mount anything. Manager environment
+is limited to the reviewed native PATH forms and C/C.UTF-8/POSIX locale assignments;
+other values are Unsupported rather than an unproven collation/launch context.
+
+Capture is optimistic, operation-scoped and deadline/budget bounded. It detects
+observed changes, including same-bytes inode replacement and ordinary byte
+restoration with changed ctime. It cannot atomically freeze arbitrary privileged
+writers or exclude privileged ABA. References must be revalidated by I3 at its
+own proof boundaries. I1 proves neither completed A nor B/C/P, current ConfigDB
+correspondence, runtime policy success, ownership or journal finalization.
+
+Native commands, five-platform evidence and limits:
+[`sssd-i1/README.md`](../tests/integration/sssd-i1/README.md).

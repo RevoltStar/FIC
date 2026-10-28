@@ -69,7 +69,7 @@ additional check of the **same** `-c/-s` graph, not this validator's replacement
 No credential DB cleanup is authorized by any of these operations. An invariant
 over login ages is not permission to delete cached identities/passwords.
 
-## Recommended implementation commits I1–I6 (not started)
+## Implementation sequence I1–I6
 
 | Stage | Existing components / new narrow work | Journal changes | Required native gates | Open risk |
 |---|---|---|---|---|
@@ -82,8 +82,8 @@ over login ages is not permission to delete cached identities/passwords.
 
 Every stage needs unit/contract/negative tests as well as listed native gates.
 Do not connect an incomplete adapter as a fallback, start SSSD to make apply pass,
-or replace unknown C/P outcomes with `is-active`. Current R1/R2 research does not
-claim I1–I6 are implemented or production-ready.
+or replace unknown C/P outcomes with `is-active`. R1/R2 research is historical evidence. I1 now has its separate read-only
+implementation and native evidence; I2–I6 remain unimplemented.
 
 ## Mandatory native acceptance gates
 
@@ -106,4 +106,24 @@ Research readiness for I1: source/closure/launch exploration can start with thes
 bounded acceptance criteria; the unexecuted races and deployment gates are work
 for the corresponding stages, not evidence of completed support. The account
 policy's default and any enlarged provider scope still need explicit decisions
-before those later features are implemented. This follow-up starts none of them.
+before those later features are implemented. The completed I1 work is described
+below; it starts no I2/I3 implementation.
+
+
+## I1 boundary and gates
+
+I1 now supplies native read-only admission, exact closed vendor-unit profiles,
+full bounded input references and conservative source-derived INI projection.
+See [API/invariants](sssd-verified-activation-design.md#implemented-i1-read-only-api)
+and [new native evidence](../tests/integration/sssd-i1/evidence.json). The existing
+research-contract catalogue remains a historical specification, not a new PASS.
+
+I1's launch-phase-change gate ends at capture/revalidation. Unit changes during
+published activation, runtime/P and journal transitions remain I3–I5 gates. Its
+source checkpoints cover two-pass capture drift, not generic snapshot publication.
+The partial `ActivationRequest` carries only existing inputs; explicit negative
+references/engine limitations must not be discarded by I3. Unknown syntax/scope
+cannot be converted into a provider relation default. I2 must interpret supported
+provider/domain/default relations; I3 must prove protected A/B/C/P, source absence,
+RO metadata, precommands, consumer/runtime identity and cleanup. No runtime receipt,
+policy integration, CAS transaction or journal transition is introduced in I1.

@@ -267,7 +267,7 @@ void verifySshUnitReferences(const SshUnitReferences& refs,std::chrono::steady_c
     if(!refs.bus||referencedManager(refs.bus.get(),deadline)!=refs.manager)
         throw Failure(ActivationStatus::InterferenceDetected,"unit-reference systemd owner changed");
 }
-static LaunchContract readContract(const std::string& unit, std::chrono::steady_clock::time_point deadline, bool socket, bool runtime=false) {
+static LaunchContract readContract(const std::string& unit, std::chrono::steady_clock::time_point deadline, bool socket, bool runtime=false, bool sssd=false) {
     sd_bus* rawBus = nullptr;
     if (sd_bus_new(&rawBus) < 0) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot allocate systemd connection");
     std::unique_ptr<sd_bus, decltype(&sd_bus_unref)> bus(rawBus, sd_bus_unref);
@@ -288,6 +288,7 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
     if(runtime) {
         readProperties(bus.get(),object,"org.freedesktop.systemd1.Unit",{"Id","LoadState","ActiveState","SubState","Job"},contract,deadline);
     }
+    if(sssd) readProperties(bus.get(),object,"org.freedesktop.systemd1.Unit",{"InvocationID"},contract,deadline);
     if(socket) {
         const std::vector<std::string> socketUnit{"Id","Names","LoadState","ActiveState","SubState","Job","InvocationID","Triggers"};
         readProperties(bus.get(),object,"org.freedesktop.systemd1.Unit",socketUnit,contract,deadline);
@@ -297,6 +298,13 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
     } else {
         auto service = serviceProperties; service.insert(service.end(), commands.begin(), commands.end());
         if(runtime)service.push_back("MainPID");
+        if(sssd) {
+            const std::vector<std::string> extra{"Type","NotifyAccess","ReadWritePaths","ReadOnlyPaths",
+                "InaccessiblePaths","MountFlags","PrivateMounts","PrivateTmp","PrivateDevices","ProtectClock",
+                "ProtectKernelTunables","ProtectKernelModules","ProtectKernelLogs","ProtectControlGroups",
+                "ProtectHome","ProtectSystem","BindPaths","BindReadOnlyPaths","TemporaryFileSystem","ProtectHostname"};
+            service.insert(service.end(),extra.begin(),extra.end());
+        }
         readProperties(bus.get(), object, "org.freedesktop.systemd1.Service", service, contract, deadline);
     }
     timeout(bus.get(), deadline);
@@ -307,6 +315,7 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
     if (envResult < 0) requireBus(envResult, "manager Environment");
     unsigned count = 0; auto environment = readValue(env.get(), count);
     std::sort(environment.begin(), environment.end()); contract["launch.ManagerEnvironment"] = environment.dump();
+    if(sssd) readProperties(bus.get(),"/org/freedesktop/systemd1","org.freedesktop.systemd1.Manager",{"UnitPath"},contract,deadline);
     const auto fragment = value(contract, "FragmentPath").get<std::string>();
     const auto dropins = value(contract, "DropInPaths");
     if (fragment.empty() || !dropins.is_array() || dropins.size() > 64)
@@ -319,6 +328,9 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
 }
 LaunchContract readLaunchContract(const std::string& unit,std::chrono::steady_clock::time_point deadline) {
     return readContract(unit,deadline,false);
+}
+LaunchContract readSssdLaunchContract(std::chrono::steady_clock::time_point deadline) {
+    return readContract("sssd.service",deadline,false,true,true);
 }
 LaunchContract readAltSshRuntime(std::chrono::steady_clock::time_point deadline) {
     return readContract("sshd.service",deadline,false,true);

@@ -3275,3 +3275,20 @@ target_include_directories(sssd_uninstall_inspection_tests PRIVATE ${CMAKE_SOURC
 target_link_libraries(sssd_uninstall_inspection_tests PRIVATE fic-core fic-platform)
 add_test(NAME sssd_uninstall_inspection_tests COMMAND sssd_uninstall_inspection_tests)
 set_tests_properties(sssd_uninstall_inspection_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+
+set(FIC_SSSD_I1_SOURCES
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdServiceAdmission.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdVerifiedInputClosure.cpp)
+add_executable(sssd_input_closure_tests fic/service/SssdInputClosureTests.cpp
+    ${FIC_SSSD_I1_SOURCES} ${FIC_VERIFIED_CONFIG_SOURCES})
+target_include_directories(sssd_input_closure_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sssd_input_closure_tests PRIVATE fic-core fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+add_test(NAME sssd_input_closure_tests COMMAND sssd_input_closure_tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/integration/sssd-i1/launch-fixtures.json)
+set_tests_properties(sssd_input_closure_tests PROPERTIES LABELS unit)
+
+if(Python3_Interpreter_FOUND)
+    add_test(NAME sssd_i1_evidence_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/integration/sssd-i1/check-evidence.py)
+    set_tests_properties(sssd_i1_evidence_checks PROPERTIES LABELS "unit;integration")
+endif()

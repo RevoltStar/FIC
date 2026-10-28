@@ -1,0 +1,12 @@
+ARG BASE_IMAGE=debian:12
+FROM ${BASE_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive container=docker
+RUN if test -f /etc/altlinux-release; then \
+ sed -i s@ftp.altlinux.org/pub/distributions/ALTLinux@distrib-coffee.ipsl.jussieu.fr/pub/linux/altlinux@g /etc/apt/sources.list.d/*.list && mkdir -p /var/cache/apt/archives/partial && apt-get -o Acquire::http::Timeout=20 update && apt-get install -y gcc-c++ glibc-devel make cmake pkg-config openssl-devel libsystemd-devel nlohmann-json-devel python3 systemd dbus util-linux iproute2 sssd sssd-tools sssd-ldap sssd-client ldb-tools; \
+ else apt-get update && apt-get install -y --no-install-recommends build-essential cmake pkg-config libssl-dev libsystemd-dev nlohmann-json3-dev python3 systemd-sysv dbus util-linux iproute2 sssd sssd-tools sssd-ldap libnss-sss libpam-sss ldb-tools; fi
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
+# ALT's libsystemd.pc names libcap.pc as a required development dependency.
+RUN if test -f /etc/altlinux-release; then apt-get install -y libcap-devel; fi
+# Match the research stock-provider installation, including native LDB modules.
+RUN if test -f /etc/altlinux-release; then apt-get install -y sssd-ad sssd-ipa sssd-proxy samba-dc-libs; fi

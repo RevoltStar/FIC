@@ -174,3 +174,38 @@ its owned key; target ownership release must not be blocked by a foreign overrid
 Current Prepared recovery can promote source+restart observations. Do not carry
 these behaviors into uncertain verified activation recovery without new receipts.
 These findings are documented, **not fixed** by R1/R2.
+
+## I1 implementation validation (separate from historical R1/R2)
+
+The new [I1 API](sssd-verified-activation-design.md#implemented-i1-read-only-api)
+observes stock launch contracts and complete inputs read-only. New results live
+in [I1 evidence](../tests/integration/sssd-i1/evidence.json); old R1/R2 JSON/source
+exports are unchanged. Normal saved-evidence CTest is not native execution.
+
+All five stock profiles can be classified/captured by I1, including older
+PIDFile profiles. This does not change their generic-engine Unsupported result.
+Debian13 privileged precommands and Ubuntu26 nonroot identity/precommands require
+I3's protected metadata/consumer proofs. Ubuntu26 stock chown/chmod resolve to
+reviewed uutils paths; ALT uses configuration user=_sssd and an installed empty
+sssd.service.d directory. No automatic package/permission repair occurs in I1.
+
+Two native environment findings are bounded explicitly: missing ALT LDB backend
+modules prevented fixture startup until the full native provider package closure
+was installed; ALT config-check reports ignored hidden/suffix files as exit-1
+merge warnings despite zero validator issues. Neither is an I1 runtime policy
+success/failure claim. The runner separately asserts monitor startup, ConfigDB,
+merge order, exact warnings and I1 results. The native unloaded-drop-in failure
+on Debian12 was fixed by checking the native unit lookup negative set rather
+than relying only on loaded properties. See the reproducible runner for details.
+
+| I1 native userspace | Installed SSSD | Read-only launch/closure | Launch/source races and late snippets | Remaining activation work |
+|---|---|---|---|---|
+| Debian 12 | 2.8.2-4+deb12u1 | PASS | PASS | stock PIDFile unsupported by generic engine; I3 |
+| Debian 13 | 2.10.1-2+b1 | PASS | PASS | privileged precommands/metadata and full SSSD proofs; I3 |
+| Ubuntu 24.04 | 2.9.4-1.1ubuntu6.8 | PASS | PASS | stock PIDFile unsupported by generic engine; I3 |
+| Ubuntu 26.04 | 2.12.0-1ubuntu5.5 | PASS | PASS | nonroot identity, precommands/metadata/consumers; I3 |
+| ALT p11 | 2.9.8-alt3 | PASS | PASS | stock PIDFile, _sssd responder identity and full proofs; I3 |
+
+These are new I1 native runs on a shared WSL kernel, not activation or deployment
+certification. Exact systemd/package versions, commands and status-specific
+observations are retained in the linked new evidence.

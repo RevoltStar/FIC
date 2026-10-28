@@ -11,6 +11,8 @@ enum class ActivationProfile { ActiveNotifyService, UbuntuSshSocket, AltSshSimpl
 using LaunchContract = std::map<std::string, std::string>;
 LaunchContract readLaunchContract(const std::string& unit,
                                  std::chrono::steady_clock::time_point deadline);
+// Read-only SSSD observation; adds typed state and namespace fields, grants no activation profile.
+LaunchContract readSssdLaunchContract(std::chrono::steady_clock::time_point deadline);
 LaunchContract readAltSshRuntime(std::chrono::steady_clock::time_point deadline);
 LaunchContract readSshSocketContract(std::chrono::steady_clock::time_point deadline);
 // Operation-scoped GC references only: no start/reload/enable job. Actual launch

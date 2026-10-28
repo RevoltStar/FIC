@@ -1,0 +1,27 @@
+#pragma once
+#include "service/VerifiedConfigLaunchContract.h"
+namespace fic::service::sssd {
+using Deadline = std::chrono::steady_clock::time_point;
+// No activation authority, receipt or ownership. Exceptions use detail::Failure.
+struct LaunchProfile {
+    std::string platform, fragment, environment, user, group, pidFile;
+    std::vector<std::vector<std::string>> preCommands;
+    std::string unitSha256;
+};
+LaunchProfile launchProfile(const std::string& platform);
+void validateLaunchProfile(const detail::LaunchContract&, const LaunchProfile&);
+enum class AdmissionState { Candidate, Stopped, Failed, Transitioning, Unknown };
+AdmissionState classifyService(const detail::LaunchContract&);
+struct SssdLaunchReference {
+    LaunchProfile profile;
+    detail::LaunchContract contract;
+    // Descriptor-rooted fingerprints, including executable bytes/metadata.
+    std::map<std::string,std::string> executables;
+    std::string processIdentity, environmentFingerprint, unitLookupFingerprint;
+    bool genericActivationSupported = false; // I1 never authorizes I3.
+    std::string activationLimit;
+};
+SssdLaunchReference admit(Deadline deadline);
+void revalidate(const SssdLaunchReference&, Deadline deadline);
+namespace detail_i1 { std::string environmentReference(const std::string& path); }
+} // namespace fic::service::sssd

@@ -1,0 +1,4878 @@
+{
+  "schema": "sssd-i1-native-v1",
+  "base": "19a97e7e1a7ef1179b3f3be0d2d893dcd7c3f91d",
+  "scope": "I1 read-only input/launch observations; not completed A/B/C/P or policy activation",
+  "environment": "Docker, stock distribution SSSD/systemd PID1, network none/loopback, no runtime host binds, shared WSL kernel",
+  "profiles": {
+    "debian-12": {
+      "status": "PASS",
+      "inventory": {
+        "platform": "debian-12",
+        "version": {
+          "command": [
+            "sssd",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "2.8.2\n",
+          "stderr": ""
+        },
+        "packages": {
+          "command": [
+            "dpkg-query",
+            "-W",
+            "-f",
+            "${binary:Package} ${Version}\n",
+            "sssd-common",
+            "sssd-tools",
+            "systemd"
+          ],
+          "exit_code": 0,
+          "stdout": "sssd-common 2.8.2-4+deb12u1\nsssd-tools 2.8.2-4+deb12u1\nsystemd 252.39-1~deb12u2\n",
+          "stderr": ""
+        },
+        "os_release": "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+        "kernel": {
+          "command": [
+            "uname",
+            "-r"
+          ],
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "unit": {
+          "command": [
+            "systemctl",
+            "cat",
+            "sssd.service"
+          ],
+          "exit_code": 0,
+          "stdout": "# /lib/systemd/system/sssd.service\n[Unit]\nDescription=System Security Services Daemon\n# SSSD must be running before we permit user sessions\nBefore=systemd-user-sessions.service nss-user-lookup.target\nWants=nss-user-lookup.target\nStartLimitIntervalSec=50s\nStartLimitBurst=5\nConditionPathExists=|/etc/sssd/sssd.conf\nConditionDirectoryNotEmpty=|/etc/sssd/conf.d/\n\n[Service]\nEnvironment=DEBUG_LOGGER=--logger=files\nEnvironmentFile=-/etc/default/sssd\nExecStart=/usr/sbin/sssd -i ${DEBUG_LOGGER}\nType=notify\nNotifyAccess=main\nPIDFile=/run/sssd.pid\nCapabilityBoundingSet=  CAP_IPC_LOCK CAP_CHOWN CAP_DAC_READ_SEARCH CAP_KILL CAP_NET_ADMIN CAP_SYS_NICE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_SYS_ADMIN CAP_SYS_RESOURCE CAP_BLOCK_SUSPEND\nRestart=on-abnormal\n\n[Install]\nWantedBy=multi-user.target\n",
+          "stderr": ""
+        }
+      },
+      "image_id": "sha256:568cbc1fb5455fe197021226b38b76466816d734b37dc05b2c9250b330b900fd",
+      "raw_sha256": "88803663c5554f379c930021ea102204caeb909568e5061163fcda161000c319",
+      "observations": {
+        "stopped": {
+          "diagnostic": "SSSD: service is stopped, failed, transitioning or unknown",
+          "status": "UnsupportedConfiguration"
+        },
+        "stock-start": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "93",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2972944299",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2973195517",
+            "Job": "",
+            "InvocationID": "773cf9108305411da4c271a739259806"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1793214051\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 9\noffline_credentials_expiration: 30\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "main-snippets": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "platform": "debian-12",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "30"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 6925,
+              "mount": 1115,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 1,
+              "inode": 6994,
+              "mount": 1115,
+              "objects": 3,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "ordered-duplicates-hidden": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf"
+          ],
+          "platform": "debian-12",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/90-last.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 6925,
+              "mount": 1115,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 6,
+              "inode": 6994,
+              "mount": 1115,
+              "objects": 8,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "native-merge": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "116",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2973769341",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2973952895",
+            "Job": "",
+            "InvocationID": "c1596b29b20e466d94a36387a4a2c189"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1793214051\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "native-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 3\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n",
+          "stderr": ""
+        },
+        "native-source-load-log": {
+          "lines": [
+            "(2026-10-28 19:00:51): [sssd] [confdb_init_domain_provider_and_enum] (0x0400): Please note that when enumeration is disabled `getent passwd` does not return all users by design. See sssd.conf man page for more detailed information",
+            "(2026-10-28 19:00:52): [sssd] [confdb_init_domain_provider_and_enum] (0x0400): Please note that when enumeration is disabled `getent passwd` does not return all users by design. See sssd.conf man page for more detailed information"
+          ],
+          "note": "monitor log plus ConfigDB; config-check is separate, not runtime semantics proof"
+        },
+        "late-matching": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "debian-12",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 6925,
+              "mount": 1115,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 6994,
+              "mount": 1115,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-conflicting": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "debian-12",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "99"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 6925,
+              "mount": 1115,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 6994,
+              "mount": 1115,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-unrelated": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "debian-12",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "8"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 6925,
+              "mount": 1115,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 6994,
+              "mount": 1115,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "race-create": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-delete": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-inode": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-bytes": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-metadata": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-restore": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "unsafe-symlink": {
+          "diagnostic": "unsafe tree entry 40-unsafe.conf: Too many levels of symbolic links",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-hardlink": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-mode": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-owner": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-directory": {
+          "diagnostic": "SSSD inputs: nested/nonregular conf.d entries",
+          "status": "UnsupportedConfiguration"
+        },
+        "profile-group-mode": {
+          "diagnostic": "SSSD inputs: configuration access mode outside native profile",
+          "status": "UnsupportedConfiguration"
+        },
+        "native-group-mode-check": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 1,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 1\nFile /etc/sssd/conf.d/40-group.conf did not pass access check. Skipping.\n\nUsed configuration snippet files: 4\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "nested-mount": {
+          "diagnostic": "special permission bits are unsupported in snapshots",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-environment-change": {
+          "diagnostic": "SSSD launch changed",
+          "status": "InterferenceDetected"
+        },
+        "optional-environment-absent": {
+          "absent": [
+            "/etc/default/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "debian-12",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 0,
+              "inode": 6923,
+              "mount": 1115,
+              "objects": 1,
+              "present": false
+            },
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 6994,
+              "mount": 1115,
+              "objects": 9,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "unsupported-environment-variable": {
+          "diagnostic": "SSSD inputs: unsupported EnvironmentFile assignment",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-dropin-change": {
+          "diagnostic": "SSSD: unapproved nonempty drop-in directory: /etc/systemd/system/sssd.service.d",
+          "status": "InterferenceDetected"
+        },
+        "absent-main-native": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "174",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2975572344",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2975719191",
+            "Job": "",
+            "InvocationID": "ea7929852e6a4989b0530299fc355595"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "absent-main": {
+          "absent": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/conf.d/00-complete.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "debian-12",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 129881,
+              "mount": 1115,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 6994,
+              "mount": 1115,
+              "objects": 9,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "alternate-check-default": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf"
+          ],
+          "exit_code": 1,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 1\nDirectory /run/sssd-alt/conf.d does not exist.\n\nUsed configuration snippet files: 0\n",
+          "stderr": ""
+        },
+        "alternate-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 5\n/etc/sssd/conf.d/00-complete.conf\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "absent-all": {
+          "diagnostic": "SSSD inputs: neither main nor loadable snippets present",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-unit-source-change": {
+          "diagnostic": "SSSD: unreviewed native unit source",
+          "status": "InterferenceDetected"
+        }
+      },
+      "command": [
+        "tests/integration/sssd-i1/run-native.sh",
+        "fic-sssd-i1:debian12",
+        "debian-12"
+      ],
+      "activation_status": "NOT_TESTED",
+      "runtime_receipt": false,
+      "i3_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported"
+    },
+    "debian-13": {
+      "status": "PASS",
+      "inventory": {
+        "platform": "debian-13",
+        "version": {
+          "command": [
+            "sssd",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "2.10.1\n",
+          "stderr": ""
+        },
+        "packages": {
+          "command": [
+            "dpkg-query",
+            "-W",
+            "-f",
+            "${binary:Package} ${Version}\n",
+            "sssd-common",
+            "sssd-tools",
+            "systemd"
+          ],
+          "exit_code": 0,
+          "stdout": "sssd-common 2.10.1-2+b1\nsssd-tools 2.10.1-2+b1\nsystemd 257.13-1~deb13u1\n",
+          "stderr": ""
+        },
+        "os_release": "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.7\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n",
+        "kernel": {
+          "command": [
+            "uname",
+            "-r"
+          ],
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "unit": {
+          "command": [
+            "systemctl",
+            "cat",
+            "sssd.service"
+          ],
+          "exit_code": 0,
+          "stdout": "# /usr/lib/systemd/system/sssd.service\n[Unit]\nDescription=System Security Services Daemon\n# SSSD must be running before we permit user sessions\nBefore=systemd-user-sessions.service nss-user-lookup.target\nWants=nss-user-lookup.target\nStartLimitIntervalSec=50s\nStartLimitBurst=5\nConditionPathExists=|/etc/sssd/sssd.conf\nConditionDirectoryNotEmpty=|/etc/sssd/conf.d/\n\n[Service]\nEnvironment=DEBUG_LOGGER=--logger=files\nEnvironmentFile=-/etc/default/sssd\nExecStartPre=+-/bin/chown -f -R root:root /etc/sssd\nExecStartPre=+-/bin/chmod -f -R g+r /etc/sssd\nExecStartPre=+-/bin/sh -c \"/bin/chown -f root:root /var/lib/sss/db/*.ldb\"\nExecStartPre=+-/bin/chown -f -R root:root /var/lib/sss/gpo_cache\nExecStartPre=+-/bin/sh -c \"/bin/chown -f root:root /var/log/sssd/*.log\"\nExecStart=/usr/sbin/sssd -i ${DEBUG_LOGGER}\nType=notify\nNotifyAccess=main\nRestart=on-abnormal\nCapabilityBoundingSet= CAP_SETGID CAP_SETUID CAP_DAC_READ_SEARCH \nSecureBits=noroot noroot-locked\nUser=root\nGroup=root\n# Note: SSSD package was built without support of running as non-privileged user\n\n[Install]\nWantedBy=multi-user.target\n",
+          "stderr": ""
+        }
+      },
+      "image_id": "sha256:401c5afe979f7d42d438d581d4f18447a758353eed2779c6dd49f7fa4dce4b8b",
+      "raw_sha256": "54f0fe619985f04873187289f64779e775862b08c95493d22e0b220394ef17da",
+      "observations": {
+        "stopped": {
+          "diagnostic": "SSSD: service is stopped, failed, transitioning or unknown",
+          "status": "UnsupportedConfiguration"
+        },
+        "stock-start": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "146",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2986718157",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2986978784",
+            "Job": "",
+            "InvocationID": "be065b09bd2b4ee795d68a4a77467678"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 3\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 9\noffline_credentials_expiration: 30\ndistinguishedName: cn=pam,cn=config\n\n# returned 3 records\n# 3 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "main-snippets": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "platform": "debian-13",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "30"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 10431,
+              "mount": 1354,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 1,
+              "inode": 10485,
+              "mount": 1354,
+              "objects": 3,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "ordered-duplicates-hidden": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf"
+          ],
+          "platform": "debian-13",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/90-last.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 10431,
+              "mount": 1354,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 6,
+              "inode": 10485,
+              "mount": 1354,
+              "objects": 8,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "native-merge": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "188",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2987930638",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2988128499",
+            "Job": "",
+            "InvocationID": "ab3da2f959524694a5c8892fe878519a"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 3\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 3 records\n# 3 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "native-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 3\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n",
+          "stderr": ""
+        },
+        "native-source-load-log": {
+          "lines": [],
+          "note": "monitor log plus ConfigDB; config-check is separate, not runtime semantics proof"
+        },
+        "late-matching": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "debian-13",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 10431,
+              "mount": 1354,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 10485,
+              "mount": 1354,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-conflicting": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "debian-13",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "99"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 10431,
+              "mount": 1354,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 10485,
+              "mount": 1354,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-unrelated": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "debian-13",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "8"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 10431,
+              "mount": 1354,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 10485,
+              "mount": 1354,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "race-create": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-delete": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-inode": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-bytes": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-metadata": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-restore": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "unsafe-symlink": {
+          "diagnostic": "unsafe tree entry 40-unsafe.conf: Too many levels of symbolic links",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-hardlink": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-mode": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-owner": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-directory": {
+          "diagnostic": "SSSD inputs: nested/nonregular conf.d entries",
+          "status": "UnsupportedConfiguration"
+        },
+        "profile-group-mode": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/40-group.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "debian-13",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 10431,
+              "mount": 1354,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 10485,
+              "mount": 1354,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "native-group-mode-check": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 5\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/40-group.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "nested-mount": {
+          "diagnostic": "special permission bits are unsupported in snapshots",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-environment-change": {
+          "diagnostic": "SSSD launch changed",
+          "status": "InterferenceDetected"
+        },
+        "optional-environment-absent": {
+          "absent": [
+            "/etc/default/sssd"
+          ],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "debian-13",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 0,
+              "inode": 10430,
+              "mount": 1354,
+              "objects": 1,
+              "present": false
+            },
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 10485,
+              "mount": 1354,
+              "objects": 9,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "unsupported-environment-variable": {
+          "diagnostic": "SSSD inputs: unsupported EnvironmentFile assignment",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-dropin-change": {
+          "diagnostic": "unit needs reload, is transient, or has external generated source",
+          "status": "InterferenceDetected"
+        },
+        "absent-main-native": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "268",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2990063565",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2990214502",
+            "Job": "",
+            "InvocationID": "a9ca621fedfb42ed8c2045620e5521e7"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 3\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 3 records\n# 3 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "absent-main": {
+          "absent": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/conf.d/00-complete.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "debian-13",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 129800,
+              "mount": 1354,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 10485,
+              "mount": 1354,
+              "objects": 9,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "alternate-check-default": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf"
+          ],
+          "exit_code": 1,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 1\nDirectory /run/sssd-alt/conf.d does not exist.\n\nUsed configuration snippet files: 0\n",
+          "stderr": ""
+        },
+        "alternate-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 5\n/etc/sssd/conf.d/00-complete.conf\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "absent-all": {
+          "diagnostic": "SSSD inputs: neither main nor loadable snippets present",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-unit-source-change": {
+          "diagnostic": "SSSD: unreviewed native unit source",
+          "status": "InterferenceDetected"
+        }
+      },
+      "command": [
+        "tests/integration/sssd-i1/run-native.sh",
+        "fic-sssd-i1:debian13",
+        "debian-13"
+      ],
+      "activation_status": "NOT_TESTED",
+      "runtime_receipt": false,
+      "i3_limit": "I3 consumer/runtime/semantics/P proofs not implemented"
+    },
+    "ubuntu-24.04": {
+      "status": "PASS",
+      "inventory": {
+        "platform": "ubuntu-24.04",
+        "version": {
+          "command": [
+            "sssd",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "2.9.4\n",
+          "stderr": ""
+        },
+        "packages": {
+          "command": [
+            "dpkg-query",
+            "-W",
+            "-f",
+            "${binary:Package} ${Version}\n",
+            "sssd-common",
+            "sssd-tools",
+            "systemd"
+          ],
+          "exit_code": 0,
+          "stdout": "sssd-common 2.9.4-1.1ubuntu6.8\nsssd-tools 2.9.4-1.1ubuntu6.8\nsystemd 255.4-1ubuntu8.18\n",
+          "stderr": ""
+        },
+        "os_release": "PRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n",
+        "kernel": {
+          "command": [
+            "uname",
+            "-r"
+          ],
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "unit": {
+          "command": [
+            "systemctl",
+            "cat",
+            "sssd.service"
+          ],
+          "exit_code": 0,
+          "stdout": "# /usr/lib/systemd/system/sssd.service\n[Unit]\nDescription=System Security Services Daemon\n# SSSD must be running before we permit user sessions\nBefore=systemd-user-sessions.service nss-user-lookup.target\nWants=nss-user-lookup.target\nStartLimitIntervalSec=50s\nStartLimitBurst=5\nConditionPathExists=|/etc/sssd/sssd.conf\nConditionDirectoryNotEmpty=|/etc/sssd/conf.d/\n\n[Service]\nEnvironment=DEBUG_LOGGER=--logger=files\nEnvironmentFile=-/etc/default/sssd\nExecStart=/usr/sbin/sssd -i ${DEBUG_LOGGER}\nType=notify\nNotifyAccess=main\nPIDFile=/run/sssd.pid\nCapabilityBoundingSet=  CAP_IPC_LOCK CAP_CHOWN CAP_DAC_READ_SEARCH CAP_KILL CAP_NET_ADMIN CAP_SYS_NICE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_SYS_ADMIN CAP_SYS_RESOURCE CAP_BLOCK_SUSPEND\nRestart=on-abnormal\n\n[Install]\nWantedBy=multi-user.target\n",
+          "stderr": ""
+        }
+      },
+      "image_id": "sha256:79ab3b072281990d4f76c6720a97eca90414a0b2a8105cb7d5ce477f917a07b1",
+      "raw_sha256": "c632838da055198c91aaf6334f8892a61e78c47f034929f9e7a544c458c19327",
+      "observations": {
+        "stopped": {
+          "diagnostic": "SSSD: service is stopped, failed, transitioning or unknown",
+          "status": "UnsupportedConfiguration"
+        },
+        "stock-start": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "127",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2999508204",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2999766689",
+            "Job": "",
+            "InvocationID": "fcf4713b7f90461497c9a205ac4ddcd0"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1793214078\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 9\noffline_credentials_expiration: 30\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "main-snippets": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "platform": "ubuntu-24.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "30"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 13087,
+              "mount": 1117,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 1,
+              "inode": 13140,
+              "mount": 1117,
+              "objects": 3,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "ordered-duplicates-hidden": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf"
+          ],
+          "platform": "ubuntu-24.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/90-last.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 13087,
+              "mount": 1117,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 6,
+              "inode": 13140,
+              "mount": 1117,
+              "objects": 8,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "native-merge": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "158",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "3000200287",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "3000337482",
+            "Job": "",
+            "InvocationID": "45829c6125894fc99ba8f4f7d08c6b06"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1793214078\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "native-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 3\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n",
+          "stderr": ""
+        },
+        "native-source-load-log": {
+          "lines": [
+            "(2026-10-28 19:01:18): [sssd] [confdb_init_domain_provider_and_enum] (0x0400): Please note that when enumeration is disabled `getent passwd` does not return all users by design. See sssd.conf man page for more detailed information",
+            "(2026-10-28 19:01:19): [sssd] [confdb_init_domain_provider_and_enum] (0x0400): Please note that when enumeration is disabled `getent passwd` does not return all users by design. See sssd.conf man page for more detailed information"
+          ],
+          "note": "monitor log plus ConfigDB; config-check is separate, not runtime semantics proof"
+        },
+        "late-matching": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "ubuntu-24.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 13087,
+              "mount": 1117,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 13140,
+              "mount": 1117,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-conflicting": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "ubuntu-24.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "99"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 13087,
+              "mount": 1117,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 13140,
+              "mount": 1117,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-unrelated": {
+          "absent": [],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "ubuntu-24.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "8"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 13087,
+              "mount": 1117,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 13140,
+              "mount": 1117,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "race-create": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-delete": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-inode": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-bytes": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-metadata": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-restore": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "unsafe-symlink": {
+          "diagnostic": "unsafe tree entry 40-unsafe.conf: Too many levels of symbolic links",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-hardlink": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-mode": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-owner": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-directory": {
+          "diagnostic": "SSSD inputs: nested/nonregular conf.d entries",
+          "status": "UnsupportedConfiguration"
+        },
+        "profile-group-mode": {
+          "diagnostic": "SSSD inputs: configuration access mode outside native profile",
+          "status": "UnsupportedConfiguration"
+        },
+        "native-group-mode-check": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 1,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 1\nFile /etc/sssd/conf.d/40-group.conf did not pass access check. Skipping.\n\nUsed configuration snippet files: 4\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "nested-mount": {
+          "diagnostic": "special permission bits are unsupported in snapshots",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-environment-change": {
+          "diagnostic": "SSSD launch changed",
+          "status": "InterferenceDetected"
+        },
+        "optional-environment-absent": {
+          "absent": [
+            "/etc/default/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "ubuntu-24.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 0,
+              "inode": 13086,
+              "mount": 1117,
+              "objects": 1,
+              "present": false
+            },
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 13140,
+              "mount": 1117,
+              "objects": 9,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "unsupported-environment-variable": {
+          "diagnostic": "SSSD inputs: unsupported EnvironmentFile assignment",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-dropin-change": {
+          "diagnostic": "SSSD: unapproved nonempty drop-in directory: /etc/systemd/system/sssd.service.d",
+          "status": "InterferenceDetected"
+        },
+        "absent-main-native": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "MainPID": "228",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "3001816321",
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "3001955066",
+            "Job": "",
+            "InvocationID": "14d358dd9d764847af1441bb124be4ee"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "absent-main": {
+          "absent": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/conf.d/00-complete.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "ubuntu-24.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 129859,
+              "mount": 1117,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 13140,
+              "mount": 1117,
+              "objects": 9,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "alternate-check-default": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf"
+          ],
+          "exit_code": 1,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 1\nDirectory /run/sssd-alt/conf.d does not exist.\n\nUsed configuration snippet files: 0\n",
+          "stderr": ""
+        },
+        "alternate-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 5\n/etc/sssd/conf.d/00-complete.conf\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "absent-all": {
+          "diagnostic": "SSSD inputs: neither main nor loadable snippets present",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-unit-source-change": {
+          "diagnostic": "SSSD: unreviewed native unit source",
+          "status": "InterferenceDetected"
+        }
+      },
+      "command": [
+        "tests/integration/sssd-i1/run-native.sh",
+        "fic-sssd-i1:ubuntu2404",
+        "ubuntu-24.04"
+      ],
+      "activation_status": "NOT_TESTED",
+      "runtime_receipt": false,
+      "i3_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported"
+    },
+    "ubuntu-26.04": {
+      "status": "PASS",
+      "inventory": {
+        "platform": "ubuntu-26.04",
+        "version": {
+          "command": [
+            "sssd",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "2.12.0\n",
+          "stderr": ""
+        },
+        "packages": {
+          "command": [
+            "dpkg-query",
+            "-W",
+            "-f",
+            "${binary:Package} ${Version}\n",
+            "sssd-common",
+            "sssd-tools",
+            "systemd"
+          ],
+          "exit_code": 0,
+          "stdout": "sssd-common 2.12.0-1ubuntu5.5\nsssd-tools 2.12.0-1ubuntu5.5\nsystemd 259.9-0ubuntu0.1\n",
+          "stderr": ""
+        },
+        "os_release": "PRETTY_NAME=\"Ubuntu 26.04.1 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"26.04\"\nVERSION=\"26.04.1 LTS (Resolute Raccoon)\"\nVERSION_CODENAME=resolute\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=resolute\nLOGO=ubuntu-logo\n",
+        "kernel": {
+          "command": [
+            "uname",
+            "-r"
+          ],
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "unit": {
+          "command": [
+            "systemctl",
+            "cat",
+            "sssd.service"
+          ],
+          "exit_code": 0,
+          "stdout": "# /usr/lib/systemd/system/sssd.service\n[Unit]\nDescription=System Security Services Daemon\n# SSSD must be running before we permit user sessions\nBefore=systemd-user-sessions.service nss-user-lookup.target\nWants=nss-user-lookup.target\nStartLimitIntervalSec=50s\nStartLimitBurst=5\nConditionPathExists=|/etc/sssd/sssd.conf\nConditionDirectoryNotEmpty=|/etc/sssd/conf.d/\n\n[Service]\nEnvironment=DEBUG_LOGGER=--logger=files\nEnvironmentFile=-/etc/default/sssd\n# '-H' is used with /etc/sssd to support use case where /etc/sssd is a symlink.\n# '-H' only allows following a command line argument itself, everything else encountered due to '-R' isn't followed.\nExecStartPre=+-/bin/chown -f -R -H root:sssd /etc/sssd\nExecStartPre=+-/bin/chmod -f -R g+r /etc/sssd\nExecStartPre=+-/bin/chmod -f g+x /etc/sssd\nExecStartPre=+-/bin/chmod -f g+x /etc/sssd/conf.d\nExecStartPre=+-/bin/chmod -f g+x /etc/sssd/pki\nExecStartPre=+-/bin/sh -c \"/bin/chown -f -h sssd:sssd /var/lib/sss/db/*.ldb\"\nExecStartPre=+-/bin/chown -f -R -h sssd:sssd /var/lib/sss/gpo_cache\nExecStartPre=+-/bin/sh -c \"/bin/chown -f -h sssd:sssd /var/log/sssd/*.log*\"\nExecStart=/usr/sbin/sssd -i ${DEBUG_LOGGER}\nType=notify\nNotifyAccess=main\nRestart=on-abnormal\nCapabilityBoundingSet= CAP_SETGID CAP_SETUID CAP_DAC_READ_SEARCH\nSecureBits=noroot noroot-locked\nUser=sssd\nGroup=sssd\n# If service configured to be run under \"root\", uncomment \"SupplementaryGroups\"\n#SupplementaryGroups=sssd\n\n[Install]\nWantedBy=multi-user.target\n",
+          "stderr": ""
+        }
+      },
+      "image_id": "sha256:7b0d95952cfe1fd85710c6c1b1ce43bfa5f780e2d4eca438f8d762b866263910",
+      "raw_sha256": "2f430372854b52b91fc467295ff8cd759299758415a9245c9d17198dfd981ad6",
+      "observations": {
+        "stopped": {
+          "diagnostic": "SSSD: service is stopped, failed, transitioning or unknown",
+          "status": "UnsupportedConfiguration"
+        },
+        "stock-start": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "3011686066",
+            "Job": "",
+            "InvocationID": "e88eea87d7374954bdf83121e3414bd9",
+            "MainPID": "125",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "3011398330"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 3\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 9\noffline_credentials_expiration: 30\ndistinguishedName: cn=pam,cn=config\n\n# returned 3 records\n# 3 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "main-snippets": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "platform": "ubuntu-26.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "30"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 21467,
+              "mount": 1113,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 1,
+              "inode": 21563,
+              "mount": 1113,
+              "objects": 3,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "ordered-duplicates-hidden": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf"
+          ],
+          "platform": "ubuntu-26.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/90-last.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 21467,
+              "mount": 1113,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 6,
+              "inode": 21563,
+              "mount": 1113,
+              "objects": 8,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "native-merge": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "3012966235",
+            "Job": "",
+            "InvocationID": "0070f99d7ea045b989bd5630561bc5b6",
+            "MainPID": "171",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "3012830770"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 3\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 3 records\n# 3 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "native-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 3\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n",
+          "stderr": ""
+        },
+        "native-source-load-log": {
+          "lines": [],
+          "note": "monitor log plus ConfigDB; config-check is separate, not runtime semantics proof"
+        },
+        "late-matching": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "ubuntu-26.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 21467,
+              "mount": 1113,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 21563,
+              "mount": 1113,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-conflicting": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "ubuntu-26.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "99"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 21467,
+              "mount": 1113,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 21563,
+              "mount": 1113,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-unrelated": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": true,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "ubuntu-26.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "8"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 21467,
+              "mount": 1113,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 21563,
+              "mount": 1113,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "race-create": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-delete": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-inode": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-bytes": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-metadata": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-restore": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "unsafe-symlink": {
+          "diagnostic": "unsafe tree entry 40-unsafe.conf: Too many levels of symbolic links",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-hardlink": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-mode": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-owner": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-directory": {
+          "diagnostic": "SSSD inputs: nested/nonregular conf.d entries",
+          "status": "UnsupportedConfiguration"
+        },
+        "profile-group-mode": {
+          "absent": [],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": false,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/40-group.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "ubuntu-26.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 21467,
+              "mount": 1113,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 21563,
+              "mount": 1113,
+              "objects": 10,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "native-group-mode-check": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 5\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/40-group.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "nested-mount": {
+          "diagnostic": "special permission bits are unsupported in snapshots",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-environment-change": {
+          "diagnostic": "SSSD launch changed",
+          "status": "InterferenceDetected"
+        },
+        "optional-environment-absent": {
+          "absent": [
+            "/etc/default/sssd"
+          ],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "ubuntu-26.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 0,
+              "inode": 21440,
+              "mount": 1113,
+              "objects": 1,
+              "present": false
+            },
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 21563,
+              "mount": 1113,
+              "objects": 9,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "unsupported-environment-variable": {
+          "diagnostic": "SSSD inputs: unsupported EnvironmentFile assignment",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-dropin-change": {
+          "diagnostic": "unit needs reload, is transient, or has external generated source",
+          "status": "InterferenceDetected"
+        },
+        "absent-main-native": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "3018214180",
+            "Job": "",
+            "InvocationID": "296dd403ecca4946b7d276bccba639d6",
+            "MainPID": "258",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "3018059814"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 3\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 3 records\n# 3 entries\n# 0 referrals\n",
+            "stderr": "server_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "absent-main": {
+          "absent": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "activation_limit": "I3 consumer/runtime/semantics/P proofs not implemented",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/conf.d/00-complete.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "ubuntu-26.04",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "nss, pam"
+              }
+            }
+          },
+          "sources": {
+            "/etc/default/sssd": {
+              "files": 1,
+              "inode": 129855,
+              "mount": 1113,
+              "objects": 1,
+              "present": true
+            },
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 21563,
+              "mount": 1113,
+              "objects": 9,
+              "present": true
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "alternate-check-default": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 1\nDirectory /run/sssd-alt/conf.d does not exist.\n\nUsed configuration snippet files: 0\n",
+          "stderr": ""
+        },
+        "alternate-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 0\n\nUsed configuration snippet files: 5\n/etc/sssd/conf.d/00-complete.conf\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "absent-all": {
+          "diagnostic": "SSSD inputs: neither main nor loadable snippets present",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-unit-source-change": {
+          "diagnostic": "SSSD: unreviewed native unit source",
+          "status": "InterferenceDetected"
+        }
+      },
+      "command": [
+        "tests/integration/sssd-i1/run-native.sh",
+        "fic-sssd-i1:ubuntu2604",
+        "ubuntu-26.04"
+      ],
+      "activation_status": "NOT_TESTED",
+      "runtime_receipt": false,
+      "i3_limit": "I3 consumer/runtime/semantics/P proofs not implemented"
+    },
+    "alt-p11": {
+      "status": "PASS",
+      "inventory": {
+        "platform": "alt-p11",
+        "version": {
+          "command": [
+            "sssd",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "2.9.8\n",
+          "stderr": ""
+        },
+        "packages": {
+          "command": [
+            "rpm",
+            "-q",
+            "--qf",
+            "%{NAME} %{VERSION}-%{RELEASE}\n",
+            "sssd",
+            "sssd-tools",
+            "systemd"
+          ],
+          "exit_code": 0,
+          "stdout": "sssd 2.9.8-alt3\nsssd-tools 2.9.8-alt3\nsystemd 258.9-alt1\n",
+          "stderr": ""
+        },
+        "os_release": "NAME=\"ALT Container\"\nVERSION=\"11\"\nID=altlinux\nVERSION_ID=11\nPRETTY_NAME=\"ALT Container\"\nANSI_COLOR=\"1;33\"\nCPE_NAME=\"cpe:/o:alt:container:11\"\nBUILD_ID=\"ALT Container 11\"\nALT_BRANCH_ID=\"p11\"\nHOME_URL=\"https://basealt.ru/\"\n",
+        "kernel": {
+          "command": [
+            "uname",
+            "-r"
+          ],
+          "exit_code": 0,
+          "stdout": "6.6.87.2-microsoft-standard-WSL2\n",
+          "stderr": ""
+        },
+        "unit": {
+          "command": [
+            "systemctl",
+            "cat",
+            "sssd.service"
+          ],
+          "exit_code": 0,
+          "stdout": "# /usr/lib/systemd/system/sssd.service\n[Unit]\nDescription=System Security Services Daemon\n# SSSD must be running before we permit user sessions\nBefore=systemd-user-sessions.service nss-user-lookup.target\nWants=nss-user-lookup.target\nStartLimitIntervalSec=50s\nStartLimitBurst=5\nConditionPathExists=|/etc/sssd/sssd.conf\nConditionDirectoryNotEmpty=|/etc/sssd/conf.d/\n\n[Service]\nEnvironment=DEBUG_LOGGER=--logger=files\nEnvironmentFile=-/etc/sysconfig/sssd\nExecStart=/usr/sbin/sssd -i ${DEBUG_LOGGER}\nType=notify\nNotifyAccess=main\nPIDFile=/var/run/sssd.pid\nCapabilityBoundingSet= CAP_DAC_OVERRIDE CAP_IPC_LOCK CAP_CHOWN CAP_DAC_READ_SEARCH CAP_KILL CAP_NET_ADMIN CAP_SYS_NICE CAP_FOWNER CAP_SETGID CAP_SETUID CAP_SYS_ADMIN CAP_SYS_RESOURCE CAP_BLOCK_SUSPEND\nRestart=on-abnormal\n\n[Install]\nWantedBy=multi-user.target\n",
+          "stderr": ""
+        }
+      },
+      "image_id": "sha256:11dc0ef7388b55b627b8ade8e99653b255cec22f223a95369596b2dd99840e6a",
+      "raw_sha256": "248ebb05ca18111641058bd2518513f2355318c501e18e98bad814eb7dd927fc",
+      "observations": {
+        "stopped": {
+          "diagnostic": "systemd launch contract unavailable: GetUnit: No such file or directory",
+          "status": "UnsupportedConfiguration"
+        },
+        "stock-start": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2982163514",
+            "Job": "",
+            "InvocationID": "24d8af39aa1a47b98f653a7e93da9c5c",
+            "MainPID": "201",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2981590612"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\nuser: _sssd\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1793214060\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 9\noffline_credentials_expiration: 30\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "Can't load /etc/samba/smb.conf - run testparm to debug it\nserver_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "main-snippets": {
+          "absent": [
+            "/etc/sysconfig/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf"
+          ],
+          "platform": "alt-p11",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "30"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              },
+              "user": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "_sssd"
+              }
+            }
+          },
+          "sources": {
+            "/etc/sssd": {
+              "files": 1,
+              "inode": 87934,
+              "mount": 1178,
+              "objects": 3,
+              "present": true
+            },
+            "/etc/sysconfig/sssd": {
+              "files": 0,
+              "inode": 87937,
+              "mount": 1178,
+              "objects": 1,
+              "present": false
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "ordered-duplicates-hidden": {
+          "absent": [
+            "/etc/sysconfig/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": false,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf"
+          ],
+          "platform": "alt-p11",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/90-last.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              },
+              "user": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "_sssd"
+              }
+            }
+          },
+          "sources": {
+            "/etc/sssd": {
+              "files": 6,
+              "inode": 87934,
+              "mount": 1178,
+              "objects": 8,
+              "present": true
+            },
+            "/etc/sysconfig/sssd": {
+              "files": 0,
+              "inode": 87937,
+              "mount": 1178,
+              "objects": 1,
+              "present": false
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "native-merge": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2982941161",
+            "Job": "",
+            "InvocationID": "f6ead7e32ff241b9b97b34514e8c8eb3",
+            "MainPID": "214",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2982610653"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\nuser: _sssd\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1793214060\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "Can't load /etc/samba/smb.conf - run testparm to debug it\nserver_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "native-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 1,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 2\nFile /etc/sssd/conf.d/.hidden.conf did not match provided patterns. Skipping.\nFile /etc/sssd/conf.d/zzzzz-ignored.txt did not match provided patterns. Skipping.\n\nUsed configuration snippet files: 3\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n",
+          "stderr": ""
+        },
+        "native-source-load-log": {
+          "lines": [
+            "(2026-10-28 19:01:00): [sssd] [confdb_init_domain_provider_and_enum] (0x0400): Please note that when enumeration is disabled `getent passwd` does not return all users by design. See sssd.conf man page for more detailed information",
+            "[sssd] [sss_ini_add_snippets] (0x0020): Config merge error: File /etc/sssd/conf.d/.hidden.conf did not match provided patterns. Skipping.",
+            "[sssd] [sss_ini_add_snippets] (0x0020): Config merge error: File /etc/sssd/conf.d/zzzzz-ignored.txt did not match provided patterns. Skipping.",
+            "(2026-10-28 19:01:01): [sssd] [confdb_init_domain_provider_and_enum] (0x0400): Please note that when enumeration is disabled `getent passwd` does not return all users by design. See sssd.conf man page for more detailed information"
+          ],
+          "note": "monitor log plus ConfigDB; config-check is separate, not runtime semantics proof"
+        },
+        "late-matching": {
+          "absent": [
+            "/etc/sysconfig/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "alt-p11",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              },
+              "user": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "_sssd"
+              }
+            }
+          },
+          "sources": {
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 87934,
+              "mount": 1178,
+              "objects": 10,
+              "present": true
+            },
+            "/etc/sysconfig/sssd": {
+              "files": 0,
+              "inode": 87937,
+              "mount": 1178,
+              "objects": 1,
+              "present": false
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-conflicting": {
+          "absent": [
+            "/etc/sysconfig/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "alt-p11",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "99"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              },
+              "user": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "_sssd"
+              }
+            }
+          },
+          "sources": {
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 87934,
+              "mount": 1178,
+              "objects": 10,
+              "present": true
+            },
+            "/etc/sysconfig/sssd": {
+              "files": 0,
+              "inode": 87937,
+              "mount": 1178,
+              "objects": 1,
+              "present": false
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "late-unrelated": {
+          "absent": [
+            "/etc/sysconfig/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": true,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf",
+            "/etc/sssd/conf.d/zzzzz-foreign.conf"
+          ],
+          "platform": "alt-p11",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/zzzzz-foreign.conf",
+                "value": "8"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              },
+              "user": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "_sssd"
+              }
+            }
+          },
+          "sources": {
+            "/etc/sssd": {
+              "files": 8,
+              "inode": 87934,
+              "mount": 1178,
+              "objects": 10,
+              "present": true
+            },
+            "/etc/sysconfig/sssd": {
+              "files": 0,
+              "inode": 87937,
+              "mount": 1178,
+              "objects": 1,
+              "present": false
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "race-create": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-delete": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-inode": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-bytes": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-metadata": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "race-restore": {
+          "diagnostic": "SSSD input graph/metadata/absence changed",
+          "status": "InterferenceDetected"
+        },
+        "unsafe-symlink": {
+          "diagnostic": "unsafe tree entry 40-unsafe.conf: Too many levels of symbolic links",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-hardlink": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-mode": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-owner": {
+          "diagnostic": "SSSD inputs: untrusted owner/mode/hardlink: /etc/sssd/conf.d/40-unsafe.conf",
+          "status": "UnsupportedConfiguration"
+        },
+        "unsafe-directory": {
+          "diagnostic": "SSSD inputs: nested/nonregular conf.d entries",
+          "status": "UnsupportedConfiguration"
+        },
+        "profile-group-mode": {
+          "diagnostic": "SSSD inputs: configuration access mode outside native profile",
+          "status": "UnsupportedConfiguration"
+        },
+        "native-group-mode-check": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/etc/sssd/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 1,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 3\nFile /etc/sssd/conf.d/.hidden.conf did not match provided patterns. Skipping.\nFile /etc/sssd/conf.d/zzzzz-ignored.txt did not match provided patterns. Skipping.\nFile /etc/sssd/conf.d/40-group.conf did not pass access check. Skipping.\n\nUsed configuration snippet files: 4\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "nested-mount": {
+          "diagnostic": "special permission bits are unsupported in snapshots",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-environment-change": {
+          "diagnostic": "SSSD launch changed",
+          "status": "InterferenceDetected"
+        },
+        "optional-environment-absent": {
+          "absent": [
+            "/etc/sysconfig/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "alt-p11",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "nss, pam"
+              },
+              "user": {
+                "source": "/etc/sssd/sssd.conf",
+                "value": "_sssd"
+              }
+            }
+          },
+          "sources": {
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 87934,
+              "mount": 1178,
+              "objects": 9,
+              "present": true
+            },
+            "/etc/sysconfig/sssd": {
+              "files": 0,
+              "inode": 87937,
+              "mount": 1178,
+              "objects": 1,
+              "present": false
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "unsupported-environment-variable": {
+          "diagnostic": "SSSD inputs: unsupported EnvironmentFile assignment",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-dropin-change": {
+          "diagnostic": "unit needs reload, is transient, or has external generated source",
+          "status": "InterferenceDetected"
+        },
+        "absent-main-native": {
+          "restart": {
+            "command": [
+              "systemctl",
+              "restart",
+              "sssd.service"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          },
+          "state": {
+            "Id": "sssd.service",
+            "ActiveState": "active",
+            "SubState": "running",
+            "ActiveEnterTimestampMonotonic": "2985092884",
+            "Job": "",
+            "InvocationID": "22a9b8854bed41a0b372ef126442f846",
+            "MainPID": "282",
+            "Result": "success",
+            "ExecMainStartTimestampMonotonic": "2984718389"
+          },
+          "configdb": {
+            "command": [
+              "ldbsearch",
+              "-H",
+              "/var/lib/sss/db/config.ldb",
+              "-b",
+              "cn=config"
+            ],
+            "exit_code": 0,
+            "stdout": "# record 1\ndn: cn=sssd,cn=config\ncn: sssd\ndebug_level: 9\ndomains: test\nservices: nss, pam\nuser: _sssd\ndistinguishedName: cn=sssd,cn=config\n\n# record 2\ndn: cn=config\nversion: 2\nlastUpdate: 1\ndistinguishedName: cn=config\n\n# record 3\ndn: cn=test,cn=domain,cn=config\naccount_cache_expiration: 0\nauth_provider: ldap\ncache_credentials: true\ncn: test\ndebug_level: 9\nid_provider: ldap\nldap_search_base: dc=example,dc=test\nldap_uri: ldap://127.0.0.1:9\ndistinguishedName: cn=test,cn=domain,cn=config\n\n# record 4\ndn: cn=pam,cn=config\ncn: pam\ndebug_level: 7\noffline_credentials_expiration: 23\ndistinguishedName: cn=pam,cn=config\n\n# returned 4 records\n# 4 entries\n# 0 referrals\n",
+            "stderr": "Can't load /etc/samba/smb.conf - run testparm to debug it\nserver_sort:Unable to register control with rootdse!\n"
+          }
+        },
+        "absent-main": {
+          "absent": [
+            "/etc/sssd/sssd.conf",
+            "/etc/sysconfig/sssd"
+          ],
+          "activation_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported",
+          "apply_conflict": false,
+          "engine_negative_gap": true,
+          "fic_named_file_observed": true,
+          "later": [],
+          "order": [
+            "/etc/sssd/conf.d/00-complete.conf",
+            "/etc/sssd/conf.d/10-first.conf",
+            "/etc/sssd/conf.d/50-race.conf",
+            "/etc/sssd/conf.d/90-last.conf",
+            "/etc/sssd/conf.d/zzzz-fic.conf"
+          ],
+          "platform": "alt-p11",
+          "projection": {
+            "domain/test": {
+              "account_cache_expiration": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "0"
+              },
+              "auth_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "cache_credentials": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "true"
+              },
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "id_provider": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap"
+              },
+              "ldap_search_base": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "dc=example,dc=test"
+              },
+              "ldap_uri": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "ldap://127.0.0.1:9"
+              }
+            },
+            "pam": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/50-race.conf",
+                "value": "7"
+              },
+              "offline_credentials_expiration": {
+                "source": "/etc/sssd/conf.d/zzzz-fic.conf",
+                "value": "23"
+              }
+            },
+            "sssd": {
+              "debug_level": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "9"
+              },
+              "domains": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "test"
+              },
+              "services": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "nss, pam"
+              },
+              "user": {
+                "source": "/etc/sssd/conf.d/00-complete.conf",
+                "value": "_sssd"
+              }
+            }
+          },
+          "sources": {
+            "/etc/sssd": {
+              "files": 7,
+              "inode": 87934,
+              "mount": 1178,
+              "objects": 9,
+              "present": true
+            },
+            "/etc/sysconfig/sssd": {
+              "files": 0,
+              "inode": 87937,
+              "mount": 1178,
+              "objects": 1,
+              "present": false
+            }
+          },
+          "status": "CAPTURED"
+        },
+        "alternate-check-default": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf"
+          ],
+          "exit_code": 0,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 1\nDirectory /run/sssd-alt/conf.d does not exist.\n\nUsed configuration snippet files: 0\n",
+          "stderr": ""
+        },
+        "alternate-check-explicit": {
+          "command": [
+            "sssctl",
+            "config-check",
+            "-c",
+            "/run/sssd-alt/sssd.conf",
+            "-s",
+            "/etc/sssd/conf.d"
+          ],
+          "exit_code": 1,
+          "stdout": "Issues identified by validators: 0\n\nMessages generated during configuration merging: 2\nFile /etc/sssd/conf.d/.hidden.conf did not match provided patterns. Skipping.\nFile /etc/sssd/conf.d/zzzzz-ignored.txt did not match provided patterns. Skipping.\n\nUsed configuration snippet files: 5\n/etc/sssd/conf.d/00-complete.conf\n/etc/sssd/conf.d/10-first.conf\n/etc/sssd/conf.d/50-race.conf\n/etc/sssd/conf.d/90-last.conf\n/etc/sssd/conf.d/zzzz-fic.conf\n",
+          "stderr": ""
+        },
+        "absent-all": {
+          "diagnostic": "SSSD inputs: neither main nor loadable snippets present",
+          "status": "UnsupportedConfiguration"
+        },
+        "launch-unit-source-change": {
+          "diagnostic": "SSSD: unreviewed native unit source",
+          "status": "InterferenceDetected"
+        }
+      },
+      "command": [
+        "tests/integration/sssd-i1/run-native.sh",
+        "fic-sssd-i1:alt-p11",
+        "alt-p11"
+      ],
+      "activation_status": "NOT_TESTED",
+      "runtime_receipt": false,
+      "i3_limit": "I3 requires closed PIDFile support; generic engine remains Unsupported"
+    }
+  },
+  "source_sha256": {
+    "fic/src/service/VerifiedConfigLaunchContract.cpp": "bb19570ac34103354e1566cd38b580acd6e8a64cd6276ed07bc9ffa38bb5f1c7",
+    "fic/src/service/VerifiedConfigLaunchContract.h": "728245d48d35ea5a1febe767f6955b7ef635dad4cf8c29a44770fbc367033873",
+    "fic/src/service/sssd/SssdServiceAdmission.cpp": "ea80f3a44966f541b77bab3e0838d7cf15bfd99dcbb0bc5bfc25811d58cde56d",
+    "fic/src/service/sssd/SssdServiceAdmission.h": "4227c0b18277ef98cc944e4e6298fa732b0ebdc91c1ebc9b78589f2a7639bb56",
+    "fic/src/service/sssd/SssdVerifiedInputClosure.cpp": "0d5aa271fe4cc20b485e9ed8eb267d6a697689146630c4cf59b884ae5175e52a",
+    "fic/src/service/sssd/SssdVerifiedInputClosure.h": "70128d34785e5ce4913764f0dc93d5e96018dc95804d158a21be1a57107b505d",
+    "tests/integration/sssd-i1/CMakeLists.txt": "3d4a5a1160c4682b41d70d2f5d1c25790f17965670f7e640e0a10d6335aee2eb",
+    "tests/integration/sssd-i1/Containerfile": "5fe86e21c0aa2232ebdd751e924bbd1d4b2e2865ab1a99ea592e6dfeb2873c62",
+    "tests/integration/sssd-i1/Driver.cpp": "954309bdf86767d2e164decfd43e1ce1da074d046b7dad48b18d8921c730c8bd",
+    "tests/integration/sssd-i1/native.py": "7b00fed3a4e4102e3b8081c95290ffc8d4deb00b07484bed4fa32415784740d2",
+    "tests/integration/sssd-i1/run-native.sh": "a75823f21fc8aa3c435b4c614e65b061f9b1e4c716ed05c524a0b30c2ef2a8da"
+  }
+}
