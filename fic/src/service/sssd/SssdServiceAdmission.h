@@ -1,5 +1,8 @@
 #pragma once
 #include "service/VerifiedConfigLaunchContract.h"
+#ifdef FIC_SSSD_I1_TESTING
+#include <functional>
+#endif
 namespace fic::service::sssd {
 using Deadline = std::chrono::steady_clock::time_point;
 // No activation authority, receipt or ownership. Exceptions use detail::Failure.
@@ -23,5 +26,11 @@ struct SssdLaunchReference {
 };
 SssdLaunchReference admit(Deadline deadline);
 void revalidate(const SssdLaunchReference&, Deadline deadline);
-namespace detail_i1 { std::string environmentReference(const std::string& path); }
+namespace detail_i1 {
+std::string environmentReference(const std::string& path);
+#ifdef FIC_SSSD_I1_TESTING
+// Operation-local checkpoint after initial launch/environment/lookup observations.
+SssdLaunchReference admitForTests(Deadline, const std::function<void(const SssdLaunchReference&)>&);
+#endif
+}
 } // namespace fic::service::sssd

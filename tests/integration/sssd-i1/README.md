@@ -65,3 +65,33 @@ Gates cover:
 Kernel/mount/LSM conclusions remain Docker/WSL bounded. AD/IPA/authentication,
 I2 semantics/domain support and I3 activation/readiness/P/cleanup remain outside
 I1. Prior research gaps keep their historical statuses.
+
+
+Follow-up gates add `admission-{control,unit,env-bytes,env-inode,env-create,dropin}`
+inside the first `admit()`. The callback is operation-local and compiled only
+with FIC_SSSD_I1_TESTING, after initial launch/env/lookup and before final proof.
+Unit mutation appends a comment, preserving ExecStart. Each fixture restores its
+inputs; daemon-reload happens after restoring the unit, never before the pending
+drop-in assertion. On older systemd the exact UnitPath rejection is accepted;
+other cases require InterferenceDetected. The control must remain CAPTURED.
+
+The nested tmpfs uses mode=0700, root:root, no entries; fdinfo mount IDs prove a
+new mount. The assertion requires exactly `nested mount in controlled tree`.
+Unmount/removal are in finally. The earlier evidence of a special-bits failure
+is superseded by these actual reruns, not relabeled as mount-boundary evidence.
+
+ALT gates require final effective user=_sssd, with/without services, and reject
+missing/root/unknown users with an unchanged running monitor. Ordered snippets
+can override either way. Separate native fixtures reproduce monitor-active/PAM
+exit3 for missing/root and an active lazy PAM responder with effective _sssd.
+Unknown user fails native monitor startup. These fixture actions are outside
+production I1 and do not certify authentication or I3 consumer readiness.
+
+Export after all five runs with `python3 tests/integration/sssd-i1/collect-evidence.py`.
+It reads actual reports and the cached patched ALT source (from the R1 source
+fetch), records numbered identity excerpts/hashes and preserves historical R1/R2.
+Measured launch-fixtures are retained unless `--update-launch-fixtures` is
+explicitly requested after reviewed profile facts change; this follow-up changes
+no launch-profile facts. `check-evidence.py` enforces all new positive/negative
+observations as well as the previous gates. Saved-evidence PASS alone still does
+not execute or prove a new native run.

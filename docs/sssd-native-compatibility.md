@@ -209,3 +209,43 @@ than relying only on loaded properties. See the reproducible runner for details.
 These are new I1 native runs on a shared WSL kernel, not activation or deployment
 certification. Exact systemd/package versions, commands and status-specific
 observations are retained in the linked new evidence.
+
+### I1 follow-up: ALT identity and admission races
+
+The closed ALT p11 consumer profile requires an explicit effective `[sssd]
+user=_sssd`, including configurations without an explicit `services` key.
+Missing user, root, and unknown names are Unsupported. Ordered snippets may
+supply the value; only their final effective assignment is checked. Debian and
+Ubuntu retain their existing optional-user rules.
+
+This restriction follows the reviewed patched 2.9.8-alt3 source: monitor.c
+830–855 defaults a missing user to root, accepts root or SSSD_USER, and uses
+that identity for its monitor bus (1662–1666). The stock config selects _sssd;
+the native socket-activated PAM service has User=_sssd. The new evidence retains
+numbered source excerpts/hashes tied to unchanged R1 provenance. ALT also ships
+a control facility for privileged operation; that alternative topology is
+**Unsupported by the current closed I1 profile**, not declared invalid for ALT
+in general. I1 does not modify it or try to repair identities.
+
+New disposable native runs confirm the mismatch: missing/root user leaves the
+monitor active but native lazy PAM exits with status 3. Effective _sssd from
+ordered snippets admits capture and starts the stock lazy responder. Unknown
+user prevents monitor startup. A failed nonexistent-user PAM request does not
+prove authentication success. Persistent-input negatives are also tested while
+the old monitor/ConfigDB remain active, with/without explicit services.
+
+All five profiles pass genuine nested-mount gates: empty root:root tmpfs mode
+0700, independently verified different mount ID, then exactly `nested mount in
+controlled tree`. The earlier special-permission-bit rejection did **not** prove
+mount detection. Generic readTree and its check order are unchanged.
+
+All five also pass deterministic first-admission gates: control, vendor-unit
+comment mutation preserving ExecStart properties, EnvironmentFile byte/inode
+changes, creation of an absent optional environment, and an unloaded drop-in.
+The operation-local checkpoint follows initial launch/env/UnitPath observations
+and precedes their final proof; no capture/revalidate pair or timing sleeps
+substitutes for the first-admission experiment. Older systemd can reject the
+drop-in directly via UnitPath while newer versions report changed launch state;
+exact allowed diagnostics are asserted. These are read-only optimistic I1
+observations, not linearizable protection or completed A/B/C/P. I2/I3 remain
+unimplemented; historical R1/R2 evidence has not been rewritten.

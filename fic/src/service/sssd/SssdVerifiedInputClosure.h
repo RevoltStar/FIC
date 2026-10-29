@@ -29,6 +29,7 @@ namespace detail_i1 {
 // Pure bounded syntax subset, not a domain/provider semantics validator.
 IniProjection project(const std::vector<std::string>& order,const std::map<std::string,std::string>& bytes);
 bool loadedSnippet(const std::string& name);
+void validateConsumerIdentity(const IniProjection&,const std::string& platform);
 #ifdef FIC_SSSD_I1_TESTING
 // Compiled out of production. Checkpoint after first complete graph read.
 SssdInputReference captureForTests(const SssdLaunchReference&,const std::string& root,Deadline,

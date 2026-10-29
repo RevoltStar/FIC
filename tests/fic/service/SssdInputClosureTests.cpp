@@ -47,5 +47,19 @@ int main(int argc,char**argv){try {
     for(const auto& text:{"[pam]\nkey=first\n continued\n","[pam]\nkey=\"quoted\"\n","[pam]\nkey=1 # inline\n","orphan=1\n","[invalid section]\nx=1\n","[pam]\nx=\n"})refused([&]{s::detail_i1::project({"x"},{{"x",text}});});
     for(const auto& file:{".hidden.conf","foo.conf.bak","FOO.CONF","conf.d/sub.conf","x"})require(!s::detail_i1::loadedSnippet(file),"ignored file loaded");
     for(const auto& file:{"10.conf","zzzzz.conf"})require(s::detail_i1::loadedSnippet(file),"snippet omitted");
+    for(const auto& platform:{"debian-12","debian-13","ubuntu-24.04","ubuntu-26.04","alt-p11"}) {
+        auto missing=s::detail_i1::project({"main"},{{"main","[sssd]\ndomains=test\n"}});
+        if(std::string(platform)=="alt-p11")refused([&]{s::detail_i1::validateConsumerIdentity(missing,platform);});
+        else s::detail_i1::validateConsumerIdentity(missing,platform);
+    }
+    for(const auto& services:{"", "services=nss,pam\n"}) {
+        for(const auto& user:{"root","unknown","_sssd"}) {
+            const auto ini=s::detail_i1::project({"main","10.conf","90.conf"},
+                {{"main",std::string("[sssd]\n")+services+"user=_sssd\n"},
+                 {"10.conf","[sssd]\nuser=root\n"},{"90.conf",std::string("[sssd]\nuser=")+user+"\n"}});
+            if(std::string(user)=="_sssd")s::detail_i1::validateConsumerIdentity(ini,"alt-p11");
+            else refused([&]{s::detail_i1::validateConsumerIdentity(ini,"alt-p11");});
+        }
+    }
     std::cout<<"SSSD I1 closed launch/profile/projection tests PASS\n";return 0;
 }catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

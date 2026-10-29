@@ -28,6 +28,38 @@ for p,item in e['profiles'].items():
  assert not o['ordered-duplicates-hidden']['apply_conflict']
  for key in ('launch.Type','launch.UnitPath','launch.InvocationID','launch.ExecStartPreEx','launch.EnvironmentFiles'):
   assert key in fixtures[p]
+ for kind in ('control','unit','env-bytes','env-inode','env-create','dropin'):
+  r=o['admission-'+kind];assert 'checkpoint' in r,(p,kind)
+  if kind=='control':assert r['status']=='CAPTURED' and not r.get('injected'),(p,kind)
+  else:
+   assert r['injected'],(p,kind)
+   if kind=='dropin' and r['status']=='UnsupportedConfiguration':
+    assert r['diagnostic']=='SSSD: unapproved nonempty drop-in directory: /etc/systemd/system/sssd.service.d',(p,kind)
+   else:assert r['status']=='InterferenceDetected',(p,kind)
+   env=json.loads(r['checkpoint']['environment'])
+   if kind=='env-create':assert not env['present']
+   elif kind.startswith('env-'):assert env['present'] and env['digest']
+ mount=o['nested-mount'];assert mount['status']=='UnsupportedConfiguration' and mount['diagnostic']=='nested mount in controlled tree',p
+ m=mount['fixture'];assert m['mount']!=m['parent_mount'] and m['uid']==m['gid']==0 and int(m['mode'],8)&0o7777==0o700 and m['entries']==[],p
+ assert mount['mount_command']['exit_code']==0
+ if p=='alt-p11':
+  for kind in ('correct','missing','root','unknown'):
+   for topology in ('services','sockets'):
+    r=o['alt-identity-'+kind+'-'+topology];assert r['status']==('CAPTURED' if kind=='correct' else 'UnsupportedConfiguration'),(kind,topology)
+  for last in ('root','_sssd'):
+   r=o['alt-identity-effective-'+last];assert r['status']==('CAPTURED' if last=='_sssd' else 'UnsupportedConfiguration')
+  r=o['alt-identity-effective-_sssd'];assert r['projection']['sssd']['user']=={'value':'_sssd','source':'/etc/sssd/conf.d/99-user.conf'}
+  for kind in ('correct','missing','root'):
+   r=o['alt-native-identity-'+kind];assert r['monitor_after']['ActiveState']=='active'
+   fields=dict(line.split('=',1) for line in r['responder']['stdout'].splitlines() if '=' in line)
+   assert fields['User']=='_sssd' and fields['ExecMainStatus']==('0' if kind=='correct' else '3')
+   assert fields['ActiveState']==('active' if kind=='correct' else 'failed')
+  assert 'user: _sssd' in o['alt-native-identity-correct']['monitor_start']['configdb']['stdout']
+  assert o['alt-native-identity-unknown']['state']['ActiveState']=='failed'
+review=e['alt_identity_source_review']['files']
+r1=json.loads((HERE.parent/'sssd-research/source-r1.json').read_text())['alt-p11']
+assert review['src/monitor/monitor.c']['sha256']==r1['files']['src/monitor/monitor.c']['sha256']
+assert 'user = _sssd' in review['sssd-default.conf']['text']
 for path in HERE.glob('*.py'):ast.parse(path.read_text())
 subprocess.run(['bash','-n',str(HERE/'run-native.sh')],check=True)
 print('SSSD I1 saved evidence/fixtures PASS (not native reexecution)')

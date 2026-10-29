@@ -220,7 +220,11 @@ AdmissionState classifyService(const d::LaunchContract& c) {
     if(active=="active"&&sub=="running"&&value(c,"MainPID","u")!=0)return AdmissionState::Candidate;
     return AdmissionState::Unknown;
 }
-SssdLaunchReference admit(Deadline deadline) {
+static SssdLaunchReference admitImpl(Deadline deadline
+#ifdef FIC_SSSD_I1_TESTING
+    , const std::function<void(const SssdLaunchReference&)>& checkpoint
+#endif
+) {
     if(::geteuid()!=0)unsupported("root read-only admission required");
     const auto platform=fic::platform::makeBuildPlatformProfile();std::string platformError;
     if(!fic::platform::validateHostCompatibility(platform,"/etc/os-release",platformError))unsupported("platform mismatch: "+platformError);
@@ -230,6 +234,9 @@ SssdLaunchReference admit(Deadline deadline) {
     out.processIdentity=processIdentity(out.contract);
     out.environmentFingerprint=detail_i1::environmentReference(out.profile.environment);
     out.unitLookupFingerprint=unitLookup(out.contract,out.profile);
+#ifdef FIC_SSSD_I1_TESTING
+    if(checkpoint)checkpoint(out);
+#endif
     auto root=d::openAbsolute("/",O_PATH|O_DIRECTORY);std::uint64_t budget=64*1024*1024;
     for(const auto& name:{"/usr/sbin/sssd","/usr/sbin/sssctl","/usr/libexec/sssd/sssd_be","/usr/libexec/sssd/sssd_nss","/usr/libexec/sssd/sssd_pam"}) {
         auto file=d::openAbsolute(name,O_RDONLY);const auto id=d::identity(file.get());
@@ -242,6 +249,18 @@ SssdLaunchReference admit(Deadline deadline) {
         throw d::Failure(ActivationStatus::InterferenceDetected,"SSSD launch changed during admission");
     return out;
 }
+SssdLaunchReference admit(Deadline deadline) {
+    return admitImpl(deadline
+#ifdef FIC_SSSD_I1_TESTING
+        ,{}
+#endif
+    );
+}
+#ifdef FIC_SSSD_I1_TESTING
+SssdLaunchReference detail_i1::admitForTests(Deadline deadline,const std::function<void(const SssdLaunchReference&)>& checkpoint) {
+    return admitImpl(deadline,checkpoint);
+}
+#endif
 void revalidate(const SssdLaunchReference& ref,Deadline deadline) {
     try {const auto now=admit(deadline);
         if(now.profile.platform!=ref.profile.platform||now.contract!=ref.contract||now.executables!=ref.executables||now.processIdentity!=ref.processIdentity||now.environmentFingerprint!=ref.environmentFingerprint||now.unitLookupFingerprint!=ref.unitLookupFingerprint)

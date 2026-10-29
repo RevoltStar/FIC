@@ -180,3 +180,20 @@ correspondence, runtime policy success, ownership or journal finalization.
 
 Native commands, five-platform evidence and limits:
 [`sssd-i1/README.md`](../tests/integration/sssd-i1/README.md).
+
+
+I1 follow-up tightens the ALT consumer identity boundary: explicit effective
+`user=_sssd` is mandatory even without services; privileged ALT alternatives
+remain outside this closed profile. Missing-user defaults are not inferred to
+match the stock socket responder. Native identity/source evidence and its
+limits are recorded in [compatibility](sssd-native-compatibility.md#i1-follow-up-alt-identity-and-admission-races).
+
+Operation-local first-admission checkpoints exist only with
+`FIC_SSSD_I1_TESTING`; production contains no callback API or hook state. They
+exercise vendor bytes, optional environment content/object/absence, and pending
+UnitPath overrides between initial observations and final confirmation. The
+unchanged production sequence rejects every injected change; the control admits.
+The corrected mode-0700 nested-mount fixture verifies the mount-boundary reason,
+without changing the generic reader. These tests do not provide atomic file/unit
+locking, responder generation proof, or I3 runtime/cleanup authority. The full
+`/etc/sssd` scan and existing generic PIDFile limitations remain unchanged.

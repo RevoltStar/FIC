@@ -72,13 +72,24 @@ x=probe();experiment('profile-group-mode',x)
 assert x['status']==('CAPTURED' if platform in ('debian-13','ubuntu-26.04') else 'UnsupportedConfiguration'),x
 experiment('native-group-mode-check',check_config('-c',str(MAIN),'-s',str(DROP)))
 p.unlink()
-# Nested mount is unsupported even when all bytes would match.
-mount=DROP/'nested-mount';mount.mkdir()
-m=run(['mount','-t','tmpfs','tmpfs',str(mount)]);assert m['exit_code']==0,m
+# Prove the mount boundary, independently of the earlier mode/owner gates.
+mount=DROP/'nested-mount';mount.mkdir(mode=0o700)
+def mount_id(p):
+ fd=os.open(p,os.O_RDONLY|os.O_DIRECTORY)
+ try:
+  info=Path(f'/proc/self/fdinfo/{fd}').read_text()
+  return int(next(line.split(':',1)[1] for line in info.splitlines() if line.startswith('mnt_id:')))
+ finally:os.close(fd)
+m=run(['mount','-t','tmpfs','-o','mode=0700','tmpfs',str(mount)])
 try:
- x=probe();experiment('nested-mount',x);assert x['status']=='UnsupportedConfiguration',x
+ assert m['exit_code']==0,m
+ st=mount.stat();identity={'mount':mount_id(mount),'parent_mount':mount_id(DROP),'mode':oct(st.st_mode),'uid':st.st_uid,'gid':st.st_gid,'entries':list(mount.iterdir())}
+ assert identity['mount']!=identity['parent_mount'] and st.st_uid==0 and st.st_gid==0 and st.st_mode&0o7777==0o700 and not identity['entries'],identity
+ x=probe();experiment('nested-mount',dict(x,fixture=identity,mount_command=m))
+ assert x['status']=='UnsupportedConfiguration' and x['diagnostic']=='nested mount in controlled tree',x
 finally:
- u=run(['umount',str(mount)]);assert u['exit_code']==0,u
+ if m['exit_code']==0:
+  u=run(['umount',str(mount)]);assert u['exit_code']==0,u
  mount.rmdir()
 # Revalidate environment bytes / optional absence independently of D-Bus path.
 env=Path('/etc/sysconfig/sssd' if platform=='alt-p11' else '/etc/default/sssd')
@@ -93,6 +104,50 @@ write(env,'LD_PRELOAD=/untrusted.so\n')
 x=probe();experiment('unsupported-environment-variable',x);assert x['status']=='UnsupportedConfiguration',x
 if old is None:env.unlink()
 else:env.write_bytes(old)
+# Checkpoints live inside the FIRST admit(), never capture -> revalidate.
+fragment=Path(json.loads(probe('launch')['launch']['launch.FragmentPath'])['value'])
+for kind in ('control','unit','env-bytes','env-inode','env-create','dropin'):
+ raw_unit=fragment.read_bytes();env_old=env.read_bytes() if env.exists() else None
+ if kind=='env-create':env.unlink(missing_ok=True)
+ elif kind in ('env-bytes','env-inode'):write(env,'# initial admission environment\n')
+ initial=state()
+ try:
+  x=probe('admit-'+kind);experiment('admission-'+kind,x)
+  assert 'checkpoint' in x,x
+  if kind=='dropin' and x['status']=='UnsupportedConfiguration':
+   assert x['diagnostic']=='SSSD: unapproved nonempty drop-in directory: /etc/systemd/system/sssd.service.d',x
+  else:assert x['status']==('CAPTURED' if kind=='control' else 'InterferenceDetected'),x
+  if kind!='control':assert x['injected'],x
+  final=state();assert initial['MainPID']==final['MainPID'] and initial['InvocationID']==final['InvocationID'],(initial,final)
+ finally:
+  if kind=='unit':
+   fragment.write_bytes(raw_unit);ctl('daemon-reload')
+  if env_old is None:env.unlink(missing_ok=True)
+  else:env.write_bytes(env_old)
+  if kind=='dropin':
+   Path('/etc/systemd/system/sssd.service.d/i1-admission.conf').unlink(missing_ok=True)
+   # ALT ships this directory; preserve it, cleanup just the fixture.
+   if platform!='alt-p11':Path('/etc/systemd/system/sssd.service.d').rmdir()
+# ALT tests inspect persistent inputs with the original monitor still active.
+if platform=='alt-p11':
+ saved=MAIN.read_text()
+ for kind,user in (('correct','_sssd'),('missing',None),('root','root'),('unknown','i1_nonexistent')):
+  for services in (True,False):
+   text=saved.replace('user = _sssd\n','')
+   if not services:text=text.replace('services = nss, pam\n','')
+   if user is not None:text=text.replace('[sssd]\n','[sssd]\nuser = '+user+'\n')
+   write(MAIN,text);before=state();x=probe();after=state()
+   experiment('alt-identity-'+kind+('-services' if services else '-sockets'),x)
+   assert before['MainPID']==after['MainPID'] and before['InvocationID']==after['InvocationID'] and after['ActiveState']=='active'
+   assert x['status']==('CAPTURED' if kind=='correct' else 'UnsupportedConfiguration'),x
+ write(MAIN,saved)
+ for last in ('root','_sssd'):
+  write(DROP/'01-user.conf','[sssd]\nuser = root\n')
+  write(DROP/'99-user.conf','[sssd]\nuser = '+last+'\n')
+  x=probe();experiment('alt-identity-effective-'+last,dict(x,native_check=check_config('-c',str(MAIN),'-s',str(DROP))))
+  assert x['status']==('CAPTURED' if last=='_sssd' else 'UnsupportedConfiguration'),x
+  if last=='_sssd':assert x['projection']['sssd']['user']=={'value':'_sssd','source':str(DROP/'99-user.conf')}
+ (DROP/'01-user.conf').unlink();(DROP/'99-user.conf').unlink()
 # Unknown drop-in appears between reference capture and revalidation, no reload.
 x=probe('dropin-change');experiment('launch-dropin-change',x);assert x['status']=='InterferenceDetected',x
 Path('/etc/systemd/system/sssd.service.d/i1.conf').unlink();Path('/etc/systemd/system/sssd.service.d').rmdir();ctl('daemon-reload')
@@ -114,4 +169,33 @@ write(MAIN,text);observe_start()
 fragment=Path(json.loads(probe('launch')['launch']['launch.FragmentPath'])['value']);raw=fragment.read_bytes()
 x=probe('unit-change');experiment('launch-unit-source-change',x);assert x['status']=='InterferenceDetected',x
 fragment.write_bytes(raw)
+# Independent native ALT behavior: stock lazy responder (not I3 proof).
+if platform=='alt-p11':
+ experiment('alt-native-identity-units',ctl('cat','sssd-pam.service','sssd-pam.socket','sssd-pam-priv.socket'))
+ write('/etc/pam.d/sssd-research','auth required pam_sss.so\naccount required pam_sss.so\n',0o644)
+ for kind,user in (('correct','_sssd'),('missing',None),('root','root'),('unknown','i1_nonexistent')):
+  text=base(services='nss')
+  if user is not None:text=text.replace('[sssd]\n','[sssd]\nuser='+user+'\n')
+  configure(text)
+  # Positive additionally checks real lexical effective user from snippets.
+  if kind=='correct':
+   write(DROP/'01-user.conf','[sssd]\nuser=root\n')
+   write(DROP/'99-user.conf','[sssd]\nuser=_sssd\n')
+  started=observe_start()
+  if kind=='unknown':
+   experiment('alt-native-identity-'+kind,started)
+   assert started['state']['ActiveState']!='active',started
+   continue
+  assert started['state']['ActiveState']=='active',started
+  sockets=ctl('start','sssd-pam.socket','sssd-pam-priv.socket')
+  assert sockets['exit_code']==0,sockets
+  request=run(['python3','/usr/local/bin/pam-probe.py','absent-research-user@test'],timeout=15)
+  responder=ctl('show','sssd-pam.service','-p','ActiveState','-p','SubState','-p','ExecMainStatus','-p','User')
+  fields=dict(line.split('=',1) for line in responder['stdout'].splitlines() if '=' in line)
+  observed={'monitor_start':started,'request':request,'responder':responder,'monitor_after':state(),
+            'journal':run(['journalctl','-b','-u','sssd-pam.service','--no-pager','-n','40'])}
+  experiment('alt-native-identity-'+kind,observed)
+  assert fields['User']=='_sssd' and observed['monitor_after']['ActiveState']=='active',observed
+  if kind=='correct':assert fields['ActiveState']=='active' and fields['ExecMainStatus']=='0',observed
+  else:assert fields['ActiveState']!='active' and fields['ExecMainStatus']=='3',observed
 experiment('result',{'status':'PASS','scope':'I1 read-only capture/revalidation only; no activation proofs','native_activation_tested':False})

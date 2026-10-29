@@ -14,6 +14,24 @@ int main(int argc,char** argv) {
         const std::string action=argc>1?argv[1]:"capture";
         if(action=="launch")out["launch"]=detail::readSssdLaunchContract(deadline);
         else if(action=="admission") {auto r=s::admit(deadline);out["platform"]=r.profile.platform;out["launch"]=r.contract;out["activation_limit"]=r.activationLimit;}
+        else if(action.rfind("admit-",0)==0) {
+            s::detail_i1::admitForTests(deadline,[&](const s::SssdLaunchReference& r){
+                out["checkpoint"]={{"process",r.processIdentity},{"environment",r.environmentFingerprint},{"lookup",r.unitLookupFingerprint}};
+                if(action=="admit-control")return;
+                if(action=="admit-unit") {
+                    std::ofstream f(r.profile.fragment,std::ios::app);f<<"\n# I1 admission mutation; ExecStart unchanged\n";
+                } else if(action=="admit-env-bytes"||action=="admit-env-create")write(r.profile.environment,"# admission changed\n");
+                else if(action=="admit-env-inode") {
+                    std::ifstream f(r.profile.environment);std::string bytes((std::istreambuf_iterator<char>(f)),{});
+                    write(r.profile.environment+".i1-tmp",bytes);
+                    if(rename((r.profile.environment+".i1-tmp").c_str(),r.profile.environment.c_str()))throw std::runtime_error("rename fixture failed");
+                } else if(action=="admit-dropin") {
+                    std::filesystem::create_directories("/etc/systemd/system/sssd.service.d");
+                    write("/etc/systemd/system/sssd.service.d/i1-admission.conf","[Service]\nEnvironment=I1_TEST=1\n");
+                } else throw std::runtime_error("unknown admission checkpoint");
+                out["injected"]=true;
+            });
+        }
         else if(action=="source-change") {
             auto r=s::capture(deadline);write(r.launch.profile.environment,"# changed after reference\n");s::revalidate(r,deadline);
         }

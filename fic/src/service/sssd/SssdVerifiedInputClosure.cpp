@@ -107,10 +107,7 @@ SssdInputReference captureGraph(const SssdLaunchReference& launch,const std::str
 void consumerExecutables(SssdInputReference& ref,Deadline deadline) {
     auto root=d::openAbsolute("/",O_PATH|O_DIRECTORY);std::uint64_t budget=64*1024*1024;
     const auto section=ref.ini.find("sssd");if(section==ref.ini.end())unsupported("missing sssd section");
-    if(auto it=section->second.find("user");it!=section->second.end()) {
-        const auto expected=ref.launch.profile.platform=="alt-p11"?"_sssd":(ref.launch.profile.platform=="ubuntu-26.04"?"sssd":"root");
-        if(it->second.value!=expected)unsupported("unsupported configuration user identity");
-    }
+    detail_i1::validateConsumerIdentity(ref.ini,ref.launch.profile.platform);
     auto services=section->second.find("services");if(services==section->second.end())return; // Native socket responders; no runtime consumer proof in I1.
     std::istringstream in(services->second.value);std::string service;
     while(std::getline(in,service,',')) {
@@ -122,6 +119,19 @@ void consumerExecutables(SssdInputReference& ref,Deadline deadline) {
 }
 }
 namespace detail_i1 {
+void validateConsumerIdentity(const IniProjection& ini,const std::string& platform) {
+    const auto section=ini.find("sssd");if(section==ini.end())unsupported("missing sssd section");
+    // ALT's native socket responders run as _sssd even when services is absent.
+    // monitor.c defaults a missing config user to root; active monitor != proof
+    // of compatibility with that consumer profile. Privileged alternatives are
+    // outside this closed profile, not silently inferred from missing inputs.
+    if(platform=="alt-p11"&&!section->second.count("user"))
+        unsupported("ALT native consumer profile requires explicit user=_sssd");
+    if(auto it=section->second.find("user");it!=section->second.end()) {
+        const auto expected=platform=="alt-p11"?"_sssd":(platform=="ubuntu-26.04"?"sssd":"root");
+        if(it->second.value!=expected)unsupported("unsupported configuration user identity");
+    }
+}
 std::string environmentReference(const std::string& path) {
     std::uint64_t budget=1024*1024;const auto s=optionalEnvironment(path,budget);environment(s);
     nlohmann::json out={{"present",s.present},{"mount",s.identity.mount}};

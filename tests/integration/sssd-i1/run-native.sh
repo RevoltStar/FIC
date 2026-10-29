@@ -24,5 +24,6 @@ PY
 docker exec "$container" timeout 60 sh -ec 'until systemctl show-environment >/dev/null 2>&1; do sleep .1; done; systemctl is-system-running --wait >/dev/null 2>&1 || true; mkdir -p /run/sssd-research-out'
 docker cp "$build/sssd_i1_probe" "$container:/usr/local/bin/sssd-i1-probe"
 docker cp "$repo/tests/integration/sssd-research/common.py" "$container:/usr/local/bin/common.py"
+docker cp "$repo/tests/integration/sssd-research/pam-probe.py" "$container:/usr/local/bin/pam-probe.py"
 docker cp "$repo/tests/integration/sssd-i1/native.py" "$container:/usr/local/bin/native.py"
 docker exec "$container" python3 /usr/local/bin/native.py "$platform"
