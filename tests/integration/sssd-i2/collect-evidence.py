@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Export actual I2 reports. Historical R1/R2/I1 artifacts are read-only."""
-import hashlib,json
+import hashlib,json,subprocess
 from pathlib import Path
 HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
 def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 platforms=('debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11')
-out={'schema':'sssd-i2-native-v1','base':'807538d89643be0ec2d63f5b0b9de95661610892',
+out={'schema':'sssd-i2-native-v1','base':'fed7e32acfb0b77fc6d96fa7e77f11959c4b98c1',
  'scope':'I2 expected semantics only; not completed C or A/B/C/P, no runtime receipt',
  'environment':'Docker, real stock systemd PID1/SSSD, loopback only, no runtime host binds, WSL shared kernel',
  'profiles':{},'source_sha256':{},'historical_sha256':{}}
+out['baseline_i2']={'commit':out['base'],'evidence_sha256':hashlib.sha256(
+ subprocess.check_output(['git','show',out['base']+':tests/integration/sssd-i2/evidence.json'],cwd=ROOT)).hexdigest()}
+out['scope_boundary_regression']={'baseline_commit':out['base'],'expected_baseline_ctest_exit':8,
+ 'red_log':'tests/integration/sssd-i2/scope-red.txt','red_log_sha256':digest(HERE/'scope-red.txt'),
+ 'meaning':'Baseline accepted a forged ghost domain; final unit/contract tests must refuse it. RED is a recorded baseline defect, not a current native failure.'}
 for p in platforms:
  raw=ROOT/'build-sssd-i2'/p/'native/results.json';data=json.loads(raw.read_text())
  assert data['experiments']['result']['status']=='PASS',p

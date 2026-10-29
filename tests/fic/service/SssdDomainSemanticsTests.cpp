@@ -1,6 +1,7 @@
 #include "service/sssd/SssdRelationValidator.h"
 #include <iostream>
 #include <stdexcept>
+#include <functional>
 using namespace fic::service::sssd;
 namespace {
 void check(bool b,const std::string& why){if(!b)throw std::runtime_error(why);}
@@ -58,6 +59,57 @@ void scopeTests(){
         check(!sameScopeReference(domainScope(input()),domainScope(changed)),"scope drift detected "+std::to_string(kind));
     }
 }
+void scopeForgeryTests(){
+    const auto denied=[](const SssdInputReference& in,DomainScopeData data,const ProposedSetting& setting,const std::string& label){
+        const auto canonical=domainScope(in);const DomainScopeReference forged(std::move(data));
+        auto result=previewConfiguration(in,forged,{ProposedOperation::Apply,{setting}});
+        if(result.projectionAvailable)std::cerr<<label<<": projectionAvailable=true, semanticStatus="<<semanticStatusName(result.semanticStatus)<<'\n';
+        check(!result.projectionAvailable&&!result.configuration,label+": forged scope must not yield a candidate configuration");
+        check(!result.issues.empty()&&result.issues.front().status==SemanticStatus::NotProven&&result.issues.front().diagnostic.find("scope")!=std::string::npos,label+": precise scope refusal");
+        check(!sameScopeReference(canonical,forged),label+": unequal structural scope despite retained fingerprints");
+    };
+    const auto in=input();const auto canonical=domainScope(in);
+    auto data=canonical.data();auto ghost=data.domains.at("a");ghost.name="ghost";
+    data.domains.emplace("ghost",ghost);
+    denied(in,data,{{"domain/ghost","cache_credentials"},true},"ghost domain injection");
+    auto extra=input(base+"[domain/b]\nid_provider=ldap\n");
+    auto inactive=domainScope(extra).data();inactive.domains.at("b").selected=true;inactive.domains.at("b").enabled=true;
+    denied(extra,inactive,{{"domain/b","account_cache_expiration"},Days{10}},"inactive flags injection");
+    auto disabled=input("[sssd]\ndomains=a,b\n[domain/a]\nid_provider=ldap\n[domain/b]\nid_provider=ldap\nenabled=false\n");
+    auto enabled=domainScope(disabled).data();enabled.domains.at("b").enabled=true;enabled.domains.at("b").enabledSetting=true;
+    denied(disabled,enabled,{{"domain/b","account_cache_expiration"},Days{10}},"disabled domain injection");
+    for(const auto& provider:{"ad","proxy","unknown"}){
+        auto unsupported=input("[sssd]\ndomains=a\n[domain/a]\nid_provider="+std::string(provider)+"\n");
+        auto facts=domainScope(unsupported).data();facts.domains.at("a").provider=ProviderClass::LdapPassword;
+        denied(unsupported,facts,{{"domain/a","cache_credentials"},true},"provider classification "+std::string(provider));
+        facts=domainScope(unsupported).data();facts.domains.at("a").issues.clear();facts.issues.clear();
+        denied(unsupported,facts,{{"domain/a","cache_credentials"},true},"removed unsupported issues "+std::string(provider));
+    }
+    auto dynamic=input(base+"subdomain_inherit=cache_credentials\n");auto issues=domainScope(dynamic).data();issues.issues.clear();issues.domains.at("a").issues.clear();
+    denied(dynamic,issues,{{"domain/a","cache_credentials"},true},"removed unknown semantics issues");
+    // Each decision-relevant field is compared even when it is the sole change.
+    const std::vector<std::function<void(DomainScopeData&)>> edits{
+        [](auto& x){x.configured.push_back("ghost");},[](auto& x){x.selected.clear();},
+        [](auto& x){x.enabled.clear();},[](auto& x){x.expectedBackends.push_back("ghost");},
+        [](auto& x){x.unselected.push_back("ghost");},[](auto& x){x.domains.at("a").name="ghost";},
+        [](auto& x){x.domains.at("a").idProvider="ad";},[](auto& x){x.domains.at("a").authProvider="ad";},
+        [](auto& x){x.domains.at("a").selected=false;},[](auto& x){x.domains.at("a").enabled=false;},
+        [](auto& x){x.domains.at("a").authDefault=true;},[](auto& x){x.domains.at("a").enabledSetting=true;},
+        [](auto& x){x.domains.at("a").dynamicPossible=true;},[](auto& x){x.domains.at("a").trustedPossible=true;},
+        [](auto& x){x.domains.at("a").requiredConsumers.clear();},
+        [](auto& x){x.domains.at("a").issues.push_back({SemanticStatus::NotProven,"domain/a","scope","forged"});},
+        [](auto& x){x.issues.push_back({SemanticStatus::NotProven,"sssd","scope","forged"});},
+        [](auto& x){x.formatVersion++;},[](auto& x){x.hypothetical=true;},
+        [](auto& x){x.proposedGraphFingerprint="forged";},
+        [](auto& x){x.platform="unknown";},[](auto& x){x.input.reset();},
+        [](auto& x){auto altered=*x.input;altered.sources.at("/etc/sssd").identity.inode++;x.input=std::make_shared<const SssdInputReference>(std::move(altered));}
+    };
+    for(std::size_t i=0;i<edits.size();++i){auto facts=canonical.data();edits[i](facts);denied(in,facts,{{"domain/a","cache_credentials"},true},"scope fact "+std::to_string(i));}
+    auto hypothetical=previewConfiguration(in,canonical,{ProposedOperation::Apply,{{{"domain/a","cache_credentials"},true}}});
+    check(hypothetical.projectionAvailable,"canonical apply control");
+    auto rejected=previewConfiguration(in,hypothetical.configuration->scope,{ProposedOperation::Apply,{{{"domain/a","cache_credentials"},true}}});
+    check(!rejected.projectionAvailable&&!rejected.configuration&&rejected.issues.front().status==SemanticStatus::NotProven,"hypothetical cannot replace observed scope");
+}
 void valueTests(){
     auto in=input();auto cfg=effectiveConfiguration(in);
     check(days(cfg.offlineDays)==0&&cfg.offlineDays.origin==ValueOrigin::NativeDefault&&!cfg.offlineDays.explicitValue,"native offline default not FIC30");
@@ -101,6 +153,8 @@ void previewTests(){
     check(!previewConfiguration(in,scope,{ProposedOperation::Refresh,{{offline,Days{2}}}}).projectionAvailable,"no owner cannot refresh");
     auto refresh=previewConfiguration(in,scope,{ProposedOperation::Refresh,{{offline,Days{2}}}},&ctx);
     check(refresh.projectionAvailable&&days(refresh.configuration->offlineDays)==2&&std::get<bool>(refresh.configuration->domains.at("a").cacheCredentials.value),"refresh one key preserves sibling");
+    auto hypotheticalRefresh=previewConfiguration(in,refresh.configuration->scope,{ProposedOperation::Refresh,{{offline,Days{2}}}},&ctx);
+    check(!hypotheticalRefresh.projectionAvailable&&!hypotheticalRefresh.configuration&&hypotheticalRefresh.issues.front().status==SemanticStatus::NotProven&&hypotheticalRefresh.issues.front().diagnostic.find("scope")!=std::string::npos,"hypothetical cannot confirm observed REFRESH even with valid ownership");
     auto multi=previewConfiguration(in,scope,{ProposedOperation::Apply,{{offline,Days{2}},{account,Days{3}}}},&ctx);
     check(multi.projectionAvailable&&multi.semanticStatus==SemanticStatus::Validated&&days(multi.configuration->domains.at("a").accountDays)==3,"multiple independent own keys logical merge");
     auto release=previewConfiguration(in,scope,{ProposedOperation::ReleasePreview,{{offline,{}}}},&ctx);
@@ -117,6 +171,10 @@ void previewTests(){
     check(!previewConfiguration(changed,scope,{ProposedOperation::Refresh,{{offline,Days{1}}}},&ctx).projectionAvailable,"same effective value changed object invalidates old scope");
     for(const auto& request:std::vector<ProposedSetting>{{offline,Seconds{2}},{{"domain/a","cached_auth_timeout"},Seconds{2}},{{"domain/unknown","cache_credentials"},true},{cache,false}})
         check(!previewConfiguration(in,scope,{ProposedOperation::Apply,{request}},&ctx).projectionAvailable,"invalid units/foreign dependency/dynamic domain/fixed true rejected");
+    auto twoDomains=input("[sssd]\ndomains=a,b\n[domain/a]\nid_provider=ldap\n[domain/b]\nid_provider=ldap\n");
+    auto partial=previewConfiguration(twoDomains,domainScope(twoDomains),{ProposedOperation::Apply,{{cache,true}}});
+    check(partial.projectionAvailable&&partial.semanticStatus==SemanticStatus::Validated&&partial.configuration->scope.data().selected.size()==2,"partial multi-domain candidate may be semantically consistent");
+    check(partial.policyCoverage==PolicyCoverage::NotEvaluated&&std::get<bool>(partial.configuration->domains.at("a").cacheCredentials.value)&&!std::get<bool>(partial.configuration->domains.at("b").cacheCredentials.value),"semantic consistency does not prove full policy coverage or enable sibling cache");
     auto noFile=input(base);
     auto offlineOnly=previewConfiguration(noFile,domainScope(noFile),{ProposedOperation::Apply,{{offline,Days{30}}}});
     check(offlineOnly.projectionAvailable&&!std::get<bool>(offlineOnly.configuration->domains.at("a").cacheCredentials.value),"offline does not enable cache implicitly");
@@ -124,4 +182,4 @@ auto newCache=previewConfiguration(noFile,domainScope(noFile),{ProposedOperation
     check(newCache.projectionAvailable&&days(newCache.configuration->offlineDays)==0,"cache does not enable/change offline implicitly");
 }
 }
-int main(){try{scopeTests();valueTests();relationTests();previewTests();std::cout<<"SSSD I2 scope/value/relation/preview tests PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{scopeTests();scopeForgeryTests();valueTests();relationTests();previewTests();std::cout<<"SSSD I2 scope/value/relation/preview tests PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

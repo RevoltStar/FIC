@@ -130,8 +130,23 @@ functional proof; unknown pairs are unsupported. No failing root is dropped to
 produce partial global success. Future I3 must prove the actual consumers and
 discovery contract before extending support.
 
-sameScopeReference requires exact format/input/launch/semantic projection
-fingerprints. Canonical input hashing includes ordered contents, all source and
+DomainScopeReference remains a public immutable data container, not an authority
+token. A caller can copy its data and retain old fingerprints while changing
+computed facts; those fingerprints alone do not authenticate the facts.
+sameScopeReference therefore compares the full structure: format/generation,
+platform, configured/selected/enabled/unselected roots, expectedBackends, every
+domain's providers/classification/flags/consumers/issues, global issues and the
+recomputed binding of its stored I1 input, in addition to the fingerprints.
+
+previewConfiguration recomputes the canonical scope from its input, requires
+full structural equivalence and rejects hypothetical references as observed.
+All admissibility decisions then use only that canonical scope, never the
+caller's domain map or selected/enabled flags. A forged ghost root, enabled flag,
+provider classification, removed issue or altered expectedBackends returns
+NotProven with no candidate configuration. This is structural validation, not a
+new signed-token or cryptographic protocol.
+
+Canonical input hashing includes ordered contents, all source and
 absence identities/metadata, launch/process/executable references and consumer
 mapping. Identical final root/value lists do not excuse changed snippets, object
 identity, metadata, provider, enabled flag or launch generation. Records retain

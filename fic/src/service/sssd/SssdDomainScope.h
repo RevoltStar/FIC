@@ -26,6 +26,8 @@ struct DomainScopeData {
     std::map<std::string,Domain> domains;
     std::vector<SemanticIssue> issues;
 };
+// Immutable data container, not an authority token. Canonical consumers must
+// verify all structural facts against the I1-derived scope, not just digests.
 class DomainScopeReference {
     std::shared_ptr<const DomainScopeData> data_;
 public:
@@ -34,7 +36,8 @@ public:
 };
 std::string inputFingerprint(const SssdInputReference&);
 DomainScopeReference domainScope(const SssdInputReference&);
-// Exact reference comparison: even irrelevant bytes/object identity changes invalidate it.
+// Full structural comparison, including derived facts and bound input observations.
+// Matching stored fingerprints alone never establish equivalence.
 bool sameScopeReference(const DomainScopeReference&,const DomainScopeReference&);
 namespace detail_i2 {
 using OrderedGraph=std::vector<std::pair<std::string,IniProjection>>;

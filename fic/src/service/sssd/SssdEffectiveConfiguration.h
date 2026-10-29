@@ -37,7 +37,12 @@ EffectiveConfiguration effectiveConfiguration(const SssdInputReference&,const Tr
 enum class ProposedOperation { Apply, Refresh, ReleasePreview };
 struct ProposedSetting {SettingKey setting;SemanticValue value;}; // monostate = remove in ReleasePreview only.
 struct ProposedChange {ProposedOperation operation;std::vector<ProposedSetting> settings;};
+// Consistency of the resulting configuration does not establish policy coverage.
+// Future I4/I6 must separately verify every required (section,key) in the full
+// canonical policy scope; I2 neither generates that set nor proves it complete.
+enum class PolicyCoverage { NotEvaluated };
 struct ConfigurationPreview {
+    PolicyCoverage policyCoverage=PolicyCoverage::NotEvaluated;
     bool projectionAvailable=false; // Never confirms CAS, release or enrollment.
     SemanticStatus semanticStatus=SemanticStatus::NotProven;
     std::vector<SemanticIssue> semanticIssues;

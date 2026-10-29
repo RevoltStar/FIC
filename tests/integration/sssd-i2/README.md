@@ -62,3 +62,20 @@ Docker/WSL shared-kernel evidence does not certify bare metal, Podman, enforcing
 LSM, real AD/IPA, trust discovery or account-cleanup timing. I3 activation,
 consumer readiness/identity, generation/P/negative-publication/cleanup and I4–I6
 policy/transaction/journal/release/package integration remain separate work.
+
+
+The I2 scope-boundary follow-up retains the existing native gates and adds
+in-memory forgery regression cases in sssd_domain_semantics_tests. With the
+original fed7e32 implementation, the new ghost test returned projectionAvailable
+true and semanticStatus Validated; the actual failing CTest log is scope-red.txt
+(exit8, intentionally recorded baseline RED, not a current native FAIL). Final
+tests reject ghost/flags/provider/issues/backend/consumer/input substitutions
+with unchanged fingerprints. Observed/hypothetical scopes remain separate.
+A partial two-domain preview can be semantically Validated but explicitly has
+PolicyCoverage::NotEvaluated and leaves the other domain's cache unchanged.
+
+The updated evidence is exported only after new native executions on all five.
+It points to fed7e32 and the prior evidence digest in git history, preserving
+baseline provenance without duplicating the large old JSON. The exporter reads
+that baseline git object; normal retained-evidence CTest does not require git
+history or execute native containers. R1/R2/I1 evidence remains unchanged.

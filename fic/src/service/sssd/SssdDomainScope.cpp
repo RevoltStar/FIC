@@ -11,6 +11,25 @@ std::string lower(std::string s){for(auto& c:s)if(c>='A'&&c<='Z')c+=32;return s;
 std::string trim(std::string s){auto a=s.find_first_not_of(" \t\r"),b=s.find_last_not_of(" \t\r");return a==s.npos?"":s.substr(a,b-a+1);}
 bool validName(const std::string& s){return !s.empty()&&s.size()<=253&&s.front()!='.'&&s.back()!='.'&&s.find("..")==s.npos&&std::all_of(s.begin(),s.end(),[](char c){return (c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='.'||c=='-'||c=='_';});}
 std::string setting(const IniProjection& p,const std::string& sec,const std::string& key){auto s=p.find(sec);if(s==p.end())return {};auto v=s->second.find(key);return v==s->second.end()?"":v->second.value;}
+// Fingerprints bind observations, not arbitrary caller-supplied derived facts.
+// Compare every fact that can influence preview or future consumer validation.
+J issueFacts(const std::vector<SemanticIssue>& issues){
+    J out=J::array();for(const auto& i:issues)out.push_back(J::array({static_cast<int>(i.status),i.section,i.key,i.diagnostic}));return out;
+}
+J scopeFacts(const DomainScopeData& data){
+    J out={{"format",data.formatVersion},{"hypothetical",data.hypothetical},
+        {"proposal",data.proposedGraphFingerprint},{"platform",data.platform},
+        {"graph",data.graphFingerprint},{"launch",data.launchFingerprint},{"projection",data.projectionFingerprint},
+        {"configured",data.configured},{"selected",data.selected},{"enabled",data.enabled},
+        {"backends",data.expectedBackends},{"unselected",data.unselected},{"issues",issueFacts(data.issues)}};
+    out["input"]=data.input?J(inputFingerprint(*data.input)):J(nullptr);
+    out["domains"]=J::object();
+    for(const auto& [key,d]:data.domains)out["domains"][key]=J::array({d.name,d.idProvider,d.authProvider,
+        static_cast<int>(d.provider),d.selected,d.enabled,d.authDefault,d.dynamicPossible,d.trustedPossible,
+        d.enabledSetting?J(*d.enabledSetting):J(nullptr),d.requiredConsumers,issueFacts(d.issues)});
+    return out;
+}
+
 }
 const char* semanticStatusName(SemanticStatus s){switch(s){
 case SemanticStatus::Validated:return "Validated";case SemanticStatus::Conflict:return "Conflict";
@@ -116,5 +135,10 @@ std::string inputFingerprint(const SssdInputReference& in){
     return hash(j);
 }
 DomainScopeReference domainScope(const SssdInputReference& input){return detail_i2::scopeProjection(input,detail_i2::merge(detail_i2::orderedGraph(input)));}
-bool sameScopeReference(const DomainScopeReference& a,const DomainScopeReference& b){return a.data().hypothetical==b.data().hypothetical&&a.data().proposedGraphFingerprint==b.data().proposedGraphFingerprint&&a.data().formatVersion==b.data().formatVersion&&a.data().graphFingerprint==b.data().graphFingerprint&&a.data().launchFingerprint==b.data().launchFingerprint&&a.data().projectionFingerprint==b.data().projectionFingerprint;}
+bool sameScopeReference(const DomainScopeReference& a,const DomainScopeReference& b){
+    return a.data().hypothetical==b.data().hypothetical&&a.data().proposedGraphFingerprint==b.data().proposedGraphFingerprint&&
+        a.data().formatVersion==b.data().formatVersion&&a.data().graphFingerprint==b.data().graphFingerprint&&
+        a.data().launchFingerprint==b.data().launchFingerprint&&a.data().projectionFingerprint==b.data().projectionFingerprint&&
+        scopeFacts(a.data())==scopeFacts(b.data());
+}
 } // namespace fic::service::sssd

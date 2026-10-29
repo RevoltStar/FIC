@@ -1,0 +1,18 @@
+Internal ctest changing into directory: /build
+Test project /build
+    Start 211: sssd_domain_semantics_tests
+1/1 Test #211: sssd_domain_semantics_tests ......***Failed    0.04 sec
+ghost domain injection: projectionAvailable=true, semanticStatus=Validated
+ghost domain injection: forged scope must not yield a candidate configuration
+
+
+0% tests passed, 1 tests failed out of 1
+
+Label Time Summary:
+unit    =   0.04 sec*proc (1 test)
+
+Total Test time (real) =   0.05 sec
+
+The following tests FAILED:
+	211 - sssd_domain_semantics_tests (Failed)
+Errors while running CTest

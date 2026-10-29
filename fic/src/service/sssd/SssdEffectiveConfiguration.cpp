@@ -62,7 +62,9 @@ EffectiveConfiguration effectiveConfiguration(const SssdInputReference& input,co
 ConfigurationPreview previewConfiguration(const SssdInputReference& input,const DomainScopeReference& scope,const ProposedChange& change,const TrustedOwnershipContext* ownership){
     ConfigurationPreview out;
     auto refuse=[&](SemanticStatus status,const std::string& why){out.issues.push_back({status,"","preview",why});return out;};
-    if(!sameScopeReference(domainScope(input),scope))return refuse(SemanticStatus::NotProven,"stale input/scope reference; re-evaluation required");
+    const auto canonical=domainScope(input);
+    if(scope.data().hypothetical||!sameScopeReference(canonical,scope))
+        return refuse(SemanticStatus::NotProven,"inconsistent, stale or hypothetical scope; canonical I1 scope required");
     if(change.settings.empty())return refuse(SemanticStatus::InvalidInput,"empty proposed operation");
     auto graph=detail_i2::orderedGraph(input);
     auto own=std::find_if(graph.begin(),graph.end(),[](const auto& s){return s.first==ownedFile;});
@@ -82,12 +84,12 @@ ConfigurationPreview previewConfiguration(const SssdInputReference& input,const 
         const auto domain=k.section.rfind("domain/",0)==0?k.section.substr(7):"";
         const bool domainKey=!domain.empty()&&(k.key=="account_cache_expiration"||k.key=="cache_credentials");
         if(!global&&!domainKey)return refuse(SemanticStatus::UnsupportedConfiguration,"only owned offline/account/cache keys can change; cached_auth_timeout is read-only");
-        if(!global&&!scope.data().domains.count(domain))return refuse(SemanticStatus::NotProven,"cannot manufacture unknown domain section");
+        if(!global&&!canonical.data().domains.count(domain))return refuse(SemanticStatus::NotProven,"cannot manufacture unknown domain section");
         const auto old=lookup(own->second,k);
         if((old||change.operation!=ProposedOperation::Apply)&&(!ownership||!ownership->ownedValues.count(k)))return refuse(SemanticStatus::NotProven,"target key lacks ownership proof");
         if(release){if(!std::holds_alternative<std::monostate>(item.value))return refuse(SemanticStatus::InvalidInput,"release preview only removes keys");own->second[k.section].erase(k.key);}
         else{
-            if(!global&&(!scope.data().domains.at(domain).selected||!scope.data().domains.at(domain).enabled))return refuse(SemanticStatus::UnsupportedConfiguration,"new/updated domain setting requires selected enabled root");
+            if(!global&&(!canonical.data().domains.at(domain).selected||!canonical.data().domains.at(domain).enabled))return refuse(SemanticStatus::UnsupportedConfiguration,"new/updated domain setting requires selected enabled root");
             auto text=proposedText(item);if(!text)return refuse(SemanticStatus::InvalidInput,"wrong typed unit/range or cache value (only fixed true may be proposed)");
             own->second[k.section][k.key]={*text,ownedFile};
         }

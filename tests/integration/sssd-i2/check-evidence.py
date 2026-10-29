@@ -8,6 +8,12 @@ platforms={'debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11'}
 assert e['schema']=='sssd-i2-native-v1' and set(e['profiles'])==platforms
 for group in ('source_sha256','historical_sha256'):
  for path,digest in e[group].items():assert hashlib.sha256((ROOT/path).read_bytes()).hexdigest()==digest,path
+assert e['base']=='fed7e32acfb0b77fc6d96fa7e77f11959c4b98c1'
+assert e['baseline_i2']['commit']==e['base'] and len(e['baseline_i2']['evidence_sha256'])==64
+red=e['scope_boundary_regression'];assert red['baseline_commit']==e['base'] and red['expected_baseline_ctest_exit']==8
+red_path=ROOT/red['red_log'];assert hashlib.sha256(red_path.read_bytes()).hexdigest()==red['red_log_sha256']
+assert 'ghost domain injection: projectionAvailable=true, semanticStatus=Validated' in red_path.read_text()
+assert '0% tests passed, 1 tests failed' in red_path.read_text()
 for platform,p in e['profiles'].items():
  assert p['status']=='PASS' and not p['runtime_receipt'] and not p['completed_proofs']
  report=p['report'];o=report['experiments']

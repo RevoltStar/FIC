@@ -141,15 +141,25 @@ be suppressed by a disabled FIC policy. Every selected root participates in
 support admission; unsupported coverage cannot yield global Validated.
 
 previewConfiguration(input, currentScope, change, ownership) rechecks exact scope
-coherence, projects every individual ordered source with I1's existing parser,
+coherence by comparing all computed facts with a newly derived canonical scope;
+it rejects inconsistent/hypothetical references as NotProven and uses only the
+canonical I1-derived facts for decisions. It projects every individual ordered
+source with I1's existing parser,
 logically edits only the zzzz-fic.conf source node, then re-merges in native
 order. It does not overwrite the final IniProjection or serialize/write a file.
 Unchanged sibling and foreign keys retain their own provenance. Callers specify
 explicit keys/typed values: offline/account Days 0..3650 or fixed cache true;
 cached_auth_timeout is read-only. No new unknown/dynamic domain section is made,
 no automatic cache enablement/value alignment/default account policy is added.
-Future whole-domain policies must construct their complete target-key set; I2
-itself does not turn a partial proposed-key list into policy compliance.
+SemanticStatus::Validated means semantic consistency, not policy coverage.
+ConfigurationPreview explicitly returns PolicyCoverage::NotEvaluated, including
+when only a's cache key is proposed in a two-root a,b LDAP scope. It does not
+implicitly enable b's cache. Future I4/I6 integration must independently validate
+every required (section,key), its intended effective value and ownership, against
+the full canonical policy scope before policy SUCCESS. A separate complete
+required target set is mandatory; I2 neither generates it nor proves it complete.
+The regression test retains a semantically Validated partial preview while
+showing that b remains false and coverage is still NotEvaluated.
 
 Apply may preview a new absent owned file without adopting anything. Any existing
 shared file requires caller-trusted graph-bound proof with exact existing own

@@ -202,7 +202,10 @@ locking, responder generation proof, or I3 runtime/cleanup authority. The full
 ## Implemented I2 semantics-only API
 
 `SssdDomainScope::{domainScope,inputFingerprint,sameScopeReference}` creates and
-compares immutable exact I1-bound domain references. `SssdEffectiveConfiguration::
+compares immutable exact I1-bound domain references. This includes structural
+comparison of the computed domain facts and their bound input, not just stored
+fingerprints; preview decisions use a fresh canonical I1-derived scope and
+reject forged or hypothetical observed references. `SssdEffectiveConfiguration::
 effectiveConfiguration` computes typed Days/Seconds/bools with source/default/
 foreign/unknown/owned provenance. `previewConfiguration` logically merges proposed
 own-key Apply/Refresh/ReleasePreview operations. `SssdRelationValidator::
@@ -217,6 +220,9 @@ mounts, journal, policy registration or integration into current SssdRuntime.
 No I1/generic/SSH validation is relaxed. SemanticProjection Validated means the
 supported LDAP configuration is expected to satisfy the reviewed relation; it
 is not completed C, completed A/B/C/P, policy Success or a runtime receipt.
+Preview also reports PolicyCoverage::NotEvaluated: I4/I6 must separately prove
+the complete required key set against canonical domain scope before policy
+SUCCESS. Structural scope consistency does not establish that policy coverage.
 
 I3 must bind these exact inputs/scope/expected values to verified runtime
 activation and the monitor/backend/late responder generation/readiness, then
