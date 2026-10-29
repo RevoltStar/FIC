@@ -3292,3 +3292,19 @@ if(Python3_Interpreter_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/integration/sssd-i1/check-evidence.py)
     set_tests_properties(sssd_i1_evidence_checks PROPERTIES LABELS "unit;integration")
 endif()
+
+set(FIC_SSSD_I2_SOURCES
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdDomainScope.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdEffectiveConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdRelationValidator.cpp)
+add_executable(sssd_domain_semantics_tests fic/service/SssdDomainSemanticsTests.cpp
+    ${FIC_SSSD_I2_SOURCES} ${FIC_SSSD_I1_SOURCES} ${FIC_VERIFIED_CONFIG_SOURCES})
+target_include_directories(sssd_domain_semantics_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sssd_domain_semantics_tests PRIVATE fic-core fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+add_test(NAME sssd_domain_semantics_tests COMMAND sssd_domain_semantics_tests)
+set_tests_properties(sssd_domain_semantics_tests PROPERTIES LABELS unit)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME sssd_i2_evidence_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/integration/sssd-i2/check-evidence.py)
+    set_tests_properties(sssd_i2_evidence_checks PROPERTIES LABELS "unit;integration")
+endif()

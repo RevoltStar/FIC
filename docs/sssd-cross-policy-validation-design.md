@@ -1,6 +1,7 @@
 # Proposed SSSD relation validator and implementation sequence
 
-Research only; no validator/policy/journal implementation in R2.
+R2 introduced the design without implementation. I2 now implements the pure
+validator/projection described below; policy/journal integration remains future work.
 [Semantics](sssd-policy-semantics.md), [domain model](sssd-domain-scope-design.md),
 [activation proofs](sssd-verified-activation-design.md).
 
@@ -83,7 +84,7 @@ over login ages is not permission to delete cached identities/passwords.
 Every stage needs unit/contract/negative tests as well as listed native gates.
 Do not connect an incomplete adapter as a fallback, start SSSD to make apply pass,
 or replace unknown C/P outcomes with `is-active`. R1/R2 research is historical evidence. I1 now has its separate read-only
-implementation and native evidence; I2–I6 remain unimplemented.
+implementation and native evidence; I2 now implements semantics only; I3–I6 remain unimplemented.
 
 ## Mandatory native acceptance gates
 
@@ -127,3 +128,48 @@ cannot be converted into a provider relation default. I2 must interpret supporte
 provider/domain/default relations; I3 must prove protected A/B/C/P, source absence,
 RO metadata, precommands, consumer/runtime identity and cleanup. No runtime receipt,
 policy integration, CAS transaction or journal transition is introduced in I1.
+
+
+## Implemented I2 computation and hypothetical operations
+
+SssdEffectiveConfiguration and SssdRelationValidator operate on the I1 ordered
+graph and SssdDomainScope. effectiveConfiguration returns typed global/domain
+values and provenance; validateRelations returns per-enabled-selected-root
+states, aggregate status and exact section/key/value diagnostics. No policy
+status flags are accepted, so foreign/default account and offline values cannot
+be suppressed by a disabled FIC policy. Every selected root participates in
+support admission; unsupported coverage cannot yield global Validated.
+
+previewConfiguration(input, currentScope, change, ownership) rechecks exact scope
+coherence, projects every individual ordered source with I1's existing parser,
+logically edits only the zzzz-fic.conf source node, then re-merges in native
+order. It does not overwrite the final IniProjection or serialize/write a file.
+Unchanged sibling and foreign keys retain their own provenance. Callers specify
+explicit keys/typed values: offline/account Days 0..3650 or fixed cache true;
+cached_auth_timeout is read-only. No new unknown/dynamic domain section is made,
+no automatic cache enablement/value alignment/default account policy is added.
+Future whole-domain policies must construct their complete target-key set; I2
+itself does not turn a partial proposed-key list into policy compliance.
+
+Apply may preview a new absent owned file without adopting anything. Any existing
+shared file requires caller-trusted graph-bound proof with exact existing own
+key/value assertions. Refresh/release require proof for each existing target;
+missing/drifted keys or a stale graph return NotProven, not adoption/recreation.
+The caller's proofIdentity is an authority label supplied by future I4/I5, not
+an independently authenticated token or journal integration in I2.
+
+Any later loaded snippet blocks Apply/Refresh, whether matching, conflicting or
+unrelated. ReleasePreview instead removes only the proven logical key and
+computes the remaining foreign/default/later-snippet image. Its
+projectionAvailable result is independent of semanticStatus/semanticIssues.
+Foreign conflicts or unsupported remaining semantics do not forbid computing
+release preview and do not mean the owned setting should be kept. This API
+confirms neither physical release, CAS nor runtime reconciliation. A hypothetical
+projection carries the captured base reference and distinct proposed-source-graph and projected-semantics
+fingerprints plus hypothetical=true; it cannot serve as a new observed I1 input.
+
+Native reruns reproduce all six LDAP pairs and proxy acceptance on all five,
+including conflict with cache=false and a single conflicting root in a two-LDAP
+scope. Config-check acceptance, actual backend startup/failed state and ConfigDB
+are retained separately. AD/IPA functional realm/trust status remains NOT_TESTED;
+source evidence is not a functional acceptance claim. [I2 evidence/runner](../tests/integration/sssd-i2/README.md).

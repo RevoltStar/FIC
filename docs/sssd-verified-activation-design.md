@@ -118,7 +118,7 @@ R2 must refine consumer/domain/relation semantics before implementation.
 existing typed `detail::Failure/ActivationStatus`; a returned reference is an
 observation, never an activation result or authority to mutate. There are no
 production callers in policies yet. Existing SSSD apply/runtime/rollback stay
-unchanged. I2–I6 are not implemented by this API.
+unchanged. I1 itself implements none of I2–I6; the separate I2 API below now projects expected semantics.
 
 Admission uses the same private root-PID1 typed D-Bus reader, with a narrow
 read-only SSSD entrypoint adding state, sandbox, InvocationID and Manager.UnitPath.
@@ -197,3 +197,33 @@ The corrected mode-0700 nested-mount fixture verifies the mount-boundary reason,
 without changing the generic reader. These tests do not provide atomic file/unit
 locking, responder generation proof, or I3 runtime/cleanup authority. The full
 `/etc/sssd` scan and existing generic PIDFile limitations remain unchanged.
+
+
+## Implemented I2 semantics-only API
+
+`SssdDomainScope::{domainScope,inputFingerprint,sameScopeReference}` creates and
+compares immutable exact I1-bound domain references. `SssdEffectiveConfiguration::
+effectiveConfiguration` computes typed Days/Seconds/bools with source/default/
+foreign/unknown/owned provenance. `previewConfiguration` logically merges proposed
+own-key Apply/Refresh/ReleasePreview operations. `SssdRelationValidator::
+validateRelations` provides provider-aware per-root diagnostics and aggregate
+expected semantic consistency. [Scope contract](sssd-domain-scope-design.md#implemented-i2-scope-reference),
+[value contract](sssd-policy-semantics.md#implemented-i2-expected-semantic-projection)
+and [preview contract](sssd-cross-policy-validation-design.md#implemented-i2-computation-and-hypothetical-operations)
+are authoritative for their respective types and boundaries.
+
+I2 is pure computation: no files, commands, service jobs, ConfigDB/cache writes,
+mounts, journal, policy registration or integration into current SssdRuntime.
+No I1/generic/SSH validation is relaxed. SemanticProjection Validated means the
+supported LDAP configuration is expected to satisfy the reviewed relation; it
+is not completed C, completed A/B/C/P, policy Success or a runtime receipt.
+
+I3 must bind these exact inputs/scope/expected values to verified runtime
+activation and the monitor/backend/late responder generation/readiness, then
+establish persistent proof, protected negative dependencies, safe publication/
+cleanup, metadata/precommand handling and platform PIDFile constraints. I4 must
+provide trusted ownership context and transaction/CAS/journal integration; I5
+must implement physical ownership release with separate runtime outcomes; I6
+must integrate policy metadata/dependencies/clients and real package-policy E2E.
+None of I3–I6 is started by I2. AD/IPA realm/trust, other mechanisms and deployment
+LSM/kernel guarantees remain outside the current native Docker/WSL proof.

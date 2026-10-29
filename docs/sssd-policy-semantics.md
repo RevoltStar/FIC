@@ -162,3 +162,51 @@ behavior must not be claimed from the password fixture. AD/IPA support remains
 possible after concrete provider/scope gates pass; source-only evidence does
 not currently authorize it. Domain changes invalidate the old receipt's coverage
 until rechecked under the [scope contract](sssd-domain-scope-design.md).
+
+
+## Implemented I2 expected semantic projection
+
+I2 now implements pure computation over an immutable copy of an I1 input graph;
+[it does not observe consumer memory](sssd-verified-activation-design.md#implemented-i2-semantics-only-api).
+Its separate [native evidence](../tests/integration/sssd-i2/evidence.json)
+reproduces the six LDAP pairs and native proxy differences on all five profiles.
+The R1/R2/I1 evidence remains historical and byte-identical.
+
+Native defaults remain offline=0 days, account=0 days, cache=false and
+cached_auth_timeout=0 seconds. They are not FIC policy defaults: existing FIC
+offline default stays 30; no FIC account default is assigned. EffectiveValue
+retains key/section, raw and typed value, units, source, explicit/default flag,
+origin, status and diagnosis. Days are bounded to 0..3650 for this FIC semantic
+contract (including foreign effective days); this does not assert a native SSSD
+range. Seconds use the reviewed uint32 reader's range. Values outside the days
+contract and unknown boolean forms are UnsupportedConfiguration; invalid numeric
+forms are InvalidInput.
+Strict unsigned decimal parsing rejects signs, suffixes, overflow, and multi-digit
+leading-zero forms because native base-0 readers could interpret them differently.
+Native booleans are case-insensitive true/false only, verified source/native on
+all five. Unknown text never becomes false/zero.
+
+The configured seconds input stays unchanged. A separate
+expectedCachedAuthSeconds projects the source-derived nonzero offline-days clamp;
+it is neither an I3 observation of consumer memory nor permission to write the
+foreign dependency. Missing auth_provider defaults to id_provider in the reviewed
+dp_target_default_module; missing id_provider is not inferred. Only ldap/ldap is
+supported. Known non-password mappings, implicit/dynamic/trust scope and unknown
+canonical key/section spellings fail closed. This bounded subset does not promise
+all native syntaxes or alternate authentication mechanisms.
+
+Foreign assignments retain their source path. Assignments in zzzz-fic.conf have
+Unknown origin unless an exact graph-bound TrustedOwnershipContext proves that
+logical key/value. Proposed values use a distinct Proposed origin, not acquired
+ownership. Context validation only checks coherence with the captured graph;
+the future journal/CAS caller must supply its authority. This API creates no
+ownership proof, credential mutation, policy Success or runtime receipt.
+
+validateRelations checks every selected enabled supported LDAP root using the
+R2 formula, independent of policy enabled flags and cache_credentials. Inactive
+roots remain reported; their values are not asserted to be loaded consumers.
+A conflict in one active root prevents a global validated result. Proxy, AD/IPA
+and unknown providers remain unsupported; dynamic/trust behavior is unproven.
+Recommended offline→cache remains appropriate for password usefulness and does
+not replace this relation validator; no Required dependency or implicit cache
+true is introduced. Current policies/registry/runtime/rollback are unchanged.

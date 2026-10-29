@@ -1,6 +1,6 @@
 # Proposed SSSD domain scope
 
-Research design only. [Evidence/semantics](sssd-policy-semantics.md).
+R2 design and evidence boundaries; implemented I2 API is specified below. [Evidence/semantics](sssd-policy-semantics.md).
 
 ## Domain sets must remain separate
 
@@ -95,3 +95,50 @@ owned set, even if that root is inactive or a later foreign snippet overrides
 it; no historical foreign restore. Remaining foreign conflicts are reported
 separately from ownership release and runtime readiness. Stopped SSSD does not
 require start to release a proven persistent setting.
+
+
+## Implemented I2 scope reference
+
+SssdDomainScope accepts the existing SssdInputReference; it never reads files,
+queries D-Bus, enumerates runtime domains or creates a second scanner.
+DomainScopeReference owns shared immutable DomainScopeData, including a deep
+immutable I1 copy, formatVersion=1, platform, exact graph/launch/projection
+fingerprints and diagnostic domain records. It is ephemeral expected semantic
+data, not a persistent/runtime receipt or authority to mutate.
+
+Configured sections, explicitly selected ordered roots, effective enabled roots,
+expected backend names and unselected sections remain separate vectors. Per-root
+records include id/auth providers, enabled explicit/default state, provider
+classification, possible dynamic/trust scope and future required monitor/backend/
+PAM/NSS consumer identifiers. Expected backends are not claimed running.
+
+Reviewed native enabled semantics start with domains, remove enabled=false and
+add unlisted enabled=true roots. Missing enabled retains membership in domains.
+The closed positive profile requires explicit static LDAP password roots:
+auto-enabled unlisted roots are reported but UnsupportedConfiguration. All-disabled
+or no explicit roots is unsupported, never empty-scope success. Duplicate names,
+empty list entries, missing/case-mismatched sections and ambiguous case identities
+are invalid. Explicit selection order is preserved; unsupported auto-added roots
+are reported canonically, without claiming their native initialization order. The parser supports a bounded ASCII name subset; nested domain
+sections and subdomain/inheritance configuration cannot prove trusted coverage.
+Extra inactive sections remain visible without being called runtime consumers.
+
+ldap/ldap (including the versioned auth default to id) is the only positive
+provider pair. Proxy has native startup evidence but unsupported password/cleanup
+scope. AD/IPA expose possible dynamic/trusted children, with no real realm/trust
+functional proof; unknown pairs are unsupported. No failing root is dropped to
+produce partial global success. Future I3 must prove the actual consumers and
+discovery contract before extending support.
+
+sameScopeReference requires exact format/input/launch/semantic projection
+fingerprints. Canonical input hashing includes ordered contents, all source and
+absence identities/metadata, launch/process/executable references and consumer
+mapping. Identical final root/value lists do not excuse changed snippets, object
+identity, metadata, provider, enabled flag or launch generation. Records retain
+the facts behind the hash for diagnosis. Hypothetical references additionally
+carry a distinct proposed-source-graph fingerprint and hypothetical=true, so
+a shadowed key removal cannot masquerade as an observed unchanged graph. There is no mutable cache or privileged
+ABA guarantee; future I3 must revalidate I1 at its proof boundaries.
+
+[Unit/native tests and retained source evidence](../tests/integration/sssd-i2/README.md)
+cover these boundaries on all five platforms. I3–I6 remain unimplemented.
