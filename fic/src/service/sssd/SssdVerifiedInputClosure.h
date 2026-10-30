@@ -26,6 +26,11 @@ struct SssdInputReference {
 SssdInputReference capture(Deadline deadline);
 void revalidate(const SssdInputReference&, Deadline deadline);
 namespace detail_i1 {
+// Internal I3 reuse of the same reader/parser. No runtime admission authority.
+SssdInputReference snapshotGraph(const SssdLaunchReference&,Deadline);
+// Persistent sources only, deliberately separate from old process identity.
+void verifyPersistentSources(const SssdInputReference&,Deadline);
+
 // Pure bounded syntax subset, not a domain/provider semantics validator.
 IniProjection project(const std::vector<std::string>& order,const std::map<std::string,std::string>& bytes);
 bool loadedSnippet(const std::string& name);

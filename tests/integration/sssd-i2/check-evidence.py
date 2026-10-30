@@ -6,8 +6,13 @@ HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
 e=json.loads((HERE/'evidence.json').read_text())
 platforms={'debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11'}
 assert e['schema']=='sssd-i2-native-v1' and set(e['profiles'])==platforms
-for group in ('source_sha256','historical_sha256'):
- for path,digest in e[group].items():assert hashlib.sha256((ROOT/path).read_bytes()).hexdigest()==digest,path
+# Keep the old native proof tied to its exact accepted source snapshot. I3
+# separately validates current sources; no old runtime PASS is relabelled.
+accepted='e36904b7572394de1c728713b154eb5b6236b919'
+for path,digest in e['source_sha256'].items():
+ source=subprocess.run(['git','-c','safe.directory='+str(ROOT),'-C',str(ROOT),'show',f'{accepted}:{path}'],check=True,stdout=subprocess.PIPE).stdout
+ assert hashlib.sha256(source).hexdigest()==digest,path
+for path,digest in e['historical_sha256'].items():assert hashlib.sha256((ROOT/path).read_bytes()).hexdigest()==digest,path
 assert e['base']=='fed7e32acfb0b77fc6d96fa7e77f11959c4b98c1'
 assert e['baseline_i2']['commit']==e['base'] and len(e['baseline_i2']['evidence_sha256'])==64
 red=e['scope_boundary_regression'];assert red['baseline_commit']==e['base'] and red['expected_baseline_ctest_exit']==8

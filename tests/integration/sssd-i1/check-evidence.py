@@ -6,7 +6,12 @@ HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
 e=json.loads((HERE/'evidence.json').read_text());fixtures=json.loads((HERE/'launch-fixtures.json').read_text())
 platforms={'debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11'}
 assert e['schema']=='sssd-i1-native-v1' and set(e['profiles'])==platforms==set(fixtures)
-for p,digest in e['source_sha256'].items():assert hashlib.sha256((ROOT/p).read_bytes()).hexdigest()==digest,p
+# Historical runtime evidence binds to its accepted implementation, not future
+# adapters. Current-source/runtime regression binding belongs to the I3 gate.
+accepted='807538d89643be0ec2d63f5b0b9de95661610892'
+for p,digest in e['source_sha256'].items():
+ source=subprocess.run(['git','-c','safe.directory='+str(ROOT),'-C',str(ROOT),'show',f'{accepted}:{p}'],check=True,stdout=subprocess.PIPE).stdout
+ assert hashlib.sha256(source).hexdigest()==digest,p
 for p,item in e['profiles'].items():
  assert item['status']=='PASS' and item['activation_status']=='NOT_TESTED' and not item['runtime_receipt']
  o=item['observations']

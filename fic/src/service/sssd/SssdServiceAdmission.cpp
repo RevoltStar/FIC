@@ -261,6 +261,13 @@ SssdLaunchReference detail_i1::admitForTests(Deadline deadline,const std::functi
     return admitImpl(deadline,checkpoint);
 }
 #endif
+void detail_i1::verifyExecutables(const SssdLaunchReference& ref){
+    auto root=d::openAbsolute("/",O_PATH|O_DIRECTORY);std::uint64_t budget=128*1024*1024;
+    for(const auto& [path,expected]:ref.executables){
+        const auto observed=path.rfind("/bin/",0)==0?nativeTool(root.get(),path.substr(5),budget,ref.profile.platform=="ubuntu-26.04"):d::fingerprintUnitSource(root.get(),path,budget);
+        if(observed!=expected)throw d::Failure(ActivationStatus::InterferenceDetected,"SSSD executable/alias source changed");
+    }
+}
 void revalidate(const SssdLaunchReference& ref,Deadline deadline) {
     try {const auto now=admit(deadline);
         if(now.profile.platform!=ref.profile.platform||now.contract!=ref.contract||now.executables!=ref.executables||now.processIdentity!=ref.processIdentity||now.environmentFingerprint!=ref.environmentFingerprint||now.unitLookupFingerprint!=ref.unitLookupFingerprint)

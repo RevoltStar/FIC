@@ -28,6 +28,7 @@ SssdLaunchReference admit(Deadline deadline);
 void revalidate(const SssdLaunchReference&, Deadline deadline);
 namespace detail_i1 {
 std::string environmentReference(const std::string& path);
+void verifyExecutables(const SssdLaunchReference&);
 #ifdef FIC_SSSD_I1_TESTING
 // Operation-local checkpoint after initial launch/environment/lookup observations.
 SssdLaunchReference admitForTests(Deadline, const std::function<void(const SssdLaunchReference&)>&);

@@ -56,13 +56,16 @@ std::string ServiceState::at(const std::string& key) const {
     return it->second;
 }
 SystemdActivation::SystemdActivation(const std::string& unit, std::chrono::steady_clock::time_point deadline,
-                                     const std::vector<ControlledPath>& targets, ActivationProfile activationProfile)
-    : profile_(activationProfile), unit_(unit), targets_(targets), deadline_(deadline) {
+                                     const std::vector<ControlledPath>& targets, ActivationProfile activationProfile,std::function<void(const LaunchContract&)> sssdValidator)
+    : profile_(activationProfile), sssdValidator_(std::move(sssdValidator)), unit_(unit), targets_(targets), deadline_(deadline) {
     namespace_ = namespaceIdentity(::getpid());
     std::ifstream comm("/proc/1/comm"); std::string name; std::getline(comm, name);
     if (name != "systemd" || namespaceIdentity(1) != namespace_)
         throw Failure(ActivationStatus::UnsupportedConfiguration, "activator and system manager must share a mount namespace");
     const auto profile = fic::platform::makeBuildPlatformProfile();
+    if((profile_==ActivationProfile::SssdNotify)!=bool(sssdValidator_)||
+       (profile_==ActivationProfile::SssdNotify&&unit_!="sssd.service"))
+        throw Failure(ActivationStatus::UnsupportedConfiguration,"closed SSSD native validator required");
     if(profile_==ActivationProfile::UbuntuSshSocket && (unit_!="ssh.service" ||
        (profile.id!="ubuntu-24.04"&&profile.id!="ubuntu-26.04")))
         throw Failure(ActivationStatus::UnsupportedConfiguration,"closed Ubuntu SSH socket profile required");
@@ -95,7 +98,8 @@ ServiceState SystemdActivation::query(std::chrono::milliseconds timeout) const {
     }
     for (const auto& p : properties) state.at(p);
     try {
-        const auto launch = readLaunchContract(unit_, queryDeadline);
+        auto launch = profile_==ActivationProfile::SssdNotify?readSssdLaunchContract(queryDeadline):readLaunchContract(unit_, queryDeadline);
+        if(profile_==ActivationProfile::SssdNotify)for(const auto& key:{"ActiveState","SubState","MainPID","InvocationID","Job"})launch.erase(std::string("launch.")+key);
         state.properties.insert(launch.begin(), launch.end());
     } catch (const Failure& e) {
         if (!configuration_.empty() && e.status != ActivationStatus::TimedOut)
@@ -109,6 +113,7 @@ void SystemdActivation::verifyConfiguration(const ServiceState& s) const {
     // replacement is itself unsupported. Initial unsupported setups fail preflight.
     if (!configuration_.empty()) for (const auto& [key, expected] : configuration_)
         if (!s.properties.count(key) || s.at(key) != expected) throw Failure(ActivationStatus::InterferenceDetected, "service configuration changed: " + key);
+    if(sssdValidator_)sssdValidator_(s.properties);
     validateLaunchContract(s.properties, &targets_, profile_);
     const bool kind=profile_==ActivationProfile::AltSshSimple ? s.at("Type")=="simple"&&s.at("NotifyAccess")=="none" : s.at("Type")=="notify"&&s.at("NotifyAccess")=="main";
     if (s.at("Id") != unit_ || s.at("LoadState") != "loaded" || !kind)
@@ -142,6 +147,7 @@ void SystemdActivation::restart() {
     auto before = query(remaining()); verifyConfiguration(before);
     if (before.at("ActiveState") != "active" || before.at("InvocationID") != originalInvocation_ || !before.at("Job").empty())
         throw Failure(ActivationStatus::InterferenceDetected, "service changed before requested restart");
+    restartAttempted_=true;
     const auto result = execute(executable_, {"--system", "--no-pager", "--no-ask-password", "--no-block", "--job-mode=fail", "restart", "--", unit_}, remaining());
     if (!result.success()) throw Failure(result.timedOut ? ActivationStatus::TimedOut : ActivationStatus::RestartFailed,
         "systemctl restart failed: " + result.error + result.standardError);

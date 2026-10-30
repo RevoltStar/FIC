@@ -14,6 +14,8 @@ struct ActivationProof {
     std::function<void(std::chrono::steady_clock::time_point)> sshSocketActivation;
     // Closed ALT simple-service readiness; runs only inside the common bounded loop.
     std::function<bool(const ServiceState&, std::chrono::steady_clock::time_point)> altSshReadiness;
+    // Mandatory for the closed SSSD profile; adapter supplies I1 native validation.
+    std::function<void(const LaunchContract&)> sssdLaunchValidation;
     LaunchContract expectedConfiguration;
     std::map<std::string, Identity> sourceRoots;
     std::map<std::string, std::map<std::string, struct stat>> sourceAttributes;

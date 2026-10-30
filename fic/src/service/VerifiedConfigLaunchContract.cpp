@@ -1,4 +1,5 @@
 #include "service/VerifiedConfigLaunchContract.h"
+#include "platform/PlatformProfile.h"
 #include <fic/core/integrity/ContentDigest.h>
 #include <nlohmann/json.hpp>
 #include <systemd/sd-bus.h>
@@ -382,8 +383,18 @@ void validateLaunchContract(const LaunchContract& contract, const std::vector<Co
         throw Failure(ActivationStatus::UnsupportedConfiguration, "unit needs reload, is transient, or has external generated source");
     const auto triggers=value(contract,"TriggeredBy");
     const bool validTriggers=profile==ActivationProfile::UbuntuSshSocket ? triggers==Json::array({"ssh.socket"}) : triggers.empty();
+    bool pidSupported=value(contract,"PIDFile")=="";
+    if(profile==ActivationProfile::SssdNotify){
+        const auto platform=fic::platform::makeBuildPlatformProfile().id;
+        const bool legacy=platform=="debian-12"||platform=="ubuntu-24.04"||platform=="alt-p11";
+        if(!legacy&&platform!="debian-13"&&platform!="ubuntu-26.04")
+            throw Failure(ActivationStatus::UnsupportedConfiguration,"unknown SSSD native platform");
+        if(value(contract,"Id")!="sssd.service"||value(contract,"Type")!="notify"||value(contract,"NotifyAccess")!="main")
+            throw Failure(ActivationStatus::UnsupportedConfiguration,"only closed SSSD notify/main service supported");
+        pidSupported=value(contract,"PIDFile")==Json(legacy?"/run/sssd.pid":"");
+    }
     if (!validTriggers || value(contract, "FileDescriptorStoreMax") != 0 ||
-        value(contract, "NFileDescriptorStore") != 0 || value(contract, "PIDFile") != "" ||
+        value(contract, "NFileDescriptorStore") != 0 || !pidSupported ||
         value(contract, "ExitType") != "main" || value(contract, "RemainAfterExit") != false)
         throw Failure(ActivationStatus::UnsupportedConfiguration, "activation triggers, retained FDs or alternate main identity unsupported");
     if (value(contract, "ExecStartEx").size() != 1)

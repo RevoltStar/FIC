@@ -1,9 +1,145 @@
-# Proposed SSSD verified activation — research design, not implementation
+# SSSD verified activation — I1/I2/I3 and future transaction design
 
 Native facts and bounded coverage: [R1](sssd-native-compatibility.md).
 Reuse `VerifiedConfigServiceActivator` and its existing snapshot/publication/
 launch/cleanup engine. Do not create another activation engine or pretend an
 SSH activation profile is an SSSD profile.
+
+## I3 adapter contract (no policy or ownership authority)
+
+`service/sssd/SssdVerifiedActivationAdapter` activates the **observed** I1 graph,
+canonical I2 scope and explicit typed section/key expectations. Forged scope,
+hypothetical preview, empty/duplicate targets, provider/scope/relation conflicts
+or values different from the captured graph are refused before publication.
+The adapter neither writes configuration/journal nor returns policy SUCCESS;
+`PolicyCoverage::NotEvaluated` remains explicit. I4/I5/I6 are not implemented here.
+
+A single bounded attempt (maximum five minutes) uses the existing generic
+engine and internal proof callbacks. The process-local operation mutex prevents
+concurrent adapter calls; it does not serialize arbitrary privileged writers.
+Existing generic mount/observer/cleanup guarantees and residual races apply.
+There is no admission or runtime receipt cache and no service supervisor.
+
+### Closed support and native prerequisites
+
+Only already-active/stable `sssd.service`, notify/main, exact I1 stock unit
+fingerprint, researched package revision and native executable identities are
+supported. The existing verified executor/hash store must already trust
+systemctl, `/usr/sbin/sssd`, the platform package-query executable and
+`/usr/bin/ldbsearch` (plus `/usr/bin/dbus-send` for modern backend protocol);
+the adapter never provisions tools or trust hashes.
+Package revisions are closed to the five I3 native observations; an unreviewed
+revision is UnsupportedConfiguration even with the same upstream version.
+
+The SSSD-only PIDFile exception is `/run/sssd.pid` for Debian12/Ubuntu24/ALT;
+Debian13/Ubuntu26 retain empty systemd PIDFile. Contents must identify the
+confirmed monitor through a no-symlink root-owned regular single-link descriptor.
+It is checked before publication and against the new monitor, never used alone
+as process identity. Generic and SSH profiles retain their previous restrictions.
+Snapshot validation has no SSSD activation authority.
+
+Native ignored privileged precommands remain unchanged. Debian13 group-readable
+root metadata and Ubuntu26 root:sssd group-readable/searchable metadata must
+already permit RO initialization; the adapter never repairs foreign metadata.
+The published snapshot preserves bytes, owner/group/mode and mtime; native
+chown/chmod attempts against RO data can fail without establishing their effect.
+ALT requires the existing I1 `[sssd] user=_sssd` contract and real child UID/GID.
+
+The complete `/etc/sssd` parent is one controlled tree, including exact empty
+subdirectories. The narrow explicit-directory manifest is accepted only by the
+closed SSSD engine profile. This protects absent main/conf.d slots. An absent
+optional EnvironmentFile **outside** that tree remains Unsupported before mount;
+no placeholder file or global `/etc` snapshot is created. Consequently stock ALT
+with absent `/etc/sysconfig/sssd` is not a positive supported environment. Its
+positive native fixture has explicit administrator-supplied native launch
+configuration; the stock absence refusal is retained separately in evidence.
+
+Required PAM semantics currently support a monitor-spawned configured PAM
+responder (`services=pam`), not lazy-only responders. Backend-only expectations
+can omit PAM. Missing consumers return NotProven/Unsupported, never partial SUCCESS.
+
+### Source-causal C: exact chain and limits
+
+Versioned distribution sources, hashes and anchors are retained in
+[I3 source review](../tests/integration/sssd-i3/source-review.json), tied to the
+original R1 archive/patch provenance. These sources describe initialization;
+they are not runtime evidence on their own.
+
+1. A protects the complete expected graph and launch sources. The new monitor
+   InvocationID differs from the admitted one; main/child executable objects,
+   parent/start tokens, credentials, root, mount namespace and service cgroup
+   are observed through procfs/pidfds and rechecked. Native code and provider
+   module fingerprints remain pinned; LDAP modules must actually be mapped.
+2. Monitor `confdb_setup` precedes spawning children. Each selected backend and
+   required responder must hold a descriptor **and shared mapping** to the
+   observed ConfigDB object. `/proc/PID/map_files` resolves object identity
+   correctly even when OverlayFS `maps` reports the backing device number.
+   The native root/service-controlled ConfigDB ancestry is checked without
+   following symlinks; native service-group writable directories are allowed
+   only for the specific nonroot identity, never world-writable directories.
+   ConfigDB and central-bus ancestors are opened without symlinks; access/default
+   ACLs are refused instead of silently trusting extra named principals.
+3. The stable bounded ConfigDB generation (identity, metadata and SHA-256) must
+   project to the protected I2 scope, selected values and relation dependencies.
+   `ldbsearch` searches a private size-sealed memory copy; it never receives the
+   live database pathname. TDB's write-capable open/recovery is therefore confined
+   to that copy, whose mutation is itself refused. The live generation is checked
+   before and after. No cache, credential or ConfigDB mutation is performed by FIC.
+4. In SSSD2.8/2.9 the backend's monitor connection is constructed after successful
+   `dp_init_recv`/target initialization. UNIX socket diagnostics prove a
+   bidirectional peer relation between descriptors of the exact new child and
+   monitor; a matching command line or socket filename is insufficient.
+5. In SSSD2.10/2.12 the connection is created earlier, so it is insufficient.
+   The adapter connects to the central bus and verifies SO_PEERCRED against the
+   exact new monitor. Read-only GetNameOwner/GetConnectionUnixProcessID bind the
+   selected backend's unique bus owner to its pinned PID. IsOnline is called on
+   that **unique owner**, and the PID is checked again. The native interface is
+   installed by `dp_init_interface` only after successful modules/targets/options
+   initialization. Either boolean reply proves that initialized consuming path;
+   it does not assert LDAP is online. No RegisterService, responder-name
+   impersonation, RequestName or authentication is performed. A responder's
+   birth order/monitor READY is deliberately not used as a registration proof.
+6. PAM `sss_process_init` reads domain options before its event loop. A bounded
+   unauthenticated GET_VERSION request must return native protocol version and
+   SCM_CREDENTIALS from that exact responder PID/UID/GID. This establishes the
+   functioning initialized consumer, not a password check.
+
+| Selected parameter | Consumer/read moment | Proven scope; excluded claims |
+|---|---|---|
+| offline_credentials_expiration | LDAP `sdap_get_options` at initialization; PAM `sysdb_cache_auth` at request time | LDAP relation dependency validated; future PAM path reads expected ConfigDB value. No actual auth path is claimed. |
+| cache_credentials | backend/PAM `confdb_get_domain_internal` during domain initialization | Domain flag available to the known future PAM/cache path. No assertion that credentials were stored or a login succeeded. |
+| cached_auth_timeout | domain initialization; PAM cached-auth request path | Configured seconds and I2 clamp are reported separately. No cached-auth request is implied by protocol availability. |
+| account_cache_expiration | LDAP options/cleanup setup at initialization | Expected option available to cleanup code. No assertion that periodic cleanup has executed. |
+
+C is bounded causal evidence, not direct memory inspection. It does not prove
+LDAP availability, future process survival, arbitrary provider semantics,
+AD/IPA trusts, actual authentication or cache cleanup. It requires the complete
+chain; READY, a new PID, a ConfigDB match or a source-code path alone is insufficient.
+No runtime instrumentation, authentication or SSSD hooks are used in production.
+
+### P and result algebra
+
+After ordinary ownership-checked cleanup, P reopens original resources and
+compares complete identities/manifests/bytes/metadata, negative slots, environment,
+unit lookup and launch/native code sources. Dynamic old MainPID/InvocationID/Job
+are removed only from the **configuration** comparison; P separately confirms
+the newly proven runtime generation when one exists. It never requires the old
+monitor to survive the intended restart.
+
+Admission, A/B/C/P, generic primary/status, cleanup errors, residual mounts and
+possible runtime effects are separate fields. Restart dispatch is recorded
+conservatively even if systemctl times out. Cancellation does not undo runtime
+changes. Refusal, failed activation, unknown runtime effect, activated-but-P-not-
+proven and failed cleanup cannot satisfy `success()`. Cleanup failure never
+promotes an otherwise successful activation and prevents P. Failed primary
+activation remains visible even when P can independently be established.
+
+Native fault/functional reports and current-source integrity checks are in the
+[I3 runner](../tests/integration/sssd-i3/README.md). Historical R1/R2/I1/I2 evidence
+is unchanged: its guards compare against the exact accepted historical commits;
+current I1/I2 behavior is regression-tested separately. Full Git history is
+required for these guards (CI fetch-depth=0); they do not relabel historical
+PASS as evidence for modified sources.
 
 ## Admission, transaction and proof obligations
 
@@ -21,7 +157,8 @@ SSSD fails apply before persistent mutation. FIC does not install, enable or
 start it to make admission pass. Unsupported alternate -c, arbitrary consumer
 commands, sandbox/namespace topology and unsafe absent inputs remain rejected.
 
-Next, under resource serialization, capture ownership and the complete candidate
+The following transaction steps are future I4/I5 obligations, not I3 behavior.
+Under resource serialization, capture ownership and the complete candidate
 INI graph/metadata/manifest, project effective values and validate relations/scope.
 These preflight checks are not final A/B/C proofs of a running instance. Persist
 transaction preparation before the one conditional mutation, using existing

@@ -22,6 +22,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          # Retained I1/I2 evidence binds to immutable accepted source commits.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install build dependencies
@@ -95,6 +97,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          # Retained I1/I2 evidence binds to immutable accepted source commits.
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Install build dependencies

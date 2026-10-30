@@ -183,3 +183,25 @@ including conflict with cache=false and a single conflicting root in a two-LDAP
 scope. Config-check acceptance, actual backend startup/failed state and ConfigDB
 are retained separately. AD/IPA functional realm/trust status remains NOT_TESTED;
 source evidence is not a functional acceptance claim. [I2 evidence/runner](../tests/integration/sssd-i2/README.md).
+
+## I3 activation consumer proof
+
+I3 now validates explicit observed section/key expectations against canonical I2
+scope and full relation dependencies before calling the existing generic engine.
+It still has `PolicyCoverage::NotEvaluated`; it does not create trusted ownership,
+mutate policies, finalize journal or authorize I4/I5 release.
+
+The [I3 contract](sssd-verified-activation-design.md#source-causal-c-exact-chain-and-limits)
+distinguishes initialization versus future request-time reads. ConfigDB equality
+is only one link: actual mapped generation, new monitor/child identities,
+versioned initialization and backend/responder postconditions are also required.
+Modern backend IsOnline is only a post-initialization protocol observation and
+may return false; it is not an authentication or LDAP availability test.
+
+[I3 native gates](../tests/integration/sssd-i3/README.md) retain launch-phase,
+conf.d/inode/pre-opened-FD, topology, SIGSTOP/deadline, stale ConfigDB, missing
+consumer, cleanup/residual and post-cleanup runtime/persistent outcomes separately.
+A matching surviving INI, default value or successful generic activation alone
+cannot turn a NotProven C/P into adapter SUCCESS. Late runtime change can leave
+P Proven while invalidating B/C; late persistent drift can leave protected C
+Proven while P fails. Neither outcome is policy SUCCESS.

@@ -6,7 +6,7 @@
 #include <functional>
 #endif
 namespace fic::service::detail {
-enum class ActivationProfile { ActiveNotifyService, UbuntuSshSocket, AltSshSimple };
+enum class ActivationProfile { ActiveNotifyService, UbuntuSshSocket, AltSshSimple, SssdNotify };
 // Typed, canonical launch-only values; no mutable Exec* runtime status fields.
 using LaunchContract = std::map<std::string, std::string>;
 LaunchContract readLaunchContract(const std::string& unit,

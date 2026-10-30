@@ -1,0 +1,66 @@
+{
+  "scope": "current I1 native regressions; no rewrite of historical I1 evidence",
+  "production_source_sha256": {
+    "fic/src/service/VerifiedConfigActivationProof.h": "98ad58bf0dff8ccb7ec3b8d02adde7bb78fafc294c4537f518fdc9845ae112fb",
+    "fic/src/service/VerifiedConfigLaunchContract.cpp": "779c68bbc23cb33cfa4a339fd7bd0c84da94a3846f2aa4f6a64d22785621068c",
+    "fic/src/service/VerifiedConfigLaunchContract.h": "3cf7c388af0a63e83434706e7ef1635009bd69d2b22eabb308d8db7b10d7e152",
+    "fic/src/service/VerifiedConfigMountSupport.cpp": "2e446f9c5d798d3cb9bd3a31159a809ce8009d1b8b4f5e3e48bb9bffe97c4efc",
+    "fic/src/service/VerifiedConfigMountSupport.h": "4abf4cb22912881c7a02574684c73e005e9498e5d68321376945f4152752ef2f",
+    "fic/src/service/VerifiedConfigServiceActivator.cpp": "b369dce6a6c87022bc513d9b50f57d410edeee66a73fccb8fec470a3dcff7b53",
+    "fic/src/service/VerifiedConfigServiceActivator.h": "d9c6d88f20d034b8338ee9bbd4c0f1b28c56487b5d5827b2fc6f79596d2ce78c",
+    "fic/src/service/VerifiedConfigServiceActivatorTestAccess.h": "1e99d60ad651041bd4df939046b3ebcac2024ef5847341841664bf7227401446",
+    "fic/src/service/VerifiedConfigSystemd.cpp": "dd63b89292692bb47a882094ceb4d564da64d7144aa22d84ee8a5f10ee857d86",
+    "fic/src/service/VerifiedConfigSystemd.h": "ea9fb02183121159ed1bdfb2d795e726ba0927d52b827a2d914e5c2a4a150838",
+    "fic/src/service/sssd/SssdServiceAdmission.cpp": "de0e94e9c113ae23cc24593033e77f3a30c0c97c0b0147359abcf23a592ac156",
+    "fic/src/service/sssd/SssdServiceAdmission.h": "f157144d49b9609be1dbbb5f32ca12d21ae02f4afbfd204b70d2e5664425d156",
+    "fic/src/service/sssd/SssdVerifiedInputClosure.cpp": "22a6b1b42178115647d0228a5861c39839bb08e458871a924c020e49f41f1421",
+    "fic/src/service/sssd/SssdVerifiedInputClosure.h": "ebf5169402b2aad5cedbed7e520b6bb93f99f93f0dd8a123f914cd9e3670d9ab"
+  },
+  "fixture_sha256": {
+    "tests/integration/sssd-i1/Driver.cpp": "7b5ee9893db99073089fe18505deab7e21b24b0a0d126136fc44cea3f821c061",
+    "tests/integration/sssd-i1/native.py": "af1634f42126c95b6ecebf5d724cc236fe801f918d85b54d330959dd2ccee0e8",
+    "tests/integration/sssd-i1/run-native.sh": "d01aca9d4b79bc114e837d57cddf6e5127fe700bcd6bba564d4a00b2b9c793ff"
+  },
+  "profiles": {
+    "debian-12": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/i1-debian-12.json",
+      "report_sha256": "c8cfd23514d52e82bc3146c991bd0e73ad0b4a961c1064ee6475187382cb5931",
+      "observations": 43,
+      "probe_sha256": "013dde7699f0f9ddf9d896045b63db54f9341aaffde9ecfc5b2b9e4bf8ac1583",
+      "runner_log_sha256": "f169bb7487eaefc689645ab4db77a484642d70785009edbf29ccdeb32498ca40"
+    },
+    "debian-13": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/i1-debian-13.json",
+      "report_sha256": "1b136e0043219cf72d35c7a447ab100c53619e0dc658d3d97157a8bc704e8457",
+      "observations": 43,
+      "probe_sha256": "3d224f314a52bd4d3936be4efb1b96f4bbc275008a766c4e3ff8be9c232696b6",
+      "runner_log_sha256": "f871bc7353906743e67d7c0209a1c76855ffcf2c4ebc355dcf7ef4727d12f73e"
+    },
+    "ubuntu-24.04": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/i1-ubuntu-24.04.json",
+      "report_sha256": "9ade62b43ed151c136b07175d9b551d830a5be03322ed69126b52c15dba3bfa2",
+      "observations": 43,
+      "probe_sha256": "7652d2ac60be3d2fcaecce1a76565e2e05275e6f919489d1b571ac05a331f480",
+      "runner_log_sha256": "f169bb7487eaefc689645ab4db77a484642d70785009edbf29ccdeb32498ca40"
+    },
+    "ubuntu-26.04": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/i1-ubuntu-26.04.json",
+      "report_sha256": "56e55f8b86203e3f5133019f149b7d233c67de197c15d0af93ce369df3d1de6f",
+      "observations": 43,
+      "probe_sha256": "4bec6f971db1ea1488dc474b366cc41261ef594173c69b1eaa9bc4c8cc95ce23",
+      "runner_log_sha256": "f871bc7353906743e67d7c0209a1c76855ffcf2c4ebc355dcf7ef4727d12f73e"
+    },
+    "alt-p11": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/i1-alt-p11.json",
+      "report_sha256": "b1390f4f6aaa1adfb4d7b9c29fa2d6b0e9e1af5804a03a21d8b287945074c7eb",
+      "observations": 58,
+      "probe_sha256": "8ae97a214e8733de65729e0e06c3fa5314b2c59f016bb74735fa4755f2048e5e",
+      "runner_log_sha256": "f1d3cec7f4330b6f41164816598354e116b2d700f23bacd1369f49ecd84a369e"
+    }
+  }
+}

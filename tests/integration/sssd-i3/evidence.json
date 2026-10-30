@@ -1,0 +1,161 @@
+{
+  "schema": "sssd-i3-native-v1",
+  "base": "e36904b7572394de1c728713b154eb5b6236b919",
+  "environment": "Docker; stock five distribution userlands/systemd PID1; WSL shared kernel; loopback only; no runtime host binds/ports",
+  "proof_model": "bounded source-causal; no direct memory/auth/LDAP health/cleanup execution claim",
+  "source_sha256": {
+    "fic/src/service/VerifiedConfigActivationProof.h": "98ad58bf0dff8ccb7ec3b8d02adde7bb78fafc294c4537f518fdc9845ae112fb",
+    "fic/src/service/VerifiedConfigLaunchContract.cpp": "779c68bbc23cb33cfa4a339fd7bd0c84da94a3846f2aa4f6a64d22785621068c",
+    "fic/src/service/VerifiedConfigLaunchContract.h": "3cf7c388af0a63e83434706e7ef1635009bd69d2b22eabb308d8db7b10d7e152",
+    "fic/src/service/VerifiedConfigMountSupport.cpp": "2e446f9c5d798d3cb9bd3a31159a809ce8009d1b8b4f5e3e48bb9bffe97c4efc",
+    "fic/src/service/VerifiedConfigMountSupport.h": "4abf4cb22912881c7a02574684c73e005e9498e5d68321376945f4152752ef2f",
+    "fic/src/service/VerifiedConfigServiceActivator.cpp": "b369dce6a6c87022bc513d9b50f57d410edeee66a73fccb8fec470a3dcff7b53",
+    "fic/src/service/VerifiedConfigServiceActivator.h": "d9c6d88f20d034b8338ee9bbd4c0f1b28c56487b5d5827b2fc6f79596d2ce78c",
+    "fic/src/service/VerifiedConfigServiceActivatorTestAccess.h": "1e99d60ad651041bd4df939046b3ebcac2024ef5847341841664bf7227401446",
+    "fic/src/service/VerifiedConfigSystemd.cpp": "dd63b89292692bb47a882094ceb4d564da64d7144aa22d84ee8a5f10ee857d86",
+    "fic/src/service/VerifiedConfigSystemd.h": "ea9fb02183121159ed1bdfb2d795e726ba0927d52b827a2d914e5c2a4a150838",
+    "fic/src/service/sssd/SssdDomainScope.cpp": "e2b92b413f51f2961c279d6228648d7dc96407d504905abaa8f9e220484d5320",
+    "fic/src/service/sssd/SssdDomainScope.h": "6741dfd5450c31f8ea4819e79ff89882f7f88fc845d9815c6d0a4d73c5d57a94",
+    "fic/src/service/sssd/SssdEffectiveConfiguration.cpp": "5a3aec6ee07854df4ccabb32d54422706bb80b3cb2aad53399035d12b7178c3a",
+    "fic/src/service/sssd/SssdEffectiveConfiguration.h": "d45c18f3c80e3755472c488ebc046c77b70cdc3ea5a0c3425e3b4e72a137c016",
+    "fic/src/service/sssd/SssdRelationValidator.cpp": "35a49dd1dad58c81f15f2cbc3f548c3d3e60d54989a932c122c48ddd7e0eaa27",
+    "fic/src/service/sssd/SssdRelationValidator.h": "3b3fc2a2233929e50a38e5a1f9800d24159fc9dd94758c2caf96e5f9be0a8b29",
+    "fic/src/service/sssd/SssdRuntimeProof.cpp": "0deb45d459f423bfd9062668757d5c345579dba06082650a486ef42025f64444",
+    "fic/src/service/sssd/SssdRuntimeProof.h": "5e30843dea68fb7e6fc1c336286ac5c1c681ca697c9d080976fd8e0ab66bf3a6",
+    "fic/src/service/sssd/SssdServiceAdmission.cpp": "de0e94e9c113ae23cc24593033e77f3a30c0c97c0b0147359abcf23a592ac156",
+    "fic/src/service/sssd/SssdServiceAdmission.h": "f157144d49b9609be1dbbb5f32ca12d21ae02f4afbfd204b70d2e5664425d156",
+    "fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp": "90d03fdeb9c87973263ba602a2c5ae5f2ed5b431512f1b99e7884699a9c87307",
+    "fic/src/service/sssd/SssdVerifiedActivationAdapter.h": "abe6a1b9ecffbde4de774736e47cb14faea87a2866b1bbaded4627ca6cf55d3c",
+    "fic/src/service/sssd/SssdVerifiedInputClosure.cpp": "22a6b1b42178115647d0228a5861c39839bb08e458871a924c020e49f41f1421",
+    "fic/src/service/sssd/SssdVerifiedInputClosure.h": "ebf5169402b2aad5cedbed7e520b6bb93f99f93f0dd8a123f914cd9e3670d9ab",
+    "tests/integration/sssd-i3/CMakeLists.txt": "6637541217372861df094bcfd2c07e1bbe305ee653f816208725006687e77470",
+    "tests/integration/sssd-i3/Driver.cpp": "cf3a6c80104a4cbfc364a61d6f8942c78520192a34d028faff11695427d1a16b",
+    "tests/integration/sssd-i3/native.py": "da8188e92b3140a690389bef6d4a98a8100e822d6b268ccecaff5449ee05c74c",
+    "tests/integration/sssd-i3/run-native.sh": "f71cf7c3df2f0a34909ed2860cc4459b364cae9756a64e226146e68fee261e45",
+    "tests/integration/sssd-i3/source-manifest.py": "e3e3d1ed7d7fcab56ae31ee94068dae169f6ac195b7b18c9640c5e6bcc517df2",
+    "tests/integration/sssd-research/common.py": "10d61f183aabe391e455538da4baf3bef1082a51552cb0dacc1560aa6dcc43f1",
+    "tests/integration/sssd-research/pam-probe.py": "15e86d8d971c8888350bb67c3c7b2e31939a261ff3bb86a98d4af926b42e2bda",
+    "tests/integration/sssd-research/r2_auth.py": "fc106753777210a5023f0cdddac23c741c9e5eb56d5522262816419540ee2db5"
+  },
+  "source_review_sha256": "c654252edf8b9831183d9dc66539d9c2ba7f1cac8917f11617162f86497a2889",
+  "historical_sha256": {
+    "tests/integration/sssd-research/source-r1.json": "6066b0f1988831cb77c7b66582b8cbc856ecb001beadda606ed24a10099a7111",
+    "tests/integration/sssd-research/source-r2.json": "1ca4a86d15d1963efccb4c5188bbdeacf33eb1a47e4811367afa6ac0e39bf68c",
+    "tests/integration/sssd-i1/evidence.json": "319e9764ee247dcd337281f3182a8db06113d0d883c7567dc0885b0dab266c6f",
+    "tests/integration/sssd-i1/launch-fixtures.json": "9020928ebcf60e32868ca9f11cd594db1e57ddbf1f334d9e8adc4d2dd83b73ad",
+    "tests/integration/sssd-i2/evidence.json": "905873a725bfdba65fe5029974b60973e9915f730d55f3a673c485bfa2ef5246",
+    "tests/integration/sssd-i2/source-review.json": "7ed3249b0bbee5fede411e81fbfb1250c31fc64b9cc96fdf55e3b38b4193d5c3"
+  },
+  "profiles": {
+    "debian-12": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/debian-12.json",
+      "report_sha256": "9a721b2fba2a1b1c0044fb2ecff527eee072e1601fa114f405e426ca01718ec4",
+      "probe_sha256": "ef64219d8b6d2c1cc40d4b10e172fca9f65314b9e352dde0bd8f4b4aeac8e0a2",
+      "image_id": "sha256:e3a6eea652553b8f63c4d589256da0de81e3c411ceaf8754805c0dbbd5528c96",
+      "runtime_isolation": {
+        "network": "none",
+        "cgroupns": "private",
+        "host_binds": null,
+        "ports": {}
+      },
+      "observations": 55,
+      "completed_proofs": [
+        "A",
+        "B",
+        "C-source-causal",
+        "P"
+      ],
+      "policy_success": false,
+      "policy_coverage": "NotEvaluated"
+    },
+    "debian-13": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/debian-13.json",
+      "report_sha256": "ed51e64999418c5ab5b0e532aa2f6bf54acfcf8f78f0c4f0825025af9d8039ee",
+      "probe_sha256": "a4827b4862b861d7ddfa77963465cb5a00d5c63d5f6fa7bdfdb801933e5ad4f5",
+      "image_id": "sha256:f1faf31bd4ec8e6c38f5ead594b4c1da1e68a87447c730773e61de48871a1d2c",
+      "runtime_isolation": {
+        "network": "none",
+        "cgroupns": "private",
+        "host_binds": null,
+        "ports": {}
+      },
+      "observations": 57,
+      "completed_proofs": [
+        "A",
+        "B",
+        "C-source-causal",
+        "P"
+      ],
+      "policy_success": false,
+      "policy_coverage": "NotEvaluated"
+    },
+    "ubuntu-24.04": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/ubuntu-24.04.json",
+      "report_sha256": "ee36b310278d31a661eecb069c1f48dbb2edc9718535d6c14a42cccea5d097eb",
+      "probe_sha256": "71b4aeef71aaf1ab88d20e1738775fd8afbd00fa332e54b888175eade177ee30",
+      "image_id": "sha256:3752159390f9686fd6e9cef48d8f5ccc378d85ffa366bfee78d39b8b126fe349",
+      "runtime_isolation": {
+        "network": "none",
+        "cgroupns": "private",
+        "host_binds": null,
+        "ports": {}
+      },
+      "observations": 55,
+      "completed_proofs": [
+        "A",
+        "B",
+        "C-source-causal",
+        "P"
+      ],
+      "policy_success": false,
+      "policy_coverage": "NotEvaluated"
+    },
+    "ubuntu-26.04": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/ubuntu-26.04.json",
+      "report_sha256": "066dd783f86fed7e0bca0c71e3dcbfbe220d3d24004be56498e9790ea555d308",
+      "probe_sha256": "a472952ca029ded6aa110aedbf84ceacd0f98a60868e6aa2616c1d8a98379c70",
+      "image_id": "sha256:06f0d609e6f49befa77184370ac43ff83598a1f98cdd9cc17099d2cabf420ed9",
+      "runtime_isolation": {
+        "network": "none",
+        "cgroupns": "private",
+        "host_binds": null,
+        "ports": {}
+      },
+      "observations": 57,
+      "completed_proofs": [
+        "A",
+        "B",
+        "C-source-causal",
+        "P"
+      ],
+      "policy_success": false,
+      "policy_coverage": "NotEvaluated"
+    },
+    "alt-p11": {
+      "status": "PASS",
+      "report": "tests/integration/sssd-i3/reports/alt-p11.json",
+      "report_sha256": "4a0f88cba87b58a063f2b9d98a05ccc2dd788e245b4a2b03061dff7f21993d31",
+      "probe_sha256": "3f6bbcfa67ae62d96cca7c81051571b4772df7d9fe4b5b3904c4ae602543d9d7",
+      "image_id": "sha256:cd5a689d81c65b12a4df169a7bcb144a612344f1ae9e0bf46762386749665420",
+      "runtime_isolation": {
+        "network": "none",
+        "cgroupns": "private",
+        "host_binds": null,
+        "ports": {}
+      },
+      "observations": 57,
+      "completed_proofs": [
+        "A",
+        "B",
+        "C-source-causal",
+        "P"
+      ],
+      "policy_success": false,
+      "policy_coverage": "NotEvaluated"
+    }
+  }
+}

@@ -31,3 +31,5 @@ res.log
 !tests/integration/sssd-i1/*.py
 
 !tests/integration/sssd-i2/*.py
+
+!tests/integration/sssd-i3/*.py

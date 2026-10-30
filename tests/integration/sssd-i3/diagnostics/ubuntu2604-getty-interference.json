@@ -1,0 +1,32 @@
+{
+  "status": "RuntimeEffectUnknown",
+  "proofs": {
+    "A": "Proven",
+    "B": "Proven",
+    "C": "Proven",
+    "P": "Proven",
+    "admission": "Proven"
+  },
+  "engine": {
+    "attempted": true,
+    "cleanup_errors": [],
+    "diagnostic": "mount namespace event before commit",
+    "primary": "InterferenceDetected",
+    "readiness": false,
+    "residual_mounts": [],
+    "status": "InterferenceDetected"
+  },
+  "success": false,
+  "diagnostic": "mount namespace event before commit",
+  "native_after": {
+    "Id": "sssd.service",
+    "ActiveState": "active",
+    "SubState": "running",
+    "ActiveEnterTimestampMonotonic": "5239747049",
+    "Job": "",
+    "InvocationID": "2b24e6b8f0fb47f3a954bfa356a41f4e",
+    "MainPID": "196",
+    "Result": "success",
+    "ExecMainStartTimestampMonotonic": "5234204574"
+  }
+}

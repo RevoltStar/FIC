@@ -1,0 +1,10 @@
+# Test fixtures only. The production adapter never provisions dependencies.
+ARG BASE_IMAGE=fic-sssd-i1:debian12
+FROM ${BASE_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && \
+    if test -f /etc/altlinux-release; then \
+      apt-get install -y openldap-clients openldap-servers strace openssl; \
+    else \
+      apt-get install -y --no-install-recommends ldap-utils slapd strace openssl; \
+    fi

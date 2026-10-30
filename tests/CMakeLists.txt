@@ -3308,3 +3308,18 @@ if(Python3_Interpreter_FOUND)
         ${CMAKE_CURRENT_SOURCE_DIR}/integration/sssd-i2/check-evidence.py)
     set_tests_properties(sssd_i2_evidence_checks PROPERTIES LABELS "unit;integration")
 endif()
+
+add_executable(sssd_verified_activation_tests fic/service/SssdVerifiedActivationTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdRuntimeProof.cpp
+    ${FIC_SSSD_I2_SOURCES} ${FIC_SSSD_I1_SOURCES} ${FIC_VERIFIED_CONFIG_SOURCES})
+target_include_directories(sssd_verified_activation_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sssd_verified_activation_tests PRIVATE fic-core fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+add_test(NAME sssd_verified_activation_tests COMMAND sssd_verified_activation_tests
+    ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i1/launch-fixtures.json)
+set_tests_properties(sssd_verified_activation_tests PROPERTIES LABELS unit)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME sssd_i3_evidence_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i3/check-evidence.py)
+    set_tests_properties(sssd_i3_evidence_checks PROPERTIES LABELS "unit;integration")
+endif()

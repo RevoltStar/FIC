@@ -194,7 +194,11 @@ struct Operation {
 };
 ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, const detail::ActivationProof* proof = nullptr, bool validationOnly = false) {
     ActivationResult result;
-    try { validateRequest(request); } catch (const Failure& e) {
+    const auto profile=proof?proof->profile:ActivationProfile::ActiveNotifyService;
+    try { validateRequest(request);
+        if(profile!=ActivationProfile::SssdNotify)for(const auto& path:request.paths)
+            if(!path.directories.empty())throw Failure(ActivationStatus::UnsupportedConfiguration,"exact directories require closed SSSD profile");
+    } catch (const Failure& e) {
         result.status = result.primaryStatus = e.status; result.diagnostic = e.what(); return result;
     }
     Operation operation(hooks);
@@ -204,12 +208,12 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         detail::validatePublicationEnvironment(request, &result.residualPaths);
         const auto deadline = std::chrono::steady_clock::now() + request.timeout;
         const auto workspace = fic::core::FicRuntimePaths::get().runtimeDir / "verified-config-activator";
-        const auto profile=proof?proof->profile:ActivationProfile::ActiveNotifyService;
+
         if(!validationOnly && proof && ((profile==ActivationProfile::UbuntuSshSocket)!=bool(proof->sshSocketActivation)))
             throw Failure(ActivationStatus::UnsupportedConfiguration,"incomplete closed SSH socket proof");
         if(!validationOnly && proof && ((profile==ActivationProfile::AltSshSimple)!=bool(proof->altSshReadiness)))
             throw Failure(ActivationStatus::UnsupportedConfiguration,"incomplete closed ALT SSH readiness proof");
-        service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths, profile);
+        service = std::make_unique<SystemdActivation>(request.unit, deadline, request.paths, profile,proof?proof->sssdLaunchValidation:std::function<void(const LaunchContract&)>{});
         const auto launch = validationOnly ? service->preflightSnapshotValidation() : service->preflight();
         const auto validationBaseline=launch.properties;
         if (proof) {
@@ -318,8 +322,8 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
             result.status=result.primaryStatus=ActivationStatus::Success;
             result.diagnostic="configuration validated under current pinned inputs; no activation/readiness";
         } else {
-            if(proof && proof->profile==ActivationProfile::UbuntuSshSocket) proof->sshSocketActivation(deadline);
-            else service->restart();
+            if(proof && proof->profile==ActivationProfile::UbuntuSshSocket){result.activationAttempted=true;proof->sshSocketActivation(deadline);}
+            else {try{service->restart();}catch(...){result.activationAttempted=service->restartAttempted();throw;}result.activationAttempted=service->restartAttempted();}
     #ifdef FIC_ACTIVATOR_TESTING
             hooks.checkpoint(detail::TestPhase::RestartQueued, operation.directory);
     #endif

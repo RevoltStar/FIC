@@ -1,0 +1,2587 @@
+{
+  "alt-p11": {
+    "source_tree": "sssd-2.9.8",
+    "archive_provenance": "../sssd-research/source-r1.json",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "8fc6fb6a6572003725c9eef11bfe0f611711cee5140d7f74330240c1f2d4504e",
+        "anchors": [
+          {
+            "line": 141,
+            "text": "};\n\nstatic int start_service(struct mt_svc *mt_svc);\n\nstatic void monitor_service_shutdown(struct mt_svc *svc);\n\nstatic int service_signal_reset_offline(struct mt_svc *svc);"
+          },
+          {
+            "line": 406,
+            "text": "}\n\nstatic int notify_startup(void)\n{\n#ifdef HAVE_SYSTEMD\n    int ret;\n"
+          },
+          {
+            "line": 496,
+            "text": "        ctx->pid_file_created = true;\n\n        notify_startup();\n\n        /* Initialization is complete, terminate parent process if in daemon\n         * mode. Make sure we send the signal to the right process */\n        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 569,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc);\n\ntypedef struct tevent_req *\n(*service_signal_send_fn)(TALLOC_CTX *mem_ctx,\n                          struct sbus_connection *conn,"
+          },
+          {
+            "line": 1085,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1245,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1519,
+            "text": "    }\n\n    ret = confdb_setup(ctx, cdb_file, config_file, config_dir, only_section,\n                       &ctx->cdb);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to setup ConfDB [%d]: %s\\n\",\n             ret, sss_strerror(ret));"
+          },
+          {
+            "line": 1801,
+            "text": "}\n\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)"
+          },
+          {
+            "line": 1805,
+            "text": "                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)\n{\n    struct tevent_timer *te;\n    struct timeval tv;\n"
+          },
+          {
+            "line": 1823,
+            "text": "     */\n    te = tevent_add_timer(svc->mt_ctx->ev, svc, tv,\n                          service_startup_handler, svc);\n    if (te == NULL) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Unable to queue service %s for startup\\n\", svc->name);\n        return ENOMEM;"
+          },
+          {
+            "line": 1833,
+            "text": "\nstatic void mt_svc_exit_handler(int pid, int wait_status, void *pvt);\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr)\n{\n    errno_t ret;"
+          },
+          {
+            "line": 1937,
+            "text": "\n    /* Check the number of restart tries and relaunch the service */\n    monitor_restart_service(svc);\n\n    return;\n}\n"
+          },
+          {
+            "line": 1942,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc)\n{\n    struct mt_ctx *mt_ctx = svc->mt_ctx;\n    int restart_delay;\n    time_t now = time(NULL);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "9cef261aa4ca1c2b99ee4e8c2cd94b5fa313eb8d32f72c1e09edcca5aecc2fd8",
+        "anchors": [
+          {
+            "line": 107,
+            "text": "}\n\nstatic int confdb_create_base(struct confdb_ctx *cdb)\n{\n    int ret;\n    struct ldb_ldif *ldif;\n"
+          },
+          {
+            "line": 370,
+            "text": "}\n\nerrno_t confdb_setup(TALLOC_CTX *mem_ctx,\n                     const char *cdb_file,\n                     const char *config_file,\n                     const char *config_dir,\n                     const char *only_section,"
+          },
+          {
+            "line": 419,
+            "text": "\n        /* Load special entries */\n        ret = confdb_create_base(cdb);\n        if (ret != EOK) {\n            DEBUG(SSSDBG_FATAL_FAILURE,\n                  \"Unable to load special entries into confdb\\n\");\n            goto done;"
+          }
+        ]
+      },
+      "src/confdb/confdb.c": {
+        "sha256": "d77ae50a74ef91dfdaf83b2926009076b59b5ef0825695dc9a72b0bf60adb721",
+        "anchors": [
+          {
+            "line": 788,
+            "text": "}\n\nstatic errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;"
+          },
+          {
+            "line": 790,
+            "text": "static errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;\n    int id_timeout;\n    errno_t ret;"
+          },
+          {
+            "line": 795,
+            "text": "    int id_timeout;\n    errno_t ret;\n    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 797,
+            "text": "    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);"
+          },
+          {
+            "line": 798,
+            "text": "\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 801,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;\n    }\n\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 806,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);"
+          },
+          {
+            "line": 810,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);\n        goto done;\n    }\n\n    /* convert from days to seconds */"
+          },
+          {
+            "line": 817,
+            "text": "    cred_expiration *= 3600 * 24;\n    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */"
+          },
+          {
+            "line": 818,
+            "text": "    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 827,
+            "text": "    if (ret != EOK) goto done;\n\n    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }"
+          },
+          {
+            "line": 829,
+            "text": "    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }\n\n    ret = EOK;"
+          },
+          {
+            "line": 837,
+            "text": "done:\n    if (ret == EOK) {\n        *_cached_auth_timeout = cached_auth_timeout;\n    }\n    return ret;\n}\n"
+          },
+          {
+            "line": 996,
+            "text": "\n    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);"
+          },
+          {
+            "line": 997,
+            "text": "    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;"
+          },
+          {
+            "line": 1000,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0],"
+          },
+          {
+            "line": 1005,
+            "text": "\n    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 1006,
+            "text": "    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\","
+          },
+          {
+            "line": 1011,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\",\n              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0], &domain->override_gid,"
+          },
+          {
+            "line": 1381,
+            "text": "    }\n\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\","
+          },
+          {
+            "line": 1382,
+            "text": "\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);"
+          },
+          {
+            "line": 1385,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);\n        goto done;\n    }\n"
+          },
+          {
+            "line": 1700,
+            "text": "}\n\nstatic int confdb_get_domain_internal(struct confdb_ctx *cdb,\n                                      TALLOC_CTX *mem_ctx,\n                                      const char *name,\n                                      struct sss_domain_info **_domain)\n{"
+          },
+          {
+            "line": 1832,
+            "text": "\n        domain = NULL;\n       ret = confdb_get_domain_internal(cdb, cdb, domlist[i], &domain);\n        if (ret) {\n            DEBUG(SSSDBG_FATAL_FAILURE,\n                  RETRIEVE_DOMAIN_ERROR_MSG,\n                  ret, sss_strerror(ret), domlist[i]);"
+          }
+        ]
+      },
+      "src/providers/data_provider_be.c": {
+        "sha256": "f0db3e02c3f26416687cc104893348cc6b789bd7c466e048ea40de4aeb910d2e",
+        "anchors": [
+          {
+            "line": 500,
+            "text": "}\n\nstatic void dp_initialized(struct tevent_req *req);\n\nerrno_t be_process_init(TALLOC_CTX *mem_ctx,\n                        const char *be_domain,\n                        uid_t uid,"
+          },
+          {
+            "line": 502,
+            "text": "static void dp_initialized(struct tevent_req *req);\n\nerrno_t be_process_init(TALLOC_CTX *mem_ctx,\n                        const char *be_domain,\n                        uid_t uid,\n                        gid_t gid,\n                        struct tevent_context *ev,"
+          },
+          {
+            "line": 598,
+            "text": "    }\n\n    req = dp_init_send(be_ctx, be_ctx->ev, be_ctx, be_ctx->uid, be_ctx->gid,\n                       be_ctx->sbus_name);\n    if (req == NULL) {\n        ret = ENOMEM;\n        goto done;"
+          },
+          {
+            "line": 605,
+            "text": "    }\n\n    tevent_req_set_callback(req, dp_initialized, be_ctx);\n\n    ret = EOK;\n\ndone:"
+          },
+          {
+            "line": 690,
+            "text": "}\n\nstatic void dp_initialized(struct tevent_req *req)\n{\n    struct tevent_signal *tes;\n    struct be_ctx *be_ctx;\n    errno_t ret;"
+          },
+          {
+            "line": 698,
+            "text": "    be_ctx = tevent_req_callback_data(req, struct be_ctx);\n\n    ret = dp_init_recv(be_ctx, req);\n    talloc_zfree(req);\n    if (ret !=  EOK) {\n        goto done;\n    }"
+          },
+          {
+            "line": 704,
+            "text": "    }\n\n    ret = sss_monitor_service_init(be_ctx, be_ctx->ev, be_ctx->sbus_name,\n                                   be_ctx->identity, DATA_PROVIDER_VERSION,\n                                   MT_SVC_PROVIDER, NULL, &be_ctx->mon_conn);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to initialize monitor connection\\n\");"
+          },
+          {
+            "line": 852,
+            "text": "    }\n\n    ret = be_process_init(main_ctx,\n                          be_domain, uid, gid,\n                          main_ctx->event_ctx,\n                          main_ctx->confdb_ctx);\n    if (ret != EOK) {"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp_iface_backend.c": {
+        "sha256": "ec1073ea7de5a692458e167a39678ace45eceb9d50511c93897267909fdfa318",
+        "anchors": [
+          {
+            "line": 31,
+            "text": "\nerrno_t\ndp_backend_is_online(TALLOC_CTX *mem_ctx,\n                     struct sbus_request *sbus_req,\n                     struct be_ctx *be_ctx,\n                     const char *domname,\n                     bool *_is_online)"
+          },
+          {
+            "line": 37,
+            "text": "                     bool *_is_online)\n{\n    struct sss_domain_info *domain;\n\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {"
+          },
+          {
+            "line": 40,
+            "text": "\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;"
+          },
+          {
+            "line": 42,
+            "text": "        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }"
+          },
+          {
+            "line": 43,
+            "text": "    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }\n"
+          },
+          {
+            "line": 50,
+            "text": "    /**\n     * FIXME: https://github.com/SSSD/sssd/issues/4825\n     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {"
+          },
+          {
+            "line": 52,
+            "text": "     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }"
+          },
+          {
+            "line": 53,
+            "text": "     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n"
+          },
+          {
+            "line": 55,
+            "text": "        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n\n    return EOK;\n}"
+          }
+        ]
+      },
+      "src/sbus/server/sbus_server_interface.c": {
+        "sha256": "eefbec7f0055f7ec5831080fb50f2871325bf48241baa6c2cdf241fe702b27fd",
+        "anchors": [
+          {
+            "line": 314,
+            "text": "\nstatic errno_t\nsbus_server_bus_get_connection_unix_process_id(TALLOC_CTX *mem_ctx,\n                                               struct sbus_request *sbus_req,\n                                               struct sbus_server *server,\n                                               const char *name,\n                                               uint32_t *_pid)"
+          },
+          {
+            "line": 399,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListNames, sbus_server_bus_list_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListActivatableNames, sbus_server_bus_list_activatable_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetNameOwner, sbus_server_bus_get_name_owner, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),"
+          },
+          {
+            "line": 402,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, AddMatch, sbus_server_bus_add_match, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, RemoveMatch, sbus_server_bus_remove_match, server)\n        ),"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp.c": {
+        "sha256": "d66bf12b242e016163727eeb8ef1dfa67479844baae9059728f44fe7f8804567",
+        "anchors": [
+          {
+            "line": 139,
+            "text": "};\n\nstatic void dp_init_done(struct tevent_req *subreq);\n\nstruct tevent_req *\ndp_init_send(TALLOC_CTX *mem_ctx,\n             struct tevent_context *ev,"
+          },
+          {
+            "line": 142,
+            "text": "\nstruct tevent_req *\ndp_init_send(TALLOC_CTX *mem_ctx,\n             struct tevent_context *ev,\n             struct be_ctx *be_ctx,\n             uid_t uid,\n             gid_t gid,"
+          },
+          {
+            "line": 197,
+            "text": "    }\n\n    tevent_req_set_callback(subreq, dp_init_done, req);\n\n    ret = EAGAIN;\n\ndone:"
+          },
+          {
+            "line": 210,
+            "text": "}\n\nstatic void dp_init_done(struct tevent_req *subreq)\n{\n    struct dp_init_state *state;\n    struct tevent_req *req;\n    errno_t ret;"
+          },
+          {
+            "line": 238,
+            "text": "    }\n\n    ret = dp_init_targets(state->provider, state->provider->be_ctx,\n                          state->provider, state->provider->modules);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to initialize DP targets \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));"
+          },
+          {
+            "line": 262,
+            "text": "}\n\nerrno_t dp_init_recv(TALLOC_CTX *mem_ctx,\n                     struct tevent_req *req)\n{\n    TEVENT_REQ_RETURN_ON_ERROR(req);\n"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_options.c": {
+        "sha256": "69c4bd9e435653429dfe0f27887e91137c54a46ab7bc5da217ea302859aecb16",
+        "anchors": [
+          {
+            "line": 49,
+            "text": "    const char *pwd_policy;\n    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;"
+          },
+          {
+            "line": 50,
+            "text": "    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;\n    const char *authtok_type;"
+          },
+          {
+            "line": 180,
+            "text": "    }\n\n    /* account_cache_expiration must be >= than offline_credentials_expiration */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 183,
+            "text": "    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Cannot get value of %s from confdb \\n\",\n                  CONFDB_PAM_CRED_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 190,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that"
+          },
+          {
+            "line": 191,
+            "text": "\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login."
+          },
+          {
+            "line": 194,
+            "text": "\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached"
+          },
+          {
+            "line": 197,
+            "text": "     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached\n     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {"
+          },
+          {
+            "line": 201,
+            "text": "     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 205,
+            "text": "              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 207,
+            "text": "                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&"
+          },
+          {
+            "line": 211,
+            "text": "        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 212,
+            "text": "    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,"
+          },
+          {
+            "line": 215,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;"
+          },
+          {
+            "line": 216,
+            "text": "                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 218,
+            "text": "                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_id_cleanup.c": {
+        "sha256": "3b1b5f3319417b473a9eeb811f8ec73502a517a973c96d0b2cf4587a666c76fb",
+        "anchors": [
+          {
+            "line": 36,
+            "text": "\n/* ==Cleanup-Task========================================================= */\nstruct ldap_id_cleanup_ctx {\n    struct sdap_id_ctx *ctx;\n    struct sdap_domain *sdom;\n};\n"
+          },
+          {
+            "line": 47,
+            "text": "                                 void *pvt)\n{\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}"
+          },
+          {
+            "line": 49,
+            "text": "    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,"
+          },
+          {
+            "line": 50,
+            "text": "\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,\n                              struct sdap_domain *sdom)"
+          },
+          {
+            "line": 60,
+            "text": "    time_t period;\n    time_t offset;\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n    char *name = NULL;\n\n    period = dp_opt_get_int(id_ctx->opts->basic, SDAP_PURGE_CACHE_TIMEOUT);\n    if (period == 0) {"
+          },
+          {
+            "line": 76,
+            "text": "    first_delay = 10;\n\n    cleanup_ctx = talloc_zero(sdom, struct ldap_id_cleanup_ctx);\n    if (cleanup_ctx == NULL) {\n        ret = ENOMEM;\n        goto done;\n    }"
+          },
+          {
+            "line": 119,
+            "text": "                          struct sss_domain_info *domain);\n\nerrno_t ldap_id_cleanup(struct sdap_id_ctx *ctx,\n                        struct sdap_domain *sdom)\n{\n    int ret, tret;\n    bool in_transaction = false;"
+          },
+          {
+            "line": 185,
+            "text": "    char *subfilter = NULL;\n    char *ts_subfilter = NULL;\n    int account_cache_expiration;\n    hash_table_t *uid_table;\n    struct ldb_message **msgs;\n    size_t count;\n    const char *name;"
+          },
+          {
+            "line": 198,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {"
+          },
+          {
+            "line": 200,
+            "text": "    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%\"SPRItime\")))\","
+          },
+          {
+            "line": 202,
+            "text": "              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%\"SPRItime\")))\",\n                                    SYSDB_CACHE_EXPIRE,\n                                    SYSDB_LAST_LOGIN,"
+          },
+          {
+            "line": 208,
+            "text": "                                    SYSDB_LAST_LOGIN,\n                                    SYSDB_LAST_LOGIN,\n                                    (now - (account_cache_expiration * 86400)));\n\n        ts_subfilter = talloc_asprintf(tmpctx,\n                            \"(&(!(%s=0))(%s<=%\"SPRItime\")(|(!(%s=*))(%s<=%\"SPRItime\")))\",\n                            SYSDB_CACHE_EXPIRE,"
+          },
+          {
+            "line": 217,
+            "text": "                            SYSDB_LAST_LOGIN,\n                            SYSDB_LAST_LOGIN,\n                            (now - (account_cache_expiration * 86400)));\n    } else {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(!(%s=*)))\",\n                                    SYSDB_CACHE_EXPIRE,"
+          }
+        ]
+      },
+      "src/responder/common/responder_common.c": {
+        "sha256": "0e40b22b29e441e2ac17fe9f63e94ecfc5cfebff3c210ca0956ab3fb2baf61ce",
+        "anchors": [
+          {
+            "line": 1285,
+            "text": "}\n\nint sss_process_init(TALLOC_CTX *mem_ctx,\n                     struct tevent_context *ev,\n                     struct confdb_ctx *cdb,\n                     struct sss_cmd_table sss_cmds[],\n                     const char *sss_pipe_name,"
+          },
+          {
+            "line": 1377,
+            "text": "    }\n\n    ret = confdb_get_domains(rctx->cdb, &rctx->domains);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"fatal error setting up domain map\\n\");\n        goto fail;\n    }"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv.c": {
+        "sha256": "001889195465b9dac41171abfe36ca9c44800e8c97da66d08e0f3715ca6dc6d0",
+        "anchors": [
+          {
+            "line": 170,
+            "text": "}\n\nstatic int pam_process_init(TALLOC_CTX *mem_ctx,\n                            struct tevent_context *ev,\n                            struct confdb_ctx *cdb,\n                            int pipe_fd, int priv_pipe_fd)\n{"
+          },
+          {
+            "line": 184,
+            "text": "\n    pam_cmds = get_pam_cmds();\n    ret = sss_process_init(mem_ctx, ev, cdb,\n                           pam_cmds,\n                           SSS_PAM_SOCKET_NAME, pipe_fd,\n                           SSS_PAM_PRIV_SOCKET_NAME, priv_pipe_fd,\n                           CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 193,
+            "text": "                           &rctx);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"sss_process_init() failed\\n\");\n        return ret;\n    }\n\n    pctx = talloc_zero(rctx, struct pam_ctx);"
+          },
+          {
+            "line": 410,
+            "text": "\n    /* The responder is initialized. Now tell it to the monitor. */\n    ret = sss_monitor_service_init(rctx, rctx->ev, SSS_BUS_PAM,\n                                   SSS_PAM_SBUS_SERVICE_NAME,\n                                   SSS_PAM_SBUS_SERVICE_VERSION,\n                                   MT_SVC_SERVICE,\n                                   &rctx->last_request_time, &rctx->mon_conn);"
+          },
+          {
+            "line": 518,
+            "text": "    }\n\n    ret = pam_process_init(main_ctx,\n                           main_ctx->event_ctx,\n                           main_ctx->confdb_ctx,\n                           pipe_fd, priv_pipe_fd);\n    if (ret != EOK) return 3;"
+          },
+          {
+            "line": 525,
+            "text": "\n    /* loop on main */\n    server_loop(main_ctx);\n\n    return 0;\n}"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv_cmd.c": {
+        "sha256": "e1d83edbfbe9efb8220e36034dcfd88848ae6ae4d8c96d361ccbc808d2762c80",
+        "anchors": [
+          {
+            "line": 1316,
+            "text": "        case SSS_PAM_AUTHENTICATE:\n            if ((preq->domain != NULL) &&\n                (preq->domain->cache_credentials == true) &&\n                (pd->offline_auth == false)) {\n                const char *password = NULL;\n                bool use_cached_auth;\n"
+          },
+          {
+            "line": 1421,
+            "text": "        pd->pam_status == PAM_SUCCESS &&\n        preq->domain &&\n        preq->domain->cache_credentials &&\n        !pd->offline_auth &&\n        !pd->last_auth_saved &&\n        !is_files_provider(preq->domain)) {\n        ret = set_last_login(preq);"
+          },
+          {
+            "line": 2671,
+            "text": "static errno_t pam_is_last_online_login_fresh(struct sss_domain_info *domain,\n                                              const char* user,\n                                              int cached_auth_timeout,\n                                              bool *_result)\n{\n    errno_t ret;\n    bool result = true;"
+          },
+          {
+            "line": 2686,
+            "text": "    }\n\n    result = time(NULL) < (last_login + cached_auth_timeout);\n    ret = EOK;\n\ndone:\n    if (ret == EOK) {"
+          },
+          {
+            "line": 2725,
+            "text": "    }\n\n    if (!domain->cache_credentials || domain->cached_auth_timeout <= 0) {\n        return false;\n    }\n\n    if (pam_cmd == SSS_PAM_PREAUTH"
+          },
+          {
+            "line": 2734,
+            "text": "\n        ret = pam_is_last_online_login_fresh(domain, user,\n                                             domain->cached_auth_timeout,\n                                             &result);\n        if (ret != EOK) {\n            /* non-critical, consider fail as 'non-fresh value' */\n            DEBUG(SSSDBG_MINOR_FAILURE,"
+          }
+        ]
+      },
+      "src/db/sysdb_ops.c": {
+        "sha256": "2b8af616351993c0b9a9b4b980a5e098d3ba40b1a35fc33083415b21870d9e7b",
+        "anchors": [
+          {
+            "line": 4589,
+            "text": "}\n\nint sysdb_cache_auth(struct sss_domain_info *domain,\n                     const char *name,\n                     const char *password,\n                     struct confdb_ctx *cdb,\n                     bool just_check,"
+          },
+          {
+            "line": 4663,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time of offline credentials.\\n\");\n        goto done;"
+          }
+        ]
+      }
+    }
+  },
+  "debian-12": {
+    "source_tree": "sssd-2.8.2",
+    "archive_provenance": "../sssd-research/source-r1.json",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "29a348784c42769baaa044f463311826fe4648156b0870699211a5075fe70caf",
+        "anchors": [
+          {
+            "line": 178,
+            "text": "};\n\nstatic int start_service(struct mt_svc *mt_svc);\n\nstatic void monitor_service_shutdown(struct mt_svc *svc);\n\nstatic int service_signal_reset_offline(struct mt_svc *svc);"
+          },
+          {
+            "line": 444,
+            "text": "}\n\nstatic int notify_startup(void)\n{\n#ifdef HAVE_SYSTEMD\n    int ret;\n"
+          },
+          {
+            "line": 534,
+            "text": "        ctx->pid_file_created = true;\n\n        notify_startup();\n\n        /* Initialization is complete, terminate parent process if in daemon\n         * mode. Make sure we send the signal to the right process */\n        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 607,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc);\n\nstatic int service_signal_dns_reload(struct mt_svc *svc);\nstatic int monitor_update_resolv(struct config_file_ctx *file_ctx,\n                                 const char *filename)"
+          },
+          {
+            "line": 1144,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1304,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1593,
+            "text": "    }\n\n    ret = confdb_setup(ctx, cdb_file, config_file, config_dir, only_section,\n                       &ctx->cdb);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to setup ConfDB [%d]: %s\\n\",\n             ret, sss_strerror(ret));"
+          },
+          {
+            "line": 2144,
+            "text": "}\n\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)"
+          },
+          {
+            "line": 2148,
+            "text": "                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)\n{\n    struct tevent_timer *te;\n    struct timeval tv;\n"
+          },
+          {
+            "line": 2164,
+            "text": "     */\n    te = tevent_add_timer(svc->mt_ctx->ev, svc, tv,\n                          service_startup_handler, svc);\n    if (te == NULL) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Unable to queue service %s for startup\\n\", svc->name);\n        return ENOMEM;"
+          },
+          {
+            "line": 2174,
+            "text": "\nstatic void mt_svc_exit_handler(int pid, int wait_status, void *pvt);\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr)\n{\n    errno_t ret;"
+          },
+          {
+            "line": 2278,
+            "text": "\n    /* Check the number of restart tries and relaunch the service */\n    monitor_restart_service(svc);\n\n    return;\n}\n"
+          },
+          {
+            "line": 2283,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc)\n{\n    struct mt_ctx *mt_ctx = svc->mt_ctx;\n    int restart_delay;\n    time_t now = time(NULL);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "9cef261aa4ca1c2b99ee4e8c2cd94b5fa313eb8d32f72c1e09edcca5aecc2fd8",
+        "anchors": [
+          {
+            "line": 107,
+            "text": "}\n\nstatic int confdb_create_base(struct confdb_ctx *cdb)\n{\n    int ret;\n    struct ldb_ldif *ldif;\n"
+          },
+          {
+            "line": 370,
+            "text": "}\n\nerrno_t confdb_setup(TALLOC_CTX *mem_ctx,\n                     const char *cdb_file,\n                     const char *config_file,\n                     const char *config_dir,\n                     const char *only_section,"
+          },
+          {
+            "line": 419,
+            "text": "\n        /* Load special entries */\n        ret = confdb_create_base(cdb);\n        if (ret != EOK) {\n            DEBUG(SSSDBG_FATAL_FAILURE,\n                  \"Unable to load special entries into confdb\\n\");\n            goto done;"
+          }
+        ]
+      },
+      "src/confdb/confdb.c": {
+        "sha256": "e62d11de9ba48a2aea53afd7fde8200b14d584cd9c890ae8818f25527a265c81",
+        "anchors": [
+          {
+            "line": 786,
+            "text": "}\n\nstatic errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;"
+          },
+          {
+            "line": 788,
+            "text": "static errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;\n    int id_timeout;\n    errno_t ret;"
+          },
+          {
+            "line": 793,
+            "text": "    int id_timeout;\n    errno_t ret;\n    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 795,
+            "text": "    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);"
+          },
+          {
+            "line": 796,
+            "text": "\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 799,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;\n    }\n\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 804,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);"
+          },
+          {
+            "line": 808,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);\n        goto done;\n    }\n\n    /* convert from days to seconds */"
+          },
+          {
+            "line": 815,
+            "text": "    cred_expiration *= 3600 * 24;\n    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */"
+          },
+          {
+            "line": 816,
+            "text": "    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 825,
+            "text": "    if (ret != EOK) goto done;\n\n    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }"
+          },
+          {
+            "line": 827,
+            "text": "    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }\n\n    ret = EOK;"
+          },
+          {
+            "line": 835,
+            "text": "done:\n    if (ret == EOK) {\n        *_cached_auth_timeout = cached_auth_timeout;\n    }\n    return ret;\n}\n"
+          },
+          {
+            "line": 994,
+            "text": "\n    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);"
+          },
+          {
+            "line": 995,
+            "text": "    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;"
+          },
+          {
+            "line": 998,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0],"
+          },
+          {
+            "line": 1003,
+            "text": "\n    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 1004,
+            "text": "    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\","
+          },
+          {
+            "line": 1009,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\",\n              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0], &domain->override_gid,"
+          },
+          {
+            "line": 1375,
+            "text": "    }\n\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\","
+          },
+          {
+            "line": 1376,
+            "text": "\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);"
+          },
+          {
+            "line": 1379,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);\n        goto done;\n    }\n"
+          },
+          {
+            "line": 1690,
+            "text": "}\n\nstatic int confdb_get_domain_internal(struct confdb_ctx *cdb,\n                                      TALLOC_CTX *mem_ctx,\n                                      const char *name,\n                                      struct sss_domain_info **_domain)\n{"
+          },
+          {
+            "line": 1822,
+            "text": "\n        domain = NULL;\n       ret = confdb_get_domain_internal(cdb, cdb, domlist[i], &domain);\n        if (ret) {\n            DEBUG(SSSDBG_FATAL_FAILURE,\n                  RETRIEVE_DOMAIN_ERROR_MSG,\n                  ret, sss_strerror(ret), domlist[i]);"
+          }
+        ]
+      },
+      "src/providers/data_provider_be.c": {
+        "sha256": "21c74e8e10fab9985bfe96d3fc778fb872529f5522f670834198aca61d1921b9",
+        "anchors": [
+          {
+            "line": 501,
+            "text": "}\n\nstatic void dp_initialized(struct tevent_req *req);\n\nerrno_t be_process_init(TALLOC_CTX *mem_ctx,\n                        const char *be_domain,\n                        uid_t uid,"
+          },
+          {
+            "line": 503,
+            "text": "static void dp_initialized(struct tevent_req *req);\n\nerrno_t be_process_init(TALLOC_CTX *mem_ctx,\n                        const char *be_domain,\n                        uid_t uid,\n                        gid_t gid,\n                        struct tevent_context *ev,"
+          },
+          {
+            "line": 599,
+            "text": "    }\n\n    req = dp_init_send(be_ctx, be_ctx->ev, be_ctx, be_ctx->uid, be_ctx->gid,\n                       be_ctx->sbus_name);\n    if (req == NULL) {\n        ret = ENOMEM;\n        goto done;"
+          },
+          {
+            "line": 606,
+            "text": "    }\n\n    tevent_req_set_callback(req, dp_initialized, be_ctx);\n\n    /* Load the resolv.conf file in case a call to dbus' resInit() was missed */\n    ret = data_provider_res_init(be_ctx, NULL, be_ctx);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 645,
+            "text": "}\n\nstatic void dp_initialized(struct tevent_req *req)\n{\n    struct tevent_signal *tes;\n    struct be_ctx *be_ctx;\n    errno_t ret;"
+          },
+          {
+            "line": 653,
+            "text": "    be_ctx = tevent_req_callback_data(req, struct be_ctx);\n\n    ret = dp_init_recv(be_ctx, req);\n    talloc_zfree(req);\n    if (ret !=  EOK) {\n        goto done;\n    }"
+          },
+          {
+            "line": 659,
+            "text": "    }\n\n    ret = sss_monitor_service_init(be_ctx, be_ctx->ev, be_ctx->sbus_name,\n                                   be_ctx->identity, DATA_PROVIDER_VERSION,\n                                   MT_SVC_PROVIDER, NULL, &be_ctx->mon_conn);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to initialize monitor connection\\n\");"
+          },
+          {
+            "line": 801,
+            "text": "    }\n\n    ret = be_process_init(main_ctx,\n                          be_domain, uid, gid,\n                          main_ctx->event_ctx,\n                          main_ctx->confdb_ctx);\n    if (ret != EOK) {"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp_iface_backend.c": {
+        "sha256": "ec1073ea7de5a692458e167a39678ace45eceb9d50511c93897267909fdfa318",
+        "anchors": [
+          {
+            "line": 31,
+            "text": "\nerrno_t\ndp_backend_is_online(TALLOC_CTX *mem_ctx,\n                     struct sbus_request *sbus_req,\n                     struct be_ctx *be_ctx,\n                     const char *domname,\n                     bool *_is_online)"
+          },
+          {
+            "line": 37,
+            "text": "                     bool *_is_online)\n{\n    struct sss_domain_info *domain;\n\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {"
+          },
+          {
+            "line": 40,
+            "text": "\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;"
+          },
+          {
+            "line": 42,
+            "text": "        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }"
+          },
+          {
+            "line": 43,
+            "text": "    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }\n"
+          },
+          {
+            "line": 50,
+            "text": "    /**\n     * FIXME: https://github.com/SSSD/sssd/issues/4825\n     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {"
+          },
+          {
+            "line": 52,
+            "text": "     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }"
+          },
+          {
+            "line": 53,
+            "text": "     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n"
+          },
+          {
+            "line": 55,
+            "text": "        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n\n    return EOK;\n}"
+          }
+        ]
+      },
+      "src/sbus/server/sbus_server_interface.c": {
+        "sha256": "eefbec7f0055f7ec5831080fb50f2871325bf48241baa6c2cdf241fe702b27fd",
+        "anchors": [
+          {
+            "line": 314,
+            "text": "\nstatic errno_t\nsbus_server_bus_get_connection_unix_process_id(TALLOC_CTX *mem_ctx,\n                                               struct sbus_request *sbus_req,\n                                               struct sbus_server *server,\n                                               const char *name,\n                                               uint32_t *_pid)"
+          },
+          {
+            "line": 399,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListNames, sbus_server_bus_list_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListActivatableNames, sbus_server_bus_list_activatable_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetNameOwner, sbus_server_bus_get_name_owner, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),"
+          },
+          {
+            "line": 402,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, AddMatch, sbus_server_bus_add_match, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, RemoveMatch, sbus_server_bus_remove_match, server)\n        ),"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp.c": {
+        "sha256": "d66bf12b242e016163727eeb8ef1dfa67479844baae9059728f44fe7f8804567",
+        "anchors": [
+          {
+            "line": 139,
+            "text": "};\n\nstatic void dp_init_done(struct tevent_req *subreq);\n\nstruct tevent_req *\ndp_init_send(TALLOC_CTX *mem_ctx,\n             struct tevent_context *ev,"
+          },
+          {
+            "line": 142,
+            "text": "\nstruct tevent_req *\ndp_init_send(TALLOC_CTX *mem_ctx,\n             struct tevent_context *ev,\n             struct be_ctx *be_ctx,\n             uid_t uid,\n             gid_t gid,"
+          },
+          {
+            "line": 197,
+            "text": "    }\n\n    tevent_req_set_callback(subreq, dp_init_done, req);\n\n    ret = EAGAIN;\n\ndone:"
+          },
+          {
+            "line": 210,
+            "text": "}\n\nstatic void dp_init_done(struct tevent_req *subreq)\n{\n    struct dp_init_state *state;\n    struct tevent_req *req;\n    errno_t ret;"
+          },
+          {
+            "line": 238,
+            "text": "    }\n\n    ret = dp_init_targets(state->provider, state->provider->be_ctx,\n                          state->provider, state->provider->modules);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to initialize DP targets \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));"
+          },
+          {
+            "line": 262,
+            "text": "}\n\nerrno_t dp_init_recv(TALLOC_CTX *mem_ctx,\n                     struct tevent_req *req)\n{\n    TEVENT_REQ_RETURN_ON_ERROR(req);\n"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_options.c": {
+        "sha256": "a7545eae83d3d9e9d173f872cd98079b1946479b3c15372b8c3c4c41949be9b8",
+        "anchors": [
+          {
+            "line": 47,
+            "text": "    const char *pwd_policy;\n    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;"
+          },
+          {
+            "line": 48,
+            "text": "    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;\n    const char *authtok_type;"
+          },
+          {
+            "line": 168,
+            "text": "    }\n\n    /* account_cache_expiration must be >= than offline_credentials_expiration */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 171,
+            "text": "    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Cannot get value of %s from confdb \\n\",\n                  CONFDB_PAM_CRED_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 178,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that"
+          },
+          {
+            "line": 179,
+            "text": "\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login."
+          },
+          {
+            "line": 182,
+            "text": "\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached"
+          },
+          {
+            "line": 185,
+            "text": "     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached\n     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {"
+          },
+          {
+            "line": 189,
+            "text": "     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 193,
+            "text": "              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 195,
+            "text": "                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&"
+          },
+          {
+            "line": 199,
+            "text": "        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 200,
+            "text": "    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,"
+          },
+          {
+            "line": 203,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;"
+          },
+          {
+            "line": 204,
+            "text": "                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 206,
+            "text": "                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_id_cleanup.c": {
+        "sha256": "461f2e41b55ee6d570fd4bb4325548ebf59da2c9d5575f7ea84592f7cc7415e1",
+        "anchors": [
+          {
+            "line": 36,
+            "text": "\n/* ==Cleanup-Task========================================================= */\nstruct ldap_id_cleanup_ctx {\n    struct sdap_id_ctx *ctx;\n    struct sdap_domain *sdom;\n};\n"
+          },
+          {
+            "line": 47,
+            "text": "                                 void *pvt)\n{\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}"
+          },
+          {
+            "line": 49,
+            "text": "    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,"
+          },
+          {
+            "line": 50,
+            "text": "\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,\n                              struct sdap_domain *sdom)"
+          },
+          {
+            "line": 60,
+            "text": "    time_t period;\n    time_t offset;\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n    char *name = NULL;\n\n    period = dp_opt_get_int(id_ctx->opts->basic, SDAP_PURGE_CACHE_TIMEOUT);\n    if (period == 0) {"
+          },
+          {
+            "line": 76,
+            "text": "    first_delay = 10;\n\n    cleanup_ctx = talloc_zero(sdom, struct ldap_id_cleanup_ctx);\n    if (cleanup_ctx == NULL) {\n        ret = ENOMEM;\n        goto done;\n    }"
+          },
+          {
+            "line": 119,
+            "text": "                          struct sss_domain_info *domain);\n\nerrno_t ldap_id_cleanup(struct sdap_id_ctx *ctx,\n                        struct sdap_domain *sdom)\n{\n    int ret, tret;\n    bool in_transaction = false;"
+          },
+          {
+            "line": 185,
+            "text": "    char *subfilter = NULL;\n    char *ts_subfilter = NULL;\n    int account_cache_expiration;\n    hash_table_t *uid_table;\n    struct ldb_message **msgs;\n    size_t count;\n    const char *name;"
+          },
+          {
+            "line": 198,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {"
+          },
+          {
+            "line": 200,
+            "text": "    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%ld)))\","
+          },
+          {
+            "line": 202,
+            "text": "              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%ld)))\",\n                                    SYSDB_CACHE_EXPIRE,\n                                    SYSDB_LAST_LOGIN,"
+          },
+          {
+            "line": 208,
+            "text": "                                    SYSDB_LAST_LOGIN,\n                                    SYSDB_LAST_LOGIN,\n                                    (long) (now - (account_cache_expiration * 86400)));\n\n        ts_subfilter = talloc_asprintf(tmpctx,\n                            \"(&(!(%s=0))(%s<=%ld)(|(!(%s=*))(%s<=%ld)))\",\n                            SYSDB_CACHE_EXPIRE,"
+          },
+          {
+            "line": 217,
+            "text": "                            SYSDB_LAST_LOGIN,\n                            SYSDB_LAST_LOGIN,\n                            (long) (now - (account_cache_expiration * 86400)));\n    } else {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(!(%s=*)))\",\n                                    SYSDB_CACHE_EXPIRE,"
+          }
+        ]
+      },
+      "src/responder/common/responder_common.c": {
+        "sha256": "e376b4d888eb9b323122bd3fee7437b72031971993027d2ff71aa0f1fb0358b7",
+        "anchors": [
+          {
+            "line": 1281,
+            "text": "}\n\nint sss_process_init(TALLOC_CTX *mem_ctx,\n                     struct tevent_context *ev,\n                     struct confdb_ctx *cdb,\n                     struct sss_cmd_table sss_cmds[],\n                     const char *sss_pipe_name,"
+          },
+          {
+            "line": 1372,
+            "text": "    }\n\n    ret = confdb_get_domains(rctx->cdb, &rctx->domains);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"fatal error setting up domain map\\n\");\n        goto fail;\n    }"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv.c": {
+        "sha256": "ffe793d443ec0718965528c2e466d3b744138f5ee0316a835595f6cd8eeb6992",
+        "anchors": [
+          {
+            "line": 169,
+            "text": "}\n\nstatic int pam_process_init(TALLOC_CTX *mem_ctx,\n                            struct tevent_context *ev,\n                            struct confdb_ctx *cdb,\n                            int pipe_fd, int priv_pipe_fd)\n{"
+          },
+          {
+            "line": 183,
+            "text": "\n    pam_cmds = get_pam_cmds();\n    ret = sss_process_init(mem_ctx, ev, cdb,\n                           pam_cmds,\n                           SSS_PAM_SOCKET_NAME, pipe_fd,\n                           SSS_PAM_PRIV_SOCKET_NAME, priv_pipe_fd,\n                           CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 192,
+            "text": "                           &rctx);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"sss_process_init() failed\\n\");\n        return ret;\n    }\n\n    pctx = talloc_zero(rctx, struct pam_ctx);"
+          },
+          {
+            "line": 395,
+            "text": "\n    /* The responder is initialized. Now tell it to the monitor. */\n    ret = sss_monitor_service_init(rctx, rctx->ev, SSS_BUS_PAM,\n                                   SSS_PAM_SBUS_SERVICE_NAME,\n                                   SSS_PAM_SBUS_SERVICE_VERSION,\n                                   MT_SVC_SERVICE,\n                                   &rctx->last_request_time, &rctx->mon_conn);"
+          },
+          {
+            "line": 503,
+            "text": "    }\n\n    ret = pam_process_init(main_ctx,\n                           main_ctx->event_ctx,\n                           main_ctx->confdb_ctx,\n                           pipe_fd, priv_pipe_fd);\n    if (ret != EOK) return 3;"
+          },
+          {
+            "line": 510,
+            "text": "\n    /* loop on main */\n    server_loop(main_ctx);\n\n    return 0;\n}\n"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv_cmd.c": {
+        "sha256": "03457bb9a925878832b0d83912cd71d038e284867250cee638f533e8638dc529",
+        "anchors": [
+          {
+            "line": 928,
+            "text": "        case SSS_PAM_AUTHENTICATE:\n            if ((preq->domain != NULL) &&\n                (preq->domain->cache_credentials == true) &&\n                (pd->offline_auth == false)) {\n                const char *password = NULL;\n                bool use_cached_auth;\n"
+          },
+          {
+            "line": 1033,
+            "text": "        pd->pam_status == PAM_SUCCESS &&\n        preq->domain &&\n        preq->domain->cache_credentials &&\n        !pd->offline_auth &&\n        !pd->last_auth_saved &&\n        NEED_CHECK_PROVIDER(preq->domain->provider)) {\n        ret = set_last_login(preq);"
+          },
+          {
+            "line": 2199,
+            "text": "static errno_t pam_is_last_online_login_fresh(struct sss_domain_info *domain,\n                                              const char* user,\n                                              int cached_auth_timeout,\n                                              bool *_result)\n{\n    errno_t ret;\n    bool result = true;"
+          },
+          {
+            "line": 2214,
+            "text": "    }\n\n    result = time(NULL) < (last_login + cached_auth_timeout);\n    ret = EOK;\n\ndone:\n    if (ret == EOK) {"
+          },
+          {
+            "line": 2253,
+            "text": "    }\n\n    if (!domain->cache_credentials || domain->cached_auth_timeout <= 0) {\n        return false;\n    }\n\n    if (pam_cmd == SSS_PAM_PREAUTH"
+          },
+          {
+            "line": 2262,
+            "text": "\n        ret = pam_is_last_online_login_fresh(domain, user,\n                                             domain->cached_auth_timeout,\n                                             &result);\n        if (ret != EOK) {\n            /* non-critical, consider fail as 'non-fresh value' */\n            DEBUG(SSSDBG_MINOR_FAILURE,"
+          }
+        ]
+      },
+      "src/db/sysdb_ops.c": {
+        "sha256": "d37ad3840738506df71ac63eacb32384a539fc057383e5e8354d7b3aff7e2d98",
+        "anchors": [
+          {
+            "line": 4484,
+            "text": "}\n\nint sysdb_cache_auth(struct sss_domain_info *domain,\n                     const char *name,\n                     const char *password,\n                     struct confdb_ctx *cdb,\n                     bool just_check,"
+          },
+          {
+            "line": 4558,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time of offline credentials.\\n\");\n        goto done;"
+          }
+        ]
+      }
+    }
+  },
+  "debian-13": {
+    "source_tree": "sssd-2.10.1",
+    "archive_provenance": "../sssd-research/source-r1.json",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "e9efee7006ae83c5fb6064246d5fb882f53289a529d5f3b2c2c10aa8ef947657",
+        "anchors": [
+          {
+            "line": 128,
+            "text": "};\n\nstatic int start_service(struct mt_svc *mt_svc);\n\nstatic void monitor_service_shutdown(struct mt_svc *svc);\n\nstatic int service_signal_reset_offline(struct mt_svc *svc);"
+          },
+          {
+            "line": 386,
+            "text": "}\n\nstatic int notify_startup(void)\n{\n#ifdef HAVE_SYSTEMD\n    int ret;\n"
+          },
+          {
+            "line": 476,
+            "text": "        ctx->pid_file_created = true;\n\n        notify_startup();\n\n        /* Initialization is complete, terminate parent process if in daemon\n         * mode. Make sure we send the signal to the right process */\n        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 520,
+            "text": "        /* This code is more a sanity guard: if any of providers\n         * didn't start to this moment (MONITOR_MAX_SVC_RESTARTS),\n         * `monitor_restart_service()` should already have process\n         * terminated anyway.\n         */\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Providers did not start in time!\\n\");\n        monitor_quit(ctx, 1);"
+          },
+          {
+            "line": 546,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc);\n\ntypedef struct tevent_req *\n(*service_signal_send_fn)(TALLOC_CTX *mem_ctx,\n                          struct sbus_connection *conn,"
+          },
+          {
+            "line": 962,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1114,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1568,
+            "text": "}\n\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)"
+          },
+          {
+            "line": 1572,
+            "text": "                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)\n{\n    struct tevent_timer *te;\n    struct timeval tv;\n"
+          },
+          {
+            "line": 1590,
+            "text": "     */\n    te = tevent_add_timer(svc->mt_ctx->ev, svc, tv,\n                          service_startup_handler, svc);\n    if (te == NULL) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Unable to queue service %s for startup\\n\", svc->name);\n        return ENOMEM;"
+          },
+          {
+            "line": 1600,
+            "text": "\nstatic void mt_svc_exit_handler(int pid, int wait_status, void *pvt);\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr)\n{\n    errno_t ret;"
+          },
+          {
+            "line": 1719,
+            "text": "\n    /* Check the number of restart tries and relaunch the service */\n    monitor_restart_service(svc);\n\n    return;\n}\n"
+          },
+          {
+            "line": 1724,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc)\n{\n    struct mt_ctx *mt_ctx = svc->mt_ctx;\n    int restart_delay;\n    time_t now = time(NULL);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "044ba8a30737ca216ae815d12cc05180ed41714e56b0d8dd871f2a7ccf287f26",
+        "anchors": [
+          {
+            "line": 47,
+            "text": "\n\nerrno_t confdb_read_ini(TALLOC_CTX *mem_ctx,\n                        const char *config_file,\n                        const char *config_dir,\n                        bool allow_missing_file,\n                        struct sss_ini **_ini)"
+          },
+          {
+            "line": 72,
+            "text": "}\n\nstatic int confdb_create_base(struct confdb_ctx *cdb)\n{\n    int ret;\n    struct ldb_ldif *ldif;\n"
+          },
+          {
+            "line": 224,
+            "text": "\n    /* Load special entries */\n    ret = confdb_create_base(cdb);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Unable to load special entries into confdb\\n\");\n        goto done;"
+          },
+          {
+            "line": 248,
+            "text": "}\n\nerrno_t confdb_setup(TALLOC_CTX *mem_ctx,\n                     const char *cdb_file,\n                     const char *config_file,\n                     const char *config_dir,\n                     const char *only_section,"
+          },
+          {
+            "line": 259,
+            "text": "    struct sss_ini *ini;\n\n    ret = confdb_read_ini(mem_ctx, config_file, config_dir, allow_missing_file,\n                          &ini);\n    if (ret != EOK) {\n        return ret;\n    }"
+          }
+        ]
+      },
+      "src/confdb/confdb.c": {
+        "sha256": "847a864e0126a056ace5d9a5d9708d37724c253a303793cfd514957c7ff136a7",
+        "anchors": [
+          {
+            "line": 906,
+            "text": "\n\nstatic errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;"
+          },
+          {
+            "line": 908,
+            "text": "static errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;\n    int id_timeout;\n    errno_t ret;"
+          },
+          {
+            "line": 913,
+            "text": "    int id_timeout;\n    errno_t ret;\n    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 915,
+            "text": "    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);"
+          },
+          {
+            "line": 916,
+            "text": "\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 919,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;\n    }\n\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 924,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);"
+          },
+          {
+            "line": 928,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);\n        goto done;\n    }\n\n    /* convert from days to seconds */"
+          },
+          {
+            "line": 935,
+            "text": "    cred_expiration *= 3600 * 24;\n    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */"
+          },
+          {
+            "line": 936,
+            "text": "    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 945,
+            "text": "    if (ret != EOK) goto done;\n\n    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }"
+          },
+          {
+            "line": 947,
+            "text": "    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }\n\n    ret = EOK;"
+          },
+          {
+            "line": 955,
+            "text": "done:\n    if (ret == EOK) {\n        *_cached_auth_timeout = cached_auth_timeout;\n    }\n    return ret;\n}\n"
+          },
+          {
+            "line": 1136,
+            "text": "\n    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);"
+          },
+          {
+            "line": 1137,
+            "text": "    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;"
+          },
+          {
+            "line": 1140,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0],"
+          },
+          {
+            "line": 1145,
+            "text": "\n    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 1146,
+            "text": "    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\","
+          },
+          {
+            "line": 1151,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\",\n              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0], &domain->override_gid,"
+          },
+          {
+            "line": 1533,
+            "text": "    }\n\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\","
+          },
+          {
+            "line": 1534,
+            "text": "\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);"
+          },
+          {
+            "line": 1537,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);\n        goto done;\n    }\n"
+          },
+          {
+            "line": 1861,
+            "text": "}\n\nstatic int confdb_get_domain_internal(struct confdb_ctx *cdb,\n                                      TALLOC_CTX *mem_ctx,\n                                      const char *name,\n                                      struct sss_domain_info **_domain)\n{"
+          },
+          {
+            "line": 1993,
+            "text": "\n        domain = NULL;\n       ret = confdb_get_domain_internal(cdb, cdb, domlist[i], &domain);\n        if (ret) {\n            DEBUG(SSSDBG_FATAL_FAILURE,\n                  RETRIEVE_DOMAIN_ERROR_MSG,\n                  ret, sss_strerror(ret), domlist[i]);"
+          }
+        ]
+      },
+      "src/providers/data_provider_be.c": {
+        "sha256": "5b010665e5f368143cc3260c85b3f4f9880049ef98bcf67ef0d63529ff300498",
+        "anchors": [
+          {
+            "line": 607,
+            "text": "}\n\nerrno_t be_process_init(TALLOC_CTX *mem_ctx,\n                        const char *be_domain,\n                        struct tevent_context *ev,\n                        struct confdb_ctx *cdb)\n{"
+          },
+          {
+            "line": 699,
+            "text": "    }\n\n    ret = dp_init(be_ctx->ev, be_ctx, be_ctx->sbus_name);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to setup data provider [%d]: %s\\n\",\n              ret, sss_strerror(ret));\n        goto done;"
+          },
+          {
+            "line": 755,
+            "text": "    }\n\n    ret = sss_monitor_register_service(be_ctx, be_ctx->conn,\n                                       be_ctx->identity, DATA_PROVIDER_VERSION,\n                                       MT_SVC_PROVIDER);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to register to the monitor \""
+          },
+          {
+            "line": 855,
+            "text": "    }\n\n    ret = be_process_init(main_ctx,\n                          be_domain,\n                          main_ctx->event_ctx,\n                          main_ctx->confdb_ctx);\n    if (ret != EOK) {"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp_iface_backend.c": {
+        "sha256": "ec1073ea7de5a692458e167a39678ace45eceb9d50511c93897267909fdfa318",
+        "anchors": [
+          {
+            "line": 31,
+            "text": "\nerrno_t\ndp_backend_is_online(TALLOC_CTX *mem_ctx,\n                     struct sbus_request *sbus_req,\n                     struct be_ctx *be_ctx,\n                     const char *domname,\n                     bool *_is_online)"
+          },
+          {
+            "line": 37,
+            "text": "                     bool *_is_online)\n{\n    struct sss_domain_info *domain;\n\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {"
+          },
+          {
+            "line": 40,
+            "text": "\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;"
+          },
+          {
+            "line": 42,
+            "text": "        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }"
+          },
+          {
+            "line": 43,
+            "text": "    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }\n"
+          },
+          {
+            "line": 50,
+            "text": "    /**\n     * FIXME: https://github.com/SSSD/sssd/issues/4825\n     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {"
+          },
+          {
+            "line": 52,
+            "text": "     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }"
+          },
+          {
+            "line": 53,
+            "text": "     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n"
+          },
+          {
+            "line": 55,
+            "text": "        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n\n    return EOK;\n}"
+          }
+        ]
+      },
+      "src/sss_iface/sss_iface.c": {
+        "sha256": "85d4637a2ce177fd728fb1b06a8dd4b4b3deba7e43ace75ddb122d3fe455f0ee",
+        "anchors": [
+          {
+            "line": 91,
+            "text": "\nerrno_t\nsss_sbus_connect(TALLOC_CTX *mem_ctx,\n                 struct tevent_context *ev,\n                 const char *conn_name,\n                 time_t *last_request_time,\n                 struct sbus_connection **_conn)"
+          },
+          {
+            "line": 100,
+            "text": "    errno_t ret;\n\n    ret = sss_iface_connect_address(mem_ctx, ev, conn_name, SSS_BUS_ADDRESS,\n                                    last_request_time, &conn);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to connect to SSSD D-Bus server \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));"
+          },
+          {
+            "line": 114,
+            "text": "\nstatic void\nsss_monitor_register_service_done(struct tevent_req *req);\n\nerrno_t\nsss_monitor_register_service(TALLOC_CTX *mem_ctx,\n                             struct sbus_connection *conn,"
+          },
+          {
+            "line": 117,
+            "text": "\nerrno_t\nsss_monitor_register_service(TALLOC_CTX *mem_ctx,\n                             struct sbus_connection *conn,\n                             const char *svc_name,\n                             uint16_t svc_version,\n                             uint16_t svc_type)"
+          },
+          {
+            "line": 133,
+            "text": "    }\n\n    tevent_req_set_callback(req, sss_monitor_register_service_done, conn);\n\n    return EOK;\n}\n"
+          },
+          {
+            "line": 139,
+            "text": "\nstatic void\nsss_monitor_register_service_done(struct tevent_req *req)\n{\n    uint16_t version;\n    errno_t ret;\n"
+          }
+        ]
+      },
+      "src/sbus/server/sbus_server_interface.c": {
+        "sha256": "26e43aa317bfc50f4941d58d920a2ff3a8d5194bd4aeb66ef2f0d1d9d0b85dfb",
+        "anchors": [
+          {
+            "line": 314,
+            "text": "\nstatic errno_t\nsbus_server_bus_get_connection_unix_process_id(TALLOC_CTX *mem_ctx,\n                                               struct sbus_request *sbus_req,\n                                               struct sbus_server *server,\n                                               const char *name,\n                                               uint32_t *_pid)"
+          },
+          {
+            "line": 399,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListNames, sbus_server_bus_list_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListActivatableNames, sbus_server_bus_list_activatable_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetNameOwner, sbus_server_bus_get_name_owner, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),"
+          },
+          {
+            "line": 402,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, AddMatch, sbus_server_bus_add_match, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, RemoveMatch, sbus_server_bus_remove_match, server)\n        ),"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp.c": {
+        "sha256": "a7670f35b354671862f8e07745cb43d6cd27f116e9009b5cea6f4184b9ea282f",
+        "anchors": [
+          {
+            "line": 155,
+            "text": "\nerrno_t\ndp_init(struct tevent_context *ev,\n        struct be_ctx *be_ctx,\n        const char *sbus_name)\n{\n    struct data_provider *provider;"
+          },
+          {
+            "line": 171,
+            "text": "    talloc_set_destructor(provider, dp_destructor);\n\n    ret = sss_sbus_connect(provider, ev, sbus_name, NULL, &provider->sbus_conn);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to connect to SSSD D-Bus server \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));\n        goto done;"
+          },
+          {
+            "line": 190,
+            "text": "    }\n\n    ret = dp_init_targets(provider, be_ctx, provider, provider->modules);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to initialize DP targets \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));\n        goto done;"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_options.c": {
+        "sha256": "ccd5c13d9cee0ce298f98ebf560cab7c00f2ca445226d94ab1e360dc21fce902",
+        "anchors": [
+          {
+            "line": 49,
+            "text": "    const char *pwd_policy;\n    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;"
+          },
+          {
+            "line": 50,
+            "text": "    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;\n    const char *authtok_type;"
+          },
+          {
+            "line": 172,
+            "text": "    }\n\n    /* account_cache_expiration must be >= than offline_credentials_expiration */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 175,
+            "text": "    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Cannot get value of %s from confdb \\n\",\n                  CONFDB_PAM_CRED_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 182,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that"
+          },
+          {
+            "line": 183,
+            "text": "\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login."
+          },
+          {
+            "line": 186,
+            "text": "\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached"
+          },
+          {
+            "line": 189,
+            "text": "     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached\n     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {"
+          },
+          {
+            "line": 193,
+            "text": "     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 197,
+            "text": "              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 199,
+            "text": "                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&"
+          },
+          {
+            "line": 203,
+            "text": "        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 204,
+            "text": "    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,"
+          },
+          {
+            "line": 207,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;"
+          },
+          {
+            "line": 208,
+            "text": "                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 210,
+            "text": "                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_id_cleanup.c": {
+        "sha256": "3b1b5f3319417b473a9eeb811f8ec73502a517a973c96d0b2cf4587a666c76fb",
+        "anchors": [
+          {
+            "line": 36,
+            "text": "\n/* ==Cleanup-Task========================================================= */\nstruct ldap_id_cleanup_ctx {\n    struct sdap_id_ctx *ctx;\n    struct sdap_domain *sdom;\n};\n"
+          },
+          {
+            "line": 47,
+            "text": "                                 void *pvt)\n{\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}"
+          },
+          {
+            "line": 49,
+            "text": "    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,"
+          },
+          {
+            "line": 50,
+            "text": "\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,\n                              struct sdap_domain *sdom)"
+          },
+          {
+            "line": 60,
+            "text": "    time_t period;\n    time_t offset;\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n    char *name = NULL;\n\n    period = dp_opt_get_int(id_ctx->opts->basic, SDAP_PURGE_CACHE_TIMEOUT);\n    if (period == 0) {"
+          },
+          {
+            "line": 76,
+            "text": "    first_delay = 10;\n\n    cleanup_ctx = talloc_zero(sdom, struct ldap_id_cleanup_ctx);\n    if (cleanup_ctx == NULL) {\n        ret = ENOMEM;\n        goto done;\n    }"
+          },
+          {
+            "line": 119,
+            "text": "                          struct sss_domain_info *domain);\n\nerrno_t ldap_id_cleanup(struct sdap_id_ctx *ctx,\n                        struct sdap_domain *sdom)\n{\n    int ret, tret;\n    bool in_transaction = false;"
+          },
+          {
+            "line": 185,
+            "text": "    char *subfilter = NULL;\n    char *ts_subfilter = NULL;\n    int account_cache_expiration;\n    hash_table_t *uid_table;\n    struct ldb_message **msgs;\n    size_t count;\n    const char *name;"
+          },
+          {
+            "line": 198,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {"
+          },
+          {
+            "line": 200,
+            "text": "    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%\"SPRItime\")))\","
+          },
+          {
+            "line": 202,
+            "text": "              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%\"SPRItime\")))\",\n                                    SYSDB_CACHE_EXPIRE,\n                                    SYSDB_LAST_LOGIN,"
+          },
+          {
+            "line": 208,
+            "text": "                                    SYSDB_LAST_LOGIN,\n                                    SYSDB_LAST_LOGIN,\n                                    (now - (account_cache_expiration * 86400)));\n\n        ts_subfilter = talloc_asprintf(tmpctx,\n                            \"(&(!(%s=0))(%s<=%\"SPRItime\")(|(!(%s=*))(%s<=%\"SPRItime\")))\",\n                            SYSDB_CACHE_EXPIRE,"
+          },
+          {
+            "line": 217,
+            "text": "                            SYSDB_LAST_LOGIN,\n                            SYSDB_LAST_LOGIN,\n                            (now - (account_cache_expiration * 86400)));\n    } else {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(!(%s=*)))\",\n                                    SYSDB_CACHE_EXPIRE,"
+          }
+        ]
+      },
+      "src/responder/common/responder_common.c": {
+        "sha256": "1705a3f76e0f338bdd2cc1a975f2a2c8da393553378d57fcf5d4c6d38360ad19",
+        "anchors": [
+          {
+            "line": 1050,
+            "text": "}\n\nint sss_process_init(TALLOC_CTX *mem_ctx,\n                     struct tevent_context *ev,\n                     struct confdb_ctx *cdb,\n                     struct sss_cmd_table sss_cmds[],\n                     const char *sss_pipe_name,"
+          },
+          {
+            "line": 1138,
+            "text": "    }\n\n    ret = confdb_get_domains(rctx->cdb, &rctx->domains);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"fatal error setting up domain map\\n\");\n        goto fail;\n    }"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv.c": {
+        "sha256": "75f9c5a7af5a1251946e829d0776c374ae9960018f241d18bd9b1a81e12bd9f0",
+        "anchors": [
+          {
+            "line": 170,
+            "text": "}\n\nstatic int pam_process_init(TALLOC_CTX *mem_ctx,\n                            struct tevent_context *ev,\n                            struct confdb_ctx *cdb)\n{\n    struct resp_ctx *rctx;"
+          },
+          {
+            "line": 183,
+            "text": "\n    pam_cmds = get_pam_cmds();\n    ret = sss_process_init(mem_ctx, ev, cdb,\n                           pam_cmds,\n                           SSS_PAM_SOCKET_NAME, SCKT_RSP_UMASK,\n                           CONFDB_PAM_CONF_ENTRY,\n                           SSS_BUS_PAM, SSS_PAM_SBUS_SERVICE_NAME,"
+          },
+          {
+            "line": 191,
+            "text": "                           &rctx);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"sss_process_init() failed\\n\");\n        return ret;\n    }\n\n    pctx = talloc_zero(rctx, struct pam_ctx);"
+          },
+          {
+            "line": 481,
+            "text": "    }\n\n    ret = pam_process_init(main_ctx,\n                           main_ctx->event_ctx,\n                           main_ctx->confdb_ctx);\n    if (ret != EOK) return 3;\n"
+          },
+          {
+            "line": 487,
+            "text": "\n    /* loop on main */\n    server_loop(main_ctx);\n\n    return 0;\n}\n"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv_cmd.c": {
+        "sha256": "5e540e4300ea981d6581e859b2d4695216240c398bf075fb97b00fc6f02ec788",
+        "anchors": [
+          {
+            "line": 1313,
+            "text": "        case SSS_PAM_AUTHENTICATE:\n            if ((preq->domain != NULL) &&\n                (preq->domain->cache_credentials == true) &&\n                (pd->offline_auth == false)) {\n                const char *password = NULL;\n                bool use_cached_auth;\n"
+          },
+          {
+            "line": 1418,
+            "text": "        pd->pam_status == PAM_SUCCESS &&\n        preq->domain &&\n        preq->domain->cache_credentials &&\n        !pd->offline_auth &&\n        !pd->last_auth_saved &&\n        !is_files_provider(preq->domain)) {\n        ret = set_last_login(preq);"
+          },
+          {
+            "line": 2666,
+            "text": "static errno_t pam_is_last_online_login_fresh(struct sss_domain_info *domain,\n                                              const char* user,\n                                              int cached_auth_timeout,\n                                              bool *_result)\n{\n    errno_t ret;\n    bool result = true;"
+          },
+          {
+            "line": 2681,
+            "text": "    }\n\n    result = time(NULL) < (last_login + cached_auth_timeout);\n    ret = EOK;\n\ndone:\n    if (ret == EOK) {"
+          },
+          {
+            "line": 2720,
+            "text": "    }\n\n    if (!domain->cache_credentials || domain->cached_auth_timeout <= 0) {\n        return false;\n    }\n\n    if (pam_cmd == SSS_PAM_PREAUTH"
+          },
+          {
+            "line": 2729,
+            "text": "\n        ret = pam_is_last_online_login_fresh(domain, user,\n                                             domain->cached_auth_timeout,\n                                             &result);\n        if (ret != EOK) {\n            /* non-critical, consider fail as 'non-fresh value' */\n            DEBUG(SSSDBG_MINOR_FAILURE,"
+          }
+        ]
+      },
+      "src/db/sysdb_ops.c": {
+        "sha256": "15f176979afd0d1b5931b4b85ea463f6e69142d8a26186c4f2a7b52e995f544a",
+        "anchors": [
+          {
+            "line": 4557,
+            "text": "}\n\nint sysdb_cache_auth(struct sss_domain_info *domain,\n                     const char *name,\n                     const char *password,\n                     struct confdb_ctx *cdb,\n                     bool just_check,"
+          },
+          {
+            "line": 4631,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time of offline credentials.\\n\");\n        goto done;"
+          }
+        ]
+      }
+    }
+  },
+  "ubuntu-24.04": {
+    "source_tree": "sssd-2.9.4",
+    "archive_provenance": "../sssd-research/source-r1.json",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "8fc6fb6a6572003725c9eef11bfe0f611711cee5140d7f74330240c1f2d4504e",
+        "anchors": [
+          {
+            "line": 141,
+            "text": "};\n\nstatic int start_service(struct mt_svc *mt_svc);\n\nstatic void monitor_service_shutdown(struct mt_svc *svc);\n\nstatic int service_signal_reset_offline(struct mt_svc *svc);"
+          },
+          {
+            "line": 406,
+            "text": "}\n\nstatic int notify_startup(void)\n{\n#ifdef HAVE_SYSTEMD\n    int ret;\n"
+          },
+          {
+            "line": 496,
+            "text": "        ctx->pid_file_created = true;\n\n        notify_startup();\n\n        /* Initialization is complete, terminate parent process if in daemon\n         * mode. Make sure we send the signal to the right process */\n        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 569,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc);\n\ntypedef struct tevent_req *\n(*service_signal_send_fn)(TALLOC_CTX *mem_ctx,\n                          struct sbus_connection *conn,"
+          },
+          {
+            "line": 1085,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1245,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1519,
+            "text": "    }\n\n    ret = confdb_setup(ctx, cdb_file, config_file, config_dir, only_section,\n                       &ctx->cdb);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to setup ConfDB [%d]: %s\\n\",\n             ret, sss_strerror(ret));"
+          },
+          {
+            "line": 1801,
+            "text": "}\n\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)"
+          },
+          {
+            "line": 1805,
+            "text": "                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)\n{\n    struct tevent_timer *te;\n    struct timeval tv;\n"
+          },
+          {
+            "line": 1823,
+            "text": "     */\n    te = tevent_add_timer(svc->mt_ctx->ev, svc, tv,\n                          service_startup_handler, svc);\n    if (te == NULL) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Unable to queue service %s for startup\\n\", svc->name);\n        return ENOMEM;"
+          },
+          {
+            "line": 1833,
+            "text": "\nstatic void mt_svc_exit_handler(int pid, int wait_status, void *pvt);\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr)\n{\n    errno_t ret;"
+          },
+          {
+            "line": 1937,
+            "text": "\n    /* Check the number of restart tries and relaunch the service */\n    monitor_restart_service(svc);\n\n    return;\n}\n"
+          },
+          {
+            "line": 1942,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc)\n{\n    struct mt_ctx *mt_ctx = svc->mt_ctx;\n    int restart_delay;\n    time_t now = time(NULL);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "9cef261aa4ca1c2b99ee4e8c2cd94b5fa313eb8d32f72c1e09edcca5aecc2fd8",
+        "anchors": [
+          {
+            "line": 107,
+            "text": "}\n\nstatic int confdb_create_base(struct confdb_ctx *cdb)\n{\n    int ret;\n    struct ldb_ldif *ldif;\n"
+          },
+          {
+            "line": 370,
+            "text": "}\n\nerrno_t confdb_setup(TALLOC_CTX *mem_ctx,\n                     const char *cdb_file,\n                     const char *config_file,\n                     const char *config_dir,\n                     const char *only_section,"
+          },
+          {
+            "line": 419,
+            "text": "\n        /* Load special entries */\n        ret = confdb_create_base(cdb);\n        if (ret != EOK) {\n            DEBUG(SSSDBG_FATAL_FAILURE,\n                  \"Unable to load special entries into confdb\\n\");\n            goto done;"
+          }
+        ]
+      },
+      "src/confdb/confdb.c": {
+        "sha256": "e660570ac1b522caa3195bea403506b588a736aa74ee7ecccb9fe67fa58ef454",
+        "anchors": [
+          {
+            "line": 788,
+            "text": "}\n\nstatic errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;"
+          },
+          {
+            "line": 790,
+            "text": "static errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;\n    int id_timeout;\n    errno_t ret;"
+          },
+          {
+            "line": 795,
+            "text": "    int id_timeout;\n    errno_t ret;\n    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 797,
+            "text": "    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);"
+          },
+          {
+            "line": 798,
+            "text": "\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 801,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;\n    }\n\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 806,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);"
+          },
+          {
+            "line": 810,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);\n        goto done;\n    }\n\n    /* convert from days to seconds */"
+          },
+          {
+            "line": 817,
+            "text": "    cred_expiration *= 3600 * 24;\n    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */"
+          },
+          {
+            "line": 818,
+            "text": "    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 827,
+            "text": "    if (ret != EOK) goto done;\n\n    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }"
+          },
+          {
+            "line": 829,
+            "text": "    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }\n\n    ret = EOK;"
+          },
+          {
+            "line": 837,
+            "text": "done:\n    if (ret == EOK) {\n        *_cached_auth_timeout = cached_auth_timeout;\n    }\n    return ret;\n}\n"
+          },
+          {
+            "line": 996,
+            "text": "\n    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);"
+          },
+          {
+            "line": 997,
+            "text": "    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;"
+          },
+          {
+            "line": 1000,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0],"
+          },
+          {
+            "line": 1005,
+            "text": "\n    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 1006,
+            "text": "    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\","
+          },
+          {
+            "line": 1011,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\",\n              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0], &domain->override_gid,"
+          },
+          {
+            "line": 1381,
+            "text": "    }\n\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\","
+          },
+          {
+            "line": 1382,
+            "text": "\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);"
+          },
+          {
+            "line": 1385,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);\n        goto done;\n    }\n"
+          },
+          {
+            "line": 1700,
+            "text": "}\n\nstatic int confdb_get_domain_internal(struct confdb_ctx *cdb,\n                                      TALLOC_CTX *mem_ctx,\n                                      const char *name,\n                                      struct sss_domain_info **_domain)\n{"
+          },
+          {
+            "line": 1832,
+            "text": "\n        domain = NULL;\n       ret = confdb_get_domain_internal(cdb, cdb, domlist[i], &domain);\n        if (ret) {\n            DEBUG(SSSDBG_FATAL_FAILURE,\n                  RETRIEVE_DOMAIN_ERROR_MSG,\n                  ret, sss_strerror(ret), domlist[i]);"
+          }
+        ]
+      },
+      "src/providers/data_provider_be.c": {
+        "sha256": "f0db3e02c3f26416687cc104893348cc6b789bd7c466e048ea40de4aeb910d2e",
+        "anchors": [
+          {
+            "line": 500,
+            "text": "}\n\nstatic void dp_initialized(struct tevent_req *req);\n\nerrno_t be_process_init(TALLOC_CTX *mem_ctx,\n                        const char *be_domain,\n                        uid_t uid,"
+          },
+          {
+            "line": 502,
+            "text": "static void dp_initialized(struct tevent_req *req);\n\nerrno_t be_process_init(TALLOC_CTX *mem_ctx,\n                        const char *be_domain,\n                        uid_t uid,\n                        gid_t gid,\n                        struct tevent_context *ev,"
+          },
+          {
+            "line": 598,
+            "text": "    }\n\n    req = dp_init_send(be_ctx, be_ctx->ev, be_ctx, be_ctx->uid, be_ctx->gid,\n                       be_ctx->sbus_name);\n    if (req == NULL) {\n        ret = ENOMEM;\n        goto done;"
+          },
+          {
+            "line": 605,
+            "text": "    }\n\n    tevent_req_set_callback(req, dp_initialized, be_ctx);\n\n    ret = EOK;\n\ndone:"
+          },
+          {
+            "line": 690,
+            "text": "}\n\nstatic void dp_initialized(struct tevent_req *req)\n{\n    struct tevent_signal *tes;\n    struct be_ctx *be_ctx;\n    errno_t ret;"
+          },
+          {
+            "line": 698,
+            "text": "    be_ctx = tevent_req_callback_data(req, struct be_ctx);\n\n    ret = dp_init_recv(be_ctx, req);\n    talloc_zfree(req);\n    if (ret !=  EOK) {\n        goto done;\n    }"
+          },
+          {
+            "line": 704,
+            "text": "    }\n\n    ret = sss_monitor_service_init(be_ctx, be_ctx->ev, be_ctx->sbus_name,\n                                   be_ctx->identity, DATA_PROVIDER_VERSION,\n                                   MT_SVC_PROVIDER, NULL, &be_ctx->mon_conn);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to initialize monitor connection\\n\");"
+          },
+          {
+            "line": 852,
+            "text": "    }\n\n    ret = be_process_init(main_ctx,\n                          be_domain, uid, gid,\n                          main_ctx->event_ctx,\n                          main_ctx->confdb_ctx);\n    if (ret != EOK) {"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp_iface_backend.c": {
+        "sha256": "ec1073ea7de5a692458e167a39678ace45eceb9d50511c93897267909fdfa318",
+        "anchors": [
+          {
+            "line": 31,
+            "text": "\nerrno_t\ndp_backend_is_online(TALLOC_CTX *mem_ctx,\n                     struct sbus_request *sbus_req,\n                     struct be_ctx *be_ctx,\n                     const char *domname,\n                     bool *_is_online)"
+          },
+          {
+            "line": 37,
+            "text": "                     bool *_is_online)\n{\n    struct sss_domain_info *domain;\n\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {"
+          },
+          {
+            "line": 40,
+            "text": "\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;"
+          },
+          {
+            "line": 42,
+            "text": "        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }"
+          },
+          {
+            "line": 43,
+            "text": "    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }\n"
+          },
+          {
+            "line": 50,
+            "text": "    /**\n     * FIXME: https://github.com/SSSD/sssd/issues/4825\n     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {"
+          },
+          {
+            "line": 52,
+            "text": "     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }"
+          },
+          {
+            "line": 53,
+            "text": "     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n"
+          },
+          {
+            "line": 55,
+            "text": "        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n\n    return EOK;\n}"
+          }
+        ]
+      },
+      "src/sbus/server/sbus_server_interface.c": {
+        "sha256": "eefbec7f0055f7ec5831080fb50f2871325bf48241baa6c2cdf241fe702b27fd",
+        "anchors": [
+          {
+            "line": 314,
+            "text": "\nstatic errno_t\nsbus_server_bus_get_connection_unix_process_id(TALLOC_CTX *mem_ctx,\n                                               struct sbus_request *sbus_req,\n                                               struct sbus_server *server,\n                                               const char *name,\n                                               uint32_t *_pid)"
+          },
+          {
+            "line": 399,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListNames, sbus_server_bus_list_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListActivatableNames, sbus_server_bus_list_activatable_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetNameOwner, sbus_server_bus_get_name_owner, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),"
+          },
+          {
+            "line": 402,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, AddMatch, sbus_server_bus_add_match, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, RemoveMatch, sbus_server_bus_remove_match, server)\n        ),"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp.c": {
+        "sha256": "d66bf12b242e016163727eeb8ef1dfa67479844baae9059728f44fe7f8804567",
+        "anchors": [
+          {
+            "line": 139,
+            "text": "};\n\nstatic void dp_init_done(struct tevent_req *subreq);\n\nstruct tevent_req *\ndp_init_send(TALLOC_CTX *mem_ctx,\n             struct tevent_context *ev,"
+          },
+          {
+            "line": 142,
+            "text": "\nstruct tevent_req *\ndp_init_send(TALLOC_CTX *mem_ctx,\n             struct tevent_context *ev,\n             struct be_ctx *be_ctx,\n             uid_t uid,\n             gid_t gid,"
+          },
+          {
+            "line": 197,
+            "text": "    }\n\n    tevent_req_set_callback(subreq, dp_init_done, req);\n\n    ret = EAGAIN;\n\ndone:"
+          },
+          {
+            "line": 210,
+            "text": "}\n\nstatic void dp_init_done(struct tevent_req *subreq)\n{\n    struct dp_init_state *state;\n    struct tevent_req *req;\n    errno_t ret;"
+          },
+          {
+            "line": 238,
+            "text": "    }\n\n    ret = dp_init_targets(state->provider, state->provider->be_ctx,\n                          state->provider, state->provider->modules);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to initialize DP targets \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));"
+          },
+          {
+            "line": 262,
+            "text": "}\n\nerrno_t dp_init_recv(TALLOC_CTX *mem_ctx,\n                     struct tevent_req *req)\n{\n    TEVENT_REQ_RETURN_ON_ERROR(req);\n"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_options.c": {
+        "sha256": "e557ba39befc8a58f705d3d3e0b2744198acc91d3b7e6c8fe41a086d1f646e6a",
+        "anchors": [
+          {
+            "line": 49,
+            "text": "    const char *pwd_policy;\n    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;"
+          },
+          {
+            "line": 50,
+            "text": "    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;\n    const char *authtok_type;"
+          },
+          {
+            "line": 172,
+            "text": "    }\n\n    /* account_cache_expiration must be >= than offline_credentials_expiration */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 175,
+            "text": "    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Cannot get value of %s from confdb \\n\",\n                  CONFDB_PAM_CRED_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 182,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that"
+          },
+          {
+            "line": 183,
+            "text": "\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login."
+          },
+          {
+            "line": 186,
+            "text": "\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached"
+          },
+          {
+            "line": 189,
+            "text": "     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached\n     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {"
+          },
+          {
+            "line": 193,
+            "text": "     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 197,
+            "text": "              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 199,
+            "text": "                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&"
+          },
+          {
+            "line": 203,
+            "text": "        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 204,
+            "text": "    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,"
+          },
+          {
+            "line": 207,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;"
+          },
+          {
+            "line": 208,
+            "text": "                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 210,
+            "text": "                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_id_cleanup.c": {
+        "sha256": "3b1b5f3319417b473a9eeb811f8ec73502a517a973c96d0b2cf4587a666c76fb",
+        "anchors": [
+          {
+            "line": 36,
+            "text": "\n/* ==Cleanup-Task========================================================= */\nstruct ldap_id_cleanup_ctx {\n    struct sdap_id_ctx *ctx;\n    struct sdap_domain *sdom;\n};\n"
+          },
+          {
+            "line": 47,
+            "text": "                                 void *pvt)\n{\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}"
+          },
+          {
+            "line": 49,
+            "text": "    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,"
+          },
+          {
+            "line": 50,
+            "text": "\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,\n                              struct sdap_domain *sdom)"
+          },
+          {
+            "line": 60,
+            "text": "    time_t period;\n    time_t offset;\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n    char *name = NULL;\n\n    period = dp_opt_get_int(id_ctx->opts->basic, SDAP_PURGE_CACHE_TIMEOUT);\n    if (period == 0) {"
+          },
+          {
+            "line": 76,
+            "text": "    first_delay = 10;\n\n    cleanup_ctx = talloc_zero(sdom, struct ldap_id_cleanup_ctx);\n    if (cleanup_ctx == NULL) {\n        ret = ENOMEM;\n        goto done;\n    }"
+          },
+          {
+            "line": 119,
+            "text": "                          struct sss_domain_info *domain);\n\nerrno_t ldap_id_cleanup(struct sdap_id_ctx *ctx,\n                        struct sdap_domain *sdom)\n{\n    int ret, tret;\n    bool in_transaction = false;"
+          },
+          {
+            "line": 185,
+            "text": "    char *subfilter = NULL;\n    char *ts_subfilter = NULL;\n    int account_cache_expiration;\n    hash_table_t *uid_table;\n    struct ldb_message **msgs;\n    size_t count;\n    const char *name;"
+          },
+          {
+            "line": 198,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {"
+          },
+          {
+            "line": 200,
+            "text": "    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%\"SPRItime\")))\","
+          },
+          {
+            "line": 202,
+            "text": "              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%\"SPRItime\")))\",\n                                    SYSDB_CACHE_EXPIRE,\n                                    SYSDB_LAST_LOGIN,"
+          },
+          {
+            "line": 208,
+            "text": "                                    SYSDB_LAST_LOGIN,\n                                    SYSDB_LAST_LOGIN,\n                                    (now - (account_cache_expiration * 86400)));\n\n        ts_subfilter = talloc_asprintf(tmpctx,\n                            \"(&(!(%s=0))(%s<=%\"SPRItime\")(|(!(%s=*))(%s<=%\"SPRItime\")))\",\n                            SYSDB_CACHE_EXPIRE,"
+          },
+          {
+            "line": 217,
+            "text": "                            SYSDB_LAST_LOGIN,\n                            SYSDB_LAST_LOGIN,\n                            (now - (account_cache_expiration * 86400)));\n    } else {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(!(%s=*)))\",\n                                    SYSDB_CACHE_EXPIRE,"
+          }
+        ]
+      },
+      "src/responder/common/responder_common.c": {
+        "sha256": "0c9e438a2f2f9ab244bdbab3ecc12d840f8356a139f07b967719ce8337aa6e94",
+        "anchors": [
+          {
+            "line": 1285,
+            "text": "}\n\nint sss_process_init(TALLOC_CTX *mem_ctx,\n                     struct tevent_context *ev,\n                     struct confdb_ctx *cdb,\n                     struct sss_cmd_table sss_cmds[],\n                     const char *sss_pipe_name,"
+          },
+          {
+            "line": 1377,
+            "text": "    }\n\n    ret = confdb_get_domains(rctx->cdb, &rctx->domains);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"fatal error setting up domain map\\n\");\n        goto fail;\n    }"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv.c": {
+        "sha256": "b3d6501d9c80732c66b68e80a388aa265b9ea2cdcc1a300744bfe98bded509f4",
+        "anchors": [
+          {
+            "line": 170,
+            "text": "}\n\nstatic int pam_process_init(TALLOC_CTX *mem_ctx,\n                            struct tevent_context *ev,\n                            struct confdb_ctx *cdb,\n                            int pipe_fd, int priv_pipe_fd)\n{"
+          },
+          {
+            "line": 184,
+            "text": "\n    pam_cmds = get_pam_cmds();\n    ret = sss_process_init(mem_ctx, ev, cdb,\n                           pam_cmds,\n                           SSS_PAM_SOCKET_NAME, pipe_fd,\n                           SSS_PAM_PRIV_SOCKET_NAME, priv_pipe_fd,\n                           CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 193,
+            "text": "                           &rctx);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"sss_process_init() failed\\n\");\n        return ret;\n    }\n\n    pctx = talloc_zero(rctx, struct pam_ctx);"
+          },
+          {
+            "line": 410,
+            "text": "\n    /* The responder is initialized. Now tell it to the monitor. */\n    ret = sss_monitor_service_init(rctx, rctx->ev, SSS_BUS_PAM,\n                                   SSS_PAM_SBUS_SERVICE_NAME,\n                                   SSS_PAM_SBUS_SERVICE_VERSION,\n                                   MT_SVC_SERVICE,\n                                   &rctx->last_request_time, &rctx->mon_conn);"
+          },
+          {
+            "line": 518,
+            "text": "    }\n\n    ret = pam_process_init(main_ctx,\n                           main_ctx->event_ctx,\n                           main_ctx->confdb_ctx,\n                           pipe_fd, priv_pipe_fd);\n    if (ret != EOK) return 3;"
+          },
+          {
+            "line": 525,
+            "text": "\n    /* loop on main */\n    server_loop(main_ctx);\n\n    return 0;\n}\n"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv_cmd.c": {
+        "sha256": "1adf6667c4c74754d27bcd630405cc94f939b42a7f31fd469cd5292dee84921c",
+        "anchors": [
+          {
+            "line": 1304,
+            "text": "        case SSS_PAM_AUTHENTICATE:\n            if ((preq->domain != NULL) &&\n                (preq->domain->cache_credentials == true) &&\n                (pd->offline_auth == false)) {\n                const char *password = NULL;\n                bool use_cached_auth;\n"
+          },
+          {
+            "line": 1409,
+            "text": "        pd->pam_status == PAM_SUCCESS &&\n        preq->domain &&\n        preq->domain->cache_credentials &&\n        !pd->offline_auth &&\n        !pd->last_auth_saved &&\n        !is_files_provider(preq->domain)) {\n        ret = set_last_login(preq);"
+          },
+          {
+            "line": 2643,
+            "text": "static errno_t pam_is_last_online_login_fresh(struct sss_domain_info *domain,\n                                              const char* user,\n                                              int cached_auth_timeout,\n                                              bool *_result)\n{\n    errno_t ret;\n    bool result = true;"
+          },
+          {
+            "line": 2658,
+            "text": "    }\n\n    result = time(NULL) < (last_login + cached_auth_timeout);\n    ret = EOK;\n\ndone:\n    if (ret == EOK) {"
+          },
+          {
+            "line": 2697,
+            "text": "    }\n\n    if (!domain->cache_credentials || domain->cached_auth_timeout <= 0) {\n        return false;\n    }\n\n    if (pam_cmd == SSS_PAM_PREAUTH"
+          },
+          {
+            "line": 2706,
+            "text": "\n        ret = pam_is_last_online_login_fresh(domain, user,\n                                             domain->cached_auth_timeout,\n                                             &result);\n        if (ret != EOK) {\n            /* non-critical, consider fail as 'non-fresh value' */\n            DEBUG(SSSDBG_MINOR_FAILURE,"
+          }
+        ]
+      },
+      "src/db/sysdb_ops.c": {
+        "sha256": "dd535b5f8e1b22b354d3f25f0ee575f0f50ed77ffc2ddac47661146f9888a8ec",
+        "anchors": [
+          {
+            "line": 4523,
+            "text": "}\n\nint sysdb_cache_auth(struct sss_domain_info *domain,\n                     const char *name,\n                     const char *password,\n                     struct confdb_ctx *cdb,\n                     bool just_check,"
+          },
+          {
+            "line": 4597,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time of offline credentials.\\n\");\n        goto done;"
+          }
+        ]
+      }
+    }
+  },
+  "ubuntu-26.04": {
+    "source_tree": "sssd-2.12.0",
+    "archive_provenance": "../sssd-research/source-r1.json",
+    "files": {
+      "src/monitor/monitor.c": {
+        "sha256": "2c35f53ba2a813fae930f09217a6cf768c77afc5e9b179b0d045008c4a0771ec",
+        "anchors": [
+          {
+            "line": 122,
+            "text": "};\n\nstatic int start_service(struct mt_svc *mt_svc);\n\nstatic void monitor_service_shutdown(struct mt_svc *svc);\n\nstatic int service_signal_reset_offline(struct mt_svc *svc);"
+          },
+          {
+            "line": 380,
+            "text": "}\n\nstatic int notify_startup(void)\n{\n#ifdef HAVE_SYSTEMD\n    int ret;\n"
+          },
+          {
+            "line": 470,
+            "text": "        ctx->pid_file_created = true;\n\n        notify_startup();\n\n        /* Initialization is complete, terminate parent process if in daemon\n         * mode. Make sure we send the signal to the right process */\n        if (ctx->is_daemon) {"
+          },
+          {
+            "line": 514,
+            "text": "        /* This code is more a sanity guard: if any of providers\n         * didn't start to this moment (MONITOR_MAX_SVC_RESTARTS),\n         * `monitor_restart_service()` should already have process\n         * terminated anyway.\n         */\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Providers did not start in time!\\n\");\n        monitor_quit(ctx, 1);"
+          },
+          {
+            "line": 540,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc);\n\ntypedef struct tevent_req *\n(*service_signal_send_fn)(TALLOC_CTX *mem_ctx,\n                          struct sbus_connection *conn,"
+          },
+          {
+            "line": 899,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1051,
+            "text": "    svc->restarts = restarts;\n\n    ret = start_service(svc);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\"Failed to start service '%s'\\n\", svc->name);\n        talloc_free(svc);\n    }"
+          },
+          {
+            "line": 1505,
+            "text": "}\n\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)"
+          },
+          {
+            "line": 1509,
+            "text": "                                    struct timeval t, void *ptr);\n\nstatic int start_service(struct mt_svc *svc)\n{\n    struct tevent_timer *te;\n    struct timeval tv;\n"
+          },
+          {
+            "line": 1527,
+            "text": "     */\n    te = tevent_add_timer(svc->mt_ctx->ev, svc, tv,\n                          service_startup_handler, svc);\n    if (te == NULL) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Unable to queue service %s for startup\\n\", svc->name);\n        return ENOMEM;"
+          },
+          {
+            "line": 1537,
+            "text": "\nstatic void mt_svc_exit_handler(int pid, int wait_status, void *pvt);\nstatic void service_startup_handler(struct tevent_context *ev,\n                                    struct tevent_timer *te,\n                                    struct timeval t, void *ptr)\n{\n    errno_t ret;"
+          },
+          {
+            "line": 1656,
+            "text": "\n    /* Check the number of restart tries and relaunch the service */\n    monitor_restart_service(svc);\n\n    return;\n}\n"
+          },
+          {
+            "line": 1661,
+            "text": "}\n\nstatic void monitor_restart_service(struct mt_svc *svc)\n{\n    struct mt_ctx *mt_ctx = svc->mt_ctx;\n    int restart_delay;\n    time_t now = time(NULL);"
+          }
+        ]
+      },
+      "src/confdb/confdb_setup.c": {
+        "sha256": "044ba8a30737ca216ae815d12cc05180ed41714e56b0d8dd871f2a7ccf287f26",
+        "anchors": [
+          {
+            "line": 47,
+            "text": "\n\nerrno_t confdb_read_ini(TALLOC_CTX *mem_ctx,\n                        const char *config_file,\n                        const char *config_dir,\n                        bool allow_missing_file,\n                        struct sss_ini **_ini)"
+          },
+          {
+            "line": 72,
+            "text": "}\n\nstatic int confdb_create_base(struct confdb_ctx *cdb)\n{\n    int ret;\n    struct ldb_ldif *ldif;\n"
+          },
+          {
+            "line": 224,
+            "text": "\n    /* Load special entries */\n    ret = confdb_create_base(cdb);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Unable to load special entries into confdb\\n\");\n        goto done;"
+          },
+          {
+            "line": 248,
+            "text": "}\n\nerrno_t confdb_setup(TALLOC_CTX *mem_ctx,\n                     const char *cdb_file,\n                     const char *config_file,\n                     const char *config_dir,\n                     const char *only_section,"
+          },
+          {
+            "line": 259,
+            "text": "    struct sss_ini *ini;\n\n    ret = confdb_read_ini(mem_ctx, config_file, config_dir, allow_missing_file,\n                          &ini);\n    if (ret != EOK) {\n        return ret;\n    }"
+          }
+        ]
+      },
+      "src/confdb/confdb.c": {
+        "sha256": "abf342fdcb3a4a965f6c611c3487385421863a0db330ad44e3ce7c2f51b5e804",
+        "anchors": [
+          {
+            "line": 939,
+            "text": "\n\nstatic errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;"
+          },
+          {
+            "line": 941,
+            "text": "static errno_t init_cached_auth_timeout(struct confdb_ctx *cdb,\n                                        struct ldb_message *msg,\n                                        uint32_t *_cached_auth_timeout)\n{\n    int cred_expiration;\n    int id_timeout;\n    errno_t ret;"
+          },
+          {
+            "line": 946,
+            "text": "    int id_timeout;\n    errno_t ret;\n    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 948,
+            "text": "    uint32_t cached_auth_timeout;\n\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);"
+          },
+          {
+            "line": 949,
+            "text": "\n    ret = get_entry_as_uint32(msg, &cached_auth_timeout,\n                              CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 952,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for [%s]\\n\", CONFDB_DOMAIN_CACHED_AUTH_TIMEOUT);\n        goto done;\n    }\n\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 957,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);"
+          },
+          {
+            "line": 961,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time [%s] of offline credentials.\\n\",\n              CONFDB_PAM_CRED_TIMEOUT);\n        goto done;\n    }\n\n    /* convert from days to seconds */"
+          },
+          {
+            "line": 968,
+            "text": "    cred_expiration *= 3600 * 24;\n    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */"
+          },
+          {
+            "line": 969,
+            "text": "    if (cred_expiration != 0 &&\n        cred_expiration < cached_auth_timeout) {\n        cached_auth_timeout = cred_expiration;\n    }\n\n    /* Set up the PAM identity timeout */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,"
+          },
+          {
+            "line": 978,
+            "text": "    if (ret != EOK) goto done;\n\n    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }"
+          },
+          {
+            "line": 980,
+            "text": "    if (cached_auth_timeout > id_timeout) {\n        DEBUG(SSSDBG_MINOR_FAILURE,\n              \"cached_auth_timeout is greater than pam_id_timeout so be aware \"\n              \"that back end could be called to handle initgroups.\\n\");\n    }\n\n    ret = EOK;"
+          },
+          {
+            "line": 988,
+            "text": "done:\n    if (ret == EOK) {\n        *_cached_auth_timeout = cached_auth_timeout;\n    }\n    return ret;\n}\n"
+          },
+          {
+            "line": 1174,
+            "text": "\n    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);"
+          },
+          {
+            "line": 1175,
+            "text": "    /* Do we allow to cache credentials */\n    ret = get_entry_as_bool(res->msgs[0], &domain->cache_credentials,\n                            CONFDB_DOMAIN_CACHE_CREDS, 0);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;"
+          },
+          {
+            "line": 1178,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\", CONFDB_DOMAIN_CACHE_CREDS);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0],"
+          },
+          {
+            "line": 1183,
+            "text": "\n    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,"
+          },
+          {
+            "line": 1184,
+            "text": "    ret = get_entry_as_uint32(res->msgs[0],\n                              &domain->cache_credentials_min_ff_length,\n                              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH,\n                              CONFDB_DEFAULT_CACHE_CREDS_MIN_FF_LENGTH);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\","
+          },
+          {
+            "line": 1189,
+            "text": "        DEBUG(SSSDBG_FATAL_FAILURE,\n              \"Invalid value for %s\\n\",\n              CONFDB_DOMAIN_CACHE_CREDS_MIN_FF_LENGTH);\n        goto done;\n    }\n\n    ret = get_entry_as_uint32(res->msgs[0], &domain->override_gid,"
+          },
+          {
+            "line": 1532,
+            "text": "    }\n\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\","
+          },
+          {
+            "line": 1533,
+            "text": "\n    ret = init_cached_auth_timeout(cdb, res->msgs[0],\n                                   &domain->cached_auth_timeout);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);"
+          },
+          {
+            "line": 1536,
+            "text": "    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"init_cached_auth_timeout failed: %s:[%d].\\n\",\n              sss_strerror(ret), ret);\n        goto done;\n    }\n"
+          },
+          {
+            "line": 1830,
+            "text": "}\n\nstatic int confdb_get_domain_internal(struct confdb_ctx *cdb,\n                                      TALLOC_CTX *mem_ctx,\n                                      const char *name,\n                                      struct sss_domain_info **_domain)\n{"
+          },
+          {
+            "line": 1962,
+            "text": "\n        domain = NULL;\n       ret = confdb_get_domain_internal(cdb, cdb, domlist[i], &domain);\n        if (ret) {\n            DEBUG(SSSDBG_FATAL_FAILURE,\n                  RETRIEVE_DOMAIN_ERROR_MSG,\n                  ret, sss_strerror(ret), domlist[i]);"
+          }
+        ]
+      },
+      "src/providers/data_provider_be.c": {
+        "sha256": "0a4439562797dfe1686d136e163df87f8151e203273b98b53c3022a2f06c1445",
+        "anchors": [
+          {
+            "line": 603,
+            "text": "}\n\nerrno_t be_process_init(TALLOC_CTX *mem_ctx,\n                        const char *be_domain,\n                        struct tevent_context *ev,\n                        struct confdb_ctx *cdb)\n{"
+          },
+          {
+            "line": 695,
+            "text": "    }\n\n    ret = dp_init(be_ctx->ev, be_ctx, be_ctx->sbus_name);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to setup data provider [%d]: %s\\n\",\n              ret, sss_strerror(ret));\n        goto done;"
+          },
+          {
+            "line": 751,
+            "text": "    }\n\n    ret = sss_monitor_register_service(be_ctx, be_ctx->conn,\n                                       be_ctx->identity, DATA_PROVIDER_VERSION,\n                                       MT_SVC_PROVIDER);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"Unable to register to the monitor \""
+          },
+          {
+            "line": 851,
+            "text": "    }\n\n    ret = be_process_init(main_ctx,\n                          be_domain,\n                          main_ctx->event_ctx,\n                          main_ctx->confdb_ctx);\n    if (ret != EOK) {"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp_iface_backend.c": {
+        "sha256": "ec1073ea7de5a692458e167a39678ace45eceb9d50511c93897267909fdfa318",
+        "anchors": [
+          {
+            "line": 31,
+            "text": "\nerrno_t\ndp_backend_is_online(TALLOC_CTX *mem_ctx,\n                     struct sbus_request *sbus_req,\n                     struct be_ctx *be_ctx,\n                     const char *domname,\n                     bool *_is_online)"
+          },
+          {
+            "line": 37,
+            "text": "                     bool *_is_online)\n{\n    struct sss_domain_info *domain;\n\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {"
+          },
+          {
+            "line": 40,
+            "text": "\n    if (SBUS_REQ_STRING_IS_EMPTY(domname)) {\n        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;"
+          },
+          {
+            "line": 42,
+            "text": "        domain = be_ctx->domain;\n    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }"
+          },
+          {
+            "line": 43,
+            "text": "    } else {\n        domain = find_domain_by_name(be_ctx->domain, domname, false);\n        if (domain == NULL) {\n            return ERR_DOMAIN_NOT_FOUND;\n        }\n    }\n"
+          },
+          {
+            "line": 50,
+            "text": "    /**\n     * FIXME: https://github.com/SSSD/sssd/issues/4825\n     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {"
+          },
+          {
+            "line": 52,
+            "text": "     * domain->state is set only for subdomains not for the main domain\n     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }"
+          },
+          {
+            "line": 53,
+            "text": "     */\n    if (be_ctx->domain == domain) {\n        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n"
+          },
+          {
+            "line": 55,
+            "text": "        *_is_online = be_is_offline(be_ctx) == false;\n    } else {\n        *_is_online = domain->state == DOM_ACTIVE;\n    }\n\n    return EOK;\n}"
+          }
+        ]
+      },
+      "src/sss_iface/sss_iface.c": {
+        "sha256": "85d4637a2ce177fd728fb1b06a8dd4b4b3deba7e43ace75ddb122d3fe455f0ee",
+        "anchors": [
+          {
+            "line": 91,
+            "text": "\nerrno_t\nsss_sbus_connect(TALLOC_CTX *mem_ctx,\n                 struct tevent_context *ev,\n                 const char *conn_name,\n                 time_t *last_request_time,\n                 struct sbus_connection **_conn)"
+          },
+          {
+            "line": 100,
+            "text": "    errno_t ret;\n\n    ret = sss_iface_connect_address(mem_ctx, ev, conn_name, SSS_BUS_ADDRESS,\n                                    last_request_time, &conn);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to connect to SSSD D-Bus server \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));"
+          },
+          {
+            "line": 114,
+            "text": "\nstatic void\nsss_monitor_register_service_done(struct tevent_req *req);\n\nerrno_t\nsss_monitor_register_service(TALLOC_CTX *mem_ctx,\n                             struct sbus_connection *conn,"
+          },
+          {
+            "line": 117,
+            "text": "\nerrno_t\nsss_monitor_register_service(TALLOC_CTX *mem_ctx,\n                             struct sbus_connection *conn,\n                             const char *svc_name,\n                             uint16_t svc_version,\n                             uint16_t svc_type)"
+          },
+          {
+            "line": 133,
+            "text": "    }\n\n    tevent_req_set_callback(req, sss_monitor_register_service_done, conn);\n\n    return EOK;\n}\n"
+          },
+          {
+            "line": 139,
+            "text": "\nstatic void\nsss_monitor_register_service_done(struct tevent_req *req)\n{\n    uint16_t version;\n    errno_t ret;\n"
+          }
+        ]
+      },
+      "src/sbus/server/sbus_server_interface.c": {
+        "sha256": "26e43aa317bfc50f4941d58d920a2ff3a8d5194bd4aeb66ef2f0d1d9d0b85dfb",
+        "anchors": [
+          {
+            "line": 314,
+            "text": "\nstatic errno_t\nsbus_server_bus_get_connection_unix_process_id(TALLOC_CTX *mem_ctx,\n                                               struct sbus_request *sbus_req,\n                                               struct sbus_server *server,\n                                               const char *name,\n                                               uint32_t *_pid)"
+          },
+          {
+            "line": 399,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListNames, sbus_server_bus_list_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListActivatableNames, sbus_server_bus_list_activatable_names, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetNameOwner, sbus_server_bus_get_name_owner, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),"
+          },
+          {
+            "line": 402,
+            "text": "            SBUS_SYNC(METHOD, org_freedesktop_DBus, ListQueuedOwners, sbus_server_bus_list_queued_owners, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixUser, sbus_server_bus_get_connection_unix_user, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, GetConnectionUnixProcessID, sbus_server_bus_get_connection_unix_process_id, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, StartServiceByName, sbus_server_bus_start_service_by_name, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, AddMatch, sbus_server_bus_add_match, server),\n            SBUS_SYNC(METHOD, org_freedesktop_DBus, RemoveMatch, sbus_server_bus_remove_match, server)\n        ),"
+          }
+        ]
+      },
+      "src/providers/data_provider/dp.c": {
+        "sha256": "a7670f35b354671862f8e07745cb43d6cd27f116e9009b5cea6f4184b9ea282f",
+        "anchors": [
+          {
+            "line": 155,
+            "text": "\nerrno_t\ndp_init(struct tevent_context *ev,\n        struct be_ctx *be_ctx,\n        const char *sbus_name)\n{\n    struct data_provider *provider;"
+          },
+          {
+            "line": 171,
+            "text": "    talloc_set_destructor(provider, dp_destructor);\n\n    ret = sss_sbus_connect(provider, ev, sbus_name, NULL, &provider->sbus_conn);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to connect to SSSD D-Bus server \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));\n        goto done;"
+          },
+          {
+            "line": 190,
+            "text": "    }\n\n    ret = dp_init_targets(provider, be_ctx, provider, provider->modules);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Unable to initialize DP targets \"\n              \"[%d]: %s\\n\", ret, sss_strerror(ret));\n        goto done;"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_options.c": {
+        "sha256": "69c4bd9e435653429dfe0f27887e91137c54a46ab7bc5da217ea302859aecb16",
+        "anchors": [
+          {
+            "line": 49,
+            "text": "    const char *pwd_policy;\n    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;"
+          },
+          {
+            "line": 50,
+            "text": "    int ret;\n    int account_cache_expiration;\n    int offline_credentials_expiration;\n    const char *ldap_deref;\n    int ldap_deref_val;\n    int o;\n    const char *authtok_type;"
+          },
+          {
+            "line": 180,
+            "text": "    }\n\n    /* account_cache_expiration must be >= than offline_credentials_expiration */\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {"
+          },
+          {
+            "line": 183,
+            "text": "    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0,\n                         &offline_credentials_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Cannot get value of %s from confdb \\n\",\n                  CONFDB_PAM_CRED_TIMEOUT);\n        goto done;"
+          },
+          {
+            "line": 190,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that"
+          },
+          {
+            "line": 191,
+            "text": "\n    account_cache_expiration = dp_opt_get_int(opts->basic,\n                                              SDAP_ACCOUNT_CACHE_EXPIRATION);\n\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login."
+          },
+          {
+            "line": 194,
+            "text": "\n    /* account cache_expiration must not be smaller than\n     * offline_credentials_expiration to prevent deleting entries that\n     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached"
+          },
+          {
+            "line": 197,
+            "text": "     * still contain credentials valid for offline login.\n     *\n     * offline_credentials_expiration == 0 is a special case that says\n     * that the cached credentials are valid forever. Therefore, the cached\n     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {"
+          },
+          {
+            "line": 201,
+            "text": "     * entries must not be purged from cache.\n     */\n    if (!offline_credentials_expiration && account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 205,
+            "text": "              \"Conflicting values for options %s (unlimited) \"\n                  \"and %s (%d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 207,
+            "text": "                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&"
+          },
+          {
+            "line": 211,
+            "text": "        goto done;\n    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,"
+          },
+          {
+            "line": 212,
+            "text": "    }\n    if (offline_credentials_expiration && account_cache_expiration &&\n        offline_credentials_expiration > account_cache_expiration) {\n        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,"
+          },
+          {
+            "line": 215,
+            "text": "        DEBUG(SSSDBG_CRIT_FAILURE, \"Value of %s (now %d) must be larger \"\n                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;"
+          },
+          {
+            "line": 216,
+            "text": "                  \"than value of %s (now %d)\\n\",\n                  opts->basic[SDAP_ACCOUNT_CACHE_EXPIRATION].opt_name,\n                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;"
+          },
+          {
+            "line": 218,
+            "text": "                  account_cache_expiration,\n                  CONFDB_PAM_CRED_TIMEOUT,\n                  offline_credentials_expiration);\n        ret = EINVAL;\n        goto done;\n    }\n"
+          }
+        ]
+      },
+      "src/providers/ldap/ldap_id_cleanup.c": {
+        "sha256": "3b1b5f3319417b473a9eeb811f8ec73502a517a973c96d0b2cf4587a666c76fb",
+        "anchors": [
+          {
+            "line": 36,
+            "text": "\n/* ==Cleanup-Task========================================================= */\nstruct ldap_id_cleanup_ctx {\n    struct sdap_id_ctx *ctx;\n    struct sdap_domain *sdom;\n};\n"
+          },
+          {
+            "line": 47,
+            "text": "                                 void *pvt)\n{\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}"
+          },
+          {
+            "line": 49,
+            "text": "    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,"
+          },
+          {
+            "line": 50,
+            "text": "\n    cleanup_ctx = talloc_get_type(pvt, struct ldap_id_cleanup_ctx);\n    return ldap_id_cleanup(cleanup_ctx->ctx, cleanup_ctx->sdom);\n}\n\nerrno_t ldap_id_setup_cleanup(struct sdap_id_ctx *id_ctx,\n                              struct sdap_domain *sdom)"
+          },
+          {
+            "line": 60,
+            "text": "    time_t period;\n    time_t offset;\n    struct ldap_id_cleanup_ctx *cleanup_ctx = NULL;\n    char *name = NULL;\n\n    period = dp_opt_get_int(id_ctx->opts->basic, SDAP_PURGE_CACHE_TIMEOUT);\n    if (period == 0) {"
+          },
+          {
+            "line": 76,
+            "text": "    first_delay = 10;\n\n    cleanup_ctx = talloc_zero(sdom, struct ldap_id_cleanup_ctx);\n    if (cleanup_ctx == NULL) {\n        ret = ENOMEM;\n        goto done;\n    }"
+          },
+          {
+            "line": 119,
+            "text": "                          struct sss_domain_info *domain);\n\nerrno_t ldap_id_cleanup(struct sdap_id_ctx *ctx,\n                        struct sdap_domain *sdom)\n{\n    int ret, tret;\n    bool in_transaction = false;"
+          },
+          {
+            "line": 185,
+            "text": "    char *subfilter = NULL;\n    char *ts_subfilter = NULL;\n    int account_cache_expiration;\n    hash_table_t *uid_table;\n    struct ldb_message **msgs;\n    size_t count;\n    const char *name;"
+          },
+          {
+            "line": 198,
+            "text": "    }\n\n    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {"
+          },
+          {
+            "line": 200,
+            "text": "    account_cache_expiration = dp_opt_get_int(opts->basic, SDAP_ACCOUNT_CACHE_EXPIRATION);\n    DEBUG(SSSDBG_TRACE_ALL, \"Cache expiration is set to %d days\\n\",\n              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%\"SPRItime\")))\","
+          },
+          {
+            "line": 202,
+            "text": "              account_cache_expiration);\n\n    if (account_cache_expiration > 0) {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(|(!(%s=*))(%s<=%\"SPRItime\")))\",\n                                    SYSDB_CACHE_EXPIRE,\n                                    SYSDB_LAST_LOGIN,"
+          },
+          {
+            "line": 208,
+            "text": "                                    SYSDB_LAST_LOGIN,\n                                    SYSDB_LAST_LOGIN,\n                                    (now - (account_cache_expiration * 86400)));\n\n        ts_subfilter = talloc_asprintf(tmpctx,\n                            \"(&(!(%s=0))(%s<=%\"SPRItime\")(|(!(%s=*))(%s<=%\"SPRItime\")))\",\n                            SYSDB_CACHE_EXPIRE,"
+          },
+          {
+            "line": 217,
+            "text": "                            SYSDB_LAST_LOGIN,\n                            SYSDB_LAST_LOGIN,\n                            (now - (account_cache_expiration * 86400)));\n    } else {\n        subfilter = talloc_asprintf(tmpctx,\n                                    \"(&(!(%s=0))(!(%s=*)))\",\n                                    SYSDB_CACHE_EXPIRE,"
+          }
+        ]
+      },
+      "src/responder/common/responder_common.c": {
+        "sha256": "843664048a98d82448c92ff1999307745da87427ce49465263e34f17c13638a2",
+        "anchors": [
+          {
+            "line": 1026,
+            "text": "}\n\nint sss_process_init(TALLOC_CTX *mem_ctx,\n                     struct tevent_context *ev,\n                     struct confdb_ctx *cdb,\n                     struct sss_cmd_table sss_cmds[],\n                     const char *sss_pipe_name,"
+          },
+          {
+            "line": 1114,
+            "text": "    }\n\n    ret = confdb_get_domains(rctx->cdb, &rctx->domains);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"fatal error setting up domain map\\n\");\n        goto fail;\n    }"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv.c": {
+        "sha256": "f14c673647ec711c2f349301ea87b86983e7a40f2cf9aacd530e33154f915223",
+        "anchors": [
+          {
+            "line": 170,
+            "text": "}\n\nstatic int pam_process_init(TALLOC_CTX *mem_ctx,\n                            struct tevent_context *ev,\n                            struct confdb_ctx *cdb)\n{\n    struct resp_ctx *rctx;"
+          },
+          {
+            "line": 183,
+            "text": "\n    pam_cmds = get_pam_cmds();\n    ret = sss_process_init(mem_ctx, ev, cdb,\n                           pam_cmds,\n                           SSS_PAM_SOCKET_NAME, SCKT_RSP_UMASK,\n                           CONFDB_PAM_CONF_ENTRY,\n                           SSS_BUS_PAM, SSS_PAM_SBUS_SERVICE_NAME,"
+          },
+          {
+            "line": 191,
+            "text": "                           &rctx);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_FATAL_FAILURE, \"sss_process_init() failed\\n\");\n        return ret;\n    }\n\n    pctx = talloc_zero(rctx, struct pam_ctx);"
+          },
+          {
+            "line": 530,
+            "text": "    }\n\n    ret = pam_process_init(main_ctx,\n                           main_ctx->event_ctx,\n                           main_ctx->confdb_ctx);\n    if (ret != EOK) return 3;\n"
+          },
+          {
+            "line": 536,
+            "text": "\n    /* loop on main */\n    server_loop(main_ctx);\n\n    return 0;\n}"
+          }
+        ]
+      },
+      "src/responder/pam/pamsrv_cmd.c": {
+        "sha256": "dae2d2bdc0745a880a6d0ec60f12702a94f610d7adc0617ba8a1614433bfd94b",
+        "anchors": [
+          {
+            "line": 1341,
+            "text": "        case SSS_PAM_AUTHENTICATE:\n            if ((preq->domain != NULL) &&\n                (preq->domain->cache_credentials == true) &&\n                (pd->offline_auth == false)) {\n                const char *password = NULL;\n                bool use_cached_auth;\n"
+          },
+          {
+            "line": 1446,
+            "text": "        pd->pam_status == PAM_SUCCESS &&\n        preq->domain &&\n        preq->domain->cache_credentials &&\n        !pd->offline_auth &&\n        !pd->last_auth_saved) {\n        ret = set_last_login(preq);\n        if (ret != EOK) {"
+          },
+          {
+            "line": 2719,
+            "text": "static errno_t pam_is_last_online_login_fresh(struct sss_domain_info *domain,\n                                              const char* user,\n                                              int cached_auth_timeout,\n                                              bool *_result)\n{\n    errno_t ret;\n    bool result = true;"
+          },
+          {
+            "line": 2734,
+            "text": "    }\n\n    result = time(NULL) < (last_login + cached_auth_timeout);\n    ret = EOK;\n\ndone:\n    if (ret == EOK) {"
+          },
+          {
+            "line": 2773,
+            "text": "    }\n\n    if (!domain->cache_credentials || domain->cached_auth_timeout <= 0) {\n        return false;\n    }\n\n    if (pam_cmd == SSS_PAM_PREAUTH"
+          },
+          {
+            "line": 2782,
+            "text": "\n        ret = pam_is_last_online_login_fresh(domain, user,\n                                             domain->cached_auth_timeout,\n                                             &result);\n        if (ret != EOK) {\n            /* non-critical, consider fail as 'non-fresh value' */\n            DEBUG(SSSDBG_MINOR_FAILURE,"
+          }
+        ]
+      },
+      "src/db/sysdb_ops.c": {
+        "sha256": "2b8af616351993c0b9a9b4b980a5e098d3ba40b1a35fc33083415b21870d9e7b",
+        "anchors": [
+          {
+            "line": 4589,
+            "text": "}\n\nint sysdb_cache_auth(struct sss_domain_info *domain,\n                     const char *name,\n                     const char *password,\n                     struct confdb_ctx *cdb,\n                     bool just_check,"
+          },
+          {
+            "line": 4663,
+            "text": "\n    ret = confdb_get_int(cdb, CONFDB_PAM_CONF_ENTRY,\n                         CONFDB_PAM_CRED_TIMEOUT, 0, &cred_expiration);\n    if (ret != EOK) {\n        DEBUG(SSSDBG_CRIT_FAILURE,\n              \"Failed to read expiration time of offline credentials.\\n\");\n        goto done;"
+          }
+        ]
+      }
+    }
+  }
+}

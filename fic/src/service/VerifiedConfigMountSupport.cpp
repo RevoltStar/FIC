@@ -265,9 +265,14 @@ void validateRequest(const ActivationRequest& r) {
             if (p.path == r.paths[j].path || below(p.path, r.paths[j].path) || below(r.paths[j].path, p.path))
                 invalid("overlapping controlled paths");
         if (p.kind == ControlledPathKind::File) {
-            if (!p.manifest.empty() || !fic::core::ContentDigest::isCanonicalSha256Hex(p.sha256)) invalid("invalid file digest/manifest");
+            if (!p.directories.empty() || !p.manifest.empty() || !fic::core::ContentDigest::isCanonicalSha256Hex(p.sha256)) invalid("invalid file digest/manifest");
         } else if (p.kind == ControlledPathKind::Directory) {
-            if (!p.sha256.empty() || p.manifest.size() > 4096) invalid("invalid directory manifest");
+            if (!p.sha256.empty() || p.manifest.size() > 4096 || p.directories.size()>4096) invalid("invalid directory manifest");
+            for(const auto& name:p.directories){
+                if(!cleanPath(name,false)||p.manifest.count(name))invalid("invalid exact directory entry");
+                for(auto parent=std::filesystem::path(name).parent_path();!parent.empty();parent=parent.parent_path())
+                    if(!p.directories.count(parent.string()))invalid("incomplete exact directory ancestry");
+            }
             for (const auto& [name, digest] : p.manifest) {
                 if (!cleanPath(name, false) || !fic::core::ContentDigest::isCanonicalSha256Hex(digest)) invalid("invalid manifest entry");
                 for (auto parent = std::filesystem::path(name).parent_path(); !parent.empty(); parent = parent.parent_path())
@@ -323,6 +328,12 @@ void verifyTree(int root, const ControlledPath& expected, std::uint64_t budget) 
     std::set<std::string> dirs{""};
     for (const auto& [name, _] : desired)
         for (auto p = std::filesystem::path(name).parent_path(); !p.empty(); p = p.parent_path()) dirs.insert(p.string());
+    if(!expected.directories.empty()){
+        std::set<std::string> actualDirectories;
+        for(const auto& [name,attr]:tree.attributes)if(!name.empty()&&S_ISDIR(attr.st_mode))actualDirectories.insert(name);
+        if(actualDirectories!=expected.directories)throw Failure(ActivationStatus::ChecksumMismatch,"exact directory set changed");
+        dirs.insert(expected.directories.begin(),expected.directories.end());
+    }
     for (const auto& [name, attr] : tree.attributes)
         if (S_ISDIR(attr.st_mode) && !dirs.count(name))
             throw Failure(ActivationStatus::ChecksumMismatch, "unexpected directory outside manifest structure");

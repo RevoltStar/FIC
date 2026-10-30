@@ -132,6 +132,16 @@ void validateConsumerIdentity(const IniProjection& ini,const std::string& platfo
         if(it->second.value!=expected)unsupported("unsupported configuration user identity");
     }
 }
+SssdInputReference snapshotGraph(const SssdLaunchReference& launch,Deadline deadline){
+    auto out=captureGraph(launch,"",deadline
+#ifdef FIC_SSSD_I1_TESTING
+        ,{}
+#endif
+    );consumerExecutables(out,deadline);return out;
+}
+void verifyPersistentSources(const SssdInputReference& before,Deadline deadline){
+    equalSources(before.sources,observe(before.launch,"",deadline));
+}
 std::string environmentReference(const std::string& path) {
     std::uint64_t budget=1024*1024;const auto s=optionalEnvironment(path,budget);environment(s);
     nlohmann::json out={{"present",s.present},{"mount",s.identity.mount}};

@@ -1,0 +1,7 @@
+16:29:37.645486 fsopen("tmpfs", FSOPEN_CLOEXEC) = 3
+16:29:37.646318 mount_setattr(-9, NULL, 0, NULL, 0) = -1 EINVAL (Invalid argument)
+16:29:37.646469 fsopen("tmpfs", FSOPEN_CLOEXEC) = 4
+16:29:37.646730 fsmount(4, FSMOUNT_CLOEXEC, 0) = 5
+16:29:37.646865 mount_setattr(5, "", AT_EMPTY_PATH|AT_RECURSIVE, {attr_set=MOUNT_ATTR_NOSYMFOLLOW, attr_clr=0, propagation=0 /* MS_??? */, userns_fd=0}, 32) = 0
+16:29:37.677029 fsmount(3, FSMOUNT_CLOEXEC, MOUNT_ATTR_NOSUID|MOUNT_ATTR_NODEV|MOUNT_ATTR_NOEXEC|MOUNT_ATTR_NOSYMFOLLOW) = 4
+16:29:37.775853 move_mount(4, "", AT_FDCWD, "/run/credentials/getty@tty1.service", MOVE_MOUNT_F_EMPTY_PATH) = 0

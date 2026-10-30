@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -18,6 +19,9 @@ struct ControlledPath {
     ControlledPathKind kind = ControlledPathKind::File;
     std::string sha256;       // File only
     FileManifest manifest;   // Directory only
+    // Exact non-root directory set for the closed SSSD full-parent snapshot.
+    // Empty retains the existing inferred-directory contract for other profiles.
+    std::set<std::string> directories;
 };
 struct ActivationRequest {
     std::vector<ControlledPath> paths;
@@ -38,6 +42,8 @@ struct ActivationResult {
     std::vector<std::string> cleanupErrors;
     std::vector<std::string> residualPaths;
     bool readinessConfirmed = false;
+    // Conservative: restart dispatch/preflight entered; cancellation is not undo.
+    bool activationAttempted = false;
     bool success() const { return status == ActivationStatus::Success; }
 };
 

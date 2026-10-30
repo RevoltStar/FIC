@@ -249,3 +249,43 @@ drop-in directly via UnitPath while newer versions report changed launch state;
 exact allowed diagnostics are asserted. These are read-only optimistic I1
 observations, not linearizable protection or completed A/B/C/P. I2/I3 remain
 unimplemented; historical R1/R2 evidence has not been rewritten.
+
+## I3 implementation boundary
+
+The preceding tables are the immutable R1 research snapshot, not the current
+adapter result. The standalone I3 adapter and exact source-causal chain are
+specified in [verified activation design](sssd-verified-activation-design.md#i3-adapter-contract-no-policy-or-ownership-authority).
+Current native evidence is collected separately in
+[`sssd-i3`](../tests/integration/sssd-i3/README.md); old R1/R2/I1/I2 PASS is not
+promoted to I3 runtime proof.
+
+The closed I3 profile supports the measured notify units with their native
+PIDFile/precommands/identity. It requires already-prepared metadata, private
+publication boundaries and existing EnvironmentFile. On ALT, stock absence of
+`/etc/sysconfig/sssd` is explicitly Unsupported; the positive fixture uses an
+explicit administrator-supplied native EnvironmentFile, with the stock refusal
+recorded separately. Native SSSD units are never replaced for a positive gate.
+Only configured monitor-spawned PAM responders have a C proof; lazy-only PAM
+remains Unsupported. Exact package revisions are checked, not upstream version
+strings alone. No production tool installation or trust seeding is performed.
+
+Docker/WSL remains the measured environment. A deliberately preserved Ubuntu26
+failure shows unrelated getty credential mounts causing InterferenceDetected;
+mount observation was retained, and only fixture getty was quiesced for the
+supported positive environment. Quiet/private deployment is a real prerequisite,
+not a reason to ignore namespace events.
+
+I3 retained native matrix (2026-10-30):
+
+| Profile | Launch/metadata | A/B/source-causal C/P | LDAP/PAM and faults |
+|---|---|---|---|
+| Debian12, 2.8.2-4+deb12u1 | stock notify/main + root PIDFile | PASS | PASS, 55 observations |
+| Debian13, 2.10.1-2+b1 | stock root precommands; prepared metadata | PASS | PASS, 57 observations |
+| Ubuntu24, 2.9.4-1.1ubuntu6.8 | stock notify/main + root PIDFile | PASS | PASS, 55 observations |
+| Ubuntu26, 2.12.0-1ubuntu5.5 | stock nonroot + privileged ignored precommands; prepared metadata | PASS | PASS, 57 observations |
+| ALT p11, 2.9.8-alt3 | stock root monitor/PIDFile, `_sssd` children, explicit environment fixture | PASS | PASS, 57 observations |
+
+These are adapter-level proofs with clean cleanup on supported positive fixtures,
+not policy-level coverage/ownership SUCCESS. Mandatory failures remain failures,
+including runtime-unknown timeout, P drift and successful-primary/failed-cleanup.
+Exact raw outcomes and identities are in the separate I3 reports.
