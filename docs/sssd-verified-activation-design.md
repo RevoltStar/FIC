@@ -117,6 +117,25 @@ AD/IPA trusts, actual authentication or cache cleanup. It requires the complete
 chain; READY, a new PID, a ConfigDB match or a source-code path alone is insufficient.
 No runtime instrumentation, authentication or SSSD hooks are used in production.
 
+### Publication versus completed A
+
+The published callback validates the bounded RO snapshot, exact bytes/metadata/
+manifest, negative slots, I1/I2 graph and required launch/code inputs. This is a
+local prerequisite (`publishedValidated`), **not** completed Input Proof A.
+
+A becomes Proven only in the ready callback after publication validation **and**
+a complete successful `proveRuntime`: new monitor generation, ConfigDB binding,
+initialized selected backends/required responders and the existing bounded
+source-causal chain. `activationAttempted` records dispatch entry only and cannot
+promote A. Pre-restart unit/mount interference, timeout after publication, and
+attempted restart without full consumer proof leave A NotProven, even if some B
+facts were established. No additional runtime proof subsystem is introduced.
+
+A records historical protected-input consumption. Subsequent persistent drift or
+cleanup failure does not erase that fact, but forbids overall SUCCESS. A later
+runtime-generation change can invalidate current B/C while historical A remains
+Proven; P keeps its independent existing meaning.
+
 ### P and result algebra
 
 After ordinary ownership-checked cleanup, P reopens original resources and

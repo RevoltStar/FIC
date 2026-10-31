@@ -71,7 +71,7 @@ only the protocol state; it does not turn the availability probe into auth proof
 PAM GET_VERSION is an authenticated-by-kernel-credentials availability observation,
 not a password operation. Required lazy-only PAM topology remains Unsupported.
 
-There are 55 observations on Debian12/Ubuntu24 and 57 on Debian13/Ubuntu26/ALT. They include:
+There are 56 observations on Debian12/Ubuntu24 and 58 on Debian13/Ubuntu26/ALT. They include:
 
 * positive full graph, protected RO write rejection, absent main/conf.d, cache
   disabled, two LDAP roots and backend-only selected semantics;
@@ -112,3 +112,18 @@ cleanup identity-check/umount residual race remains documented and unchanged.
 The collector and validator do not grant policy coverage or ownership authority.
 I4 still needs journal-backed CAS/Apply/REFRESH/recovery; I5 verified release;
 I6 policy registration/dependencies and client/end-to-end integration.
+
+## Input Proof A follow-up
+
+Publication alone is a validated local prerequisite. A is promoted only after
+complete successful source-causal runtime proof; neither publication nor restart
+dispatch is sufficient. The pre-fix saved-evidence RED is retained in
+`input-proof-red.txt` (base ad41b954b009989cf9b12bed6fade17c1b7d2e9e).
+
+The five-platform native rerun adds the existing `timeout-published` hook and
+asserts A/B/C NotProven before restart, A NotProven with incomplete consumer proof
+after dispatch, full A/B/C/P on success, historical A/B/C with P drift or cleanup
+failure, and historical A with current B/C invalidation after cleanup. The
+retained-evidence guard additionally correlates A with the existing `semantics`
+checkpoint, which is reached only after full runtime proof. B/C/P contracts,
+generic engine, SSH and runtime proof implementation are unchanged.

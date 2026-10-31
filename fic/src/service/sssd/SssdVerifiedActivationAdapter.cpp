@@ -168,6 +168,7 @@ perform(const SssdVerifiedActivationRequest &request
       proof.sourceRoots[path.path.string()] = source.identity;
       proof.sourceAttributes[path.path.string()] = source.tree.attributes;
     }
+    bool publishedValidated = false;
     proof.published = [&](Deadline current) {
       const auto snapshot =
           detail_i1::snapshotGraph(request.input.launch, current);
@@ -201,7 +202,8 @@ perform(const SssdVerifiedActivationRequest &request
       detail_i3::validateExpectations(effectiveConfiguration(snapshot),
                                       request.expectations);
       detail_i3::verifyNativeCode(native);
-      result.inputs = SssdProofState::Proven;
+      // Publication is a prerequisite, not evidence of runtime consumption.
+      publishedValidated = true;
       checkpoint("published");
     };
     proof.ready = [&](const d::ServiceState &state, Deadline current) {
@@ -212,11 +214,16 @@ perform(const SssdVerifiedActivationRequest &request
         try {
           detail_i3::proveRuntime(request, cfg, native, state, current,
                                   attempt);
+          if (!publishedValidated)
+            throw d::Failure(ActivationStatus::ReadinessUnconfirmed,
+                             "SSSD protected publication not confirmed");
           result.processes = std::move(attempt.processes);
           result.parameters = std::move(attempt.parameters);
           result.configDbGeneration = std::move(attempt.configDbGeneration);
           result.nativeCode = std::move(attempt.nativeCode);
           result.newInvocation = attempt.newInvocation;
+          // Historical input consumption survives later P/cleanup failures.
+          result.inputs = SssdProofState::Proven;
           result.activation = SssdProofState::Proven;
           result.semantics = SssdProofState::Proven;
           break;

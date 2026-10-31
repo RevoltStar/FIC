@@ -6,7 +6,7 @@ HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
 platforms=('debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11')
 def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 current=json.loads(subprocess.check_output(['python3',str(HERE/'source-manifest.py')]))
-out={'schema':'sssd-i3-native-v1','base':'e36904b7572394de1c728713b154eb5b6236b919','environment':'Docker; stock five distribution userlands/systemd PID1; WSL shared kernel; loopback only; no runtime host binds/ports','proof_model':'bounded source-causal; no direct memory/auth/LDAP health/cleanup execution claim','source_sha256':current,'source_review_sha256':digest(HERE/'source-review.json'),'historical_sha256':{},'profiles':{}}
+out={'schema':'sssd-i3-native-v1','base':'ad41b954b009989cf9b12bed6fade17c1b7d2e9e','environment':'Docker; stock five distribution userlands/systemd PID1; WSL shared kernel; loopback only; no runtime host binds/ports','proof_model':'bounded source-causal; no direct memory/auth/LDAP health/cleanup execution claim','source_sha256':current,'source_review_sha256':digest(HERE/'source-review.json'),'historical_sha256':{},'profiles':{}}
 for directory in ('sssd-research','sssd-i1','sssd-i2'):
  for name in ('evidence.json','source-r1.json','source-r2.json','source-review.json','launch-fixtures.json'):
   path=HERE.parent/directory/name

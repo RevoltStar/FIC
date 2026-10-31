@@ -275,15 +275,15 @@ mount observation was retained, and only fixture getty was quiesced for the
 supported positive environment. Quiet/private deployment is a real prerequisite,
 not a reason to ignore namespace events.
 
-I3 retained native matrix (2026-10-30):
+I3 retained native matrix (2026-10-31; corrected input-consumption A):
 
 | Profile | Launch/metadata | A/B/source-causal C/P | LDAP/PAM and faults |
 |---|---|---|---|
-| Debian12, 2.8.2-4+deb12u1 | stock notify/main + root PIDFile | PASS | PASS, 55 observations |
-| Debian13, 2.10.1-2+b1 | stock root precommands; prepared metadata | PASS | PASS, 57 observations |
-| Ubuntu24, 2.9.4-1.1ubuntu6.8 | stock notify/main + root PIDFile | PASS | PASS, 55 observations |
-| Ubuntu26, 2.12.0-1ubuntu5.5 | stock nonroot + privileged ignored precommands; prepared metadata | PASS | PASS, 57 observations |
-| ALT p11, 2.9.8-alt3 | stock root monitor/PIDFile, `_sssd` children, explicit environment fixture | PASS | PASS, 57 observations |
+| Debian12, 2.8.2-4+deb12u1 | stock notify/main + root PIDFile | PASS | PASS, 56 observations |
+| Debian13, 2.10.1-2+b1 | stock root precommands; prepared metadata | PASS | PASS, 58 observations |
+| Ubuntu24, 2.9.4-1.1ubuntu6.8 | stock notify/main + root PIDFile | PASS | PASS, 56 observations |
+| Ubuntu26, 2.12.0-1ubuntu5.5 | stock nonroot + privileged ignored precommands; prepared metadata | PASS | PASS, 58 observations |
+| ALT p11, 2.9.8-alt3 | stock root monitor/PIDFile, `_sssd` children, explicit environment fixture | PASS | PASS, 58 observations |
 
 These are adapter-level proofs with clean cleanup on supported positive fixtures,
 not policy-level coverage/ownership SUCCESS. Mandatory failures remain failures,

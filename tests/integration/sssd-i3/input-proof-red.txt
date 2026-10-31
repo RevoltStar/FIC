@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/admsys/FIC/tests/integration/sssd-i3/check-evidence.py", line 34, in <module>
+    x=o[name];assert x['proofs']['A']=='NotProven' and x['proofs']['B']=='NotProven' and x['proofs']['C']=='NotProven' and not x['engine']['attempted'],(platform,name,x['proofs'])
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('debian-12', 'unit-before', {'A': 'Proven', 'B': 'NotProven', 'C': 'NotProven', 'P': 'NotProven', 'admission': 'Proven'})

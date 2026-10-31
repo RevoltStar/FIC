@@ -76,15 +76,19 @@ prepared();write('/etc/sssd/unexpected-xattr','test')
 assert run(['python3','-c',"import os;os.setxattr('/etc/sssd/unexpected-xattr','user.i3',b'blocked')"])['exit_code']==0
 case('xattr-refused');Path('/etc/sssd/unexpected-xattr').unlink()
 prepared();ctl('stop','sssd.service');case('stopped')
+prepared();x=case('timeout-published','timeout-published',timeout=15000)
+assert 'published' in x['checkpoints'] and x['engine']['primary']=='TimedOut' and not x['engine']['attempted'],x
+assert x['proofs']['A']==x['proofs']['B']==x['proofs']['C']=='NotProven',x
 for action in ('unit-before','unit-after','snippet-inode','source-fd','persistent-drift','mount-change','stop-monitor','stop-pam','stop-backend','stale-configdb','stop-pam-after','environment-replace','negative-create'):
  prepared();unit=Path('/usr/lib/systemd/system/sssd.service' if platform in ('debian-13','ubuntu-26.04','alt-p11') else '/lib/systemd/system/sssd.service');original=unit.read_bytes()
  x=case(action,action,timeout=15000 if (action.startswith('stop-') or action=='stale-configdb') else 60000)
  if action.startswith('unit-'):unit.write_bytes(original);ctl('daemon-reload')
  if action=='mount-change':assert run(['umount','/run/i3-mount'])['exit_code']==0
- if action in ('stop-monitor','stop-pam','stop-backend','stale-configdb'):assert x['runtime_effect_possible'] and x['proofs']['C']!='Proven',x
- if action in ('source-fd','snippet-inode','persistent-drift'):assert x['proofs']['P']=='Drifted',x
+ if action in ('unit-before','mount-change'):assert x['proofs']['A']==x['proofs']['B']==x['proofs']['C']=='NotProven' and not x['engine']['attempted'],x
+ if action in ('stop-monitor','stop-pam','stop-backend','stale-configdb'):assert x['engine']['attempted'] and x['runtime_effect_possible'] and x['proofs']['C']!='Proven' and x['proofs']['A']=='NotProven',x
+ if action in ('source-fd','snippet-inode','persistent-drift','environment-replace','negative-create'):assert x['proofs']['A']==x['proofs']['B']==x['proofs']['C']=='Proven' and x['proofs']['P']=='Drifted',x
  if action in ('environment-replace','negative-create'):assert x['proofs']['P']=='Drifted' and x['proofs']['C']=='Proven',x
- if action=='stop-pam-after':assert x['status']=='RuntimeEffectUnknown' and x['proofs']['P']=='Proven' and x['proofs']['C']=='NotProven',x
+ if action=='stop-pam-after':assert x['status']=='RuntimeEffectUnknown' and x['proofs']['A']=='Proven' and x['proofs']['P']=='Proven' and x['proofs']['C']=='NotProven',x
  if action=='persistent-drift':assert x['proofs']['C']=='Proven' and x['status']=='RuntimeActivatedButPersistentUnproven',x
 prepared()
 assert run(['mount','--make-shared','/etc'])['exit_code']==0
@@ -120,5 +124,5 @@ if Path('/usr/sbin/slapd').exists():
   assert o[name]['exit_code']!=0,(name,o[name])
  experiment('ldap-functional-result',{'status':'PASS','adapter_activations':activation_count[0],'synthetic_user_only':True})
 else:experiment('ldap-functional-result',{'status':'NOT_TESTED','reason':'fixture tools absent; use test-only I3 image'})
-prepared();x=case('cleanup-fail','cleanup-fail');assert x['status']=='CleanupFailed' and x['proofs']['C']=='Proven' and x['proofs']['P']!='Proven' and x['engine']['residual_mounts'],x
+prepared();x=case('cleanup-fail','cleanup-fail');assert x['status']=='CleanupFailed' and x['proofs']['A']==x['proofs']['B']==x['proofs']['C']=='Proven' and x['engine']['primary']=='Success' and x['proofs']['P']!='Proven' and x['engine']['residual_mounts'],x
 experiment('result',{'status':'PASS','scope':'I3 adapter only; no policy SUCCESS/ownership/journal proof'})

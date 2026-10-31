@@ -1,6 +1,6 @@
 {
   "schema": "sssd-i3-native-v1",
-  "base": "e36904b7572394de1c728713b154eb5b6236b919",
+  "base": "ad41b954b009989cf9b12bed6fade17c1b7d2e9e",
   "environment": "Docker; stock five distribution userlands/systemd PID1; WSL shared kernel; loopback only; no runtime host binds/ports",
   "proof_model": "bounded source-causal; no direct memory/auth/LDAP health/cleanup execution claim",
   "source_sha256": {
@@ -24,13 +24,13 @@
     "fic/src/service/sssd/SssdRuntimeProof.h": "5e30843dea68fb7e6fc1c336286ac5c1c681ca697c9d080976fd8e0ab66bf3a6",
     "fic/src/service/sssd/SssdServiceAdmission.cpp": "de0e94e9c113ae23cc24593033e77f3a30c0c97c0b0147359abcf23a592ac156",
     "fic/src/service/sssd/SssdServiceAdmission.h": "f157144d49b9609be1dbbb5f32ca12d21ae02f4afbfd204b70d2e5664425d156",
-    "fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp": "90d03fdeb9c87973263ba602a2c5ae5f2ed5b431512f1b99e7884699a9c87307",
+    "fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp": "4fd0f97e6402d4fe7da0ea3b8647d6878624de1ccdb59b4b6f76a0f8d1c64c56",
     "fic/src/service/sssd/SssdVerifiedActivationAdapter.h": "abe6a1b9ecffbde4de774736e47cb14faea87a2866b1bbaded4627ca6cf55d3c",
     "fic/src/service/sssd/SssdVerifiedInputClosure.cpp": "22a6b1b42178115647d0228a5861c39839bb08e458871a924c020e49f41f1421",
     "fic/src/service/sssd/SssdVerifiedInputClosure.h": "ebf5169402b2aad5cedbed7e520b6bb93f99f93f0dd8a123f914cd9e3670d9ab",
     "tests/integration/sssd-i3/CMakeLists.txt": "6637541217372861df094bcfd2c07e1bbe305ee653f816208725006687e77470",
     "tests/integration/sssd-i3/Driver.cpp": "cf3a6c80104a4cbfc364a61d6f8942c78520192a34d028faff11695427d1a16b",
-    "tests/integration/sssd-i3/native.py": "da8188e92b3140a690389bef6d4a98a8100e822d6b268ccecaff5449ee05c74c",
+    "tests/integration/sssd-i3/native.py": "4b2689e05ebffd9cca18449a486470f1eddecefc317e1106f1e2ec400356a568",
     "tests/integration/sssd-i3/run-native.sh": "f71cf7c3df2f0a34909ed2860cc4459b364cae9756a64e226146e68fee261e45",
     "tests/integration/sssd-i3/source-manifest.py": "e3e3d1ed7d7fcab56ae31ee94068dae169f6ac195b7b18c9640c5e6bcc517df2",
     "tests/integration/sssd-research/common.py": "10d61f183aabe391e455538da4baf3bef1082a51552cb0dacc1560aa6dcc43f1",
@@ -50,8 +50,8 @@
     "debian-12": {
       "status": "PASS",
       "report": "tests/integration/sssd-i3/reports/debian-12.json",
-      "report_sha256": "9a721b2fba2a1b1c0044fb2ecff527eee072e1601fa114f405e426ca01718ec4",
-      "probe_sha256": "ef64219d8b6d2c1cc40d4b10e172fca9f65314b9e352dde0bd8f4b4aeac8e0a2",
+      "report_sha256": "fe9b21cf591b8871f9048807e5c1955f8b553b4da14d52280f89752b4619a48d",
+      "probe_sha256": "f6caa04193ab8ea1d8bdb0e70be1bc9381f56c50a0b78571acd0fc0f27f9b1e3",
       "image_id": "sha256:e3a6eea652553b8f63c4d589256da0de81e3c411ceaf8754805c0dbbd5528c96",
       "runtime_isolation": {
         "network": "none",
@@ -59,7 +59,7 @@
         "host_binds": null,
         "ports": {}
       },
-      "observations": 55,
+      "observations": 56,
       "completed_proofs": [
         "A",
         "B",
@@ -72,8 +72,8 @@
     "debian-13": {
       "status": "PASS",
       "report": "tests/integration/sssd-i3/reports/debian-13.json",
-      "report_sha256": "ed51e64999418c5ab5b0e532aa2f6bf54acfcf8f78f0c4f0825025af9d8039ee",
-      "probe_sha256": "a4827b4862b861d7ddfa77963465cb5a00d5c63d5f6fa7bdfdb801933e5ad4f5",
+      "report_sha256": "026fd7facece439d56217a0429c64c3637af0ae7206e0c47624a8449e5024991",
+      "probe_sha256": "412b0d15c413a956d957676e0a0187e9aabda70d87056667b02ffa10341096d9",
       "image_id": "sha256:f1faf31bd4ec8e6c38f5ead594b4c1da1e68a87447c730773e61de48871a1d2c",
       "runtime_isolation": {
         "network": "none",
@@ -81,7 +81,7 @@
         "host_binds": null,
         "ports": {}
       },
-      "observations": 57,
+      "observations": 58,
       "completed_proofs": [
         "A",
         "B",
@@ -94,8 +94,8 @@
     "ubuntu-24.04": {
       "status": "PASS",
       "report": "tests/integration/sssd-i3/reports/ubuntu-24.04.json",
-      "report_sha256": "ee36b310278d31a661eecb069c1f48dbb2edc9718535d6c14a42cccea5d097eb",
-      "probe_sha256": "71b4aeef71aaf1ab88d20e1738775fd8afbd00fa332e54b888175eade177ee30",
+      "report_sha256": "d23c36aa5494964b9a4f06b5a98367293137583962d71b4aa63f5abeec015fac",
+      "probe_sha256": "3f5f0e1bc6c90b91c5e7ccca8436eff3770c29e97e983edcfc9231704ccf3a25",
       "image_id": "sha256:3752159390f9686fd6e9cef48d8f5ccc378d85ffa366bfee78d39b8b126fe349",
       "runtime_isolation": {
         "network": "none",
@@ -103,7 +103,7 @@
         "host_binds": null,
         "ports": {}
       },
-      "observations": 55,
+      "observations": 56,
       "completed_proofs": [
         "A",
         "B",
@@ -116,8 +116,8 @@
     "ubuntu-26.04": {
       "status": "PASS",
       "report": "tests/integration/sssd-i3/reports/ubuntu-26.04.json",
-      "report_sha256": "066dd783f86fed7e0bca0c71e3dcbfbe220d3d24004be56498e9790ea555d308",
-      "probe_sha256": "a472952ca029ded6aa110aedbf84ceacd0f98a60868e6aa2616c1d8a98379c70",
+      "report_sha256": "2cbffeaf1faaa3640b9c336aa159654350d04b3640bc6dbe0bf0541f7feb6975",
+      "probe_sha256": "68ebb4c0f4423fc682cdb8e5a0b6cc1e24a5912be22543feb8a1590607f20307",
       "image_id": "sha256:06f0d609e6f49befa77184370ac43ff83598a1f98cdd9cc17099d2cabf420ed9",
       "runtime_isolation": {
         "network": "none",
@@ -125,7 +125,7 @@
         "host_binds": null,
         "ports": {}
       },
-      "observations": 57,
+      "observations": 58,
       "completed_proofs": [
         "A",
         "B",
@@ -138,8 +138,8 @@
     "alt-p11": {
       "status": "PASS",
       "report": "tests/integration/sssd-i3/reports/alt-p11.json",
-      "report_sha256": "4a0f88cba87b58a063f2b9d98a05ccc2dd788e245b4a2b03061dff7f21993d31",
-      "probe_sha256": "3f6bbcfa67ae62d96cca7c81051571b4772df7d9fe4b5b3904c4ae602543d9d7",
+      "report_sha256": "5853d4cec8cd2ddbd87876ecdf3a48e6db79f35ec30d2898ceb7e5f4fe9a20eb",
+      "probe_sha256": "3a19eef4d1e4895a5fca9df5ff9060997bad7e16f970df99fb8ae734ade42eda",
       "image_id": "sha256:cd5a689d81c65b12a4df169a7bcb144a612344f1ae9e0bf46762386749665420",
       "runtime_isolation": {
         "network": "none",
@@ -147,7 +147,7 @@
         "host_binds": null,
         "ports": {}
       },
-      "observations": 57,
+      "observations": 58,
       "completed_proofs": [
         "A",
         "B",
