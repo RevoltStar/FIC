@@ -744,8 +744,7 @@ ConfigurationStepResult removeManagedSnippetFile(
     // the path at rename time is moved; the identity re-proof below
     // decides whether it was the proven inode or a foreign replacement.
     static std::atomic<unsigned long long> removalSequence;
-    const std::string privateTarget = options.path.string() +
-        ".fic-removing-" + std::to_string(::getpid()) + "-" +
+    const std::string privateTarget = managedSnippetRemovalStagingPrefix(options.path.string()) + std::to_string(::getpid()) + "-" +
         std::to_string(removalSequence.fetch_add(1));
     if (auto hook = beforeStageHook()) {
         hook(privateTarget);
@@ -1076,7 +1075,7 @@ bool hasManagedSnippetStagingArtifacts(
         return false;
     }
     const std::string prefix =
-        options.managedSnippetFile.filename().string() + ".fic-removing-";
+        managedSnippetRemovalStagingPrefix(options.managedSnippetFile.filename().string());
     errno = 0;
     while (const dirent* entry = ::readdir(stream)) {
         const std::string name(entry->d_name);

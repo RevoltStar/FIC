@@ -12,6 +12,12 @@
 
 namespace fic::identity::sssd {
 
+// Shared naming contract for interrupted proof-bound removal. Readers must
+// reject these artifacts; neither their name nor their bytes grant ownership.
+inline std::string managedSnippetRemovalStagingPrefix(const std::string& managedName) {
+    return managedName + ".fic-removing-";
+}
+
 void setManagedSnippetRemovalRaceHookForTests(
     std::function<void()> hook);
 void setManagedSnippetBeforeStageHookForTests(

@@ -193,6 +193,12 @@ public:
     // Typed in-place SSH ownership transition. The previous permission/value
     // remains in the record until runtime-verified atomic finalization. No
     // automatic Prepared recovery; only a proven no-effect attempt may abort.
+    // I4-only typed API. No legacy adoption and no generic prepare/setStatus
+    // projection may silently finalize an unresolved SSSD transition.
+    bool beginSssdTransaction(const PolicyRef&, const SssdOwnershipTransition&, MutationId&, std::string&);
+    bool advanceSssdTransaction(MutationId, const SssdOwnershipTransition&, std::string&);
+    bool commitSssdTransaction(MutationId, std::string&);
+    bool abortSssdNoEffect(MutationId, std::string&);
     bool beginSshRefresh(MutationId,const UndoRemoveSshManagedPolicy& target,
         const std::string& beforeSha256,const std::string& targetSha256,std::string&);
     bool noteSshPublication(MutationId,const AtomicTargetState&,bool durable,std::string&);
@@ -285,6 +291,7 @@ private:
         Indeterminate
     };
 
+    bool persistSssdChange(const std::vector<MutationRecord>& previous, MutationId previousNext, std::string&);
     bool persistSshChange(const MutationRecord& previous, std::string& error);
     PersistOutcome persist(std::string& error);
     // Centralized failed-load handling: revoke operational trust (health =

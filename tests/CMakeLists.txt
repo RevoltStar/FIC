@@ -3323,3 +3323,22 @@ if(Python3_Interpreter_FOUND)
         ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i3/check-evidence.py)
     set_tests_properties(sssd_i3_evidence_checks PROPERTIES LABELS "unit;integration")
 endif()
+
+add_executable(sssd_transaction_tests fic/service/SssdTransactionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdTransactionCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdRuntimeProof.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${FIC_SSSD_I2_SOURCES} ${FIC_SSSD_I1_SOURCES} ${FIC_VERIFIED_CONFIG_SOURCES})
+target_include_directories(sssd_transaction_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sssd_transaction_tests PRIVATE fic-core fic-policy fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+add_test(NAME sssd_transaction_tests COMMAND sssd_transaction_tests)
+set_tests_properties(sssd_transaction_tests PROPERTIES LABELS unit)
+
+target_compile_definitions(sssd_transaction_tests PRIVATE FIC_ACTIVATOR_TESTING=1)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME sssd_i4_evidence_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i4/check-evidence.py)
+    set_tests_properties(sssd_i4_evidence_checks PROPERTIES LABELS "unit;integration")
+endif()

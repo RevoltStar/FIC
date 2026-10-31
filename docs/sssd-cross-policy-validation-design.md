@@ -205,3 +205,17 @@ A matching surviving INI, default value or successful generic activation alone
 cannot turn a NotProven C/P into adapter SUCCESS. Late runtime change can leave
 P Proven while invalidating B/C; late persistent drift can leave protected C
 Proven while P fails. Neither outcome is policy SUCCESS.
+
+## I4 transaction integration boundary
+
+The standalone [I4 coordinator](sssd-verified-activation-design.md#i4-transaction-coordinator-backend-no-policy-integration)
+derives the complete policy target set itself, constructs TrustedOwnershipContext
+from healthy journal plus exact physical ownership, and invokes the existing I2
+preview/relation validator before any persistent mutation. All selected LDAP
+roots participate; foreign/default account/offline values and cache=false remain
+relation inputs. Unsupported/dynamic/trusted scope is refused rather than reduced
+to an LDAP subset. Sibling entries are preserved in one conditional replacement.
+The shared-resource unresolved gate precedes admission, preventing another key
+from mutating over an ambiguous transition. Legacy scalar ownership is preserved
+but blocks I4 pending the explicit I6 integration decision. I2 API/semantics,
+Recommended dependencies and existing policy registration remain unchanged.

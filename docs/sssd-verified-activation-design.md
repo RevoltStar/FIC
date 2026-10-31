@@ -1,4 +1,4 @@
-# SSSD verified activation — I1/I2/I3 and future transaction design
+# SSSD verified activation and journal-backed transactions
 
 Native facts and bounded coverage: [R1](sssd-native-compatibility.md).
 Reuse `VerifiedConfigServiceActivator` and its existing snapshot/publication/
@@ -12,7 +12,7 @@ canonical I2 scope and explicit typed section/key expectations. Forged scope,
 hypothetical preview, empty/duplicate targets, provider/scope/relation conflicts
 or values different from the captured graph are refused before publication.
 The adapter neither writes configuration/journal nor returns policy SUCCESS;
-`PolicyCoverage::NotEvaluated` remains explicit. I4/I5/I6 are not implemented here.
+`PolicyCoverage::NotEvaluated` remains explicit. The standalone I4 backend is described below; I5/I6 remain separate future work.
 
 A single bounded attempt (maximum five minutes) uses the existing generic
 engine and internal proof callbacks. The process-local operation mutex prevents
@@ -389,3 +389,107 @@ must implement physical ownership release with separate runtime outcomes; I6
 must integrate policy metadata/dependencies/clients and real package-policy E2E.
 None of I3–I6 is started by I2. AD/IPA realm/trust, other mechanisms and deployment
 LSM/kernel guarantees remain outside the current native Docker/WSL proof.
+
+## I4 transaction coordinator (backend, no policy integration)
+
+`SssdTransactionCoordinator` accepts an explicit Apply/Refresh, closed parameter
+kind, matching `IDENTITY_ACCESS/SSSD` policy identity, typed value and shared
+absolute deadline. Account expiration has no default. The coordinator computes
+all enabled selected static LDAP targets from canonical I2 scope; callers cannot
+supply a raw section/key or narrow the domain set. It retains I3's bounded
+source-causal C and `PolicyCoverage::NotEvaluated`: backend completion is not a
+registered policy SUCCESS.
+
+All execute/inspection/no-effect-resolution operations use one process-local,
+deadline-bounded SSSD resource mutex. The caller must already hold normal daemon
+admission for the whole operation. This does not replace daemon.lock or serialize
+arbitrary privileged processes. Legacy policy/rollback callers are deliberately
+not connected until I6. Do not mix legacy SSSD mutators with this standalone
+API; I6 must replace those paths before production policy integration.
+
+### Ownership and persistence
+
+One shared `/etc/sssd/conf.d/zzzz-fic.conf` contains only individually journaled
+assignments. The new schema-3 action `sssd_journal_ownership` has payload version
+1 and is distinct from legacy `remove_sssd_managed_setting`. No global journal
+schema/status change or migration is introduced. Active legacy SSSD records block
+I4 for the entire shared resource; their historical scalar release contract and
+bytes are preserved. I4 neither adopts them nor fabricates missing witnesses.
+
+Every active I4 owner must have a complete exact assignment set and stable domain/
+provider scope. The union must equal the canonical physical file, including its
+complete contents; unaccounted entries/comments, missing/drifted keys, unsafe
+metadata and replaced inode are refused. The highest committed operation sequence
+provides the current shared-file publication witness: older sibling records
+legitimately refer to earlier whole-file images, while retaining their individual
+key authority. Matching foreign values still enroll independent own assignments.
+There is no foreign backup, second managed file or foreign configuration repair.
+
+The I2 TrustedOwnershipContext is constructed inside the coordinator from the
+witness-aware healthy journal, proven current physical union and exact captured
+I1 graph. Its proofIdentity is a label, never caller authority. Full I2 hypothetical
+projection/relations, later-snippet refusal, native I3 prerequisites and safe
+publication topology are checked before Prepared. Existing trusted conf.d is required; an absent main remains supported through
+the existing I1 graph. A captured native configuration source supplies the trusted
+group/readability template for canonical fresh-file mode 0600 or 0640 (never a
+blind copy of a read-only foreign mode). No directory or
+external EnvironmentFile is fabricated.
+
+REFRESH preserves the same record ID/current authority while persisting exact
+previous/target assignments, scopes, graph fingerprint, planned image digest and
+sequence. It performs one conditional atomic replacement, without release or an
+intermediate foreign value. Same-value owned Apply/Refresh uses the same record
+and performs no persistent config write, but still records a transaction and
+requires fresh I3 activation. There is no runtime receipt cache.
+
+AtomicFileWriter provides exclusive creation or exact identity/content/metadata
+precondition, descriptor-derived installed witness, staged-file fsync, rename
+and parent fsync. Installed and durability outcomes remain independent. Parent
+root/conf.d directory timestamps and directory link counts can change through
+our own rename/OverlayFS copy-up; their identity, access metadata and complete
+manifest remain checked, while foreign regular-file metadata stays exact.
+The existing non-cooperating-writer check/rename race remains: FIC locking is
+cooperative and does not prevent arbitrary root/CAP_SYS_ADMIN interference.
+Post-publication I1 rechecks bind the candidate to the installed object and reject
+changes to foreign graph/launch inputs. After I3, the existing exact I1 source
+revalidator checks the whole graph again, including owned-file timestamps, before
+journal finalization. I3 uses the same existing protected engine.
+
+### Transaction barriers and recovery
+
+The payload phases are Prepared → MutationArmed → Published → DurablePublished →
+ActivationArmed → RuntimeVerified → Completed. MutationArmed is persisted before
+any staged write; ActivationArmed is persisted before entering I3. These are
+permission/effect-possibility barriers, not statements that an effect occurred.
+Current ownership remains the previous committed set until one durable journal
+finalization after complete A/B/C/P, clean cleanup and final resource/runtime
+rechecks. Generic journal prepare/setStatus/discard cannot bypass this lifecycle.
+
+Persistent/CAS/durability, possible runtime effect, I3 proofs, cleanup/residuals
+and journal finalization have separate result fields. A successful restart with
+failed cleanup/P or failed journal finalization is never backend Success.
+Failure after a possible effect keeps the previous and target facts and gates
+all sibling Apply/Refresh requests. Even a structurally healthy sibling record
+must have the complete uniform target set for its declared current scope. There is no compensation or blind restore.
+
+Inspection classifies no transition, proven unarmed no-effect Prepared, previous
+image, exact publication witness, durable target, target bytes without recorded
+publication identity, foreign drift, unknown runtime, residual mounts and journal/
+schema failure. Matching target bytes never establish activation or new ownership.
+Only Prepared with exact previous identity/metadata/content (or proven fresh
+absence), durable previous/absence barrier, no atomic-write or legacy proof-bound-removal staging artifacts, a trusted
+managed directory, and no possible
+publication/activation may be explicitly resolved. Resolution preserves previous
+ownership or removes a fresh no-effect intent. Armed states are conservatively
+unresolved even if the old image survived. No automatic promotion/restart/retry
+is performed. Residual mounts are reported and never adopted or removed.
+
+If final journal rename happened but its durability was uncertain, the object
+is Indeterminate. A new witness-aware load may subsequently prove that completed
+document durable; this is not promotion of a Prepared record by looking at the
+config file. An uninstalled final document leaves RuntimeVerified/Prepared and
+continues to gate the resource.
+
+I5 verified release and I6 policy/registry/client integration remain separate.
+The native transaction/crash evidence is maintained only in `sssd-i4`, without
+rewriting historical R1/R2/I1/I2/I3 evidence.

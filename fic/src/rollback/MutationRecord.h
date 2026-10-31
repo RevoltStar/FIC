@@ -232,6 +232,48 @@ struct UndoRemoveSssdManagedSetting {
     std::string appliedValue; // value FIC last applied; drift fingerprint
 };
 
+// I4 is deliberately disjoint from the legacy scalar release permission.
+// Only exact own assignments are retained; no foreign configuration backup.
+struct SssdAssignment {
+    std::string section, key, value;
+    bool operator==(const SssdAssignment& b) const {
+        return section==b.section && key==b.key && value==b.value;
+    }
+};
+struct SssdImageWitness {
+    bool present=false;
+    std::uint64_t device=0, inode=0;
+    std::uint32_t mode=0, owner=0, group=0;
+    std::string sha256;
+};
+struct SssdOwnedState {
+    std::vector<SssdAssignment> assignments;
+    std::string scope;
+    std::uint64_t sequence=0;
+    SssdImageWitness publication;
+};
+enum class SssdTransitionPhase {
+    Prepared, MutationArmed, Published, DurablePublished, ActivationArmed,
+    RuntimeVerified, Completed
+};
+struct SssdOwnershipTransition {
+    std::uint32_t version=1;
+    std::uint64_t sequence=0;
+    SssdTransitionPhase phase=SssdTransitionPhase::Prepared;
+    SssdOwnedState previous;
+    std::vector<SssdAssignment> target;
+    std::string targetScope, inputFingerprint, targetSha256;
+    SssdImageWitness before, publication;
+    bool publicationDurable=false, activationPossible=false;
+    bool a=false, b=false, c=false, p=false, clean=false;
+    std::vector<std::string> residuals, cleanupErrors;
+    std::map<std::string,std::string> runtimeFacts;
+};
+struct SssdJournalOwnership {
+    SssdOwnedState current;
+    std::optional<SssdOwnershipTransition> transition;
+};
+
 // Kerberos reversible structured edit payload for a scalar relation of the
 // root /etc/krb5.conf (foreign main config — no FIC-owned drop-in). The
 // payload stores the EXACT pre-FIC before-state of the single target
@@ -420,6 +462,7 @@ using UndoPayload = std::variant<
     UndoRemoveFirewallPolicy,
     UndoRemoveGrubManagedSetting,
     UndoRemoveSssdManagedSetting,
+    SssdJournalOwnership,
     UndoRestoreKerberosScalar,
     UndoDisablePamCapability,
     UndoRemovePamProviderManagedEntry,

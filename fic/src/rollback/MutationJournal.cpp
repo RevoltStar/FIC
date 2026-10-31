@@ -1,4 +1,5 @@
 #include "rollback/MutationJournal.h"
+#include "rollback/SssdJournalPayload.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/integrity/ContentDigest.h>
@@ -697,6 +698,8 @@ json serializeUndoAction(const UndoAction& action) {
         value["section"] = sssdSetting->section;
         value["option"] = sssdSetting->option;
         value["applied_value"] = sssdSetting->appliedValue;
+    } else if (const auto* sssd = std::get_if<SssdJournalOwnership>(&action.payload)) {
+        value["ownership"] = sssd_payload::encode(*sssd);
     } else if (const auto* kerberosScalar = std::get_if<
                    UndoRestoreKerberosScalar>(&action.payload)) {
         value["section"] = kerberosScalar->section;
@@ -1336,6 +1339,10 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         return false;
     }
     action.backend = backend;
+    if (backend == MutationBackend::Sssd && actionName == "sssd_journal_ownership") {
+        try { action.payload=sssd_payload::decode(value.at("ownership"));return true; }
+        catch(const std::exception& e) {error=std::string("Malformed SSSD I4 payload: ")+e.what();return false;}
+    }
     if (backend == MutationBackend::Desktop && actionName == "own_desktop_artifact") {
         if (!value.contains("kind") || !value["kind"].is_string() ||
             !value.contains("phase") || !value["phase"].is_string() ||
@@ -2080,7 +2087,7 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
             return false;
         }
     }
-    if (record.undo.backend == MutationBackend::Sssd) {
+    if (record.undo.backend == MutationBackend::Sssd && !std::holds_alternative<SssdJournalOwnership>(record.undo.payload)) {
         const auto* sssd =
             std::get_if<UndoRemoveSssdManagedSetting>(&record.undo.payload);
         if (sssd == nullptr ||
@@ -2187,7 +2194,7 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
         return false;
     }
     record.status = status;
-    if(!validSshRecord(record,error))return false;
+    if(!validSshRecord(record,error)||!sssd_payload::validRecord(record,error))return false;
     if ((record.undo.backend == MutationBackend::Desktop ||
          (std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload) ||
           std::holds_alternative<UndoOwnDesktopArtifact>(record.undo.payload))) &&
@@ -2317,6 +2324,7 @@ std::string undoActionTypeName(const UndoAction& action) {
     if (std::holds_alternative<UndoRemoveGrubManagedSetting>(action.payload)) {
         return "remove_grub_managed_setting";
     }
+    if (std::holds_alternative<SssdJournalOwnership>(action.payload)) return "sssd_journal_ownership";
     if (std::holds_alternative<UndoRemoveSssdManagedSetting>(action.payload)) {
         return "remove_sssd_managed_setting";
     }
@@ -2927,6 +2935,8 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
     }
 
     if(schemaIt->get<std::uint32_t>()==2)for(const auto& record:parsed) {
+        if(std::holds_alternative<SssdJournalOwnership>(record.undo.payload))
+            return failLoad("SSSD typed operations require journal schema 3",error);
         if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&
            (ssh->ownershipVersion||ssh->operationSequence||ssh->transition))
             return failLoad("SSH typed operations require journal schema 3",error);
@@ -3152,6 +3162,9 @@ MutationJournal::PersistOutcome MutationJournal::persist(std::string& error) {
 bool MutationJournal::prepareMutation(MutationRecord record,
                                       MutationId& id,
                                       std::string& error) {
+    if (std::holds_alternative<SssdJournalOwnership>(record.undo.payload)) {
+        error="SSSD I4 ownership requires typed transaction API";return false;
+    }
     if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)) return false;
     if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&ssh->transition) {
         error="SSH transitions require the typed journal API";return false;
@@ -3257,7 +3270,7 @@ bool MutationJournal::prepareMutation(MutationRecord record,
             return false;
         }
     }
-    if (record.undo.backend == MutationBackend::Sssd) {
+    if (record.undo.backend == MutationBackend::Sssd && !std::holds_alternative<SssdJournalOwnership>(record.undo.payload)) {
         const auto* sssd =
             std::get_if<UndoRemoveSssdManagedSetting>(&record.undo.payload);
         const std::string expectedResource =
@@ -4278,6 +4291,9 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
         return false;
     }
     MutationRecord* record = find(id);
+    if (record && std::holds_alternative<SssdJournalOwnership>(record->undo.payload)) {
+        error="SSSD I4 disposition requires typed lifecycle API";return false;
+    }
     if (record == nullptr) {
         error = "Mutation record не найден: " + std::to_string(id);
         return false;
@@ -4343,6 +4359,9 @@ bool MutationJournal::discard(MutationId id, std::string& error) {
             if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&records_[index].undo.payload);ssh&&sshTransitionPending(*ssh)) {
                 error="cannot discard unresolved SSH ownership transition";return false;
             }
+            if(std::holds_alternative<SssdJournalOwnership>(records_[index].undo.payload)) {
+                error="SSSD I4 disposition requires typed lifecycle API";return false;
+            }
             const MutationRecord removed = records_[index];
             records_.erase(records_.begin() +
                            static_cast<std::ptrdiff_t>(index));
@@ -4394,6 +4413,87 @@ void MutationJournal::setBeforeVirginJournalInstallHookForTests(
 void MutationJournal::setBeforeFinalJournalProofHookForTests(
     std::function<void()> hook) {
     beforeFinalJournalProofHook() = std::move(hook);
+}
+
+bool MutationJournal::persistSssdChange(const std::vector<MutationRecord>& previous,
+    MutationId previousNext,std::string& error) {
+    for(const auto& r:records_)if(!sssd_payload::validRecord(r,error)) {
+        records_=previous;nextId_=previousNext;return false;
+    }
+    const auto outcome=persist(error);
+    if(outcome==PersistOutcome::Persisted)return true;
+    if(outcome==PersistOutcome::NotInstalled){records_=previous;nextId_=previousNext;}
+    else health_=JournalHealth::Indeterminate;
+    return false;
+}
+bool MutationJournal::beginSssdTransaction(const PolicyRef& policy,const SssdOwnershipTransition& incoming,
+    MutationId& id,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSSD requires healthy witness-aware journal";return false;}
+    MutationRecord* prior=nullptr;std::uint64_t highest=0;
+    for(auto& r:records_)if(r.isActive()&&r.undo.backend==MutationBackend::Sssd) {
+        auto* p=std::get_if<SssdJournalOwnership>(&r.undo.payload);
+        if(!p||r.status!=MutationStatus::Applied||(p->transition&&p->transition->phase!=SssdTransitionPhase::Completed)) {
+            error="SSSD shared resource blocked by legacy/unresolved ownership";return false;
+        }
+        highest=std::max(highest,p->current.sequence);
+        if(r.policy==policy) {if(prior){error="duplicate SSSD policy";return false;}prior=&r;}
+    }
+    if(highest==UINT64_MAX||incoming.sequence!=highest+1||incoming.phase!=SssdTransitionPhase::Prepared||
+       sssd_payload::state(incoming.previous)!=(prior?sssd_payload::state(std::get<SssdJournalOwnership>(prior->undo.payload).current):sssd_payload::state(SssdOwnedState{}))) {
+        error="SSSD predecessor/sequence mismatch";return false;
+    }
+    if(!prior&&(nextId_==0||nextId_==std::numeric_limits<MutationId>::max())) {
+        error="SSSD mutation identity allocator is invalid/exhausted";return false;
+    }
+    const auto previous=records_;const auto previousNext=nextId_;
+    MutationRecord next;
+    if(prior)next=*prior;
+    else {next.id=nextId_++;next.policy=policy;next.resource="sssd/managed/"+policy.policyName;next.createdAtEpoch=currentEpochSeconds();}
+    next.status=MutationStatus::Prepared;next.error.clear();next.updatedAtEpoch=currentEpochSeconds();
+    next.undo={MutationBackend::Sssd,SssdJournalOwnership{incoming.previous,incoming}};
+    if(prior)*prior=next;else records_.push_back(next);
+    id=next.id;return persistSssdChange(previous,previousNext,error);
+}
+bool MutationJournal::advanceSssdTransaction(MutationId id,const SssdOwnershipTransition& next,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSSD journal unavailable";return false;}
+    auto* r=find(id);auto* p=r?std::get_if<SssdJournalOwnership>(&r->undo.payload):nullptr;
+    if(!p||!p->transition||r->status!=MutationStatus::Prepared){error="SSSD transition not Prepared";return false;}
+    const auto& old=*p->transition;
+    // Only effect facts may change. Intent, previous authority and planned image
+    // remain immutable through all persistence/error paths.
+    if(next.version!=old.version||next.sequence!=old.sequence||
+       sssd_payload::state(next.previous)!=sssd_payload::state(old.previous)||next.target!=old.target||next.targetScope!=old.targetScope||
+       sssd_payload::image(next.before)!=sssd_payload::image(old.before)||next.targetSha256!=old.targetSha256||next.inputFingerprint!=old.inputFingerprint||
+       static_cast<int>(next.phase)<static_cast<int>(old.phase)||static_cast<int>(next.phase)>static_cast<int>(old.phase)+1||
+       next.phase==SssdTransitionPhase::Completed||
+       (old.activationPossible&&!next.activationPossible)||(old.publicationDurable&&!next.publicationDurable)||
+       (old.publication.present&&sssd_payload::image(old.publication)!=sssd_payload::image(next.publication))) {
+        error="SSSD transition changed intent or regressed effect facts";return false;
+    }
+    const auto previous=records_;p->transition=next;r->updatedAtEpoch=currentEpochSeconds();
+    return persistSssdChange(previous,nextId_,error);
+}
+bool MutationJournal::commitSssdTransaction(MutationId id,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSSD journal unavailable";return false;}
+    auto* r=find(id);auto* p=r?std::get_if<SssdJournalOwnership>(&r->undo.payload):nullptr;
+    if(!p||!p->transition||r->status!=MutationStatus::Prepared||p->transition->phase!=SssdTransitionPhase::RuntimeVerified) {
+        error="SSSD complete verified transaction required";return false;
+    }
+    const auto previous=records_;auto& t=*p->transition;
+    p->current={t.target,t.targetScope,t.sequence,t.publication};t.phase=SssdTransitionPhase::Completed;
+    r->status=MutationStatus::Applied;r->updatedAtEpoch=currentEpochSeconds();
+    return persistSssdChange(previous,nextId_,error);
+}
+bool MutationJournal::abortSssdNoEffect(MutationId id,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSSD journal unavailable";return false;}
+    auto* r=find(id);auto* p=r?std::get_if<SssdJournalOwnership>(&r->undo.payload):nullptr;
+    if(!p||!p->transition||r->status!=MutationStatus::Prepared||p->transition->phase!=SssdTransitionPhase::Prepared) {
+        error="only unarmed no-effect SSSD Prepared can be resolved";return false;
+    }
+    const auto previous=records_;
+    if(p->current.assignments.empty())records_.erase(std::remove_if(records_.begin(),records_.end(),[&](const auto& e){return e.id==id;}),records_.end());
+    else {p->transition.reset();r->status=MutationStatus::Applied;r->updatedAtEpoch=currentEpochSeconds();}
+    return persistSssdChange(previous,nextId_,error);
 }
 
 } // namespace fic::rollback
