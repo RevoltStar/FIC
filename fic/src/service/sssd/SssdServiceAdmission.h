@@ -26,6 +26,13 @@ struct SssdLaunchReference {
 };
 SssdLaunchReference admit(Deadline deadline);
 void revalidate(const SssdLaunchReference&, Deadline deadline);
+namespace detail_i5 {
+// Same closed launch proof, additionally accepts inactive/dead MainPID=0.
+// This alone is not offline proof: coordinator must exclude consumers/sockets
+// and recheck before publication and finalization while holding the unit lease.
+SssdLaunchReference admitForRelease(Deadline);
+void revalidateRelease(const SssdLaunchReference&, Deadline);
+}
 namespace detail_i1 {
 std::string environmentReference(const std::string& path);
 void verifyExecutables(const SssdLaunchReference&);

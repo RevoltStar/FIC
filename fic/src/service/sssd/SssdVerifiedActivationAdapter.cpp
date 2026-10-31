@@ -113,13 +113,14 @@ ActivationRequest protectedRequest(const SssdInputReference &input,
 } // namespace detail_i3
 namespace {
 SssdVerifiedActivationResult
-perform(const SssdVerifiedActivationRequest &request
+perform(const SssdVerifiedActivationRequest &given
 #ifdef FIC_ACTIVATOR_TESTING
         ,
         const detail_i3::AdapterTestHooks *tests
 #endif
 ) {
   SssdVerifiedActivationResult result;
+  auto request=given;
   const auto started = std::chrono::steady_clock::now();
   const auto deadline = started + request.timeout;
   std::unique_lock<std::timed_mutex> operation(operationMutex, std::defer_lock);
@@ -139,13 +140,22 @@ perform(const SssdVerifiedActivationRequest &request
     if (!operation.try_lock_until(deadline))
       throw d::Failure(ActivationStatus::TimedOut,
                        "SSSD operation resource busy");
+    if(request.intent!=SssdActivationIntent::Apply&&request.intent!=SssdActivationIntent::ConfigurationRelease)
+      unsupported("unknown SSSD activation intent");
     const auto canonical = domainScope(request.input);
     if (request.scope.data().hypothetical ||
         !sameScopeReference(canonical, request.scope))
       unsupported("untrusted, hypothetical or stale domain scope");
     auto cfg = effectiveConfiguration(request.input);
+    if(request.intent==SssdActivationIntent::ConfigurationRelease&&request.expectations.empty()) {
+      // Empty administrative requirements are not an empty C proof. Verify
+      // native backend initialization/ConfigDB through actual observed cleanup
+      // options, without requiring the released policy's former value.
+      for(const auto& domain:cfg.scope.data().enabled)
+        request.expectations.push_back({{"domain/"+domain,"account_cache_expiration"},cfg.domains.at(domain).accountDays.value});
+    }
     detail_i3::validateExpectations(cfg, request.expectations);
-    if (request.input.applyConflict())
+    if (request.intent==SssdActivationIntent::Apply && request.input.applyConflict())
       unsupported("later eligible foreign snippet outside activation support");
     auto paths = detail_i3::protectedRequest(request.input, request.timeout);
     revalidate(request.input, deadline);

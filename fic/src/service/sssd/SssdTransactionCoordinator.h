@@ -41,6 +41,31 @@ struct SssdRecoveryInspection {
     std::vector<std::string> residuals;
     std::string diagnostic;
 };
+struct SssdReleaseRequest {
+    PolicyRef policy;
+    SssdManagedParameter parameter;
+    rollback::SssdReleaseIntent intent=rollback::SssdReleaseIntent::ReleaseOnly;
+    Deadline deadline;
+};
+enum class SssdReleaseStatus {
+    Refused, OwnershipConflict, Unresolved, PersistentReleased, RuntimeVerified,
+    ReleasedOffline, ReleasedAwaitingDisable, CleanupFailed, JournalFailed, Completed
+};
+struct SssdReleaseResult {
+    SssdReleaseStatus status=SssdReleaseStatus::Refused;
+    rollback::MutationId mutation=0;
+    bool prepared=false, physicalReleased=false, casRefused=false, durable=false;
+    bool offline=false, offlineVerified=false, finalized=false, unresolved=false;
+    bool disableAcknowledged=false;
+    SssdVerifiedActivationResult activation;
+    std::vector<rollback::SssdAssignment> released, surviving;
+    std::string diagnostic, stagedPath;
+    bool success() const {
+        return finalized&&!unresolved&&physicalReleased&&durable&&
+            (offline?offlineVerified:activation.success())&&
+            (status==SssdReleaseStatus::Completed||status==SssdReleaseStatus::ReleasedOffline);
+    }
+};
 // Every API acquires the same deadline-bounded process-local resource mutex.
 // Caller must hold daemon admission for the whole call; this is NOT a new
 // interprocess lock or an authority to bypass daemon.lock/package state.
@@ -50,6 +75,9 @@ public:
     SssdTransactionResult execute(const SssdTransactionRequest&);
     SssdRecoveryInspection inspect(Deadline);
     SssdRecoveryInspection resolveNoEffect(Deadline);
+    SssdReleaseResult release(const SssdReleaseRequest&);
+    // Inspection/no-effect resolution use the same shared-resource gate above.
+    // No production DisableRelease acknowledgement API exists before I6.
 private:
     rollback::MutationJournal& journal_;
 };
@@ -64,6 +92,7 @@ struct TransactionTestHooks {
     const detail_i3::AdapterTestHooks* adapter=nullptr;
 };
 SssdTransactionResult executeForTests(rollback::MutationJournal&,const SssdTransactionRequest&,const TransactionTestHooks&);
+SssdReleaseResult releaseForTests(rollback::MutationJournal&,const SssdReleaseRequest&,const TransactionTestHooks&);
 #endif
 }
 } // namespace fic::service::sssd

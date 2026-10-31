@@ -488,6 +488,11 @@ std::function<void(const std::filesystem::path&)>& beforeStageHook() {
     return hook;
 }
 
+std::function<void(const std::string&)>& removalCheckpoint() {
+    static std::function<void(const std::string&)> hook;
+    return hook;
+}
+
 // A link/unlink fallback is unsafe here: unlinking the source after link
 // could remove a replacement that arrived in the meantime. Unsupported
 // renameat2 therefore fails closed.
@@ -717,7 +722,13 @@ bool exclusiveCreateOriginal(
 ConfigurationStepResult removeManagedSnippetFile(
     const SecureConfigurationFileOptions& options,
     const SecureConfigurationDirectoryOptions& directoryOptions,
-    const ConfigurationFileSnapshot& expected) {
+    const ConfigurationFileSnapshot& expected,
+    const AtomicTargetState* original = nullptr,
+    const std::filesystem::path& journaledStage = {},
+    ManagedSnippetRemovalResult* outcome = nullptr) {
+    auto checkpoint = [&](const char* phase) {
+        if (original) if (auto hook = removalCheckpoint()) hook(phase);
+    };
     ConfigurationFileSnapshot proven;
     dev_t device = 0;
     ino_t inode = 0;
@@ -729,7 +740,9 @@ ConfigurationStepResult removeManagedSnippetFile(
     if (!captureRemovalProof(options, proven, device, inode, error)) {
         return ConfigurationStepResult::failure(std::move(error));
     }
-    if (!snapshotsEqualSnapshots(proven, expected)) {
+    if (!snapshotsEqualSnapshots(proven, expected) ||
+        (original && (device != original->identity.device || inode != original->identity.inode))) {
+        if (outcome) outcome->conflict = true;
         return ConfigurationStepResult::failure(
             "refusing to remove an externally modified managed SSSD "
             "drop-in: " +
@@ -744,22 +757,40 @@ ConfigurationStepResult removeManagedSnippetFile(
     // the path at rename time is moved; the identity re-proof below
     // decides whether it was the proven inode or a foreign replacement.
     static std::atomic<unsigned long long> removalSequence;
-    const std::string privateTarget = managedSnippetRemovalStagingPrefix(options.path.string()) + std::to_string(::getpid()) + "-" +
+    const std::string privateTarget = original ? journaledStage.string() :
+        managedSnippetRemovalStagingPrefix(options.path.string()) + std::to_string(::getpid()) + "-" +
         std::to_string(removalSequence.fetch_add(1));
     if (auto hook = beforeStageHook()) {
         hook(privateTarget);
     }
+    checkpoint("before_rename_away");
     if (!renameNoReplace(options.path, privateTarget)) {
         return ConfigurationStepResult::failure(
             "could not stage managed SSSD drop-in without replacement: " +
             options.path.string() + ": " + std::strerror(errno));
     }
+    if (outcome) outcome->staged = true;
+    checkpoint("rename_away");
     if (auto hook = stagedRaceHook()) {
         hook(privateTarget);
     }
     struct stat moved {};
-    if (::lstat(privateTarget.c_str(), &moved) != 0 ||
-        moved.st_dev != device || moved.st_ino != inode) {
+    bool exact = ::lstat(privateTarget.c_str(), &moved) == 0 &&
+        moved.st_dev == device && moved.st_ino == inode;
+    if (original && exact) {
+        checkpoint("before_staged_reproof");
+        ConfigurationFileSnapshot staged;
+        dev_t stagedDevice = 0;
+        ino_t stagedInode = 0;
+        auto stagedOptions = options;
+        stagedOptions.path = privateTarget;
+        exact = moved.st_nlink == 1 &&
+            captureRemovalProof(stagedOptions, staged, stagedDevice, stagedInode, error) &&
+            stagedDevice == original->identity.device && stagedInode == original->identity.inode &&
+            snapshotsEqualSnapshots(staged, expected);
+    }
+    if (!exact) {
+        if (outcome) outcome->conflict = true;
         // The moved-away object is NOT the proven inode: a foreign
         // replacement occupied the path at rename time. Restore it only
         // when the original path is still free; a third version must never
@@ -782,6 +813,7 @@ ConfigurationStepResult removeManagedSnippetFile(
             "refusing to remove a foreign replacement of the managed SSSD "
             "drop-in" + restoreNote + ": " + options.path.string());
     }
+    checkpoint("staged_reproved");
     // The proven inode was moved away: the exact proven target state is
     // removed. Delete the now-private FIC-owned object.
     if (::unlink(privateTarget.c_str()) != 0) {
@@ -791,14 +823,47 @@ ConfigurationStepResult removeManagedSnippetFile(
             "could not delete the staged managed SSSD drop-in " +
             privateTarget + ": " + std::strerror(errno));
     }
+    if (outcome) outcome->removed = true;
+    checkpoint("staged_unlink");
+    checkpoint("before_removal_directory_fsync");
     if (!AtomicFileWriter::fsyncParentDirectoryForPath(
             options.path.string(), &error)) {
         return ConfigurationStepResult::failure(std::move(error));
     }
+    if (outcome) outcome->durable = true;
+    checkpoint("removal_directory_fsync");
     return ConfigurationStepResult::success(true);
 }
 
 } // namespace
+
+ManagedSnippetRemovalResult removeProvenManagedSnippet(
+    const SecureConfigurationFileOptions& options,
+    const SecureConfigurationDirectoryOptions& directoryOptions,
+    const AtomicTargetState& expected,
+    const std::filesystem::path& journaledStagingPath) {
+    ManagedSnippetRemovalResult result;
+    // A persisted private name must be a direct sibling in the established
+    // staging namespace. Never allow this primitive to rename arbitrary paths.
+    const auto prefix = managedSnippetRemovalStagingPrefix(options.path.filename().string());
+    const auto leaf = journaledStagingPath.filename().string();
+    if (expected.owner != 0 || (expected.mode != 0600 && expected.mode != 0640) ||
+        expected.identity.inode == 0 ||
+        journaledStagingPath.parent_path() != options.path.parent_path() ||
+        leaf.rfind(prefix, 0) != 0 || leaf.size() == prefix.size()) {
+        result.diagnostic = "invalid journaled SSSD removal staging path";
+        return result;
+    }
+    const ConfigurationFileSnapshot snapshot{expected.content, expected.owner, expected.group, expected.mode};
+    const auto step = removeManagedSnippetFile(options, directoryOptions, snapshot,
+                                               &expected, journaledStagingPath, &result);
+    result.diagnostic = step.message;
+    return result;
+}
+
+void setManagedSnippetRemovalCheckpointForTests(std::function<void(const std::string&)> hook) {
+    removalCheckpoint() = std::move(hook);
+}
 
 // Commits the FIC-owned drop-in change: exclusive atomic creation for a
 // missing artifact, CAS rewrite for an existing one and CAS-verified unlink

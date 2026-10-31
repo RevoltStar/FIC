@@ -13,9 +13,11 @@ LaunchContract readLaunchContract(const std::string& unit,
                                  std::chrono::steady_clock::time_point deadline);
 // Read-only SSSD observation; adds typed state and namespace fields, grants no activation profile.
 LaunchContract readSssdLaunchContract(std::chrono::steady_clock::time_point deadline);
+// I5 monotonic offline epoch, read through the same authoritative client.
+LaunchContract readSssdReleaseEpoch(std::chrono::steady_clock::time_point deadline);
 LaunchContract readAltSshRuntime(std::chrono::steady_clock::time_point deadline);
 LaunchContract readSshSocketContract(std::chrono::steady_clock::time_point deadline);
-// Operation-scoped GC references only: no start/reload/enable job. Actual launch
+// Shared SSH/SSSD operation-scoped GC references: no start/reload/enable job. Actual launch
 // proofs continue to come from the private, root-PID1 connection below.
 struct SshUnitReferences;
 std::shared_ptr<const SshUnitReferences> retainSshUnitsForValidation(

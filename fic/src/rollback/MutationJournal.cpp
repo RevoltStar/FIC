@@ -3097,6 +3097,7 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
                         error);
     }
 
+    if(!sssd_payload::validContainerLinks(parsed,error))return failLoad(error,error);
     records_ = std::move(parsed);
     nextId_ = parsedNextId;
     loaded_ = true;
@@ -4420,6 +4421,7 @@ bool MutationJournal::persistSssdChange(const std::vector<MutationRecord>& previ
     for(const auto& r:records_)if(!sssd_payload::validRecord(r,error)) {
         records_=previous;nextId_=previousNext;return false;
     }
+    if(!sssd_payload::validContainerLinks(records_,error)){records_=previous;nextId_=previousNext;return false;}
     const auto outcome=persist(error);
     if(outcome==PersistOutcome::Persisted)return true;
     if(outcome==PersistOutcome::NotInstalled){records_=previous;nextId_=previousNext;}
@@ -4435,10 +4437,10 @@ bool MutationJournal::beginSssdTransaction(const PolicyRef& policy,const SssdOwn
         if(!p||r.status!=MutationStatus::Applied||(p->transition&&p->transition->phase!=SssdTransitionPhase::Completed)) {
             error="SSSD shared resource blocked by legacy/unresolved ownership";return false;
         }
-        highest=std::max(highest,p->current.sequence);
+        highest=std::max(highest,sssd_payload::sequence(*p));
         if(r.policy==policy) {if(prior){error="duplicate SSSD policy";return false;}prior=&r;}
     }
-    if(highest==UINT64_MAX||incoming.sequence!=highest+1||incoming.phase!=SssdTransitionPhase::Prepared||
+    if(highest==UINT64_MAX||incoming.sequence!=highest+1||incoming.phase!=SssdTransitionPhase::Prepared||incoming.release||incoming.version!=1||
        sssd_payload::state(incoming.previous)!=(prior?sssd_payload::state(std::get<SssdJournalOwnership>(prior->undo.payload).current):sssd_payload::state(SssdOwnedState{}))) {
         error="SSSD predecessor/sequence mismatch";return false;
     }
@@ -4450,7 +4452,8 @@ bool MutationJournal::beginSssdTransaction(const PolicyRef& policy,const SssdOwn
     if(prior)next=*prior;
     else {next.id=nextId_++;next.policy=policy;next.resource="sssd/managed/"+policy.policyName;next.createdAtEpoch=currentEpochSeconds();}
     next.status=MutationStatus::Prepared;next.error.clear();next.updatedAtEpoch=currentEpochSeconds();
-    next.undo={MutationBackend::Sssd,SssdJournalOwnership{incoming.previous,incoming}};
+    const auto container=prior?std::get<SssdJournalOwnership>(prior->undo.payload).container:std::optional<SssdContainerWitness>{};
+    next.undo={MutationBackend::Sssd,SssdJournalOwnership{incoming.previous,incoming,container}};
     if(prior)*prior=next;else records_.push_back(next);
     id=next.id;return persistSssdChange(previous,previousNext,error);
 }
@@ -4459,6 +4462,7 @@ bool MutationJournal::advanceSssdTransaction(MutationId id,const SssdOwnershipTr
     auto* r=find(id);auto* p=r?std::get_if<SssdJournalOwnership>(&r->undo.payload):nullptr;
     if(!p||!p->transition||r->status!=MutationStatus::Prepared){error="SSSD transition not Prepared";return false;}
     const auto& old=*p->transition;
+    if(old.release||next.release){error="release requires typed release API";return false;}
     // Only effect facts may change. Intent, previous authority and planned image
     // remain immutable through all persistence/error paths.
     if(next.version!=old.version||next.sequence!=old.sequence||
@@ -4476,11 +4480,11 @@ bool MutationJournal::advanceSssdTransaction(MutationId id,const SssdOwnershipTr
 bool MutationJournal::commitSssdTransaction(MutationId id,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSSD journal unavailable";return false;}
     auto* r=find(id);auto* p=r?std::get_if<SssdJournalOwnership>(&r->undo.payload):nullptr;
-    if(!p||!p->transition||r->status!=MutationStatus::Prepared||p->transition->phase!=SssdTransitionPhase::RuntimeVerified) {
+    if(!p||!p->transition||r->status!=MutationStatus::Prepared||p->transition->phase!=SssdTransitionPhase::RuntimeVerified||p->transition->release) {
         error="SSSD complete verified transaction required";return false;
     }
     const auto previous=records_;auto& t=*p->transition;
-    p->current={t.target,t.targetScope,t.sequence,t.publication};t.phase=SssdTransitionPhase::Completed;
+    p->current={t.target,t.targetScope,t.sequence,t.publication};p->container.reset();t.phase=SssdTransitionPhase::Completed;
     r->status=MutationStatus::Applied;r->updatedAtEpoch=currentEpochSeconds();
     return persistSssdChange(previous,nextId_,error);
 }
@@ -4493,6 +4497,118 @@ bool MutationJournal::abortSssdNoEffect(MutationId id,std::string& error) {
     const auto previous=records_;
     if(p->current.assignments.empty())records_.erase(std::remove_if(records_.begin(),records_.end(),[&](const auto& e){return e.id==id;}),records_.end());
     else {p->transition.reset();r->status=MutationStatus::Applied;r->updatedAtEpoch=currentEpochSeconds();}
+    return persistSssdChange(previous,nextId_,error);
+}
+
+bool MutationJournal::beginSssdRelease(MutationId id,const SssdOwnershipTransition& incoming,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSSD release requires healthy witness-aware journal";return false;}
+    auto* record=find(id);auto* owner=record?std::get_if<SssdJournalOwnership>(&record->undo.payload):nullptr;
+    if(!owner||record->status!=MutationStatus::Applied||!incoming.release||incoming.version!=2||
+       incoming.phase!=SssdTransitionPhase::Prepared||
+       sssd_payload::state(incoming.previous)!=sssd_payload::state(owner->current)) {
+        error="SSSD release requires exact Applied predecessor";return false;
+    }
+    std::uint64_t highest=0;const SssdImageWitness* latest=nullptr;std::size_t survivorCount=0;
+    for(const auto& r:records_)if(r.isActive()&&r.undo.backend==MutationBackend::Sssd) {
+        const auto* p=std::get_if<SssdJournalOwnership>(&r.undo.payload);
+        if(!p||r.status!=MutationStatus::Applied||(p->transition&&p->transition->phase!=SssdTransitionPhase::Completed)) {
+            error="SSSD shared resource blocked by legacy/unresolved ownership";return false;
+        }
+        if(sssd_payload::sequence(*p)>highest){highest=sssd_payload::sequence(*p);latest=&sssd_payload::publication(*p);}
+        if(r.id==id)continue;
+        ++survivorCount;
+        const auto& snapshots=incoming.release->survivors;
+        const auto found=std::find_if(snapshots.begin(),snapshots.end(),[&](const auto& e){return e.id==r.id;});
+        if(found==snapshots.end()||found->policy!=r.policy.policyName||
+           sssd_payload::state(found->state)!=sssd_payload::state(p->current)||
+           sssd_payload::container(found->container)!=sssd_payload::container(p->container)) {
+            error="SSSD release surviving ownership snapshot mismatch";return false;
+        }
+    }
+    if(!latest||highest==UINT64_MAX||incoming.sequence!=highest+1||
+       survivorCount!=incoming.release->survivors.size()||
+       sssd_payload::image(incoming.before)!=sssd_payload::image(*latest)) {
+        error="SSSD release container predecessor/sequence mismatch";return false;
+    }
+    const auto previous=records_;owner->transition=incoming;record->status=MutationStatus::Prepared;
+    record->error.clear();record->updatedAtEpoch=currentEpochSeconds();
+    return persistSssdChange(previous,nextId_,error);
+}
+
+bool MutationJournal::advanceSssdRelease(MutationId id,const SssdOwnershipTransition& next,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSSD release journal unavailable";return false;}
+    auto* r=find(id);auto* p=r?std::get_if<SssdJournalOwnership>(&r->undo.payload):nullptr;
+    if(!p||!p->transition||!p->transition->release||!next.release||r->status!=MutationStatus::Prepared) {
+        error="SSSD release transition not Prepared";return false;
+    }
+    const auto& old=*p->transition;
+    // Compare the complete persisted intent, removing only effect evidence.
+    auto intent=[](SssdOwnershipTransition t) {
+        t.phase=SssdTransitionPhase::Prepared;t.publication={};t.publicationDurable=false;
+        t.activationPossible=false;t.a=t.b=t.c=t.p=t.clean=false;
+        t.residuals.clear();t.cleanupErrors.clear();t.runtimeFacts.clear();
+        t.release->offlineVerified=false;t.release->serviceAfter.clear();
+        t.release->disableGeneration.clear();t.release->releasedGraphFingerprint.clear();
+        return sssd_payload::encode(SssdJournalOwnership{t.previous,t});
+    };
+    bool allowed=next.phase==old.phase;
+    switch(old.phase) {
+    case SssdTransitionPhase::Prepared:allowed|=next.phase==SssdTransitionPhase::MutationArmed;break;
+    case SssdTransitionPhase::MutationArmed:allowed|=next.phase==SssdTransitionPhase::Published;break;
+    case SssdTransitionPhase::Published:allowed|=next.phase==SssdTransitionPhase::DurablePublished;break;
+    case SssdTransitionPhase::DurablePublished:
+        allowed|=next.phase==(old.release->offline?SssdTransitionPhase::OfflineVerified:SssdTransitionPhase::ActivationArmed);break;
+    case SssdTransitionPhase::ActivationArmed:allowed|=next.phase==SssdTransitionPhase::RuntimeVerified;break;
+    case SssdTransitionPhase::RuntimeVerified:case SssdTransitionPhase::OfflineVerified:
+        allowed|=old.release->intent==SssdReleaseIntent::DisableRelease&&next.phase==SssdTransitionPhase::ReleasedAwaitingDisable;break;
+    default:break;
+    }
+    const bool published=old.phase!=SssdTransitionPhase::Prepared&&old.phase!=SssdTransitionPhase::MutationArmed;
+    if(!allowed||next.phase==SssdTransitionPhase::Completed||intent(old)!=intent(next)||
+       (published&&sssd_payload::image(old.publication)!=sssd_payload::image(next.publication))||
+       (old.activationPossible&&!next.activationPossible)||(old.publicationDurable&&!next.publicationDurable)||
+       (old.a&&!next.a)||(old.b&&!next.b)||(old.c&&!next.c)||(old.p&&!next.p)||(old.clean&&!next.clean)||
+       (old.release->offlineVerified&&!next.release->offlineVerified)||
+       (!old.release->serviceAfter.empty()&&old.release->serviceAfter!=next.release->serviceAfter)||
+       (!old.release->releasedGraphFingerprint.empty()&&old.release->releasedGraphFingerprint!=next.release->releasedGraphFingerprint)) {
+        error="SSSD release intent/evidence changed or phase regressed";return false;
+    }
+    const auto previous=records_;p->transition=next;r->updatedAtEpoch=currentEpochSeconds();
+    return persistSssdChange(previous,nextId_,error);
+}
+
+bool MutationJournal::completeSssdRelease(MutationId id,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSSD release journal unavailable";return false;}
+    auto* r=find(id);auto* p=r?std::get_if<SssdJournalOwnership>(&r->undo.payload):nullptr;
+    if(!p||!p->transition||!p->transition->release||r->status!=MutationStatus::Prepared) {
+        error="SSSD verified release required";return false;
+    }
+    const auto& t=*p->transition;const auto& d=*t.release;
+    // Administrative acknowledgement needs the real registry/disable flow.
+    // I5 deliberately exposes no production path that can manufacture it.
+    if(d.intent!=SssdReleaseIntent::ReleaseOnly||
+       (t.phase!=SssdTransitionPhase::RuntimeVerified&&t.phase!=SssdTransitionPhase::OfflineVerified)) {
+        error="SSSD DisableRelease acknowledgement requires I6 registry integration";return false;
+    }
+    for(const auto& snapshot:d.survivors) {
+        auto* sibling=find(snapshot.id);auto* owned=sibling?std::get_if<SssdJournalOwnership>(&sibling->undo.payload):nullptr;
+        if(!owned||sibling->status!=MutationStatus::Applied||sibling->policy.policyName!=snapshot.policy||
+           sssd_payload::state(owned->current)!=sssd_payload::state(snapshot.state)||
+           sssd_payload::container(owned->container)!=sssd_payload::container(snapshot.container)) {
+            error="SSSD surviving owner changed before finalization";return false;
+        }
+    }
+    const auto previous=records_;
+    // One document publication transfers the container authority and retires
+    // only the releasing owner. No window exposes a stale maximum witness.
+    for(const auto& snapshot:d.survivors) {
+        auto* sibling=find(snapshot.id);auto& owned=std::get<SssdJournalOwnership>(sibling->undo.payload);
+        owned.container=SssdContainerWitness{t.sequence,id,t.publication};
+        sibling->updatedAtEpoch=currentEpochSeconds();
+    }
+    p->transition->release->disableGeneration.clear();
+    p->transition->phase=SssdTransitionPhase::Completed;
+    r->status=MutationStatus::RolledBack;r->updatedAtEpoch=currentEpochSeconds();
     return persistSssdChange(previous,nextId_,error);
 }
 

@@ -490,6 +490,102 @@ document durable; this is not promotion of a Prepared record by looking at the
 config file. An uninstalled final document leaves RuntimeVerified/Prepared and
 continues to gate the resource.
 
-I5 verified release and I6 policy/registry/client integration remain separate.
+I6 policy/registry/client integration remains separate.
 The native transaction/crash evidence is maintained only in `sssd-i4`, without
 rewriting historical R1/R2/I1/I2/I3 evidence.
+
+
+## I5 ownership release backend
+
+`SssdTransactionCoordinator::release` shares the I4 resource mutex and admission
+contract. `SssdReleaseRequest` has a closed policy/parameter identity, explicit
+ReleaseOnly/DisableRelease intent and bounded deadline. It accepts no raw key,
+arbitrary surviving-requirements list or caller-supplied administrative flag.
+The complete surviving FIC-owned assignment set comes from trusted I4 journal
+records; I1/I2 bind it to the actual source graph and canonical domain scope.
+This is **not** a proof of the complete administrative ENABLE policy set.
+There is no new `IDENTITY_ACCESS.conf` reader or partial registry in I5.
+
+Release verifies the exact canonical shared file against the latest committed
+container witness, including inode, metadata and every assignment. Orphans,
+missing owned artifacts, drift, legacy scalar records, residual publication
+mounts and unfinished sibling transitions refuse new mutation. Release removes
+only the requested owner's historical assignments, never restores a foreign
+value and never repairs/adopts a missing artifact. Current scope/provider changes
+may prevent semantic/runtime completion but do not grant permission to retain a
+proven historical owned key. Foreign sources remain byte/identity bound across
+publication. Late eligible foreign snippets are included/protected for release;
+Apply/REFRESH retains its existing stricter late-snippet boundary.
+
+A nonempty surviving image uses the existing conditional AtomicFileWriter.
+The last owner uses the existing SSSD rename-away removal with an original
+AtomicTargetState and a persisted private staging name. The staged object is
+reproved for exact inode, bounded content and metadata before unlink. A foreign
+replacement is restored with RENAME_NOREPLACE only; a third object is never
+overwritten. Removed, directory-durable and conflict outcomes are separate.
+Existing cooperative root-writer check/rename/unlink races remain; this is not
+kernel fencing of a non-cooperating privileged writer. An interrupted staging
+object is never adopted or automatically cleaned by inspection.
+
+### Versioned journal and shared witnesses
+
+Global schema stays 3. Original I4 payload/transition version 1 keeps its original
+meaning. Version 2 adds typed release intent, exact surviving-owner snapshots,
+remaining projection, absent-target witness, planned stage, ownership generation
+and independent active/offline evidence. The previous committed assignments stay
+in the releasing record until terminal finalization (and remain history after
+RolledBack). Generic prepare/status/discard and I4 advance/commit cannot complete
+a release.
+
+One journal publication both sets the releasing owner RolledBack and supplies a
+new container witness to every surviving owner. It does not alter their committed
+assignments, scope or old runtime receipt. Each handoff identifies its terminal
+release record and exact surviving state; reload authenticates those links.
+I4 chooses the effective container sequence/publication and clears the handoff
+only after its own subsequent verified commit. Thus releasing the largest
+sequence cannot resurrect an obsolete physical file witness.
+
+Release follows Prepared → MutationArmed → Published → DurablePublished →
+ActivationArmed → RuntimeVerified, or DurablePublished → OfflineVerified.
+ReleaseOnly then commits RolledBack. DisableRelease instead persists
+ReleasedAwaitingDisable and continues to gate the entire shared resource.
+**Production disable acknowledgement is prohibited until I6**: no boolean,
+configuration-file hash or backend call can claim a current registry DISABLE.
+I6 must integrate PolicyRegistry/PolicyDisableFlow, durable config generation and
+reproof of released keys and surviving ownership under the same mutex. Physical
+release is not administrative disable, and failure never restores the key.
+
+### Active and stopped runtime boundaries
+
+Active release uses the same I3 protected engine with a typed ConfigurationRelease
+intent and exact surviving expectations. With no surviving requirement, C remains
+non-vacuous: the resulting observed account-cache option is checked through the
+existing native backend source-causal proof. This does not assert policy coverage,
+functional authentication, LDAP availability or executed cache cleanup. A/B/C/P,
+cleanup and final journal disposition stay separate. Revealed invalid relations
+or unsupported consumer semantics leave physical release durable but the journal
+unresolved; no legacy restart or repair fallback exists.
+
+Stopped release uses the same closed native launch reader and operation-scoped
+systemd RefUnit lease without starting the service. It requires inactive/dead,
+MainPID=0, no pending job/triggers, absent service cgroup, compatible namespaces,
+complete bounded process enumeration without SSSD consumers/manual writers and
+no live SSSD UNIX socket endpoint. The existing private-PID1 reader enumerates
+loaded socket units and checks SSSD names and direct responder/monitor dependency
+relations; relevant active/pending/unknown sockets refuse offline admission.
+A not-found manager object is recognized as absence only when inactive/dead,
+job-free, dependency-free and without any activation history. GC of such an empty
+placeholder is not a topology change; masked/failed/partially loaded objects are
+not accepted by that exception.
+The stopped epoch includes this typed topology and monotonic main
+start/exit timestamps, so start-then-stop between observations is not mistaken
+for continuous inactivity. Rechecks run before mutation, after publication and
+before finalization. Unknown/failed/transitional state refuses; a race after
+publication remains unresolved, never repaired by starting SSSD. ReleasedOffline
+has persistent/absence proofs and deliberately no fabricated runtime B/C.
+
+Inspection and explicit no-effect resolution reuse I4. Only unarmed Prepared with
+exact original identity, no staging/mounts and proven original durability may
+abort. Armed/awaiting-disable states gate siblings even if keys are absent. A
+fresh witness-aware reload may prove an already-published terminal journal
+durable; matching config bytes alone never promotes a pending transition.

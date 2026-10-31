@@ -252,9 +252,31 @@ struct SssdOwnedState {
     std::uint64_t sequence=0;
     SssdImageWitness publication;
 };
+// A release changes the container without changing a surviving policy's own
+// assignments or inventing a new activation receipt for that policy.
+struct SssdContainerWitness {
+    std::uint64_t sequence=0;
+    MutationId releaseId=0;
+    SssdImageWitness publication;
+};
+enum class SssdReleaseIntent { ReleaseOnly, DisableRelease };
+struct SssdReleaseSurvivor {
+    MutationId id=0;
+    std::string policy;
+    SssdOwnedState state;
+    std::optional<SssdContainerWitness> container;
+};
+struct SssdReleaseDetails {
+    SssdReleaseIntent intent=SssdReleaseIntent::ReleaseOnly;
+    std::vector<SssdReleaseSurvivor> survivors;
+    std::vector<SssdAssignment> remaining;
+    bool targetAbsent=false, offline=false, offlineVerified=false;
+    std::string ownershipGeneration, serviceBefore, serviceAfter, stagedPath;
+    std::string disableGeneration, releasedGraphFingerprint;
+};
 enum class SssdTransitionPhase {
     Prepared, MutationArmed, Published, DurablePublished, ActivationArmed,
-    RuntimeVerified, Completed
+    RuntimeVerified, Completed, OfflineVerified, ReleasedAwaitingDisable
 };
 struct SssdOwnershipTransition {
     std::uint32_t version=1;
@@ -268,10 +290,12 @@ struct SssdOwnershipTransition {
     bool a=false, b=false, c=false, p=false, clean=false;
     std::vector<std::string> residuals, cleanupErrors;
     std::map<std::string,std::string> runtimeFacts;
+    std::optional<SssdReleaseDetails> release;
 };
 struct SssdJournalOwnership {
     SssdOwnedState current;
     std::optional<SssdOwnershipTransition> transition;
+    std::optional<SssdContainerWitness> container;
 };
 
 // Kerberos reversible structured edit payload for a scalar relation of the

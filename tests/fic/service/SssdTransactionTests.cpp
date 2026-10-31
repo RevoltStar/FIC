@@ -128,4 +128,104 @@ static void counterBoundsTests() {
         check(!accepted,"invalid/exhausted mutation ID must be refused before durable intent: "+std::to_string(counter));
     }
 }
-int main(){try{schemaTests();targetTests();journalTests();counterBoundsTests();std::cout<<"SSSD I4 contracts PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+static void releaseJournalTests() {
+    using Phase=r::SssdTransitionPhase;
+    for(const auto count:{1,2,3})for(const auto releaseIndex:{0,count-1})for(const bool offline:{false,true})for(const bool disable:{false,true}) {
+        char name[]="/tmp/fic-i5-journal-XXXXXX";check(mkdtemp(name),"release temp");
+        const auto path=std::filesystem::path(name)/"journal.json";std::string error;
+        r::MutationJournal journal(path);check(journal.initializeOrLoad(error),"release journal init");
+        std::vector<r::MutationId> ids;
+        const std::vector<SssdManagedParameter> kinds{SssdManagedParameter::OfflineCredentialsExpiration,SssdManagedParameter::CacheCredentials,SssdManagedParameter::AccountCacheExpiration};
+        for(int i=0;i<count;++i) {
+            auto t=transition();t.sequence=i+1;
+            if(i==1)t.target={{"domain/a","cache_credentials","true"}};
+            if(i==2)t.target={{"domain/a","account_cache_expiration","30"}};
+            r::MutationId id=0;check(journal.beginSssdTransaction(detail_i4::policyIdentity(kinds[i]),t,id,error),"enroll: "+error);
+            for(const auto phase:{Phase::MutationArmed,Phase::Published,Phase::DurablePublished,Phase::ActivationArmed,Phase::RuntimeVerified}) {
+                t.phase=phase;
+                if(phase==Phase::Published){t.publication=image();t.publication.inode+=i;}
+                if(phase==Phase::DurablePublished)t.publicationDurable=true;
+                if(phase==Phase::ActivationArmed)t.activationPossible=true;
+                if(phase==Phase::RuntimeVerified)t.a=t.b=t.c=t.p=t.clean=true;
+                check(journal.advanceSssdTransaction(id,t,error),"enroll advance: "+error);
+            }
+            check(journal.commitSssdTransaction(id,error),"enroll commit: "+error);ids.push_back(id);
+        }
+        r::SssdOwnershipTransition t;t.version=2;t.sequence=count+1;
+        const auto& rec=journal.records().at(releaseIndex);
+        t.previous=std::get<r::SssdJournalOwnership>(rec.undo.payload).current;
+        t.before=j::publication(std::get<r::SssdJournalOwnership>(journal.records().back().undo.payload));
+        t.inputFingerprint=std::string(64,'a');t.release.emplace();auto& release=*t.release;
+        release.intent=disable?r::SssdReleaseIntent::DisableRelease:r::SssdReleaseIntent::ReleaseOnly;
+        release.ownershipGeneration=std::string(64,'a');release.serviceBefore=std::string(64,'a');release.offline=offline;
+        for(const auto& sibling:journal.records())if(sibling.id!=ids[releaseIndex]) {
+            const auto& p=std::get<r::SssdJournalOwnership>(sibling.undo.payload);
+            release.survivors.push_back({sibling.id,sibling.policy.policyName,p.current,p.container});
+            release.remaining.insert(release.remaining.end(),p.current.assignments.begin(),p.current.assignments.end());
+        }
+        std::sort(release.remaining.begin(),release.remaining.end(),[](const auto& a,const auto& b){return std::tie(a.section,a.key)<std::tie(b.section,b.key);});
+        release.targetAbsent=release.remaining.empty();
+        t.targetSha256=fic::core::ContentDigest::sha256Hex(j::rendered(release.remaining));
+        if(release.targetAbsent)release.stagedPath="/etc/sssd/conf.d/zzzz-fic.conf.fic-removing-i5-"+std::to_string(ids[releaseIndex])+"-"+std::to_string(t.sequence);
+        auto bad=t;bad.release->remaining.push_back({"pam","offline_credentials_expiration","123"});
+        check(!journal.beginSssdRelease(ids[releaseIndex],bad,error),"malformed surviving projection refused");
+        check(journal.beginSssdRelease(ids[releaseIndex],t,error),"begin release: "+error);
+        check(!journal.advanceSssdTransaction(ids[releaseIndex],t,error),"apply API cannot advance release");
+        check(!journal.setStatus(ids[releaseIndex],r::MutationStatus::RolledBack,error),"generic release bypass refused");
+        check(!journal.commitSssdTransaction(ids[releaseIndex],error),"apply commit bypass refused");
+        check(journal.abortSssdNoEffect(ids[releaseIndex],error),"release unarmed abort retains owner");
+        check(journal.records().at(releaseIndex).status==r::MutationStatus::Applied,"no effect retained Applied");
+        check(journal.beginSssdRelease(ids[releaseIndex],t,error),"release rebegin");
+        for(const auto phase:{Phase::MutationArmed,Phase::Published,Phase::DurablePublished}) {
+            t.phase=phase;
+            if(phase==Phase::Published&&!release.targetAbsent){t.publication=image();t.publication.inode=100;t.publication.sha256=t.targetSha256;}
+            if(phase==Phase::DurablePublished)t.publicationDurable=true;
+            check(journal.advanceSssdRelease(ids[releaseIndex],t,error),"release phase: "+error);
+            check(!journal.abortSssdNoEffect(ids[releaseIndex],error),"armed release cannot abort");
+            r::MutationId other=0;check(!journal.beginSssdTransaction(detail_i4::policyIdentity(SssdManagedParameter::CacheCredentials),transition(),other,error),"release gates siblings");
+            r::MutationJournal fresh(path);check(fresh.initializeOrLoad(error),"release reload: "+error);
+            check(std::get<r::SssdJournalOwnership>(fresh.records().at(releaseIndex).undo.payload).current.assignments==t.previous.assignments,"previous provenance retained");
+        }
+        if(!offline){t.phase=Phase::ActivationArmed;t.activationPossible=true;check(journal.advanceSssdRelease(ids[releaseIndex],t,error),"active arm");}
+        t.phase=offline?Phase::OfflineVerified:Phase::RuntimeVerified;t.p=t.clean=true;
+        if(offline)release.offlineVerified=true;else t.a=t.b=t.c=true;
+        release.serviceAfter=release.releasedGraphFingerprint=std::string(64,'c');
+        check(journal.advanceSssdRelease(ids[releaseIndex],t,error),"verified release: "+error);
+        if(disable) {
+            check(!journal.completeSssdRelease(ids[releaseIndex],error),"disable cannot terminate from runtime proof");
+            t.phase=Phase::ReleasedAwaitingDisable;
+            check(journal.advanceSssdRelease(ids[releaseIndex],t,error),"durable awaiting disable");
+            check(!journal.completeSssdRelease(ids[releaseIndex],error),"I5 refuses production disable acknowledgement");
+            auto fabricated=t;fabricated.release->disableGeneration=std::string(64,'f');
+            check(!journal.advanceSssdRelease(ids[releaseIndex],fabricated,error),"raw disable generation cannot acknowledge pending release");
+            r::MutationJournal pending(path);check(pending.initializeOrLoad(error),"pending disable reload");
+            auto forged=pending.records().at(releaseIndex);forged.status=r::MutationStatus::RolledBack;
+            auto& forgedTransition=*std::get<r::SssdJournalOwnership>(forged.undo.payload).transition;
+            forgedTransition.phase=Phase::Completed;forgedTransition.release->disableGeneration=std::string(64,'f');
+            check(!j::validRecord(forged,error),"I5 decoder refuses fabricated terminal DisableRelease proof");
+            check(pending.records().at(releaseIndex).status==r::MutationStatus::Prepared&&
+                  std::get<r::SssdJournalOwnership>(pending.records().at(releaseIndex).undo.payload).transition->phase==Phase::ReleasedAwaitingDisable,
+                  "disable remains explicitly pending");
+            std::filesystem::remove_all(name);continue;
+        }
+        check(journal.completeSssdRelease(ids[releaseIndex],error),"terminal release: "+error);
+        r::MutationJournal final(path);check(final.initializeOrLoad(error),"terminal fresh reload: "+error);
+        check(final.records().at(releaseIndex).status==r::MutationStatus::RolledBack,"terminal only released owner");
+        for(const auto& sibling:final.records())if(sibling.isActive()) {
+            const auto& p=std::get<r::SssdJournalOwnership>(sibling.undo.payload);
+            check(p.container&&p.container->sequence==t.sequence&&p.container->releaseId==ids[releaseIndex]&&
+                  j::image(j::publication(p))==j::image(t.publication),"atomic latest witness transfer");
+        }
+        const auto roundtrip=j::encode(std::get<r::SssdJournalOwnership>(final.records().at(releaseIndex).undo.payload));
+        check(roundtrip.at("version")==2&&j::encode(j::decode(roundtrip))==roundtrip,"v2 lossless release codec");
+        auto legacy=roundtrip;legacy["version"]=1u;bool rejected=false;try{j::decode(legacy);}catch(...){rejected=true;}check(rejected,"release cannot impersonate v1");
+        if(count>1) {
+            std::ifstream input(path);j::J doc;input>>doc;input.close();
+            for(auto& r:doc["records"])if(r["status"]=="applied")r["undo"]["ownership"]["container"]["release_id"]=std::uint64_t(999);
+            std::ofstream output(path);output<<doc.dump();output.close();
+            r::MutationJournal tampered(path);check(!tampered.initializeOrLoad(error)&&!tampered.usable(),"unbound shared witness rejected on reload");
+        }
+        std::filesystem::remove_all(name);
+    }
+}
+int main(){try{schemaTests();targetTests();journalTests();counterBoundsTests();releaseJournalTests();std::cout<<"SSSD I4 contracts PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

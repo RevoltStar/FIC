@@ -220,7 +220,7 @@ AdmissionState classifyService(const d::LaunchContract& c) {
     if(active=="active"&&sub=="running"&&value(c,"MainPID","u")!=0)return AdmissionState::Candidate;
     return AdmissionState::Unknown;
 }
-static SssdLaunchReference admitImpl(Deadline deadline
+static SssdLaunchReference admitImpl(Deadline deadline, bool release
 #ifdef FIC_SSSD_I1_TESTING
     , const std::function<void(const SssdLaunchReference&)>& checkpoint
 #endif
@@ -230,8 +230,11 @@ static SssdLaunchReference admitImpl(Deadline deadline
     if(!fic::platform::validateHostCompatibility(platform,"/etc/os-release",platformError))unsupported("platform mismatch: "+platformError);
     SssdLaunchReference out;out.profile=launchProfile(platform.id);
     out.contract=d::readSssdLaunchContract(deadline);validateLaunchProfile(out.contract,out.profile);
-    if(classifyService(out.contract)!=AdmissionState::Candidate)unsupported("service is stopped, failed, transitioning or unknown");
-    out.processIdentity=processIdentity(out.contract);
+    const auto state=classifyService(out.contract);
+    const bool stopped=release&&state==AdmissionState::Stopped&&value(out.contract,"MainPID","u")==0;
+    if(state!=AdmissionState::Candidate&&!stopped)unsupported("service is failed, transitioning, unknown or not admitted stopped");
+    if(d::namespaceIdentity(1)!=d::namespaceIdentity(::getpid()))unsupported("incompatible manager mount namespace");
+    out.processIdentity=stopped?"stopped/no-runtime-proof":processIdentity(out.contract);
     out.environmentFingerprint=detail_i1::environmentReference(out.profile.environment);
     out.unitLookupFingerprint=unitLookup(out.contract,out.profile);
 #ifdef FIC_SSSD_I1_TESTING
@@ -245,12 +248,12 @@ static SssdLaunchReference admitImpl(Deadline deadline
     }
     if(!out.profile.preCommands.empty())for(const auto& tool:{"chown","chmod","sh"})out.executables[std::string("/bin/")+tool]=nativeTool(root.get(),tool,budget,out.profile.platform=="ubuntu-26.04");
     out.activationLimit=out.profile.pidFile.empty()?"I3 consumer/runtime/semantics/P proofs not implemented":"I3 requires closed PIDFile support; generic engine remains Unsupported";
-    if(d::readSssdLaunchContract(deadline)!=out.contract||processIdentity(out.contract)!=out.processIdentity||detail_i1::environmentReference(out.profile.environment)!=out.environmentFingerprint||unitLookup(out.contract,out.profile)!=out.unitLookupFingerprint)
+    if(d::readSssdLaunchContract(deadline)!=out.contract||(!stopped&&processIdentity(out.contract)!=out.processIdentity)||detail_i1::environmentReference(out.profile.environment)!=out.environmentFingerprint||unitLookup(out.contract,out.profile)!=out.unitLookupFingerprint)
         throw d::Failure(ActivationStatus::InterferenceDetected,"SSSD launch changed during admission");
     return out;
 }
 SssdLaunchReference admit(Deadline deadline) {
-    return admitImpl(deadline
+    return admitImpl(deadline,false
 #ifdef FIC_SSSD_I1_TESTING
         ,{}
 #endif
@@ -258,9 +261,22 @@ SssdLaunchReference admit(Deadline deadline) {
 }
 #ifdef FIC_SSSD_I1_TESTING
 SssdLaunchReference detail_i1::admitForTests(Deadline deadline,const std::function<void(const SssdLaunchReference&)>& checkpoint) {
-    return admitImpl(deadline,checkpoint);
+    return admitImpl(deadline,false,checkpoint);
 }
 #endif
+SssdLaunchReference detail_i5::admitForRelease(Deadline deadline) {
+    return admitImpl(deadline,true
+#ifdef FIC_SSSD_I1_TESTING
+        ,{}
+#endif
+    );
+}
+void detail_i5::revalidateRelease(const SssdLaunchReference& ref,Deadline deadline) {
+    const auto now=admitForRelease(deadline);
+    if(now.profile.platform!=ref.profile.platform||now.contract!=ref.contract||now.executables!=ref.executables||
+       now.processIdentity!=ref.processIdentity||now.environmentFingerprint!=ref.environmentFingerprint||now.unitLookupFingerprint!=ref.unitLookupFingerprint)
+        throw d::Failure(ActivationStatus::InterferenceDetected,"SSSD release launch reference changed");
+}
 void detail_i1::verifyExecutables(const SssdLaunchReference& ref){
     auto root=d::openAbsolute("/",O_PATH|O_DIRECTORY);std::uint64_t budget=128*1024*1024;
     for(const auto& [path,expected]:ref.executables){

@@ -19,6 +19,8 @@ void proveRuntime(const SssdVerifiedActivationRequest &,
                   SssdVerifiedActivationResult &);
 void confirmRuntime(const NativeRuntimeContract &,
                     const SssdVerifiedActivationResult &, Deadline);
+// I5 read-only absence proof; never starts a service or manufactures B/C.
+std::string proveStoppedConsumers(const SssdLaunchReference&, Deadline);
 std::string backendBusName(const std::string &);
 bool validBusOwner(const std::string &);
 // Pure bounded parsers exercised by unit tests; no authority in their output.

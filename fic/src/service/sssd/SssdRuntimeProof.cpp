@@ -229,7 +229,7 @@ Process process(pid_t pid, const std::string &exe, const d::Identity &db,
          "consumer exited during observation");
   return out;
 }
-std::map<unsigned, unsigned> unixPeers(Deadline deadline) {
+std::map<unsigned, unsigned> unixPeers(Deadline deadline, std::set<std::string>* names = nullptr) {
   d::Fd fd(::socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_SOCK_DIAG));
   if (!fd)
     fail(ActivationStatus::UnsupportedConfiguration,
@@ -246,7 +246,7 @@ std::map<unsigned, unsigned> unixPeers(Deadline deadline) {
   query.header.nlmsg_seq = 1;
   query.request.sdiag_family = AF_UNIX;
   query.request.udiag_states = ~0u;
-  query.request.udiag_show = UDIAG_SHOW_PEER;
+  query.request.udiag_show = UDIAG_SHOW_PEER | (names ? UDIAG_SHOW_NAME : 0);
   if (::send(fd.get(), &query, sizeof query, 0) != sizeof query)
     fail(ActivationStatus::UnsupportedConfiguration,
          "UNIX diagnostics send failed");
@@ -296,7 +296,12 @@ std::map<unsigned, unsigned> unixPeers(Deadline deadline) {
       for (auto *a = reinterpret_cast<rtattr *>(reinterpret_cast<char *>(msg) +
                                                 NLMSG_ALIGN(sizeof(*msg)));
            RTA_OK(a, attrs); a = RTA_NEXT(a, attrs))
-        if (a->rta_type == UNIX_DIAG_PEER &&
+        if (names && a->rta_type == UNIX_DIAG_NAME) {
+          const auto* text = static_cast<const char*>(RTA_DATA(a));
+          const auto length = RTA_PAYLOAD(a);
+          if (length > 4096) fail(ActivationStatus::UnsupportedConfiguration, "UNIX name bound");
+          names->insert(std::string(text, length && text[length-1] == 0 ? length-1 : length));
+        } else if (a->rta_type == UNIX_DIAG_PEER &&
             RTA_PAYLOAD(a) == sizeof(unsigned)) {
           unsigned peer;
           std::memcpy(&peer, RTA_DATA(a), sizeof peer);
@@ -557,6 +562,54 @@ std::string dbGeneration(const d::Identity &id, uid_t nativeUid,
       .dump();
 }
 } // namespace
+std::string proveStoppedConsumers(const SssdLaunchReference& reference, Deadline deadline) {
+  detail_i5::revalidateRelease(reference, deadline);
+  if (classifyService(reference.contract) != AdmissionState::Stopped ||
+      J::parse(reference.contract.at("launch.MainPID")).at("value") != 0 ||
+      !J::parse(reference.contract.at("launch.TriggeredBy")).at("value").empty())
+    fail(ActivationStatus::UnsupportedConfiguration, "offline release needs stable inactive/dead MainPID=0 without triggers");
+  struct stat ownNet{}, managerNet{};
+  if (::stat("/proc/self/ns/net", &ownNet) || ::stat("/proc/1/ns/net", &managerNet) ||
+      ownNet.st_dev != managerNet.st_dev || ownNet.st_ino != managerNet.st_ino)
+    fail(ActivationStatus::UnsupportedConfiguration, "offline socket topology namespace unproven");
+  DIR* raw = ::opendir("/proc");
+  if (!raw) fail(ActivationStatus::UnsupportedConfiguration, "offline process enumeration unavailable");
+  std::unique_ptr<DIR, DirCloser> listing(raw);
+  unsigned count = 0;
+  for (;;) {
+    errno = 0; auto* entry = ::readdir(raw);
+    if (!entry) { if (errno) fail(ActivationStatus::ReadinessUnconfirmed, "offline proc enumeration failed"); break; }
+    const std::string pid(entry->d_name);
+    if (pid.empty() || pid.find_first_not_of("0123456789") != pid.npos) continue;
+    remaining(deadline);
+    if (++count > 32768) fail(ActivationStatus::UnsupportedConfiguration, "offline process bound");
+    const auto base = "/proc/" + pid;
+    char target[4096]; const auto n = ::readlink((base + "/exe").c_str(), target, sizeof target);
+    if (n < 0) {
+      if (errno != ENOENT) fail(ActivationStatus::ReadinessUnconfirmed, "offline executable identity unreadable");
+      struct stat st{};
+      if (::stat(base.c_str(), &st)) { if (errno == ENOENT) continue; fail(ActivationStatus::ReadinessUnconfirmed, "offline process disappeared ambiguously"); }
+      const auto text = read(base + "/stat", 8192); const auto end = text.rfind(')');
+      if (end == text.npos) fail(ActivationStatus::ReadinessUnconfirmed, "offline process stat malformed");
+      std::istringstream fields(text.substr(end + 1)); std::string state; fields >> state;
+      if (state != "Z" && state != "X" && !read(base + "/cmdline", 8192).empty())
+        fail(ActivationStatus::ReadinessUnconfirmed, "offline process executable not proven");
+      continue;
+    }
+    if (n == sizeof target) fail(ActivationStatus::UnsupportedConfiguration, "offline executable name bound");
+    const std::string path(target, n); const auto name = std::filesystem::path(path).filename().string();
+    if (name == "sssd" || name.rfind("sssd_", 0) == 0 || path.find("/sssd/") != path.npos || name == "sssd (deleted)")
+      fail(ActivationStatus::ReadinessUnconfirmed, "live SSSD monitor/consumer/manual writer prevents offline release");
+  }
+  std::set<std::string> sockets; unixPeers(deadline, &sockets);
+  for (const auto& name : sockets)
+    if (name.rfind("/var/lib/sss/", 0) == 0 || name.rfind("/run/sssd", 0) == 0)
+      fail(ActivationStatus::UnsupportedConfiguration, "live SSSD socket prevents offline release");
+  detail_i5::revalidateRelease(reference, deadline);
+  return fic::core::ContentDigest::sha256Hex(J{{"launch",reference.contract},
+      {"boot",read("/proc/sys/kernel/random/boot_id",128)}, {"consumers_absent",true}, {"sockets_absent",true}}.dump());
+}
+
 std::string backendBusName(const std::string &domain) {
   std::string out = "sssd.domain_";
   const char *hex = "0123456789abcdef";

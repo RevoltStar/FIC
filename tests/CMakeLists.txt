@@ -3325,6 +3325,9 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 add_executable(sssd_transaction_tests fic/service/SssdTransactionTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdTransactionCoordinator.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdRuntimeProof.cpp
@@ -3341,4 +3344,18 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME sssd_i4_evidence_checks COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i4/check-evidence.py)
     set_tests_properties(sssd_i4_evidence_checks PROPERTIES LABELS "unit;integration")
+endif()
+
+add_executable(sssd_proven_removal_tests fic/service/SssdProvenRemovalTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp)
+target_include_directories(sssd_proven_removal_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sssd_proven_removal_tests PRIVATE fic-core fic-platform)
+add_test(NAME sssd_proven_removal_tests COMMAND sssd_proven_removal_tests)
+set_tests_properties(sssd_proven_removal_tests PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 LABELS unit)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME sssd_i5_evidence_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i5/check-evidence.py)
+    set_tests_properties(sssd_i5_evidence_checks PROPERTIES LABELS "unit;integration")
 endif()

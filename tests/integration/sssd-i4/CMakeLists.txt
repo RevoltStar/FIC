@@ -7,6 +7,9 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(I4_SYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 get_filename_component(I4_ROOT "../../.." ABSOLUTE)
 add_executable(sssd_i4_probe Driver.cpp StagedWriteCrash.cpp
+ ${I4_ROOT}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+ ${I4_ROOT}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+ ${I4_ROOT}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
  ${I4_ROOT}/fic/src/service/sssd/SssdTransactionCoordinator.cpp
  ${I4_ROOT}/fic/src/rollback/MutationJournal.cpp
  ${I4_ROOT}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp

@@ -3,6 +3,7 @@
 
 #include "modules/identity_access/shared/configuration/PreparedFileChange.h"
 #include "modules/identity_access/composite/ConfigurationParticipant.h"
+#include <fic/core/fs/AtomicFileWriter.h>
 
 #include <filesystem>
 #include <functional>
@@ -24,6 +25,24 @@ void setManagedSnippetBeforeStageHookForTests(
     std::function<void(const std::filesystem::path&)> hook);
 void setManagedSnippetStagedRaceHookForTests(
     std::function<void(const std::filesystem::path&)> hook);
+void setManagedSnippetRemovalCheckpointForTests(
+    std::function<void(const std::string&)> hook);
+
+// I5 supplies the original descriptor-bound state and a journaled staging
+// name. This reuses legacy rename-away removal, without recapturing a new
+// same-byte inode as ownership. No runtime operation or journal disposition.
+struct ManagedSnippetRemovalResult {
+    bool staged = false;
+    bool removed = false;
+    bool durable = false;
+    bool conflict = false;
+    std::string diagnostic;
+};
+ManagedSnippetRemovalResult removeProvenManagedSnippet(
+    const SecureConfigurationFileOptions&,
+    const SecureConfigurationDirectoryOptions&,
+    const AtomicTargetState& expected,
+    const std::filesystem::path& journaledStagingPath);
 
 struct SssdConfigurationOptions {
     SecureConfigurationFileOptions mainFile;

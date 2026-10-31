@@ -234,8 +234,8 @@ std::string referencedManager(sd_bus* bus,std::chrono::steady_clock::time_point 
 }
 }
 std::shared_ptr<const SshUnitReferences> retainSshUnitsForValidation(ActivationProfile profile,std::chrono::steady_clock::time_point deadline) {
-    if(profile!=ActivationProfile::ActiveNotifyService&&profile!=ActivationProfile::UbuntuSshSocket&&profile!=ActivationProfile::AltSshSimple)
-        throw Failure(ActivationStatus::UnsupportedConfiguration,"unknown SSH unit-reference profile");
+    if(profile!=ActivationProfile::ActiveNotifyService&&profile!=ActivationProfile::UbuntuSshSocket&&profile!=ActivationProfile::AltSshSimple&&profile!=ActivationProfile::SssdNotify)
+        throw Failure(ActivationStatus::UnsupportedConfiguration,"unknown service unit-reference profile");
     // Fixed root-controlled system bus endpoint. The broker may run as
     // messagebus: its credentials are not confused with PID1 credentials.
     // RefUnit requires the API-bus sender, whereas authoritative launch queries
@@ -252,7 +252,7 @@ std::shared_ptr<const SshUnitReferences> retainSshUnitsForValidation(ActivationP
     if(sd_bus_set_address(raw,"unix:path=/run/dbus/system_bus_socket")<0||sd_bus_set_bus_client(raw,1)<0||sd_bus_start(raw)<0)
         throw Failure(ActivationStatus::UnsupportedConfiguration,"unit-reference API bus unavailable");
     refs->manager=referencedManager(raw,deadline);
-    std::vector<std::string> names{profile==ActivationProfile::AltSshSimple?"sshd.service":"ssh.service"};
+    std::vector<std::string> names{profile==ActivationProfile::SssdNotify?"sssd.service":profile==ActivationProfile::AltSshSimple?"sshd.service":"ssh.service"};
     if(profile==ActivationProfile::UbuntuSshSocket)names.push_back("ssh.socket");
     for(const auto& name:names) {
         timeout(raw,deadline);
@@ -260,7 +260,7 @@ std::shared_ptr<const SshUnitReferences> retainSshUnitsForValidation(ActivationP
         // GENERIC_UNIT_VALIDATE_LOADED, then bus_unit_method_ref, in one call.
         // https://github.com/systemd/systemd/blob/v252/src/core/dbus-manager.c
         requireBus(sd_bus_call_method(raw,refs->manager.c_str(),"/org/freedesktop/systemd1",
-            "org.freedesktop.systemd1.Manager","RefUnit",nullptr,nullptr,"s",name.c_str()),"retain installed SSH unit");
+            "org.freedesktop.systemd1.Manager","RefUnit",nullptr,nullptr,"s",name.c_str()),"retain installed service unit");
     }
     verifySshUnitReferences(*refs,deadline);return refs;
 }
@@ -268,7 +268,7 @@ void verifySshUnitReferences(const SshUnitReferences& refs,std::chrono::steady_c
     if(!refs.bus||referencedManager(refs.bus.get(),deadline)!=refs.manager)
         throw Failure(ActivationStatus::InterferenceDetected,"unit-reference systemd owner changed");
 }
-static LaunchContract readContract(const std::string& unit, std::chrono::steady_clock::time_point deadline, bool socket, bool runtime=false, bool sssd=false) {
+static LaunchContract readContract(const std::string& unit, std::chrono::steady_clock::time_point deadline, bool socket, bool runtime=false, bool sssd=false, bool releaseEpoch=false) {
     sd_bus* rawBus = nullptr;
     if (sd_bus_new(&rawBus) < 0) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot allocate systemd connection");
     std::unique_ptr<sd_bus, decltype(&sd_bus_unref)> bus(rawBus, sd_bus_unref);
@@ -299,6 +299,7 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
     } else {
         auto service = serviceProperties; service.insert(service.end(), commands.begin(), commands.end());
         if(runtime)service.push_back("MainPID");
+        if(releaseEpoch)service.insert(service.end(),{"ControlGroup","ExecMainStartTimestampMonotonic","ExecMainExitTimestampMonotonic"});
         if(sssd) {
             const std::vector<std::string> extra{"Type","NotifyAccess","ReadWritePaths","ReadOnlyPaths",
                 "InaccessiblePaths","MountFlags","PrivateMounts","PrivateTmp","PrivateDevices","ProtectClock",
@@ -325,6 +326,65 @@ static LaunchContract readContract(const std::string& unit, std::chrono::steady_
     std::uint64_t budget = 1024*1024;
     contract["launch.file:" + fragment] = fingerprintUnitSource(root.get(), fragment, budget);
     for (const auto& path : dropins) contract["launch.file:" + path.get<std::string>()] = fingerprintUnitSource(root.get(), path.get<std::string>(), budget);
+    if(releaseEpoch) {
+        // Endpoints alone do not prove unit topology. Inspect the complete
+        // loaded socket set through the SAME verified root-PID1 connection.
+        timeout(bus.get(),deadline);sd_bus_message* listedRaw=nullptr;
+        const int code=sd_bus_call_method(bus.get(),"org.freedesktop.systemd1","/org/freedesktop/systemd1",
+            "org.freedesktop.systemd1.Manager","ListUnits",nullptr,&listedRaw,nullptr);
+        Message listed(listedRaw,sd_bus_message_unref);requireBus(code,"offline socket unit enumeration");
+        if(!sd_bus_message_has_signature(listed.get(),"a(ssssssouso)"))
+            throw Failure(ActivationStatus::UnsupportedConfiguration,"offline unit list schema");
+        unsigned count=0;const auto units=readValue(listed.get(),count);Json topology=Json::object();
+        if(!units.is_array()||units.size()>1024)throw Failure(ActivationStatus::UnsupportedConfiguration,"offline unit enumeration bound");
+        const auto related=[](const std::string& name){return name=="sssd.service"||name=="sssd.socket"||name.rfind("sssd-",0)==0;};
+        for(const auto& entry:units) {
+            if(!entry.is_array()||entry.size()!=10||!entry[0].is_string()||!entry[6].is_string())
+                throw Failure(ActivationStatus::UnsupportedConfiguration,"offline unit identity schema");
+            const auto name=entry[0].get<std::string>();
+            if(name.size()<7||name.substr(name.size()-7)!=".socket")continue;
+            LaunchContract socket;
+            readProperties(bus.get(),entry[6].get<std::string>(),"org.freedesktop.systemd1.Unit",
+                {"Id","LoadState","ActiveState","SubState","Job","Triggers","Requires","Wants","BindsTo",
+                 "ActiveEnterTimestampMonotonic","InactiveEnterTimestampMonotonic"},socket,deadline);
+            bool relevant=related(name);
+            for(const auto* field:{"Triggers","Requires","Wants","BindsTo"}) {
+                const auto refs=Json::parse(socket.at(std::string("launch.")+field));
+                if(refs.at("signature")!="as"||!refs.at("value").is_array())
+                    throw Failure(ActivationStatus::UnsupportedConfiguration,"offline socket dependency schema");
+                for(const auto& ref:refs.at("value")) {
+                    if(!ref.is_string())throw Failure(ActivationStatus::UnsupportedConfiguration,"offline socket dependency identity");
+                    relevant|=related(ref.get<std::string>());
+                }
+            }
+            if(!relevant)continue;
+            const auto prop=[&](const char* key,const char* signature) {
+                const auto v=Json::parse(socket.at(std::string("launch.")+key));
+                if(v.at("signature")!=signature)throw Failure(ActivationStatus::UnsupportedConfiguration,"offline socket property type");
+                return v.at("value");
+            };
+            const auto job=prop("Job","(uo)");
+            if(prop("Id","s")!=name||prop("ActiveState","s")!="inactive"||prop("SubState","s")!="dead"||
+               !job.is_array()||job.size()!=2||!job[0].is_number_unsigned()||job[0]!=0)
+                throw Failure(ActivationStatus::UnsupportedConfiguration,"SSSD socket unit is active/pending/unknown: "+name+" "+Json(socket).dump());
+            const auto load=prop("LoadState","s");
+            if(load=="not-found") {
+                // GetUnit/Show/old dependency lookups can leave a nonexistent
+                // empty unit object. It is not a loaded activation topology.
+                // Recognize ONLY a never-active, dependency-free placeholder;
+                // do not mistake masked/failed/partially loaded units for it.
+                for(const auto* field:{"Triggers","Requires","Wants","BindsTo"})
+                    if(!prop(field,"as").empty())throw Failure(ActivationStatus::UnsupportedConfiguration,"nonempty missing SSSD socket topology: "+name);
+                for(const auto* field:{"ActiveEnterTimestampMonotonic","InactiveEnterTimestampMonotonic"})
+                    if(prop(field,"t")!=0)throw Failure(ActivationStatus::UnsupportedConfiguration,"missing SSSD socket has activation history: "+name);
+                continue; // GC of an empty absent object is not a state change.
+            }
+            if(load!="loaded")throw Failure(ActivationStatus::UnsupportedConfiguration,"SSSD socket load state unproven: "+name);
+            if(!topology.emplace(name,socket).second)
+                throw Failure(ActivationStatus::UnsupportedConfiguration,"duplicate offline socket unit");
+        }
+        contract["release.SocketTopology"]=topology.dump();
+    }
     return contract;
 }
 LaunchContract readLaunchContract(const std::string& unit,std::chrono::steady_clock::time_point deadline) {
@@ -332,6 +392,13 @@ LaunchContract readLaunchContract(const std::string& unit,std::chrono::steady_cl
 }
 LaunchContract readSssdLaunchContract(std::chrono::steady_clock::time_point deadline) {
     return readContract("sssd.service",deadline,false,true,true);
+}
+LaunchContract readSssdReleaseEpoch(std::chrono::steady_clock::time_point deadline) {
+    const auto full=readContract("sssd.service",deadline,false,true,true,true);
+    LaunchContract epoch{{"release.SocketTopology",full.at("release.SocketTopology")}};
+    for(const auto* key:{"ControlGroup","ExecMainStartTimestampMonotonic","ExecMainExitTimestampMonotonic"})
+        epoch[std::string("launch.")+key]=full.at(std::string("launch.")+key);
+    return epoch;
 }
 LaunchContract readAltSshRuntime(std::chrono::steady_clock::time_point deadline) {
     return readContract("sshd.service",deadline,false,true);

@@ -7,7 +7,12 @@ def digest(p):return hashlib.sha256(p.read_bytes()).hexdigest()
 e=json.loads((HERE/'evidence.json').read_text())
 assert e['schema']=='sssd-i3-native-v1' and e['base']=='ad41b954b009989cf9b12bed6fade17c1b7d2e9e'
 assert set(e['profiles'])=={'debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11'}
-for path,h in {**e['source_sha256'],**e['historical_sha256']}.items():assert digest(ROOT/path)==h,path
+# Historical I3 evidence is bound to its accepted source commit. I5 has its
+# own current-source native matrix; do not rewrite or relabel old reports.
+for path,h in e['source_sha256'].items():
+ data=subprocess.check_output(['git','-c','safe.directory='+str(ROOT),'-C',str(ROOT),'show','2e6b72ae16236a9d871f59cb4e3e845cbc275d73:'+path])
+ assert hashlib.sha256(data).hexdigest()==h,path
+for path,h in e['historical_sha256'].items():assert digest(ROOT/path)==h,path
 assert digest(HERE/'source-review.json')==e['source_review_sha256']
 positives=('positive','readonly-write','missing-main','missing-conf-d','backend-only','cache-disabled','two-ldap',*(f'ldap-activation-{i}' for i in range(1,5)))
 refusals=('bad-expectation','missing-environment','lazy-pam-unsupported','relation-conflict','unknown-provider','xattr-refused','stopped','shared-parent','shared-slave-parent')

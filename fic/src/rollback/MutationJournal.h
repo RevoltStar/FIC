@@ -199,6 +199,12 @@ public:
     bool advanceSssdTransaction(MutationId, const SssdOwnershipTransition&, std::string&);
     bool commitSssdTransaction(MutationId, std::string&);
     bool abortSssdNoEffect(MutationId, std::string&);
+    // I5 typed transitions. The coordinator supplies physical/service/config
+    // proofs; these APIs enforce immutable intent, phase order and atomic
+    // surviving-container handoff. Generic disposition remains prohibited.
+    bool beginSssdRelease(MutationId, const SssdOwnershipTransition&, std::string&);
+    bool advanceSssdRelease(MutationId, const SssdOwnershipTransition&, std::string&);
+    bool completeSssdRelease(MutationId, std::string&);
     bool beginSshRefresh(MutationId,const UndoRemoveSshManagedPolicy& target,
         const std::string& beforeSha256,const std::string& targetSha256,std::string&);
     bool noteSshPublication(MutationId,const AtomicTargetState&,bool durable,std::string&);

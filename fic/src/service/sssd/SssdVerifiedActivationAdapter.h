@@ -18,11 +18,13 @@ struct SssdSemanticExpectation {
   SettingKey key;
   SemanticValue value;
 };
+enum class SssdActivationIntent { Apply, ConfigurationRelease };
 struct SssdVerifiedActivationRequest {
   SssdInputReference input;
   DomainScopeReference scope;
   std::vector<SssdSemanticExpectation> expectations;
   std::chrono::milliseconds timeout{10000};
+  SssdActivationIntent intent=SssdActivationIntent::Apply;
 };
 struct SssdProcessEvidence {
   pid_t pid = 0, parent = 0;
