@@ -26,5 +26,13 @@ int main() {
     assert(failure.at("message").get<std::string>().find(
                "unexpected group for configuration directory") !=
            std::string::npos);
+    assert(!failure.contains("saved")&&!failure.contains("applied"));
+    auto partial=fic::daemon::PolicyMutationResult::failure("SSSD acknowledgement pending");
+    partial.saved=true;partial.applied=false;
+    const auto pending=fic::daemon::policyMutationResponse(partial,"disabled","disable failed");
+    assert(!pending.at("ok").get<bool>()&&pending.at("saved").get<bool>()&&!pending.at("applied").get<bool>());
+    partial.saved.reset();
+    const auto uncertain=fic::daemon::policyMutationResponse(partial,"disabled","save durability unknown");
+    assert(!uncertain.contains("saved")&&!uncertain.at("applied").get<bool>());
     return 0;
 }

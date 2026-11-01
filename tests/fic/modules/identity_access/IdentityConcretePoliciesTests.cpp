@@ -1,5 +1,5 @@
 #include "modules/identity_access/kerberos/policies/KerberosTicketLifetimePolicy.h"
-#include "modules/identity_access/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
+#include "sssd/LegacySssdPolicyFixture.h"
 
 #include "modules/identity_access/composite/ConfigurationTransaction.h"
 #include "modules/identity_access/shared/configuration/PreparedFileChange.h"
@@ -30,6 +30,46 @@ void require(bool condition, const std::string& message) {
     if (!condition) {
         throw std::runtime_error(message);
     }
+}
+
+// Historical backend specimen only. Production rollback is independently
+// tested by RollbackExecutorTests and refuses these scalar legacy records.
+// Keep the old helper's source/runtime semantics exercised on temporary paths
+// without retaining a production fallback writer.
+fic::rollback::RollbackReport historicalRollbackForFixture(
+    const PolicyRef& policy,const std::string& hint,
+    const fic::rollback::RollbackExecutorDeps& deps) {
+    namespace r=fic::rollback;
+    if(policy.submoduleName!="SSSD")return r::rollbackPolicyBeforeDisable(policy,hint,deps);
+    r::RollbackReport report;report.status=r::RollbackStatus::Failed;
+    std::string error;auto* journal=r::DaemonMutationJournal::instance().tryGet(error);
+    if(!journal||!deps.sssdOptions){report.message=error;return report;}
+    const auto records=journal->activeRecords(policy);
+    if(records.empty()) {
+        const auto separator=hint.find('/');
+        if(separator==std::string::npos)return report;
+        fic::identity::sssd::SssdConfiguration configuration(deps.sssdOptions().configuration);
+        fic::identity::sssd::SssdManagedSnippetObservation observation;
+        if(!configuration.inspectManagedSnippet(hint.substr(0,separator),hint.substr(separator+1),observation,error)||observation.optionPresent) {
+            report.message=error;return report;
+        }
+        report.status=r::RollbackStatus::NothingToDo;return report;
+    }
+    bool completed=true;
+    for(const auto& record:records) {
+        const auto* legacy=std::get_if<r::UndoRemoveSssdManagedSetting>(&record.undo.payload);
+        if(!legacy)return report;
+        const auto outcome=undoSssdManagedSetting(deps.sssdOptions(),*legacy);
+        const auto status=outcome.conflict?r::RollbackStatus::Conflict:
+            outcome.nothingToDo?r::RollbackStatus::NothingToDo:outcome.ok?r::RollbackStatus::Success:r::RollbackStatus::Failed;
+        const bool ok=status==r::RollbackStatus::Success||status==r::RollbackStatus::NothingToDo;
+        if(!journal->setStatus(record.id,ok?r::MutationStatus::RolledBack:r::MutationStatus::RollbackFailed,error))return report;
+        report.outcomes.push_back({record.id,record.resource,status,outcome.message});
+        report.message=outcome.message;completed&=ok;
+        if(!ok)report.status=status;
+    }
+    if(completed)report.status=r::RollbackStatus::Success;
+    return report;
 }
 
 void writeFile(const fs::path& path,
@@ -263,12 +303,12 @@ void testSssdRollbackRetryCompletesRuntimeReconciliation(
         return okResult();
     };
     JournalOverride journalGuard(root / "journals/sssd-retry-runtime.json");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(policy.apply(), "SSSD apply failed");
     // Rollback #1: source removal succeeds, restart fails.
     failNextRestart = true;
-    const auto first = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto first = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     require(!first.rollbackCompleted(),
@@ -282,7 +322,7 @@ void testSssdRollbackRetryCompletesRuntimeReconciliation(
     const int restartsAfterFirst = restartCalls;
     require(restartsAfterFirst >= 1,
             "the first rollback must have attempted a restart");
-    const auto second = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto second = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     require(second.rollbackCompleted(),
@@ -345,7 +385,7 @@ void testSssdPreparedCrashRecoveryCompletesApplied(const fs::path& root) {
         // Daemon-style reopen: a second override forces initializeOrLoad.
         JournalOverride reopenGuard(journalPath);
         setPolicyValues(root, "30", "7200");
-        SssdOfflineCredentialsExpirationPolicy recoveryPolicy(
+        LegacySssdPolicyFixture recoveryPolicy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(recoveryPolicy.apply(), "the recovery apply must succeed");
         require(restartCalls == 1,
@@ -421,7 +461,7 @@ void testSssdApplyAbsentSourceReconcilesRuntime(const fs::path& root) {
                     "other.conf.fic-removing-1-1",
                 "unrelated staging object\n", 0600);
         }
-        SssdOfflineCredentialsExpirationPolicy policy(
+        LegacySssdPolicyFixture policy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(!policy.apply(), "runtime failure must fail apply closed");
         require(restarts == 1, "absent source must still trigger restart");
@@ -457,7 +497,7 @@ void testSssdForeignReplacementBetweenProofAndRemovalSurvives(
                      const ProcessOptions&) { return okResult(); };
     JournalOverride journalGuard(root / "journals/sssd-race-removal.json");
     {
-        SssdOfflineCredentialsExpirationPolicy policy(
+        LegacySssdPolicyFixture policy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(policy.apply(), "SSSD apply failed");
     }
@@ -484,7 +524,7 @@ void testSssdForeignReplacementBetweenProofAndRemovalSurvives(
             }
             return true;
         });
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(nullptr);
@@ -514,7 +554,7 @@ void testSssdDoubleReplacementPreservesBothForeignObjects(
                      const ProcessOptions&) { return okResult(); };
     JournalOverride guard(root / "journals/sssd-double-replacement.json");
     setPolicyValues(root, "30", "7200");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(policy.apply(), "initial SSSD apply must succeed");
     const fs::path dropIn = sssdDropInPath(main);
@@ -541,7 +581,7 @@ void testSssdDoubleReplacementPreservesBothForeignObjects(
             }
             return true;
         });
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     fic::identity::sssd::setManagedSnippetRemovalRaceHookForTests(nullptr);
@@ -576,7 +616,7 @@ void testSssdForeignRestoreFsyncFailureKeepsProvenance(
     const fs::path journalPath = root / "journals/sssd-restore-fsync.json";
     JournalOverride guard(journalPath);
     setPolicyValues(root, "30", "7200");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(policy.apply(), "initial SSSD apply must succeed");
     const fs::path dropIn = sssdDropInPath(main);
@@ -594,7 +634,7 @@ void testSssdForeignRestoreFsyncFailureKeepsProvenance(
         [&](const fs::path& privatePath) { staged = privatePath; });
     AtomicFileWriter::setDirectoryFsyncHookForTests(
         [&](const std::string& path) { return path != dropIn.string(); });
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
@@ -619,11 +659,11 @@ void testSssdForeignRestoreFsyncFailureKeepsProvenance(
     const int restartsBeforeRetry = restarts;
     {
         JournalOverride reopen(journalPath);
-        SssdOfflineCredentialsExpirationPolicy recoveryPolicy(
+        LegacySssdPolicyFixture recoveryPolicy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(!recoveryPolicy.apply(),
                 "apply must not treat staged B as completed release");
-        const auto retry = fic::rollback::rollbackPolicyBeforeDisable(
+        const auto retry = historicalRollbackForFixture(
             kSssdPolicyRef, kSssdResource,
             sssdExecutorDeps(sssdRollbackOptions(
                 main, root, resolver, runner)));
@@ -690,17 +730,17 @@ void testSssdReusedDriftAfterProofSurvives(const fs::path& root) {
     };
     JournalOverride guard(root / "journals/sssd-reused-drift.json");
     setPolicyValues(root, "30", "7200");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(policy.apply(), "initial SSSD apply must succeed");
     const int firstRestarts = restarts;
     require(policy.apply(), "unchanged Applied reapply must succeed");
     require(restarts == firstRestarts,
             "unchanged Applied reapply must not restart SSSD");
-    SssdOfflineCredentialsExpirationPolicy::setReusedProofHookForTests(
+    LegacySssdPolicyFixture::setReusedProofHookForTests(
         [&]() { writeFile(dropIn, foreign, 0600); });
     const bool applied = policy.apply();
-    SssdOfflineCredentialsExpirationPolicy::setReusedProofHookForTests(nullptr);
+    LegacySssdPolicyFixture::setReusedProofHookForTests(nullptr);
     require(!applied, "post-proof drift must fail reused apply closed");
     require(restarts == firstRestarts,
             "drifted Applied reapply must not restart SSSD");
@@ -852,13 +892,13 @@ void testSssdRemovalFsyncFailureKeepsJournalActive(const fs::path& root) {
                      const ProcessOptions&) { return okResult(); };
     JournalOverride guard(root / "journals/sssd-removal-fsync-journal.json");
     setPolicyValues(root, "30", "7200");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(policy.apply(), "SSSD apply must create provenance");
     const fs::path dropIn = sssdDropInPath(main);
     AtomicFileWriter::setDirectoryFsyncHookForTests(
         [&](const std::string& path) { return path != dropIn.string(); });
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     AtomicFileWriter::setDirectoryFsyncHookForTests(nullptr);
@@ -977,7 +1017,7 @@ void testKerberosNoActiveRecordIsNothingToDo(const fs::path& root) {
     }
     require(activeRecordCount(kKerberosPolicyRef) == 0,
             "a no-op apply must not create a journal record");
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(report.status == fic::rollback::RollbackStatus::NothingToDo,
@@ -1004,12 +1044,12 @@ void testKerberosRetryAfterCompletedRollbackIsNothingToDo(
         KerberosTicketLifetimePolicy policy(kerberosOptions(main, root));
         require(policy.apply(), "Kerberos apply failed");
     }
-    const auto first = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto first = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(first.rollbackCompleted(), "the first rollback must succeed");
     require(readFile(main) == original, "the 8h line must be restored");
-    const auto second = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto second = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(second.status == fic::rollback::RollbackStatus::NothingToDo,
@@ -1205,7 +1245,7 @@ void testSssdPolicyRestartsActiveService(const fs::path& root) {
         return okResult();
     };
     JournalOverride journalGuard(root / "journals/sssd-success.json");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(policy.apply(), "SSSD policy failed");
     // The foreign main configuration must remain byte-for-byte unchanged.
@@ -1244,7 +1284,7 @@ void testSssdPolicyRollsBackAfterRestartFailure(const fs::path& root) {
         return result;
     };
     JournalOverride journalGuard(root / "journals/sssd-rollback.json");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(!policy.apply(), "SSSD restart failure must fail the policy");
     // The transaction compensated the persistent mutation: the FIC-owned
@@ -1299,7 +1339,7 @@ void testSssdCrashWindowPreparedRemainsRecoverable(const fs::path& root) {
             "the crash-window Prepared record must remain active");
     const auto rollbackDeps = sssdExecutorDeps(sssdRollbackOptions(
         main, root, resolver, runner));
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource, rollbackDeps);
     require(report.rollbackCompleted(),
             "the crash-window Prepared record must stay recoverable");
@@ -1325,7 +1365,7 @@ void testSssdDisableRollsBackManagedSetting(const fs::path& root) {
                      const ProcessOptions&) { return okResult(); };
     JournalOverride journalGuard(root / "journals/sssd-disable.json");
     {
-        SssdOfflineCredentialsExpirationPolicy policy(
+        LegacySssdPolicyFixture policy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(policy.apply(), "SSSD apply failed");
     }
@@ -1333,7 +1373,7 @@ void testSssdDisableRollsBackManagedSetting(const fs::path& root) {
         main.parent_path() / (main.stem().string() + "-conf.d");
     require(::chmod(confd.c_str(), 0750) == 0,
             "could not model ALT SSSD conf.d mode");
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     require(report.status == fic::rollback::RollbackStatus::Success,
@@ -1368,11 +1408,11 @@ void testSssdOriginalTargetMissingRollback(const fs::path& root) {
                      const ProcessOptions&) { return okResult(); };
     JournalOverride journalGuard(root / "journals/sssd-missing.json");
     {
-        SssdOfflineCredentialsExpirationPolicy policy(
+        LegacySssdPolicyFixture policy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(policy.apply(), "SSSD apply failed");
     }
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     require(report.rollbackCompleted(), "SSSD disable rollback must succeed");
@@ -1407,7 +1447,7 @@ void testSssdDoesNotStartInactiveService(const fs::path& root) {
         return result;
     };
     JournalOverride journalGuard(root / "journals/sssd-inactive.json");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(policy.apply(), "SSSD policy failed for an inactive service");
     require(calls == 1, "inactive SSSD service received an unexpected command");
@@ -1432,7 +1472,7 @@ void testSssdExternalDriftConflict(const fs::path& root) {
                      const ProcessOptions&) { return okResult(); };
     JournalOverride journalGuard(root / "journals/sssd-drift.json");
     {
-        SssdOfflineCredentialsExpirationPolicy policy(
+        LegacySssdPolicyFixture policy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(policy.apply(), "SSSD apply failed");
     }
@@ -1441,7 +1481,7 @@ void testSssdExternalDriftConflict(const fs::path& root) {
               "# FIC managed configuration\n[pam]\n"
               "offline_credentials_expiration = 40\n",
               0600);
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kSssdPolicyRef, kSssdResource,
         sssdExecutorDeps(sssdRollbackOptions(main, root, resolver, runner)));
     require(report.status == fic::rollback::RollbackStatus::Conflict,
@@ -1472,7 +1512,7 @@ void testSssdConflictingLaterSnippetFailsApply(const fs::path& root) {
                      const std::vector<std::string>&,
                      const ProcessOptions&) { return okResult(); };
     JournalOverride journalGuard(root / "journals/sssd-conflict.json");
-    SssdOfflineCredentialsExpirationPolicy policy(
+    LegacySssdPolicyFixture policy(
         sssdOptions(main, root), resolver, {"sssd.service"}, runner);
     require(!policy.apply(),
             "a conflicting later snippet must fail the apply closed");
@@ -1497,14 +1537,14 @@ void testSssdActiveValueChangeKeepsSingleRecord(const fs::path& root) {
                      const ProcessOptions&) { return okResult(); };
     JournalOverride journalGuard(root / "journals/sssd-change.json");
     {
-        SssdOfflineCredentialsExpirationPolicy policy(
+        LegacySssdPolicyFixture policy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(policy.apply(), "SSSD apply 30 failed");
         require(activeRecordCount(kSssdPolicyRef) == 1,
                 "the first apply must leave one active record");
         setPolicyValues(root, "60", "7200");
         // A fresh policy object re-reads the (changed) module config.
-        SssdOfflineCredentialsExpirationPolicy policy2(
+        LegacySssdPolicyFixture policy2(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(policy2.apply(), "SSSD apply 60 failed");
     }
@@ -1537,7 +1577,7 @@ void testSssdRestartLikeJournalReloadKeepsRollback(const fs::path& root) {
     const fs::path journalPath = root / "journals/sssd-reload.json";
     {
         JournalOverride journalGuard(journalPath);
-        SssdOfflineCredentialsExpirationPolicy policy(
+        LegacySssdPolicyFixture policy(
             sssdOptions(main, root), resolver, {"sssd.service"}, runner);
         require(policy.apply(), "SSSD apply failed");
         require(activeRecordCount(kSssdPolicyRef) == 1,
@@ -1549,7 +1589,7 @@ void testSssdRestartLikeJournalReloadKeepsRollback(const fs::path& root) {
         JournalOverride journalGuard(journalPath);
         require(activeRecordCount(kSssdPolicyRef) == 1,
                 "the Applied record must survive a restart-like reload");
-        const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+        const auto report = historicalRollbackForFixture(
             kSssdPolicyRef, kSssdResource,
             sssdExecutorDeps(
                 sssdRollbackOptions(main, root, resolver, runner)));
@@ -1575,7 +1615,7 @@ void testKerberosTicketLifetimePolicy(const fs::path& root) {
                     "[libdefaults]\n    ticket_lifetime = 36000s\n",
                 "Kerberos policy wrote an unexpected duration");
     }
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(report.status == fic::rollback::RollbackStatus::Success,
@@ -1599,7 +1639,7 @@ void testKerberosMissingTargetRollback(const fs::path& root) {
                     std::string::npos,
                 "the relation must be created");
     }
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(report.rollbackCompleted(), "Kerberos disable must succeed");
@@ -1620,7 +1660,7 @@ void testKerberosCreatedSectionRemoved(const fs::path& root) {
         require(readFile(main).find("[libdefaults]") != std::string::npos,
                 "the FIC-created section must exist after apply");
     }
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(report.rollbackCompleted(), "Kerberos disable must succeed");
@@ -1644,7 +1684,7 @@ void testKerberosDriftConflict(const fs::path& root) {
         require(policy.apply(), "Kerberos apply failed");
     }
     writeFile(main, "[libdefaults]\nticket_lifetime = 2h\n", 0644);
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(report.status == fic::rollback::RollbackStatus::Conflict,
@@ -1678,7 +1718,7 @@ void testKerberosForeignIncludeConflict(const fs::path& root) {
         require(output.is_open(), "could not append include directive");
         output << "include " << includeFile.string() << "\n";
     }
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(report.status == fic::rollback::RollbackStatus::Conflict,
@@ -1716,7 +1756,7 @@ void testKerberosMarkersRestoredExactly(const fs::path& root) {
                     "[libdefaults]\n  ticket_lifetime* = 36000s*\n",
                 "the markers and indentation must survive the apply");
     }
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(report.rollbackCompleted(), "Kerberos disable must succeed");
@@ -1753,7 +1793,7 @@ void testKerberosActiveValueTransition(const fs::path& root) {
                     fic::rollback::KerberosBeforeKind::Present &&
                 undo->beforeRawLine == "ticket_lifetime = 8h",
             "the fresh record must carry the restored before-state");
-    const auto report = fic::rollback::rollbackPolicyBeforeDisable(
+    const auto report = historicalRollbackForFixture(
         kKerberosPolicyRef, kKerberosResource,
         kerberosExecutorDeps(kerberosOptions(main, root)));
     require(report.rollbackCompleted(), "Kerberos disable must succeed");

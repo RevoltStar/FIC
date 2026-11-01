@@ -72,6 +72,7 @@ struct SssdVerifiedActivationResult {
 // authority, ownership acquisition, functional login, or runtime-receipt cache.
 SssdVerifiedActivationResult activate(const SssdVerifiedActivationRequest &);
 namespace detail_i3 {
+std::string invocationIdentity(const detail::LaunchContract&);
 bool sameValue(const SemanticValue &, const SemanticValue &);
 void validateExpectations(const EffectiveConfiguration &,
                           const std::vector<SssdSemanticExpectation> &);

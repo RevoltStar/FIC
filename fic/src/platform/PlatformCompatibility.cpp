@@ -160,7 +160,9 @@ bool validateExecutables(const PlatformExecutables& executables,
             id == ExecutableId::Dconf ||
             id == ExecutableId::Gsettings ||
             id == ExecutableId::Sddm || id == ExecutableId::Gdm ||
-            id == ExecutableId::LightDm || id == ExecutableId::PackageQuery) {
+            id == ExecutableId::LightDm || id == ExecutableId::PackageQuery ||
+            id == ExecutableId::Sssd || id == ExecutableId::Sssctl ||
+            id == ExecutableId::Ldbsearch || id == ExecutableId::DbusSend) {
             continue;
         }
         const PlatformExecutableSpec* spec =

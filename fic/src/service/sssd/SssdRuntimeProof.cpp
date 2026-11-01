@@ -16,6 +16,7 @@
 #include <poll.h>
 #include <pwd.h>
 #include <sstream>
+#include <locale>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
@@ -102,6 +103,7 @@ Process process(pid_t pid, const std::string &exe, const d::Identity &db,
   if (end == stat.npos)
     fail(ActivationStatus::ReadinessUnconfirmed, "process stat malformed");
   std::istringstream fields(stat.substr(end + 1));
+  fields.imbue(std::locale::classic());
   std::string field, state;
   for (int i = 3; i <= 22; ++i) {
     if (!(fields >> field))
@@ -135,11 +137,13 @@ Process process(pid_t pid, const std::string &exe, const d::Identity &db,
     fail(ActivationStatus::UnsupportedConfiguration,
          "consumer outside canonical monitor cgroup");
   std::istringstream status(read(path + "/status", 16384));
+  status.imbue(std::locale::classic());
   std::string line;
   bool uid = false, gid = false;
   while (std::getline(status, line))
     if (line.rfind("Uid:", 0) == 0 || line.rfind("Gid:", 0) == 0) {
       std::istringstream values(line.substr(4));
+      values.imbue(std::locale::classic());
       unsigned a, b, c, e;
       if (!(values >> a >> b >> c >> e) || a != b || a != c || a != e)
         fail(ActivationStatus::UnsupportedConfiguration,
@@ -202,22 +206,10 @@ Process process(pid_t pid, const std::string &exe, const d::Identity &db,
     fail(ActivationStatus::ReadinessUnconfirmed,
          "consumer has no descriptor to selected ConfigDB generation");
   bool mapped = false;
-  std::istringstream maps(read(path + "/maps", 1024 * 1024));
-  while (std::getline(maps, line)) {
-    std::istringstream parts(line);
-    std::string range, mode, offset, device, name;
-    unsigned long inode;
-    if (!(parts >> range >> mode >> offset >> device >> inode))
-      continue;
-    std::getline(parts, name);
+  for(const auto& range:parseMappedRanges(read(path+"/maps",1024*1024),"/var/lib/sss/db/config.ldb",true)) {
     struct stat mapping {};
-    // maps reports the backing filesystem device on OverlayFS. Resolve the
-    // kernel mapping object instead of equating that number with stat(2).
-    if (name.find("/var/lib/sss/db/config.ldb") != name.npos &&
-        mode.size() == 4 && mode[3] == 's' &&
-        ::stat((path + "/map_files/" + range).c_str(), &mapping) == 0 &&
-        mapping.st_dev == db.device && mapping.st_ino == db.inode)
-      mapped = true;
+    if(::stat((path+"/map_files/"+range).c_str(),&mapping)==0&&mapping.st_dev==db.device&&mapping.st_ino==db.inode)
+      mapped=true;
   }
   if (!mapped)
     fail(ActivationStatus::ReadinessUnconfirmed,
@@ -591,7 +583,8 @@ std::string proveStoppedConsumers(const SssdLaunchReference& reference, Deadline
       if (::stat(base.c_str(), &st)) { if (errno == ENOENT) continue; fail(ActivationStatus::ReadinessUnconfirmed, "offline process disappeared ambiguously"); }
       const auto text = read(base + "/stat", 8192); const auto end = text.rfind(')');
       if (end == text.npos) fail(ActivationStatus::ReadinessUnconfirmed, "offline process stat malformed");
-      std::istringstream fields(text.substr(end + 1)); std::string state; fields >> state;
+      std::istringstream fields(text.substr(end + 1));
+      fields.imbue(std::locale::classic()); std::string state; fields >> state;
       if (state != "Z" && state != "X" && !read(base + "/cmdline", 8192).empty())
         fail(ActivationStatus::ReadinessUnconfirmed, "offline process executable not proven");
       continue;
@@ -632,11 +625,29 @@ bool validBusOwner(const std::string &owner) {
          dot + 1 < owner.size() &&
          owner.find_first_not_of("0123456789.", 1) == owner.npos;
 }
+std::vector<std::string> parseMappedRanges(const std::string& text,const std::string& path,bool sharedOnly) {
+  std::vector<std::string> out;
+  std::istringstream maps(text);
+  maps.imbue(std::locale::classic());
+  std::string line;
+  while(std::getline(maps,line)) {
+    std::istringstream fields(line);
+    fields.imbue(std::locale::classic());
+    std::string range,mode,offset,device,name;
+    unsigned long inode;
+    if(!(fields>>range>>mode>>offset>>device>>inode))continue;
+    std::getline(fields,name);
+    if(name.find(path)!=name.npos&&(!sharedOnly||(mode.size()==4&&mode[3]=='s')))out.push_back(range);
+  }
+  return out;
+}
+
 DbRecords parseConfigDb(const std::string &text) {
   if (text.size() > 1024 * 1024)
     fail(ActivationStatus::UnsupportedConfiguration, "ConfigDB query limit");
   DbRecords out;
   std::istringstream in(text);
+  in.imbue(std::locale::classic());
   std::string line, dn;
   std::string *last = nullptr;
   while (std::getline(in, line)) {
@@ -768,6 +779,7 @@ nativePreflight(const SssdVerifiedActivationRequest &request,
            "required dormant/lazy PAM responder has no proven initialization "
            "profile");
     std::istringstream services(section->second.at("services").value);
+    services.imbue(std::locale::classic());
     std::string name;
     bool found = false;
     while (std::getline(services, name, ',')) {
@@ -916,6 +928,7 @@ void proveRuntime(const SssdVerifiedActivationRequest &request,
       const auto stat = read("/proc/" + std::to_string(pid) + "/stat", 8192);
       const auto end = stat.rfind(')');
       std::istringstream fields(stat.substr(end + 1));
+      fields.imbue(std::locale::classic());
       std::string state;
       int parent;
       fields >> state >> parent;
@@ -966,21 +979,10 @@ void proveRuntime(const SssdVerifiedActivationRequest &request,
             auto code = d::openAbsolute(path, O_RDONLY);
             const auto id = d::identity(code.get());
             bool mapped = false;
-            std::istringstream lines(maps);
-            std::string line;
-            while (std::getline(lines, line)) {
-              std::istringstream fields(line);
-              std::string a, b, c, dev;
-              unsigned long ino;
-              if (fields >> a >> b >> c >> dev >> ino) {
-                struct stat mapping {};
-                if (line.find(path) != line.npos &&
-                    ::stat(("/proc/" + std::to_string(pid) + "/map_files/" + a)
-                               .c_str(),
-                           &mapping) == 0 &&
-                    mapping.st_ino == id.inode && mapping.st_dev == id.device)
-                  mapped = true;
-              }
+            for(const auto& range:parseMappedRanges(maps,path,false)) {
+              struct stat mapping {};
+              if(::stat(("/proc/"+std::to_string(pid)+"/map_files/"+range).c_str(),&mapping)==0&&
+                 mapping.st_ino==id.inode&&mapping.st_dev==id.device)mapped=true;
             }
             if (!mapped)
               fail(ActivationStatus::ReadinessUnconfirmed,

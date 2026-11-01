@@ -1,3 +1,4 @@
+#include <QIntValidator>
 #include "features/policies/widgets/PolicyEditorWidget.h"
 
 #include <map>
@@ -199,7 +200,8 @@ PolicyEditorWidget::PolicyEditorWidget(
                 QLocalizationManager::getLang(QString::fromStdString(key)));
             name->setWordWrap(true);
 
-            const EditorType type = editorType(policy.editor);
+            const EditorType type = !policy.hasDefault && policy.editor == "spinbox"
+                ? EditorType::LineEdit : editorType(policy.editor);
             const std::string initialValue = policy.valueValid ? policy.value : policy.defaultValue;
             QWidget* valueWidget = nullptr;
             switch (type) {
@@ -222,6 +224,10 @@ PolicyEditorWidget::PolicyEditorWidget(
             }
             case EditorType::LineEdit: {
                 auto* edit = new QLineEdit(QString::fromStdString(initialValue));
+                if (!policy.hasDefault && policy.editor == "spinbox") {
+                    edit->setValidator(new QIntValidator(policy.min, policy.max, edit));
+                    edit->setPlaceholderText(QString::fromStdString(policy.restriction));
+                }
                 edit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
                 valueWidget = edit;
                 break;
@@ -261,7 +267,9 @@ PolicyEditorWidget::PolicyEditorWidget(
             description += "\n--------------------------------\n" +
                 QString::fromStdString(policy.restriction);
             if (!policy.valueValid) {
-                description += "\n--------------------------------\nCurrent config value is invalid; default value is shown.";
+                description += policy.hasDefault
+                    ? "\n--------------------------------\nCurrent config value is invalid; default value is shown."
+                    : "\n--------------------------------\nNo valid value configured; an explicit integer is required before enabling.";
             }
             auto* descriptionWidget = new QTextEdit;
             descriptionWidget->setPlainText(description);
@@ -346,7 +354,7 @@ PolicyEditorWidget::PolicyEditorWidget(
             if (!enabledChanged && !valueChanged) {
                 continue;
             }
-            if (valueChanged) {
+            if (valueChanged || (row.enabled->isChecked() && !row.policy.hasDefault && (!row.policy.isSet || !row.policy.valueValid))) {
                 std::string validationError;
                 if (!validatePolicyDescriptorValue(
                         row.policy, value, validationError)) {

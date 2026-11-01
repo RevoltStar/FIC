@@ -501,6 +501,9 @@ void testEnrollmentMatrix() {
                 {"IDENTITY_ACCESS", "SSSD", "sssd_future_policy"}) ==
                 RollbackEnrollment::Unsupported,
             "unknown future SSSD policies must not be auto-enrolled");
+    for(const auto* name:{"sssd_cache_credentials","sssd_account_cache_expiration"})
+        require(rollbackEnrollment({"IDENTITY_ACCESS","SSSD",name})==RollbackEnrollment::Supported,
+            "I6 SSSD policies must be enrolled explicitly");
     require(rollbackEnrollment({"IDENTITY_ACCESS", "KERBEROS",
                                 "kerberos_ticket_lifetime"}) ==
                 RollbackEnrollment::Supported,
@@ -2889,7 +2892,7 @@ public:
     mutable std::unique_ptr<fic::platform::PlatformExecutableResolver> resolver_;
 };
 
-void testSssdExecutorRollbackRemovesManagedSetting() {
+void testSssdExecutorLegacyRefusesFallback() {
     IdentityConfigTree env;
     writeFile(env.sssdMain(), "[pam]\noffline_credentials_expiration = 7\n");
     ::chmod(env.sssdMain().c_str(), 0600);
@@ -2906,16 +2909,16 @@ void testSssdExecutorRollbackRemovesManagedSetting() {
                                  "30"}});
     const RollbackReport report = rollbackPolicyBeforeDisable(
         kSssdPolicy, "pam/offline_credentials_expiration", env.sssdDeps());
-    require(report.status == RollbackStatus::Success,
-            "sssd executor rollback must succeed: " + report.message);
-    require(!std::filesystem::exists(env.sssdDropIn()),
-            "the semantically empty FIC drop-in must be removed");
+    require(report.status == RollbackStatus::Failed,
+            "legacy SSSD release must refuse production fallback: " + report.message);
+    require(std::filesystem::exists(env.sssdDropIn()),
+            "legacy provenance and managed file must be retained");
     require(readFile(env.sssdMain()) ==
                 "[pam]\noffline_credentials_expiration = 7\n",
             "the foreign sssd.conf must remain byte-for-byte unchanged");
 }
 
-void testSssdExecutorDriftConflictRefusesDisable() {
+void testSssdExecutorLegacyDriftRefusesDisable() {
     IdentityConfigTree env;
     writeFile(env.sssdMain(), "[pam]\noffline_credentials_expiration = 7\n");
     ::chmod(env.sssdMain().c_str(), 0600);
@@ -2932,8 +2935,8 @@ void testSssdExecutorDriftConflictRefusesDisable() {
                                  "30"}});
     const RollbackReport report = rollbackPolicyBeforeDisable(
         kSssdPolicy, "pam/offline_credentials_expiration", env.sssdDeps());
-    require(report.status == RollbackStatus::Conflict,
-            "sssd executor drift must Conflict");
+    require(report.status == RollbackStatus::Failed,
+            "legacy SSSD release must fail closed before mutation");
     require(!report.rollbackCompleted(),
             "a Conflict must refuse the policy disable");
     require(readFile(env.sssdDropIn()).find(
@@ -3183,10 +3186,10 @@ int main(int argc, char** argv) {
          testManagedProviderOrphanWrapperIsConflict},
         {"legacy capability policy stays with capability inspector",
          testLegacyCapabilityPolicyStaysWithCapabilityInspector},
-        {"sssd executor rollback removes managed setting",
-         testSssdExecutorRollbackRemovesManagedSetting},
-        {"sssd executor drift conflict refuses disable",
-         testSssdExecutorDriftConflictRefusesDisable},
+        {"sssd executor retains legacy ownership without fallback",
+         testSssdExecutorLegacyRefusesFallback},
+        {"sssd executor refuses legacy drift without writes",
+         testSssdExecutorLegacyDriftRefusesDisable},
         {"kerberos executor rollback restores exact line",
          testKerberosExecutorRollbackRestoresExactLine},
         {"kerberos executor drift conflict refuses disable",

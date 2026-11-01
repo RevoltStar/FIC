@@ -14,17 +14,12 @@ std::string PolicyTypeValue::getDefaultValue() {
     return this->defaultValue;
 }
 
-/*
-IntPolicyTypeValue::IntPolicyTypeValue(int _min, int _max)
-    : PolicyTypeValue() {
-    if (_min >= _max){
-        throw std::invalid_argument("MAX должен быть больше MIN");
-    }
-    min = _min;
-    max = _max;
-    this->defaultValue = _min;
+IntPolicyTypeValue::IntPolicyTypeValue(int minimum, int maximum)
+    : PolicyTypeValue(), min(minimum), max(maximum) {
+    if (minimum >= maximum) throw std::invalid_argument("MAX must exceed MIN");
+    defaultPresent = false;
 }
-*/
+
 IntPolicyTypeValue::IntPolicyTypeValue(int _min, int _max, int _defaultValue)
     : PolicyTypeValue() {
     if (_min >= _max){
@@ -48,6 +43,11 @@ PolicyEditorSpec IntPolicyTypeValue::getEditorSpec() const {
 }
 
 bool IntPolicyTypeValue::validate(const std::string& value) {
+    if (!defaultPresent) {
+        int number=0;
+        const auto parsed=std::from_chars(value.data(),value.data()+value.size(),number);
+        return !value.empty()&&parsed.ec==std::errc{}&&parsed.ptr==value.data()+value.size()&&number>=min&&number<=max;
+    }
     if (value.empty()) {
         std::cerr << "Ошибка: пустая строка\n";
         return false;

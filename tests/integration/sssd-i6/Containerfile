@@ -1,0 +1,24 @@
+# Disposable native FIC packages + SSSD validation only; never production deps.
+ARG BASE_IMAGE=fic-sssd-i3:debian12
+FROM ${BASE_IMAGE}
+ENV DEBIAN_FRONTEND=noninteractive container=docker
+RUN apt-get update && if test -f /etc/altlinux-release; then \
+    apt-get install -y qt6-base-devel libsqlite3-devel libpam0-devel libgio-devel rpm-build udev nftables sudo libnotify notify-send git file; \
+  else apt-get install -y --no-install-recommends qt6-base-dev libsqlite3-dev libpam0g-dev libglib2.0-dev udev nftables sudo libnotify-bin git file dpkg-dev; fi && apt-get clean
+RUN apt-get update && apt-get install -y gdb strace && apt-get clean
+# Reuse the existing native package fixture's readonly-sysfs udev contract.
+# Native udev control is needed; coldplug of the shared kernel is forbidden.
+RUN mkdir -p /etc/systemd/system/sysinit.target.wants /etc/systemd/system/sockets.target.wants && \
+    ln -sf /dev/null /etc/systemd/system/systemd-udev-trigger.service && \
+    for unit in systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket; do \
+      mkdir -p /etc/systemd/system/$unit.d; \
+      printf '[Unit]\nConditionPathIsReadWrite=\n' > /etc/systemd/system/$unit.d/readonly-test.conf; \
+    done && \
+    for unit in systemd-udevd.service systemd-udevd-control.socket systemd-udevd-kernel.socket; do \
+      target=sockets.target; test "$unit" != systemd-udevd.service || target=sysinit.target; \
+      test -f /usr/lib/systemd/system/$unit; \
+      ln -sf /usr/lib/systemd/system/$unit /etc/systemd/system/$target.wants/$unit; \
+    done
+COPY runtime-init.sh /usr/local/bin/fic-sssd-i6-init
+RUN chmod 755 /usr/local/bin/fic-sssd-i6-init
+CMD ["/usr/local/bin/fic-sssd-i6-init"]

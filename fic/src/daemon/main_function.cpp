@@ -10,6 +10,8 @@
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "modules/identity_access/sssd/policies/SssdOfflineCredentialsExpirationPolicy.h"
+#include "modules/identity_access/sssd/policies/SssdCacheCredentialsPolicy.h"
+#include "modules/identity_access/sssd/policies/SssdAccountCacheExpirationPolicy.h"
 #include "modules/net/ssh/Ssh.h"
 #include "modules/sysctl/Sysctl.h"
 #include "policy/registry/PolicyRegistryInitialization.h"
@@ -327,6 +329,11 @@ bool enable(PolicyRegistry& policyRegistry, std::string module, std::string poli
             std::cout << "Не удалось загрузить конфигурационный файл" << '\n';
             return false;
         }
+        std::string valueError;
+        if (!concretePolicy->validateValueBeforeEnable(mcfh, valueError)) {
+            std::cout << valueError << '\n';
+            return false;
+        }
         if(!mcfh.enablePolicy(policy)){
             std::cout << "Не удалось включить параметр" << '\n';
             return false;
@@ -545,6 +552,8 @@ bool initPolicyRegistry(
     // Identity and access: SSSD, Kerberos and NSS
     cafArr.push_back(
         std::make_unique<SssdOfflineCredentialsExpirationPolicy>(executables));
+    cafArr.push_back(std::make_unique<SssdCacheCredentialsPolicy>());
+    cafArr.push_back(std::make_unique<SssdAccountCacheExpirationPolicy>());
     cafArr.push_back(std::make_unique<KerberosTicketLifetimePolicy>());
 
     // Identity and access: login.defs and local password aging

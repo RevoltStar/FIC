@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Current-source I5 retained gates; no privileged operations in CTest."""
+"""Historical accepted I5 gates; current production I6 has separate evidence."""
 import ast,gzip,hashlib,importlib.util,json,subprocess
 from pathlib import Path
 HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
@@ -9,7 +9,11 @@ m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 e=json.loads((HERE/'evidence.json').read_text())
 assert e['schema']=='sssd-i5-native-v1' and e['base']=='be53994aca09959965aa7e13ad328989147fe265'
 assert e['verified_release'] and not e['policy_integration'] and not e['production_disable_acknowledgement']
-assert e['source_sha256']==m.manifest(),'current native sources changed; rerun I5 matrix'
+# Preserve the accepted I5 source-bound specimen; do not rewrite its reports
+# or claim these historical observations validate current I6 production code.
+for path,h in e['source_sha256'].items():
+ data=subprocess.check_output(['git','-c','safe.directory='+str(ROOT),'-C',str(ROOT),'show','4717cfd4af6df9297b1a6234759258a415dcea34:'+path])
+ assert sha(data)==h,path
 assert set(e['profiles'])=={'debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11'}
 positives=('single-active-last','three-release-offline','three-release-cache','three-release-account',
  'two-release-max','two-release-last','multi-cache-release','offline-last','offline-survivor',
@@ -91,4 +95,4 @@ assert x['engine']['primary']=='InterferenceDetected' and x['engine']['status']=
 assert diagnostic['outcome']['diagnostic']=='mount namespace event before commit'
 for p in HERE.glob('*.py'):ast.parse(p.read_text())
 subprocess.run(['bash','-n',str(HERE/'run-native.sh')],check=True)
-print('I5 current-source five-platform release/offline/crash gates PASS; retained evidence only, no containers started')
+print('Historical I5 five-platform release/offline/crash gates PASS; retained evidence only, no containers started')

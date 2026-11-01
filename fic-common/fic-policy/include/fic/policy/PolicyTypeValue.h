@@ -23,12 +23,14 @@ struct PolicyEditorSpec {
 class PolicyTypeValue{
 protected:
     std::string defaultValue;
+    bool defaultPresent = true;
 public:
     PolicyTypeValue();
     virtual ~PolicyTypeValue() = default;
 
     //Дать значение по умолчанию
     std::string getDefaultValue();
+    bool hasDefaultValue() const { return defaultPresent; }
     virtual PolicyEditorSpec getEditorSpec() const = 0;
 
     virtual bool validate(const std::string& value) = 0;
@@ -44,7 +46,7 @@ class IntPolicyTypeValue : public PolicyTypeValue{
     int min;
     int max;
 public:
-    /*IntPolicyTypeValue(int _min, int _max);*/
+    IntPolicyTypeValue(int _min, int _max);
     IntPolicyTypeValue(int _min, int _max, int _defaultValue);
 
     PolicyEditorSpec getEditorSpec() const override;

@@ -53,16 +53,39 @@ inline std::optional<SssdContainerWitness> parseContainer(const J& j) {
     if(j.is_null())return {};
     return SssdContainerWitness{number(j,"sequence"),number(j,"release_id"),parseImage(j.at("publication"))};
 }
-inline J release(const SssdReleaseDetails& d) {
+inline J runtimeReceipt(const std::optional<SssdReleaseRuntimeReceipt>& receipt) {
+    if(!receipt)return nullptr;
+    J processes=J::array();
+    for(const auto& p:receipt->processes)processes.push_back({{"pid",p.pid},{"parent",p.parent},{"uid",p.uid},{"gid",p.gid},
+        {"role",p.role},{"domain",p.domain},{"start_token",p.startToken},{"executable",p.executable},
+        {"consumer_socket",p.consumerSocket},{"monitor_socket",p.monitorSocket}});
+    return {{"invocation",receipt->invocation},{"configdb_generation",receipt->configDbGeneration},
+        {"native_code",receipt->nativeCode},{"processes",processes}};
+}
+inline std::optional<SssdReleaseRuntimeReceipt> parseRuntimeReceipt(const J& j) {
+    if(j.is_null())return {};
+    SssdReleaseRuntimeReceipt out;
+    out.invocation=j.at("invocation").get<std::string>();out.configDbGeneration=j.at("configdb_generation").get<std::string>();
+    out.nativeCode=j.at("native_code").get<std::map<std::string,std::string>>();
+    const auto& processes=j.at("processes");
+    if(!processes.is_array()||processes.size()>260)throw std::invalid_argument("SSSD runtime receipt process bound");
+    for(const auto& p:processes)out.processes.push_back({small(p,"pid"),small(p,"parent"),small(p,"uid"),small(p,"gid"),
+        p.at("role").get<std::string>(),p.at("domain").get<std::string>(),p.at("start_token").get<std::string>(),
+        p.at("executable").get<std::string>(),small(p,"consumer_socket"),small(p,"monitor_socket")});
+    return out;
+}
+inline J release(const SssdReleaseDetails& d, std::uint32_t version=2) {
     J survivors=J::array();for(const auto& o:d.survivors)
         survivors.push_back({{"id",o.id},{"policy",o.policy},{"state",state(o.state)},{"container",container(o.container)}});
-    return {{"intent",d.intent==SssdReleaseIntent::ReleaseOnly?"release_only":"disable_release"},
+    J out={{"intent",d.intent==SssdReleaseIntent::ReleaseOnly?"release_only":"disable_release"},
         {"survivors",survivors},{"remaining",assignments(d.remaining)},{"target_absent",d.targetAbsent},
         {"offline",d.offline},{"offline_verified",d.offlineVerified},{"ownership_generation",d.ownershipGeneration},
         {"service_before",d.serviceBefore},{"service_after",d.serviceAfter},{"staged_path",d.stagedPath},
         {"disable_generation",d.disableGeneration},{"released_graph_fingerprint",d.releasedGraphFingerprint}};
+    if(version==3)out["runtime_receipt"]=runtimeReceipt(d.runtimeReceipt);
+    return out;
 }
-inline SssdReleaseDetails parseRelease(const J& j) {
+inline SssdReleaseDetails parseRelease(const J& j, std::uint32_t version=2) {
     SssdReleaseDetails d;
     if(j.at("intent")=="release_only")d.intent=SssdReleaseIntent::ReleaseOnly;
     else if(j.at("intent")=="disable_release")d.intent=SssdReleaseIntent::DisableRelease;
@@ -73,11 +96,15 @@ inline SssdReleaseDetails parseRelease(const J& j) {
     d.offline=j.at("offline").get<bool>();d.offlineVerified=j.at("offline_verified").get<bool>();
     d.ownershipGeneration=j.at("ownership_generation").get<std::string>();d.serviceBefore=j.at("service_before").get<std::string>();
     d.serviceAfter=j.at("service_after").get<std::string>();d.stagedPath=j.at("staged_path").get<std::string>();
-    d.disableGeneration=j.at("disable_generation").get<std::string>();d.releasedGraphFingerprint=j.at("released_graph_fingerprint").get<std::string>();return d;
+    d.disableGeneration=j.at("disable_generation").get<std::string>();d.releasedGraphFingerprint=j.at("released_graph_fingerprint").get<std::string>();
+    if(version==3)d.runtimeReceipt=parseRuntimeReceipt(j.at("runtime_receipt"));
+    else if(j.contains("runtime_receipt"))throw std::invalid_argument("legacy SSSD release cannot contain runtime receipt");
+    return d;
 }
 inline J encode(const SssdJournalOwnership& own) {
     const bool v2=own.container||(own.transition&&own.transition->release);
-    J j={{"version",v2?2u:1u},{"current",state(own.current)},{"transition",nullptr}};
+    const auto version=own.transition&&own.transition->version==3?3u:(v2?2u:1u);
+    J j={{"version",version},{"current",state(own.current)},{"transition",nullptr}};
     if(v2)j["container"]=container(own.container);
     if(own.transition) {
         const auto& t=*own.transition;
@@ -88,15 +115,15 @@ inline J encode(const SssdJournalOwnership& own) {
             {"publication_durable",t.publicationDurable},{"activation_possible",t.activationPossible},
             {"a",t.a},{"b",t.b},{"c",t.c},{"p",t.p},{"clean",t.clean},
             {"residuals",t.residuals},{"cleanup_errors",t.cleanupErrors},{"runtime_facts",t.runtimeFacts}};
-        if(t.release)j["transition"]["release"]=release(*t.release);
+        if(t.release)j["transition"]["release"]=release(*t.release,t.version);
     }
     return j;
 }
 inline SssdJournalOwnership decode(const J& j) {
     const auto version=number(j,"version");
-    if(version!=1&&version!=2)throw std::invalid_argument("unknown SSSD ownership version");
+    if(version!=1&&version!=2&&version!=3)throw std::invalid_argument("unknown SSSD ownership version");
     SssdJournalOwnership out;out.current=parseState(j.at("current"));
-    if(version==2)out.container=parseContainer(j.at("container"));
+    if(version>=2)out.container=parseContainer(j.at("container"));
     else if(j.contains("container"))throw std::invalid_argument("I4 version 1 cannot contain handoff authority");
     if(!j.at("transition").is_null()) {
         const auto& v=j.at("transition");SssdOwnershipTransition t;
@@ -113,11 +140,12 @@ inline SssdJournalOwnership decode(const J& j) {
         t.residuals=v.at("residuals").get<std::vector<std::string>>();t.cleanupErrors=v.at("cleanup_errors").get<std::vector<std::string>>();
         t.runtimeFacts=v.at("runtime_facts").get<std::map<std::string,std::string>>();
         if(v.contains("release")) {
-            if(version!=2)throw std::invalid_argument("I4 version 1 cannot contain release intent");
-            t.release=parseRelease(v.at("release"));
+            if(version<2||t.version!=version)throw std::invalid_argument("SSSD release version mismatch");
+            t.release=parseRelease(v.at("release"),t.version);
         }
         out.transition=std::move(t);
     }
+    if(version==3&&(!out.transition||!out.transition->release))throw std::invalid_argument("SSSD v3 requires release");
     return out;
 }
 inline bool validImage(const SssdImageWitness& w) {
@@ -166,7 +194,7 @@ inline std::string rendered(const std::vector<SssdAssignment>& as) {
 inline bool validReleaseRecord(const MutationRecord& r,const SssdJournalOwnership& o,std::string& error) {
     auto fail=[&](){error="Invalid SSSD I5 release identity/projection/proof";return false;};
     const auto& t=*o.transition;const auto& d=*t.release;
-    if(t.version!=2||!t.targetScope.empty()||t.previous.assignments.empty()||state(o.current)!=state(t.previous)||!t.target.empty()||
+    if((t.version!=2&&t.version!=3)||!t.targetScope.empty()||t.previous.assignments.empty()||state(o.current)!=state(t.previous)||!t.target.empty()||
        !validState(t.previous,r.policy.policyName,false)||t.sequence<=sequence(o)||!t.before.present||!validImage(t.before)||!validImage(t.publication)||
        !fic::core::ContentDigest::isCanonicalSha256Hex(t.inputFingerprint)||!fic::core::ContentDigest::isCanonicalSha256Hex(t.targetSha256)||
        !fic::core::ContentDigest::isCanonicalSha256Hex(d.ownershipGeneration)||!fic::core::ContentDigest::isCanonicalSha256Hex(d.serviceBefore)||
@@ -218,10 +246,53 @@ inline bool validReleaseRecord(const MutationRecord& r,const SssdJournalOwnershi
     if(verified&&(!t.p||!t.clean||!t.residuals.empty()||!t.cleanupErrors.empty()||
        !fic::core::ContentDigest::isCanonicalSha256Hex(d.serviceAfter)||!fic::core::ContentDigest::isCanonicalSha256Hex(d.releasedGraphFingerprint)))return fail();
     if(awaiting&&d.intent!=SssdReleaseIntent::DisableRelease)return fail();
+    if(t.version==2&&d.runtimeReceipt)return fail();
+    if(t.version==3) {
+        if(d.offline&&d.runtimeReceipt)return fail();
+        if(!d.offline&&verified&&!d.runtimeReceipt)return fail();
+        if(d.runtimeReceipt) {
+            const auto& receipt=*d.runtimeReceipt;
+            if(!t.a||!t.b||!t.c||receipt.invocation.empty()||receipt.invocation.size()>128||
+               receipt.configDbGeneration.empty()||receipt.configDbGeneration.size()>1024||receipt.nativeCode.empty()||
+               receipt.nativeCode.size()>32||receipt.processes.empty()||receipt.processes.size()>260||
+               receipt.processes.front().role!="monitor")return fail();
+            std::set<std::uint32_t> pids;
+            for(const auto& p:receipt.processes) {
+                if(!p.pid||p.pid>INT32_MAX||p.parent>INT32_MAX||!pids.insert(p.pid).second||
+                   p.startToken.empty()||p.startToken.size()>64||p.executable.empty()||p.executable.front()!='/'||p.executable.size()>4096||
+                   p.role.empty()||p.role.size()>32||p.domain.size()>256)return fail();
+                if(p.role!="monitor"&&(!p.consumerSocket||!p.monitorSocket))return fail();
+            }
+            for(const auto& [path,pin]:receipt.nativeCode) {
+                if(path.empty()||path.front()!='/'||path.size()>4096||pin.empty()||pin.size()>65536)return fail();
+                auto fingerprint=J::parse(pin,nullptr,false);
+                // I1's closed native precommands retain alias observations
+                // around the same file fingerprint. Preserve that existing
+                // representation; live acknowledgement still compares the
+                // complete original pin with nativePreflight's exact map.
+                if(path=="/bin/sh"||path=="/bin/chmod"||path=="/bin/chown") {
+                    if(!fingerprint.is_object()||!fingerprint.contains("aliases")||!fingerprint.at("aliases").is_array()||
+                       fingerprint.at("aliases").size()>2||!fingerprint.contains("source")||!fingerprint.at("source").is_string())return fail();
+                    for(const auto& alias:fingerprint.at("aliases"))
+                        if(!alias.is_array()||alias.size()!=11||!alias.back().is_string()||alias.back().get<std::string>().size()>4096)return fail();
+                    fingerprint=J::parse(fingerprint.at("source").get<std::string>(),nullptr,false);
+                }
+                if(fingerprint.is_discarded()||!fingerprint.is_object()||!fingerprint.contains("file")||
+                   !fingerprint.at("file").is_array()||fingerprint.at("file").size()!=11||
+                   !fingerprint.at("file").back().is_string()||
+                   !fic::core::ContentDigest::isCanonicalSha256Hex(fingerprint.at("file").back().get<std::string>()))return fail();
+            }
+            const auto invocation=t.runtimeFacts.find("new_invocation"),generation=t.runtimeFacts.find("configdb");
+            if(invocation==t.runtimeFacts.end()||generation==t.runtimeFacts.end()||
+               invocation->second!=receipt.invocation||generation->second!=receipt.configDbGeneration)return fail();
+        }
+    }
     // I5 cannot authenticate administrative registry/config generations.
     // Reserve the field, but reject fabricated terminal disable documents too,
     // not merely the public transition call. I6 must supply the real contract.
-    if((complete&&d.intent==SssdReleaseIntent::DisableRelease)||!d.disableGeneration.empty())return fail();
+    if(complete&&d.intent==SssdReleaseIntent::DisableRelease) {
+        if(t.version!=3||!fic::core::ContentDigest::isCanonicalSha256Hex(d.disableGeneration))return fail();
+    } else if(!d.disableGeneration.empty())return fail();
     return true;
 }
 inline bool validRecord(const MutationRecord& r,std::string& error) {

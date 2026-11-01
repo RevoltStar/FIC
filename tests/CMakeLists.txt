@@ -2252,6 +2252,7 @@ add_executable(identity_policy_hierarchy_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordMinLengthPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordQualityPolicies.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/policies/SssdCacheCredentialsPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/nss/NssPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
@@ -2475,10 +2476,10 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdPolicy.cpp
+    fic/modules/identity_access/sssd/LegacySssdPolicyBase.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdRuntime.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/policies/SssdOfflineCredentialsExpirationPolicy.cpp
+    fic/modules/identity_access/sssd/LegacySssdPolicyFixture.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/kerberos/KerberosRollback.cpp
@@ -3359,3 +3360,58 @@ if(Python3_Interpreter_FOUND)
         ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i5/check-evidence.py)
     set_tests_properties(sssd_i5_evidence_checks PROPERTIES LABELS "unit;integration")
 endif()
+
+# RollbackDispatcher's production SSSD route uses the same coordinator as
+# policies. Compile its test support once, without Docker/native side effects.
+add_library(fic-sssd-integration-test-support STATIC
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdTransactionCoordinator.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/service/sssd/SssdRuntimeProof.cpp
+    ${FIC_SSSD_I1_SOURCES} ${FIC_SSSD_I2_SOURCES} ${FIC_VERIFIED_CONFIG_SOURCES})
+target_include_directories(fic-sssd-integration-test-support PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(fic-sssd-integration-test-support PUBLIC fic-core fic-policy fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+get_property(fic_sssd_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(fic_sssd_target IN LISTS fic_sssd_targets)
+    get_target_property(fic_sssd_sources ${fic_sssd_target} SOURCES)
+    foreach(fic_sssd_source IN LISTS fic_sssd_sources)
+        if(fic_sssd_source MATCHES "/RollbackExecutor.cpp$")
+            target_link_libraries(${fic_sssd_target} PRIVATE fic-sssd-integration-test-support)
+            break()
+        endif()
+    endforeach()
+endforeach()
+
+add_executable(sssd_production_policy_tests fic/service/SssdProductionPolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/policies/SssdOfflineCredentialsExpirationPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/policies/SssdCacheCredentialsPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/policies/SssdAccountCacheExpirationPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp)
+target_include_directories(sssd_production_policy_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sssd_production_policy_tests PRIVATE fic-sssd-integration-test-support)
+add_test(NAME sssd_production_policy_tests COMMAND sssd_production_policy_tests)
+set_tests_properties(sssd_production_policy_tests PROPERTIES LABELS unit)
+
+add_executable(policy_no_default_editor_tests fic-gui/policies/PolicyNoDefaultEditorTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/widgets/PolicyEditorWidget.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/models/PolicyDescriptor.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/models/ModuleDescriptor.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/services/PolicyService.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/shared/i18n/QLocalizationManager.cpp)
+target_include_directories(policy_no_default_editor_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-gui/src)
+target_link_libraries(policy_no_default_editor_tests PRIVATE Qt${QT_VERSION_MAJOR}::Widgets fic-ipc fic-core)
+add_test(NAME policy_no_default_editor_tests COMMAND policy_no_default_editor_tests)
+set_tests_properties(policy_no_default_editor_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;FIC_SOCKET_PATH=/tmp/fic-i6-no-daemon.sock" LABELS unit)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME sssd_i6_evidence_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i6/check-evidence.py)
+    set_tests_properties(sssd_i6_evidence_checks PROPERTIES LABELS "unit;integration")
+endif()
+
+target_link_libraries(identity_policy_hierarchy_tests PRIVATE fic-sssd-integration-test-support)

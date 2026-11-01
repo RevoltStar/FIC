@@ -92,6 +92,7 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
     deps.pamPasswordRequestedState=[](bool& quality,bool& history,std::string&){quality=false;history=false;return true;};
     deps.sshRequestedState=[](const std::string&,auto& selected,std::string&){selected.clear();return true;};
     deps.sshReleaseContext=SshReleaseContext::Uninstall;
+    deps.sssdUninstall=true;
     deps.pamManagerFactory=[&](const fic::platform::PamCapabilityConfig& capability,
         const std::vector<std::string>& services,std::string& detail){
         return fic::identity::pam::createPamTopologyManager(platform.pam,capability,services,executables,detail);
@@ -189,14 +190,6 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
                         const bool absent=fic::firewall::FirewallBackend(executables).provePolicyAbsent(ref.policyName,detail);
                         results.push_back({{"policy",formatPolicyRef(ref)},{"status",absent?"NOTHING_TO_RELEASE":"FAILED"},{"message",detail}});
                         node.ok&=absent;continue;
-                    }
-                    if(journal->activeRecords(ref).empty()&&ref.moduleName=="IDENTITY_ACCESS"&&ref.submoduleName=="SSSD") {
-                        bool absent=false;std::string detail;
-                        if(!deps.sssdOptions||!fic::identity::sssd::proveManagedSnippetAbsent(deps.sssdOptions().configuration,absent,detail)) {
-                            results.push_back({{"policy",formatPolicyRef(ref)},{"status","FAILED"},{"message",detail}});
-                            node.ok=false;continue;
-                        }
-                        if(absent){results.push_back({{"policy",formatPolicyRef(ref)},{"status","NOTHING_TO_RELEASE"}});continue;}
                     }
                     // Preserve ordinary disable semantics while making bulk
                     // no-owner SYSCTL reports account for the artifact itself,

@@ -61,6 +61,17 @@ int main()
     assert(!validatePolicyDescriptorValue(policies.front(), "61", error));
     assert(error.find("outside allowed range") != std::string::npos);
 
+    auto unsetInteger = validDescriptor();
+    unsetInteger["default_value"] = nullptr;
+    unsetInteger["set"] = false; unsetInteger["value_valid"] = false;
+    unsetInteger["value"] = ""; unsetInteger["enabled"] = false;
+    assert(parseOne(unsetInteger, policies, error));
+    assert(!policies.front().hasDefault && policies.front().defaultValue.empty() && !policies.front().isSet);
+    assert(!validatePolicyDescriptorValue(policies.front(), "", error));
+    assert(validatePolicyDescriptorValue(policies.front(), "0", error));
+    unsetInteger["default_value"] = 0;
+    assert(!parseOne(unsetInteger, policies, error));
+
     auto textDescriptor = validDescriptor();
     textDescriptor["policy"] = "user_default_shell";
     textDescriptor["editor"] = "lineedit";

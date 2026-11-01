@@ -16,7 +16,7 @@
 #include "modules/identity_access/pam/policies/PamPasswdqcPolicies.h"
 #include "modules/identity_access/pam/policies/PamPasswordMinLengthPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordQualityPolicies.h"
-#include "modules/identity_access/sssd/SssdPolicy.h"
+#include "modules/identity_access/sssd/policies/SssdCacheCredentialsPolicy.h"
 
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/MutationJournal.h"
@@ -302,25 +302,6 @@ public:
 
 private:
     bool applyPam(const std::string& expectedValue) override {
-        observed = expectedValue;
-        return true;
-    }
-};
-
-class DummySssdPolicy final : public SssdPolicy {
-public:
-    DummySssdPolicy() {
-        initializeDummyPolicy(*this);
-        policyTypeValue =
-            std::make_unique<FixedPolicyTypeValue>("expected");
-    }
-
-    std::string observed;
-
-private:
-    bool applySssd(
-        fic::identity::sssd::SssdConfiguration&,
-        const std::string& expectedValue) override {
         observed = expectedValue;
         return true;
     }
@@ -1885,7 +1866,7 @@ int main() {
                     history.dependencies().size() == 1 &&
                     quality.dependencies().empty(),
                 "PAM option dependency mapping contains duplicates");
-        DummySssdPolicy sssd;
+        SssdCacheCredentialsPolicy sssd;
         DummyKerberosPolicy kerberos;
         DummyNssPolicy nss;
         std::vector<std::string> observedValues;
@@ -1916,7 +1897,10 @@ int main() {
                 !countingPeriod.validate("86401") &&
                 !countingPeriod.validate("not-a-number"),
             "counting-period policy validation is incorrect");
-        requireLeaf(sssd, "SSSD");
+        require(sssd.moduleName=="IDENTITY_ACCESS"&&sssd.submoduleName=="SSSD"&&
+                    sssd.getValue()==std::optional<std::string>("true"),
+                "production SSSD policy keeps shared hierarchy/value metadata");
+        require(!sssd.apply(),"production SSSD cannot invoke a legacy leaf hook without its authoritative registry");
         requireLeaf(kerberos, "KERBEROS");
         requireLeaf(nss, "NSS");
         require(

@@ -47,6 +47,8 @@ protected:
         const PolicyRef& policy,
         const PolicyDependencyCondition& condition);
 public:
+    const PolicyRegistry* ownerRegistry() const { return registry_; }
+
     // Prove that cached policy intent still comes from the current config.
     // Read-only; does not reload/mutate registry or create missing configs.
     bool captureConfigurationVersion(std::string& path, AtomicTargetState& state,
@@ -124,6 +126,18 @@ public:
             return policyTypeValue->getDefaultValue();
         }
         throw std::runtime_error("policyTypeValue не был установлен. Требуются правки кода");
+    }
+
+    // Existing defaulted policy enable semantics are unchanged. A no-default
+    // policy requires an explicitly configured, valid value before ENABLE write.
+    bool validateValueBeforeEnable(const ModuleConfigFileHandler& config, std::string& error) {
+        if (policyTypeValue->hasDefaultValue()) return true;
+        if (!config.hasConfiguredValue(policyName) ||
+            !validate(reverse_postprocessingValue(config.getPolicyValue(policyName)))) {
+            error = "explicit valid value required before enabling " + policyName;
+            return false;
+        }
+        return true;
     }
 
     //Включена ли указанная политика?
@@ -218,6 +232,7 @@ public:
 
 private:
     friend class PolicyRegistry;
+    const PolicyRegistry* registry_ = nullptr;
 
     void addDependency(
         const PolicyRef& policy,

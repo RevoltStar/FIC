@@ -1,5 +1,7 @@
 #include "service/sssd/SssdTransactionCoordinator.h"
 #include "rollback/SssdJournalPayload.h"
+#include "rollback/SssdDisableProof.h"
+#include <type_traits>
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -9,6 +11,8 @@
 using namespace fic::service::sssd;
 namespace r=fic::rollback;
 namespace j=r::sssd_payload;
+static_assert(!std::is_constructible_v<r::SssdDisableProof,r::MutationId,std::uint64_t,std::string>,
+    "caller cannot manufacture a production disable acknowledgement");
 static void check(bool ok,const std::string& why){if(!ok)throw std::runtime_error(why);}
 static SssdInputReference input(const std::string& providers="ldap") {
     SssdInputReference in;in.launch.profile.platform="debian-12";
@@ -192,6 +196,47 @@ static void releaseJournalTests() {
         release.serviceAfter=release.releasedGraphFingerprint=std::string(64,'c');
         check(journal.advanceSssdRelease(ids[releaseIndex],t,error),"verified release: "+error);
         if(disable) {
+            // I6 stores exactly the successful I3 process observations. The
+            // historical v2 specimen below must remain unchanged/readable.
+            auto current=journal.records().at(releaseIndex);
+            auto& v3=*std::get<r::SssdJournalOwnership>(current.undo.payload).transition;
+            v3.version=3;
+            if(!offline) {
+                r::SssdReleaseRuntimeReceipt receipt;
+                receipt.invocation="release-invocation";receipt.configDbGeneration="configdb-generation";
+                receipt.nativeCode["/usr/sbin/sssd"]=j::J{{"file",j::J::array({1,2,0,0,0755,10,0,0,0,0,std::string(64,'a')})}}.dump();
+                receipt.processes={{100,1,0,0,"monitor","","100:10","/usr/sbin/sssd",0,0},
+                    {101,100,0,0,"backend","a","101:11","/usr/lib/sssd/sssd_be",20,30}};
+                v3.release->runtimeReceipt=receipt;
+                v3.runtimeFacts["new_invocation"]=receipt.invocation;v3.runtimeFacts["configdb"]=receipt.configDbGeneration;
+            }
+            check(j::validRecord(current,error),"v3 verified release valid: "+error);
+            const auto encoded=j::encode(std::get<r::SssdJournalOwnership>(current.undo.payload));
+            check(encoded.at("version")==3&&j::encode(j::decode(encoded))==encoded,"v3 structured receipt roundtrip");
+            if(!offline) {
+                auto wrapped=current;
+                auto& receipt=*std::get<r::SssdJournalOwnership>(wrapped.undo.payload).transition->release->runtimeReceipt;
+                const auto atom=receipt.nativeCode.begin()->second;
+                const auto pin=j::J{{"aliases",j::J::array({j::J::array({1,2,3,4,0,0,0,0,0,0,"usr/bin"})})},{"source",atom}}.dump();
+                for(const auto* path:{"/bin/sh","/bin/chmod","/bin/chown"})receipt.nativeCode[path]=pin;
+                check(j::validRecord(wrapped,error),"I1 native precommand alias/source fingerprints retained: "+error);
+                check(j::encode(j::decode(j::encode(std::get<r::SssdJournalOwnership>(wrapped.undo.payload))))==
+                      j::encode(std::get<r::SssdJournalOwnership>(wrapped.undo.payload)),"native aliases receipt roundtrip");
+                receipt.nativeCode["/usr/bin/ldbsearch"]=pin;
+                check(!j::validRecord(wrapped,error),"alias wrapper cannot be assigned to arbitrary executable");
+                for(const auto mutation:{0,1,2,3}) {
+                    auto forged=current;auto& forgedT=*std::get<r::SssdJournalOwnership>(forged.undo.payload).transition;
+                    auto& receipt=*forgedT.release->runtimeReceipt;
+                    if(mutation==0)receipt.processes.clear();
+                    if(mutation==1)receipt.processes.back().consumerSocket=0;
+                    if(mutation==2)receipt.configDbGeneration="other-generation";
+                    if(mutation==3)forgedT.version=2;
+                    check(!j::validRecord(forged,error),"missing/mismatched/legacy runtime receipt refused");
+                }
+            } else {
+                auto forged=current;std::get<r::SssdJournalOwnership>(forged.undo.payload).transition->release->runtimeReceipt.emplace();
+                check(!j::validRecord(forged,error),"offline cannot manufacture process receipt");
+            }
             check(!journal.completeSssdRelease(ids[releaseIndex],error),"disable cannot terminate from runtime proof");
             t.phase=Phase::ReleasedAwaitingDisable;
             check(journal.advanceSssdRelease(ids[releaseIndex],t,error),"durable awaiting disable");

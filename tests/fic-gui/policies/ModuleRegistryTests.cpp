@@ -23,6 +23,17 @@
 #include <vector>
 
 namespace {
+class ExplicitIntegerPolicy final : public Policy {
+public:
+    ExplicitIntegerPolicy() {
+        moduleName="IDENTITY_ACCESS";submoduleName="SSSD";
+        policyName="sssd_account_cache_expiration";
+        policyTypeValue=std::make_unique<IntPolicyTypeValue>(0,3650);
+        moduleConf=std::make_unique<ModuleConfigFileHandler>(moduleName);
+        moduleConf->loadConfig();
+    }
+    bool apply() override { return false; }
+};
 class UnknownModulePolicy final : public Policy {
 public:
     UnknownModulePolicy()
@@ -70,6 +81,31 @@ int main()
     std::string error;
     assert(fic::core::FicRuntimePaths::initialize(paths, error));
 
+    // No-default integer must remain unset rather than acquiring native zero.
+    std::ofstream(root / "config/IDENTITY_ACCESS.conf")
+        << "_schema_version=1\nsssd_account_cache_expiration.status=DISABLE\n";
+    ExplicitIntegerPolicy unset;
+    assert(!unset.getPolicyTypeValue().hasDefaultValue()&&unset.getDefaultValue().empty());
+    auto descriptor=policyToJson(unset.moduleName,unset.submoduleName,unset.policyName,unset);
+    assert(descriptor["default_value"].is_null()&&!descriptor["set"].get<bool>()&&!descriptor["value_valid"].get<bool>()&&descriptor["value"]=="");
+    ModuleConfigFileHandler config("IDENTITY_ACCESS");assert(config.loadConfig());
+    assert(!unset.validateValueBeforeEnable(config,error));
+    assert(config.getPolicyStatus(unset.policyName)=="DISABLE");
+    for(const std::string value:{"0","60","3650"}) {
+        assert(config.setPolicyValue(unset.policyName,value)&&config.saveConfig());
+        ExplicitIntegerPolicy configured;
+        assert(configured.validateValueBeforeEnable(config,error));
+        assert(configured.getValue()==std::optional<std::string>(value));
+        auto json=policyToJson(configured.moduleName,configured.submoduleName,configured.policyName,configured);
+        assert(json["default_value"].is_null()&&json["value"]==value&&json["value_valid"].get<bool>());
+    }
+    for(const std::string value:{"","-1","3651","true","60days"}) {
+        assert(config.setPolicyValue(unset.policyName,value));
+        assert(!unset.validateValueBeforeEnable(config,error));
+    }
+    IntPolicyTypeValue existing(0,3650,30);
+    assert(existing.hasDefaultValue()&&existing.getDefaultValue()=="30");
+
     PolicyRegistry registry;
     assert(rebuildPolicyRegistry([] {
         PolicyList policies;
@@ -77,6 +113,12 @@ int main()
         policies.push_back(std::make_unique<GLOBAL_lang>());
         return policies;
     }, registry, error));
+    for(const auto& ref:registry.policyRefs())assert(registry.findPolicy(ref)->ownerRegistry()==&registry);
+    PolicyRegistry moved(std::move(registry));
+    for(const auto& ref:moved.policyRefs())assert(moved.findPolicy(ref)->ownerRegistry()==&moved);
+    registry=std::move(moved);
+    for(const auto& ref:registry.policyRefs())assert(registry.findPolicy(ref)->ownerRegistry()==&registry);
+
 
     assert(registry.at("DC").view == ModuleView::Device);
     assert(registry.at("AUDIT").view == ModuleView::Audit);

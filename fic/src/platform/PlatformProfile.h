@@ -36,7 +36,11 @@ enum class ExecutableId {
     Sddm,
     Gdm,
     LightDm,
-    PackageQuery
+    PackageQuery,
+    Sssd,
+    Sssctl,
+    Ldbsearch,
+    DbusSend
 };
 
 struct PlatformExecutableSpec {

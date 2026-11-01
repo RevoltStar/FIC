@@ -1,33 +1,14 @@
-#ifndef FIC_IDENTITY_ACCESS_SSSD_POLICY_H
-#define FIC_IDENTITY_ACCESS_SSSD_POLICY_H
-
+#pragma once
 #include "modules/identity_access/IdentityAccessPolicy.h"
-#include "modules/identity_access/sssd/SssdConfiguration.h"
+#include "service/sssd/SssdTransactionCoordinator.h"
 
-#include <string>
-
+// The only production SSSD policy writer is the I4/I5 coordinator. Legacy
+// configuration/runtime helpers remain for historical provenance tests only.
 class SssdPolicy : public IdentityAccessPolicy {
-public:
-    ~SssdPolicy() override = default;
-    bool apply() final;
-
+    const fic::service::sssd::SssdManagedParameter parameter_;
 protected:
-    explicit SssdPolicy(
-        fic::identity::sssd::SssdConfigurationOptions options =
-            fic::identity::sssd::SssdConfigurationOptions::production());
-
-    virtual bool applySssd(
-        fic::identity::sssd::SssdConfiguration& configuration,
-        const std::string& expectedValue) = 0;
-
-    const fic::identity::sssd::SssdConfigurationOptions&
-    configurationOptions() const {
-        return configurationOptions_;
-    }
-
-private:
-    fic::identity::sssd::SssdConfigurationOptions configurationOptions_;
-    fic::identity::sssd::SssdConfiguration configuration_;
+    explicit SssdPolicy(fic::service::sssd::SssdManagedParameter);
+public:
+    bool apply() final;
+    fic::service::sssd::SssdManagedParameter managedParameter() const { return parameter_; }
 };
-
-#endif // FIC_IDENTITY_ACCESS_SSSD_POLICY_H

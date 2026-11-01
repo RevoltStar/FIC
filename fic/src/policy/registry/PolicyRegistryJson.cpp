@@ -28,7 +28,7 @@ nlohmann::json policyToJson(const std::string& module,
     const PolicyTypeValue& typeValue = policyClass.getPolicyTypeValue();
     const PolicyEditorSpec editorSpec = typeValue.getEditorSpec();
     const bool isSet = policyClass.hasConfiguredValue();
-    bool valueValid = true;
+    bool valueValid = isSet || typeValue.hasDefaultValue();
     std::string value = policyClass.getDefaultValue();
 
     if (isSet) {
@@ -57,7 +57,7 @@ nlohmann::json policyToJson(const std::string& module,
         {"set", isSet},
         {"value", value},
         {"value_valid", valueValid},
-        {"default_value", policyClass.getDefaultValue()},
+        {"default_value", typeValue.hasDefaultValue() ? nlohmann::json(policyClass.getDefaultValue()) : nlohmann::json(nullptr)},
         {"editor", editorSpec.editor},
         {"validator", editorSpec.validator},
         {"possible_values", possibleValues},

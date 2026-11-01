@@ -587,6 +587,8 @@ def main():
         "PamFailedAuthenticationUnlockTimePolicy",
         "PamCapabilityActivationPolicy",
         "SssdOfflineCredentialsExpirationPolicy",
+        "SssdCacheCredentialsPolicy",
+        "SssdAccountCacheExpirationPolicy",
         "KerberosTicketLifetimePolicy",
         "PasswordMinAgeDaysPolicy",
         "PasswordMaxAgeDaysPolicy",
@@ -710,7 +712,6 @@ def main():
             f"{class_name} does not own submodule {submodule_name}",
     )
     for relative_path, editor_name in (
-        ("sssd/SssdPolicy.h", "SssdConfiguration"),
         ("kerberos/KerberosPolicy.h", "KerberosConfiguration"),
         ("nss/NssPolicy.h", "NssConfiguration"),
     ):
@@ -719,6 +720,19 @@ def main():
             editor_name in header,
             f"{relative_path} does not expose its configuration editor",
         )
+    sssd_policy=(identity_root / "sssd/SssdPolicy.cpp").read_text(encoding="utf-8")
+    sssd_header=(identity_root / "sssd/SssdPolicy.h").read_text(encoding="utf-8")
+    require("coordinator.execute(request)" in sssd_policy and "bool apply() final" in sssd_header,
+            "SSSD production policies must use the shared typed transaction coordinator")
+    require("prepareManagedSnippetValue" not in sssd_policy and "SssdRuntime" not in sssd_policy,
+            "production SSSD base must not retain a competing legacy writer")
+    for name in ("sssd_cache_credentials","sssd_account_cache_expiration"):
+        require(name+".status=DISABLE" in identity_config and name+".value=" not in identity_config,
+                "new SSSD policy status/default configuration is incorrect: "+name)
+        for language in ("ru","en"):
+            text=(root/f"fic/src/resources/lang/{language}.lang").read_text(encoding="utf-8")
+            require(f"[module:IDENTITY_ACCESS][policy:{name}][description]=" in text,
+                    "missing new SSSD policy localization: "+language+"/"+name)
     require(
         "ConfigurationParticipant" in composite_header
         and "unique_ptr<IdentityAccessPolicy>" not in composite_header,

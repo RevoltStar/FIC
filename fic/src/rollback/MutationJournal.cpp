@@ -1,5 +1,6 @@
 #include "rollback/MutationJournal.h"
 #include "rollback/SssdJournalPayload.h"
+#include "rollback/SssdDisableProof.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/integrity/ContentDigest.h>
@@ -4503,7 +4504,7 @@ bool MutationJournal::abortSssdNoEffect(MutationId id,std::string& error) {
 bool MutationJournal::beginSssdRelease(MutationId id,const SssdOwnershipTransition& incoming,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSSD release requires healthy witness-aware journal";return false;}
     auto* record=find(id);auto* owner=record?std::get_if<SssdJournalOwnership>(&record->undo.payload):nullptr;
-    if(!owner||record->status!=MutationStatus::Applied||!incoming.release||incoming.version!=2||
+    if(!owner||record->status!=MutationStatus::Applied||!incoming.release||(incoming.version!=2&&incoming.version!=3)||
        incoming.phase!=SssdTransitionPhase::Prepared||
        sssd_payload::state(incoming.previous)!=sssd_payload::state(owner->current)) {
         error="SSSD release requires exact Applied predecessor";return false;
@@ -4549,6 +4550,7 @@ bool MutationJournal::advanceSssdRelease(MutationId id,const SssdOwnershipTransi
         t.residuals.clear();t.cleanupErrors.clear();t.runtimeFacts.clear();
         t.release->offlineVerified=false;t.release->serviceAfter.clear();
         t.release->disableGeneration.clear();t.release->releasedGraphFingerprint.clear();
+        t.release->runtimeReceipt.reset();
         return sssd_payload::encode(SssdJournalOwnership{t.previous,t});
     };
     bool allowed=next.phase==old.phase;
@@ -4570,6 +4572,7 @@ bool MutationJournal::advanceSssdRelease(MutationId id,const SssdOwnershipTransi
        (old.a&&!next.a)||(old.b&&!next.b)||(old.c&&!next.c)||(old.p&&!next.p)||(old.clean&&!next.clean)||
        (old.release->offlineVerified&&!next.release->offlineVerified)||
        (!old.release->serviceAfter.empty()&&old.release->serviceAfter!=next.release->serviceAfter)||
+       (old.release->runtimeReceipt&&sssd_payload::runtimeReceipt(old.release->runtimeReceipt)!=sssd_payload::runtimeReceipt(next.release->runtimeReceipt))||
        (!old.release->releasedGraphFingerprint.empty()&&old.release->releasedGraphFingerprint!=next.release->releasedGraphFingerprint)) {
         error="SSSD release intent/evidence changed or phase regressed";return false;
     }
@@ -4578,6 +4581,12 @@ bool MutationJournal::advanceSssdRelease(MutationId id,const SssdOwnershipTransi
 }
 
 bool MutationJournal::completeSssdRelease(MutationId id,std::string& error) {
+    return completeSssdReleaseImpl(id,nullptr,error);
+}
+bool MutationJournal::acknowledgeSssdDisable(const SssdDisableProof& proof,std::string& error) {
+    return completeSssdReleaseImpl(proof.mutation_,&proof,error);
+}
+bool MutationJournal::completeSssdReleaseImpl(MutationId id,const SssdDisableProof* proof,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSSD release journal unavailable";return false;}
     auto* r=find(id);auto* p=r?std::get_if<SssdJournalOwnership>(&r->undo.payload):nullptr;
     if(!p||!p->transition||!p->transition->release||r->status!=MutationStatus::Prepared) {
@@ -4586,10 +4595,12 @@ bool MutationJournal::completeSssdRelease(MutationId id,std::string& error) {
     const auto& t=*p->transition;const auto& d=*t.release;
     // Administrative acknowledgement needs the real registry/disable flow.
     // I5 deliberately exposes no production path that can manufacture it.
-    if(d.intent!=SssdReleaseIntent::ReleaseOnly||
-       (t.phase!=SssdTransitionPhase::RuntimeVerified&&t.phase!=SssdTransitionPhase::OfflineVerified)) {
-        error="SSSD DisableRelease acknowledgement requires I6 registry integration";return false;
-    }
+    const bool disable=proof&&d.intent==SssdReleaseIntent::DisableRelease&&t.version==3&&
+        t.phase==SssdTransitionPhase::ReleasedAwaitingDisable&&proof->mutation_==id&&proof->sequence_==t.sequence&&
+        fic::core::ContentDigest::isCanonicalSha256Hex(proof->generation_);
+    const bool release=!proof&&d.intent==SssdReleaseIntent::ReleaseOnly&&
+        (t.phase==SssdTransitionPhase::RuntimeVerified||t.phase==SssdTransitionPhase::OfflineVerified);
+    if(!disable&&!release){error="SSSD release requires its typed live administrative acknowledgement";return false;}
     for(const auto& snapshot:d.survivors) {
         auto* sibling=find(snapshot.id);auto* owned=sibling?std::get_if<SssdJournalOwnership>(&sibling->undo.payload):nullptr;
         if(!owned||sibling->status!=MutationStatus::Applied||sibling->policy.policyName!=snapshot.policy||
@@ -4606,7 +4617,7 @@ bool MutationJournal::completeSssdRelease(MutationId id,std::string& error) {
         owned.container=SssdContainerWitness{t.sequence,id,t.publication};
         sibling->updatedAtEpoch=currentEpochSeconds();
     }
-    p->transition->release->disableGeneration.clear();
+    p->transition->release->disableGeneration=disable?proof->generation_:std::string();
     p->transition->phase=SssdTransitionPhase::Completed;
     r->status=MutationStatus::RolledBack;r->updatedAtEpoch=currentEpochSeconds();
     return persistSssdChange(previous,nextId_,error);

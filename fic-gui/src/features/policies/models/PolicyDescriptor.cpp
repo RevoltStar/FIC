@@ -83,7 +83,6 @@ bool parsePolicyDescriptors(
                 {"set", nlohmann::json::value_t::boolean},
                 {"value_valid", nlohmann::json::value_t::boolean},
                 {"value", nlohmann::json::value_t::string},
-                {"default_value", nlohmann::json::value_t::string},
                 {"restriction", nlohmann::json::value_t::string},
                 {"possible_values", nlohmann::json::value_t::array}
             };
@@ -92,6 +91,9 @@ bool parsePolicyDescriptors(
                     return false;
                 }
             }
+            const auto defaultValue = item.find("default_value");
+            if (defaultValue == item.end() || (!defaultValue->is_string() && !defaultValue->is_null()))
+                return fail(policies, error, "default_value must be a string or explicit null");
             for (const char* field : {"min", "max"}) {
                 const auto value = item.find(field);
                 if (value != item.end() && !value->is_number_integer()) {
@@ -123,7 +125,8 @@ bool parsePolicyDescriptors(
             policy.isSet = item.at("set").get<bool>();
             policy.valueValid = item.at("value_valid").get<bool>();
             policy.value = item.at("value").get<std::string>();
-            policy.defaultValue = item.at("default_value").get<std::string>();
+            policy.hasDefault = !item.at("default_value").is_null();
+            policy.defaultValue = policy.hasDefault ? item.at("default_value").get<std::string>() : std::string();
             policy.restriction = item.at("restriction").get<std::string>();
             if (policy.policyName.empty()) {
                 return fail(policies, error, "descriptor " + std::to_string(index) +

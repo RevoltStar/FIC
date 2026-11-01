@@ -10,6 +10,7 @@
 #include <vector>
 
 namespace fic::rollback {
+class SssdDisableProof;
 
 // Persistent JSON journal of executed FIC mutations.
 //
@@ -205,6 +206,7 @@ public:
     bool beginSssdRelease(MutationId, const SssdOwnershipTransition&, std::string&);
     bool advanceSssdRelease(MutationId, const SssdOwnershipTransition&, std::string&);
     bool completeSssdRelease(MutationId, std::string&);
+    bool acknowledgeSssdDisable(const SssdDisableProof&, std::string&);
     bool beginSshRefresh(MutationId,const UndoRemoveSshManagedPolicy& target,
         const std::string& beforeSha256,const std::string& targetSha256,std::string&);
     bool noteSshPublication(MutationId,const AtomicTargetState&,bool durable,std::string&);
@@ -248,6 +250,7 @@ public:
         std::function<void()> hook);
 
 private:
+    bool completeSssdReleaseImpl(MutationId, const SssdDisableProof*, std::string&);
     // Strict existing-journal load: identical parser/durability flow to
     // load(), except a missing journal is ALWAYS an error — no bootstrap
     // semantics. Used everywhere inside the witness-aware initialization

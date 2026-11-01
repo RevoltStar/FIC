@@ -2,6 +2,7 @@
 #include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
 #include "rollback/UnrecordedResourceInspection.h"
 #include "rollback/RollbackExecutor.h"
+#include "service/sssd/SssdTransactionCoordinator.h"
 #include "rollback/ScopeTransition.h"
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
@@ -111,7 +112,8 @@ bool isSupportedGrubPolicy(const std::string& policyName) {
 // automatically rollback-supported without its own journal integration and
 // undo action.
 bool isSupportedSssdPolicy(const std::string& policyName) {
-    return policyName == "sssd_offline_credentials_expiration";
+    return policyName == "sssd_offline_credentials_expiration"||
+           policyName == "sssd_cache_credentials"||policyName == "sssd_account_cache_expiration";
 }
 
 bool isSupportedKerberosPolicy(const std::string& policyName) {
@@ -519,29 +521,6 @@ MutationRollbackOutcome undoFirewallPolicyMutation(
     return outcome;
 }
 
-MutationRollbackOutcome undoSssdSetting(
-    const RollbackExecutorDeps& deps,
-    const MutationRecord& record,
-    const UndoRemoveSssdManagedSetting& undo) {
-    MutationRollbackOutcome outcome;
-    outcome.id = record.id;
-    outcome.resource = record.resource;
-    if (!deps.sssdOptions) {
-        outcome.status = RollbackStatus::Failed;
-        outcome.message = "SSSD rollback backend не настроен";
-        return outcome;
-    }
-    const SssdRollbackResult result = undoSssdManagedSetting(
-        deps.sssdOptions(), undo);
-    outcome.status = result.conflict
-        ? RollbackStatus::Conflict
-        : (result.nothingToDo ? RollbackStatus::NothingToDo
-                              : (result.ok ? RollbackStatus::Success
-                                           : RollbackStatus::Failed));
-    outcome.message = result.message;
-    return outcome;
-}
-
 MutationRollbackOutcome undoKerberosScalarMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record,
@@ -771,7 +750,10 @@ MutationRollbackOutcome undoMutation(
     if (const auto* sssdSetting =
             std::get_if<UndoRemoveSssdManagedSetting>(&record.undo.payload)) {
         if (record.undo.backend == MutationBackend::Sssd) {
-            return undoSssdSetting(deps, record, *sssdSetting);
+            MutationRollbackOutcome outcome;
+            outcome.id=record.id;outcome.resource=record.resource;outcome.status=RollbackStatus::Failed;
+            outcome.message="Legacy SSSD ownership is retained; no production legacy writer/restart fallback";
+            return outcome;
         }
     }
     if (const auto* kerberosScalar =
@@ -1065,6 +1047,7 @@ RollbackReport checkUnrecordedOwnership(
         return report;
     }
 
+
     if (policy.moduleName == "IDENTITY_ACCESS" &&
         isSharedLoginDefsPolicy(policy)) {
         // Shared /etc/login.defs backend no-record guard: an owned
@@ -1323,49 +1306,6 @@ RollbackReport checkUnrecordedOwnership(
         return report;
     }
     if (policy.moduleName == "IDENTITY_ACCESS" &&
-        policy.submoduleName == "SSSD") {
-        if (resourceHint.empty()) {
-            return provenanceUnavailable(policy);
-        }
-        if (!deps.sssdOptions) {
-            RollbackReport report;
-            report.status = RollbackStatus::Failed;
-            report.message = "SSSD rollback backend не настроен";
-            return report;
-        }
-        SssdRollbackOptions options = deps.sssdOptions();
-        const auto separator = resourceHint.find('/');
-        if (separator == std::string::npos) {
-            return provenanceUnavailable(policy);
-        }
-        const std::string section = resourceHint.substr(0, separator);
-        const std::string option = resourceHint.substr(separator + 1);
-        fic::identity::sssd::SssdConfiguration configuration(
-            options.configuration);
-        fic::identity::sssd::SssdManagedSnippetObservation observed;
-        std::string error;
-        if (!configuration.inspectManagedSnippet(
-                section, option, observed, error)) {
-            RollbackReport report;
-            report.status = RollbackStatus::Failed;
-            report.message =
-                "Не удалось проанализировать SSSD конфигурацию: " + error;
-            return report;
-        }
-        // Provenance for SSSD lives in the FIC-owned drop-in: an option
-        // there without an active journal record is unattributable owned
-        // state and must fail closed.
-        if (observed.optionPresent) {
-            return provenanceUnavailable(policy);
-        }
-        RollbackReport report;
-        report.status = RollbackStatus::NothingToDo;
-        report.message = "Active mutation records отсутствуют; FIC-owned "
-                         "SSSD drop-in не содержит '" +
-            resourceHint + "'";
-        return report;
-    }
-    if (policy.moduleName == "IDENTITY_ACCESS" &&
         policy.submoduleName == "KERBEROS") {
         // Kerberos ownership exists ONLY through an active journal record:
         // without one, FIC owns no ticket_lifetime mutation. A root/external
@@ -1420,6 +1360,39 @@ RollbackReport rollbackPolicyBeforeDisable(
         report.message = journalError.empty()
             ? "Mutation journal недоступен"
             : journalError;
+        return report;
+    }
+
+    if(policy.moduleName=="IDENTITY_ACCESS"&&policy.submoduleName=="SSSD") {
+        namespace s=fic::service::sssd;
+        RollbackReport report;report.status=RollbackStatus::Failed;
+        s::SssdTransactionCoordinator coordinator(*journal);
+        const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);
+        const auto active=journal->activeRecords(policy);
+        if(active.empty()) {
+            if(coordinator.provePolicyUnowned(policy,deadline,report.message))report.status=RollbackStatus::NothingToDo;
+            return report;
+        }
+        if(active.size()!=1||!std::holds_alternative<SssdJournalOwnership>(active.front().undo.payload)) {
+            report.message="Legacy/mixed SSSD ownership cannot be released by I6; provenance retained; explicit administrative resolution required";
+            return report;
+        }
+        const auto& owned=std::get<SssdJournalOwnership>(active.front().undo.payload);
+        if(owned.transition&&owned.transition->release&&owned.transition->phase==SssdTransitionPhase::ReleasedAwaitingDisable) {
+            if(deps.sssdUninstall){report.message="SSSD pending administrative disable must be acknowledged before uninstall";return report;}
+            report.status=RollbackStatus::Success;report.message="SSSD physical release awaits durable DISABLE and acknowledgement";
+            report.outcomes.push_back({active.front().id,active.front().resource,RollbackStatus::Success,report.message,true});
+            return report;
+        }
+        if(!deps.sssdUninstall&&!deps.sssdRegistry) {report.message="current production SSSD registry unavailable";return report;}
+        const auto parameter=policy.policyName=="sssd_cache_credentials"?s::SssdManagedParameter::CacheCredentials:
+            policy.policyName=="sssd_account_cache_expiration"?s::SssdManagedParameter::AccountCacheExpiration:s::SssdManagedParameter::OfflineCredentialsExpiration;
+        const auto released=coordinator.release({policy,parameter,deps.sssdUninstall?SssdReleaseIntent::ReleaseOnly:SssdReleaseIntent::DisableRelease,
+            deadline,deps.sssdRegistry});
+        const bool awaiting=released.status==s::SssdReleaseStatus::ReleasedAwaitingDisable&&released.physicalReleased&&released.durable;
+        if(released.success()||awaiting)report.status=RollbackStatus::Success;
+        report.message=released.diagnostic;
+        report.outcomes.push_back({released.mutation,active.front().resource,report.status,report.message,awaiting});
         return report;
     }
 
@@ -1560,6 +1533,7 @@ RollbackExecutorDeps productionRollbackDeps(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,PolicyRegistry* registry) {
     RollbackExecutorDeps deps;
+    deps.sssdRegistry=registry;
     deps.userCreationPlatform = platform.userCreation;
     deps.passwordAgingPlatform = platform.passwordAging;
     deps.pamPlatform = platform.pam;

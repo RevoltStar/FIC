@@ -40,6 +40,7 @@
 #include "modules/identity_access/pam/PamSlotAttachValidator.h"
 #include "policy/registry/PolicyRegistryJson.h"
 #include "rollback/DaemonMutationJournal.h"
+#include "service/sssd/SssdTransactionCoordinator.h"
 #include "daemon/DaemonInstanceLock.h"
 #include "daemon/UninstallLifecycle.h"
 #include "daemon/InstallationProof.h"
@@ -941,17 +942,35 @@ json handle_request(json request,
                       : fic::ipc::make_error_response("failed to enable policy");
         }
         if (command == "disable_policy") {
-            const fic::daemon::PolicyMutationResult mutation = disable(
+            fic::daemon::PolicyMutationResult mutation = disable(
                 policyRegistry, platform, executables, module, policy);
             if (mutation.ok) {
                 const auto reloadError = reloadRegistryAndGlobalConfig();
                 if (recoveryStatusMutation) return recoveryMutationResponse(reloadError);
                 if (reloadError) {
-                    return fic::ipc::make_error_response(
+                    auto response=fic::ipc::make_error_response(
                         "policy was disabled in configuration, but reconciliation failed: " +
                         reloadError.value());
+                    if(mutation.saved){response["saved"]=*mutation.saved;response["applied"]=false;}
+                    return response;
                 }
                 Policy* const changed=getPolicyClass(policyRegistry,module,policy);
+                if(changed&&changed->moduleName=="IDENTITY_ACCESS"&&changed->submoduleName=="SSSD") {
+                    std::string detail;auto* journal=fic::rollback::DaemonMutationJournal::instance().tryGet(detail);
+                    bool completed=false;
+                    if(journal) {
+                        fic::service::sssd::SssdTransactionCoordinator coordinator(*journal);
+                        const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(60);
+                        completed=journal->activeRecords(changed->policyRef()).empty()?
+                            coordinator.provePolicyUnowned(changed->policyRef(),deadline,detail,&policyRegistry):
+                            coordinator.acknowledgeDisable(changed->policyRef(),policyRegistry,deadline,detail);
+                    }
+                    if(!completed) {
+                        auto response=fic::ipc::make_error_response("DISABLE saved, but SSSD acknowledgement failed; release provenance retained: "+detail);
+                        response["saved"]=true;response["applied"]=false;return response;
+                    }
+                    mutation.applied=true;
+                }
                 if(changed&&changed->moduleName=="NET"&&changed->submoduleName=="SshEdit") {
                     const auto deps=fic::rollback::productionRollbackDeps(platform,executables,&policyRegistry);
                     const auto verified=fic::rollback::rollbackPolicyBeforeDisable(changed->policyRef(),{},deps);

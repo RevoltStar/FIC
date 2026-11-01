@@ -192,6 +192,9 @@ inode, усечение ниже сохранённого offset, рестарт
 стандартного редактора: `module`, `submodule`, `policy`, `enabled`, `set`,
 `value`, `default_value`, `editor`, `validator`, `possible_values`, `restriction` и
 применимые `min`, `max`, `text_delimiter`. `view` здесь не дублируется.
+`default_value` — строка либо `null`, если политика требует явного значения
+и не имеет default. Для unset-политики без default: `set=false`,
+`value_valid=false`, `value=""`; клиент не должен подставлять `0`.
 `editor` определяет вид контрола, а `validator` независимо задаёт клиентскую
 валидацию (`none`, `integer_range`, `unsigned_integer`, `allowed_values`).
 
@@ -543,9 +546,12 @@ root-owned alternatives selector `/usr/bin/sudo`: sudo-rs сопоставляе
   `fail_interval` и `unlock_time`, а
   `failed_authentication_enforce_for_root` — флагом `even_deny_root` активного
   `pam_faillock`;
-- `sssd_offline_credentials_expiration` задаёт срок допустимости offline-login
-  по кешированным credentials в `[pam]`. Если `sssd.service` активен, изменение
-  применяется через restart в одной компенсирующей транзакции с записью файла;
+- SSSD-политики используют единый journal-backed `SssdTransactionCoordinator`:
+  `sssd_offline_credentials_expiration` — `[pam]`, integer 0–3650, default 30;
+  `sssd_cache_credentials` — fixed true для всех выбранных LDAP-доменов;
+  `sssd_account_cache_expiration` — integer 0–3650 без default, ENABLE требует
+  явного значения. Offline→cache — только Recommended. Apply требует уже
+  работающий SSSD и полный verified proof; остановленная служба не запускается;
 - `kerberos_ticket_lifetime` задаёт `ticket_lifetime` в `[libdefaults]` в
   секундах. Уже выданные билеты политика не перевыпускает.
 
@@ -561,11 +567,10 @@ activation и effective verification. При ошибке все начатые 
 между двумя commit потребуется отдельный журнал, которого в текущем каркасе
 нет.
 
-Все leaf- и composite-политики используют один identity-configuration mutex,
-чтобы анализ и изменение PAM/SSSD/Kerberos/NSS не выполнялись конкурентно
-внутри daemon. Базы `SssdPolicy`, `KerberosPolicy` и `NssPolicy` владеют
-соответствующим typed configuration editor и передают его в hook конкретной
-политики.
+PAM/Kerberos/NSS leaf- и composite-политики используют identity-configuration
+mutex. Production `SssdPolicy` использует отдельный общий resource mutex
+координатора I4/I5 для всех трёх SSSD-политик; параллельного legacy writer нет.
+Базы `KerberosPolicy` и `NssPolicy` передают typed editor в hook политики.
 
 Редакторы намеренно различаются по грамматике и не используют общий INI
 парсер:
@@ -586,12 +591,18 @@ activation и effective verification. При ошибке все начатые 
 группу, режим, лимит размера и отсутствие symlink во всей цепочке пути.
 Подготовленное изменение повторно сверяет snapshot непосредственно перед
 атомарной записью и не затирает более позднюю внешнюю правку при rollback.
-Их `set*()` выполняет только file-level transaction: перезапуск SSSD,
-инвалидация кеша и другие runtime-действия являются обязанностью конкретного
-policy participant. `SssdOfflineCredentialsExpirationPolicy` выполняет это
-требование через `SssdRuntime`: неактивная служба не запускается, активная
-перезапускается, а ошибка restart вызывает rollback файла и повторный restart
-с восстановленной конфигурацией.
+Их `set*()` выполняет только file-level transaction. Production SSSD-политики
+не используют legacy `SssdConfiguration`/`SssdRuntime` writer: Apply/REFRESH,
+active/offline release и crash recovery выполняет координатор I1–I5.
+Disable сначала освобождает доказанный ownership, затем сохраняет DISABLE,
+перестраивает registry и повторно проверяет runtime/configuration под общим
+resource mutex. Только после этого завершается journal. Ошибка acknowledgement
+возвращает `saved=true, applied=false`; повторная попытка не удаляет keys снова.
+Legacy Applied/Prepared/RollbackFailed читаются, но production операции отказывают
+без adoption, миграции или удаления истории. Самостоятельно удалять snippet или
+journal ради обхода отказа нельзя; нужен отдельно проверенный административный
+план освобождения старого ownership. Полный контракт и границы source-causal
+runtime proof: [SSSD activation design](../docs/sssd-verified-activation-design.md).
 
 ### Работа с PAM
 

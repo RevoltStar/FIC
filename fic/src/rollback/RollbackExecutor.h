@@ -103,6 +103,8 @@ struct RollbackExecutorDeps {
     // SSSD backend configuration: the FIC-owned drop-in location and the
     // snippet topology come from the current SssdConfigurationOptions.
     std::function<SssdRollbackOptions()> sssdOptions;
+    PolicyRegistry* sssdRegistry=nullptr;
+    bool sssdUninstall=false;
     // Kerberos backend configuration: the root krb5.conf location comes from
     // the current KerberosConfigurationOptions.
     std::function<KerberosRollbackOptions()> kerberosOptions;

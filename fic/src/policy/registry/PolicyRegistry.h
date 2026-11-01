@@ -44,6 +44,14 @@ public:
     using iterator = ModuleMap::iterator;
     using const_iterator = ModuleMap::const_iterator;
 
+    PolicyRegistry() = default;
+    PolicyRegistry(const PolicyRegistry&) = delete;
+    PolicyRegistry& operator=(const PolicyRegistry&) = delete;
+    PolicyRegistry(PolicyRegistry&& other) noexcept { swap(other); }
+    PolicyRegistry& operator=(PolicyRegistry&& other) noexcept {
+        if(this!=&other){clear();swap(other);}return *this;
+    }
+
     bool addModule(
         const std::string& name,
         ModuleView view,
@@ -104,6 +112,7 @@ public:
             return false;
         }
         policy->freezeDependencies();
+        policy->registry_ = this;
         for (const PolicyCapability capability : policy->capabilities()) {
             capabilityPolicies_[capability].push_back(policy.get());
         }
@@ -171,12 +180,17 @@ public:
     void swap(PolicyRegistry& other) noexcept {
         modules_.swap(other.modules_);
         capabilityPolicies_.swap(other.capabilityPolicies_);
+        rebindOwners();other.rebindOwners();
     }
     void clear() { modules_.clear(); capabilityPolicies_.clear(); }
     bool empty() const { return modules_.empty(); }
     std::size_t size() const { return modules_.size(); }
 
 private:
+    void rebindOwners() noexcept {
+        for(auto& [name,module]:modules_)for(auto& [submodule,policies]:module.submodules)
+            for(auto& [id,policy]:policies)if(policy)policy->registry_=this;
+    }
     ModuleMap modules_;
     std::map<PolicyCapability, std::vector<Policy*>> capabilityPolicies_;
     inline static const std::vector<Policy*> emptyCapabilityPolicies_{};

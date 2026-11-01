@@ -153,7 +153,11 @@
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups]=Дополнительные группы новых пользователей
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups][description]=Задаёт дополнительные группы, назначаемые новым локальным пользователям штатным provider создания пользователей данной платформы. Управляется только provider-specific список; другие frontend options могут добавить дополнительные memberships.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=Срок действия кешированных учётных данных SSSD
-[module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Задаёт offline_credentials_expiration в секции [pam] файла sssd.conf, в днях. Активная служба SSSD перезапускается; при ошибке конфигурация откатывается и прежнее runtime-состояние восстанавливается.
+[module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Задаёт срок offline_credentials_expiration в днях (0–3650, рекомендуемое значение 30). Применение и освобождение собственного override используют проверенные SSSD-транзакции; неопределённый результат сохраняет provenance и возвращает ошибку.
+[module:IDENTITY_ACCESS][policy:sssd_cache_credentials]=Кеширование учётных данных SSSD
+[module:IDENTITY_ACCESS][policy:sssd_cache_credentials][description]=Устанавливает cache_credentials=true для всех поддерживаемых выбранных LDAP-доменов. Не включает другие политики автоматически.
+[module:IDENTITY_ACCESS][policy:sssd_account_cache_expiration]=Срок хранения записей учётных записей SSSD
+[module:IDENTITY_ACCESS][policy:sssd_account_cache_expiration][description]=Устанавливает account_cache_expiration в днях (0–3650) для всех выбранных LDAP-доменов. Требуется явное значение, включая 0; значения по умолчанию нет.
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime]=Срок жизни Kerberos-билета
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime][description]=Задаёт ticket_lifetime в секции [libdefaults] файла krb5.conf. Значение политики задаётся в секундах; существующие билеты не перевыпускаются.
 

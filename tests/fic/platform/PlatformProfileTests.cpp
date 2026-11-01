@@ -217,6 +217,12 @@ void testSelectedProfile() {
         fic::platform::makeBuildPlatformProfile();
     std::string error;
     require(fic::platform::validatePlatformProfile(profile, error), error);
+    for(const auto id:{fic::platform::ExecutableId::Sssd,fic::platform::ExecutableId::Sssctl,
+                       fic::platform::ExecutableId::Ldbsearch,fic::platform::ExecutableId::DbusSend}) {
+        const auto* spec=fic::platform::findExecutableSpec(profile.executables,id);
+        require(spec&&!spec->required,"SSSD proof tools must be optional, never an installation prerequisite");
+        require(std::count(supported.begin(),supported.end(),id)==1,"SSSD optional tool enumerated exactly once");
+    }
     require((fic::platform::findExecutableSpec(profile.executables,
                  fic::platform::ExecutableId::SshKeygen) != nullptr) == (profile.id == "alt-p11"),
             "ssh-keygen launch prerequisite must match ALT profile");

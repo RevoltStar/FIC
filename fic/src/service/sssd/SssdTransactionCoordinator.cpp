@@ -2,6 +2,9 @@
 #include "rollback/SssdJournalPayload.h"
 #include "modules/identity_access/sssd/SssdConfiguration.h"
 #include "service/sssd/SssdRuntimeProof.h"
+#include "service/sssd/SssdApplyIntent.h"
+#include "service/sssd/SssdReleaseReceipt.h"
+#include "rollback/SssdDisableProof.h"
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/integrity/ContentDigest.h>
 #include <fcntl.h>
@@ -93,6 +96,73 @@ std::vector<SssdSemanticExpectation> expectations(const std::vector<r::SssdAssig
     for(const auto& a:all)out.push_back({{a.section,a.key},a.key=="cache_credentials"?SemanticValue(true):SemanticValue(Days{static_cast<std::uint32_t>(std::stoul(a.value))})});
     return out;
 }
+struct AdministrativeProof {
+    std::string generation;
+    std::vector<r::SssdAssignment> required;
+};
+struct AdministrativeConfiguration {
+    std::string path, generation;
+    AtomicTargetState state;
+    std::unordered_map<std::string,std::string> entries;
+};
+AdministrativeConfiguration administrativeConfiguration(PolicyRegistry& registry) {
+    detail_i6::verifyRegisteredPolicySet(registry);
+    std::optional<AtomicTargetState> snapshot;std::string path,error;
+    const auto expectedPath=(fic::core::FicRuntimePaths::get().configDir/"IDENTITY_ACCESS.conf").string();
+    for(const auto parameter:{SssdManagedParameter::OfflineCredentialsExpiration,SssdManagedParameter::CacheCredentials,SssdManagedParameter::AccountCacheExpiration}) {
+        const auto ref=detail_i4::policyIdentity(parameter);auto* member=registry.findPolicy(ref);
+        AtomicTargetState captured;std::string memberPath;
+        if(!member||member->ownerRegistry()!=&registry||!member->captureConfigurationVersion(memberPath,captured,error)||
+           memberPath!=expectedPath||captured.owner!=0||(captured.mode&0022))refuse("complete current SSSD registry/configuration unproven: "+error);
+        if(snapshot&&j::image(witness(*snapshot))!=j::image(witness(captured)))refuse("mixed SSSD registry configuration generations");
+        snapshot=captured;path=memberPath;
+    }
+    FileHandlerOptions options;options.writeOptions.rejectSymlink=true;options.writeOptions.createIfMissing=false;
+    ConfigFileHandler current(path,"=",options);
+    if(!current.loadConfig())refuse("cannot read current SSSD administrative configuration");
+    for(const auto parameter:{SssdManagedParameter::OfflineCredentialsExpiration,SssdManagedParameter::CacheCredentials,SssdManagedParameter::AccountCacheExpiration}) {
+        const auto ref=detail_i4::policyIdentity(parameter);const auto status=current.entries().find(ref.policyName+".status");
+        if(status==current.entries().end())continue; // unconfigured, never explicit DISABLE
+        if((status->second!="ENABLE"&&status->second!="DISABLE")||
+           registry.findPolicy(ref)->isEnabled()!=(status->second=="ENABLE"))refuse("invalid/inconsistent SSSD registry status: "+ref.policyName);
+    }
+    if(!AtomicFileWriter::targetStateMatches(path,*snapshot,&error)||
+       !AtomicFileWriter::ensureTargetDurableIfCurrentState(path,*snapshot,&error))refuse("administrative configuration durability/drift: "+error);
+    return {path,sha(j::J{{"path",path},{"witness",j::image(witness(*snapshot))}}.dump()),*snapshot,current.entries()};
+}
+AdministrativeProof administrativeProof(PolicyRegistry& registry,const PolicyRef& releasing,
+                                       const std::string& expectedStatus,const SssdInputReference& input) {
+    AdministrativeProof out;const auto current=administrativeConfiguration(registry);
+    for(const auto parameter:{SssdManagedParameter::OfflineCredentialsExpiration,SssdManagedParameter::CacheCredentials,SssdManagedParameter::AccountCacheExpiration}) {
+        const auto ref=detail_i4::policyIdentity(parameter);auto* member=registry.findPolicy(ref);
+        const auto entry=current.entries.find(ref.policyName+".status");
+        // Absent new entries are unconfigured, never an explicit DISABLE.
+        if(entry==current.entries.end()) {if(ref==releasing)refuse("explicit releasing status missing");continue;}
+        const auto& status=entry->second;
+        if(status!="ENABLE"&&status!="DISABLE")refuse("invalid SSSD administrative status: "+ref.policyName);
+        if(member->isEnabled()!=(status=="ENABLE"))refuse("SSSD registry status mismatch");
+        if(ref==releasing) {if(status!=expectedStatus)refuse("explicit "+expectedStatus+" required for "+ref.policyName);continue;}
+        if(status!="ENABLE")continue;
+        const auto value=member->getValue();if(!value)refuse("remaining ENABLE SSSD policy has no valid value: "+ref.policyName);
+        SemanticValue semantic;
+        if(parameter==SssdManagedParameter::CacheCredentials) {if(*value!="true")refuse("invalid fixed cache value");semantic=true;}
+        else {unsigned days=0;const auto parsed=std::from_chars(value->data(),value->data()+value->size(),days);
+            if(value->empty()||parsed.ec!=std::errc{}||parsed.ptr!=value->data()+value->size()||days>3650)refuse("invalid remaining SSSD Days");semantic=Days{days};}
+        const auto assignments=detail_i4::targetAssignments(domainScope(input),parameter,semantic);
+        out.required.insert(out.required.end(),assignments.begin(),assignments.end());
+    }
+    std::string error;
+    if(!AtomicFileWriter::targetStateMatches(current.path,current.state,&error))refuse("administrative configuration changed during projection: "+error);
+    out.generation=current.generation;
+    return out;
+}
+void mergeRequired(std::vector<SssdSemanticExpectation>& expected,const std::vector<r::SssdAssignment>& required) {
+    for(const auto& value:expectations(required)) {
+        const auto found=std::find_if(expected.begin(),expected.end(),[&](const auto& v){return v.key.section==value.key.section&&v.key.key==value.key.key;});
+        if(found!=expected.end()) {if(!detail_i3::sameValue(found->value,value.value))refuse("administrative ENABLE intent conflicts with surviving ownership");}
+        else expected.push_back(value);
+    }
+}
 void graphAfter(const SssdInputReference& before,const SssdInputReference& after,const std::optional<AtomicTargetState>& installed,bool release=false) {
     if(detail_i3::configurationOnly(before.launch.contract)!=detail_i3::configurationOnly(after.launch.contract)||
        before.launch.unitLookupFingerprint!=after.launch.unitLookupFingerprint||before.launch.executables!=after.launch.executables||
@@ -181,6 +251,7 @@ SssdTransactionResult perform(r::MutationJournal& journal,const SssdTransactionR
         if(request.operation!=SssdTransactionOperation::Apply&&request.operation!=SssdTransactionOperation::Refresh)refuse("unknown operation");
         if(!lock.try_lock_until(request.deadline))refuse("shared resource busy");
         checkpoint("locked");
+        if(request.productionIntent)request.productionIntent->verify(request);
         journalProof(journal);
         // Gate precedes service inspection: even an inactive service cannot
         // hide another policy's unresolved intent.
@@ -239,6 +310,7 @@ SssdTransactionResult perform(r::MutationJournal& journal,const SssdTransactionR
         r::SssdOwnershipTransition t;
         t.sequence=owned.sequence+1;t.previous=prior;t.target=out.required;t.targetScope=detail_i4::scopeIdentity(scope);
         t.inputFingerprint=inputFingerprint(input);t.before=before?witness(*before):r::SssdImageWitness{};t.targetSha256=sha(candidate);
+        if(request.productionIntent)request.productionIntent->verify(request);
         checkpoint("before-prepared");out.status=SssdTransactionStatus::JournalFailed;
         if(!journal.beginSssdTransaction(request.policy,t,out.mutation,out.diagnostic)) {
             out.unresolved=!journal.usable();return out;
@@ -322,6 +394,7 @@ SssdTransactionResult perform(r::MutationJournal& journal,const SssdTransactionR
         detail_i3::confirmRuntime(native,out.activation,request.deadline);
         if(!AtomicFileWriter::ensureTargetDurableIfCurrentState(file,installed,&out.diagnostic))refuse("final persistent durability failed");
         out.confirmed=out.required;
+        if(request.productionIntent)request.productionIntent->verify(request);
         checkpoint("before-finalization");out.status=SssdTransactionStatus::FinalizationFailed;
         if(!journal.commitSssdTransaction(out.mutation,out.diagnostic))return out;
         out.finalized=true;out.unresolved=false;out.status=SssdTransactionStatus::Success;out.diagnostic.clear();
@@ -383,6 +456,8 @@ SssdReleaseResult performRelease(r::MutationJournal& journal,const SssdReleaseRe
         };
         const auto serviceBefore=serviceProof();
         const auto input=detail_i1::snapshotGraph(launch,request.deadline);
+        const auto administrative=request.registry&&request.intent==r::SssdReleaseIntent::DisableRelease?
+            std::optional<AdministrativeProof>(administrativeProof(*request.registry,request.policy,"ENABLE",input)):std::nullopt;
         stagedArtifacts(input.sources.at("/etc/sssd").tree);
         if(!residualMounts().empty())refuse("residual SSSD publication mounts");
         const auto before=physical();out.status=SssdReleaseStatus::OwnershipConflict;
@@ -393,7 +468,7 @@ SssdReleaseResult performRelease(r::MutationJournal& journal,const SssdReleaseRe
         out.mutation=found->second.id;
         const auto& own=std::get<r::SssdJournalOwnership>(found->second.undo.payload);
         out.released=own.current.assignments;
-        r::SssdOwnershipTransition t;t.version=2;t.sequence=owned.sequence+1;t.previous=own.current;
+        r::SssdOwnershipTransition t;t.version=request.registry?3:2;t.sequence=owned.sequence+1;t.previous=own.current;
         t.before=witness(*before);t.inputFingerprint=inputFingerprint(input);t.release.emplace();auto& release=*t.release;
         release.intent=request.intent;release.offline=out.offline;release.serviceBefore=serviceBefore;
         j::J generation=j::J::array();
@@ -418,6 +493,8 @@ SssdReleaseResult performRelease(r::MutationJournal& journal,const SssdReleaseRe
         const auto preview=previewConfiguration(input,domainScope(input),change,&trusted);
         if(!preview.projectionAvailable)refuse("I2 release projection not proven");
         detail_i1::verifyPersistentSources(input,request.deadline);serviceProof();
+        if(administrative&&administrativeProof(*request.registry,request.policy,"ENABLE",input).generation!=administrative->generation)
+            refuse("SSSD administrative generation changed before release");
         out.status=SssdReleaseStatus::JournalFailed;
         checkpoint("before-prepared");
         if(!journal.beginSssdRelease(out.mutation,t,out.diagnostic))return out;
@@ -456,6 +533,7 @@ SssdReleaseResult performRelease(r::MutationJournal& journal,const SssdReleaseRe
         serviceProof();
         const auto target=detail_i1::snapshotGraph(launch,request.deadline);graphAfter(input,target,installed,true);
         auto expected=expectations(out.surviving);const auto cfg=effectiveConfiguration(target);
+        if(administrative)mergeRequired(expected,administrative->required);
         // Even with no remaining owner C has a non-vacuous native consumer
         // proof, observing the resulting backend option, not the removed value.
         if(expected.empty())for(const auto& name:cfg.scope.data().enabled)
@@ -505,6 +583,7 @@ SssdReleaseResult performRelease(r::MutationJournal& journal,const SssdReleaseRe
                 out.diagnostic=out.activation.diagnostic;return out;
             }
             detail_i3::confirmRuntime(native,out.activation,request.deadline);
+            if(t.version==3)release.runtimeReceipt=detail_i6::captureReceipt(out.activation);
             const auto final=capture(request.deadline);graphAfter(target,final,installed,true);
             detail_i1::verifyPersistentSources(target,request.deadline);
             detail_i3::validateExpectations(effectiveConfiguration(final),expected);
@@ -523,10 +602,12 @@ SssdReleaseResult performRelease(r::MutationJournal& journal,const SssdReleaseRe
             detail_i3::confirmRuntime(*nativeProof,out.activation,request.deadline);
         }
         if(request.intent==r::SssdReleaseIntent::DisableRelease) {
+            if(administrative&&administrativeProof(*request.registry,request.policy,"ENABLE",target).generation!=administrative->generation)
+                refuse("SSSD administrative generation changed during release");
             t.phase=r::SssdTransitionPhase::ReleasedAwaitingDisable;
             if(!advance())return out;
             out.status=SssdReleaseStatus::ReleasedAwaitingDisable;
-            out.diagnostic="physical/runtime release proven; administrative acknowledgement prohibited until I6";
+            out.diagnostic="physical/runtime release proven; explicit durable DISABLE and trusted acknowledgement pending";
             checkpoint("released-awaiting-disable");return out;
         }
         checkpoint("before-finalization");out.status=SssdReleaseStatus::JournalFailed;
@@ -594,6 +675,124 @@ SssdReleaseResult SssdTransactionCoordinator::release(const SssdReleaseRequest& 
         ,nullptr
 #endif
     );
+}
+bool SssdTransactionCoordinator::provePolicyUnowned(const PolicyRef& policy,Deadline deadline,std::string& error,PolicyRegistry* disabledRegistry) {
+    try {
+        remaining(deadline);std::unique_lock<std::timed_mutex> lock(resourceMutex,std::defer_lock);
+        if(!lock.try_lock_until(deadline))refuse("shared resource busy");journalProof(journal_);
+        bool known=false;
+        for(const auto parameter:{SssdManagedParameter::OfflineCredentialsExpiration,SssdManagedParameter::CacheCredentials,SssdManagedParameter::AccountCacheExpiration})
+            known|=policy==detail_i4::policyIdentity(parameter);
+        if(!known)refuse("unknown SSSD policy cannot prove no ownership");
+        bool surviving=false;
+        for(const auto& record:journal_.records())if(record.isActive()&&record.undo.backend==r::MutationBackend::Sssd) {
+            const auto* owner=std::get_if<r::SssdJournalOwnership>(&record.undo.payload);
+            if(record.policy==policy||!owner||record.status!=r::MutationStatus::Applied||
+               (owner->transition&&owner->transition->phase!=r::SssdTransitionPhase::Completed))
+                refuse("active/legacy/unresolved SSSD ownership prevents no-owner proof");
+            surviving=true;
+        }
+        bool absent=false;
+        const auto options=fic::identity::sssd::SssdConfigurationOptions::production();
+        // The legacy absence helper deliberately requires mode 0600 for a
+        // present legacy file. An I4-owned sibling may legitimately be 0640
+        // on native precommand platforms: validate its exact I4 witness and
+        // complete union below, without weakening the legacy helper.
+        if(!surviving&&!fic::identity::sssd::proveManagedSnippetAbsent(options,absent,error))refuse(error);
+        if(absent) {
+            for(const auto& record:journal_.records())if(record.isActive()&&record.undo.backend==r::MutationBackend::Sssd)
+                refuse("surviving SSSD owner missing its physical artifact");
+        } else {
+            bool staged=false;
+            if(!fic::identity::sssd::hasManagedSnippetStagingArtifacts(options,staged,error)||staged)refuse("unproven SSSD staged artifacts: "+error);
+            ownership(journal_,SssdInputReference{},physical(),true);
+        }
+        if(!residualMounts().empty())refuse("residual SSSD publication mounts");
+        if(disabledRegistry) {
+            const auto current=administrativeConfiguration(*disabledRegistry);
+            const auto status=current.entries.find(policy.policyName+".status");
+            if(status==current.entries.end()||status->second!="DISABLE")refuse("explicit durable DISABLE required even without ownership");
+        }
+        error.clear();return true;
+    }catch(const std::exception& e){error=e.what();return false;}
+}
+bool SssdTransactionCoordinator::acknowledgeDisable(const PolicyRef& policy,PolicyRegistry& registry,Deadline deadline,std::string& error) {
+    try {
+        remaining(deadline);std::unique_lock<std::timed_mutex> lock(resourceMutex,std::defer_lock);
+        if(!lock.try_lock_until(deadline))refuse("shared resource busy");journalProof(journal_);
+        std::optional<r::MutationRecord> releasing;
+        for(const auto& record:journal_.records())if(record.isActive()&&record.undo.backend==r::MutationBackend::Sssd) {
+            const auto* owned=std::get_if<r::SssdJournalOwnership>(&record.undo.payload);
+            if(!owned)refuse("legacy SSSD owner cannot acknowledge production DISABLE");
+            if(record.policy==policy) {
+                if(releasing||record.status!=r::MutationStatus::Prepared||!owned->transition||!owned->transition->release||
+                   owned->transition->phase!=r::SssdTransitionPhase::ReleasedAwaitingDisable||
+                   owned->transition->release->intent!=r::SssdReleaseIntent::DisableRelease)
+                    refuse("exact own ReleasedAwaitingDisable required");
+                releasing=record;
+            } else if(record.status!=r::MutationStatus::Applied||(owned->transition&&owned->transition->phase!=r::SssdTransitionPhase::Completed))
+                refuse("unresolved SSSD sibling prevents acknowledgement");
+        }
+        if(!releasing)refuse("no awaiting SSSD disable to acknowledge");
+        const auto& transition=*std::get<r::SssdJournalOwnership>(releasing->undo.payload).transition;
+        const auto& release=*transition.release;
+        if(transition.version!=3)refuse("legacy v2 awaiting lacks the production v3 proof contract; provenance retained");
+        const auto lease=d::retainSshUnitsForValidation(d::ActivationProfile::SssdNotify,deadline);
+        const auto launch=detail_i5::admitForRelease(deadline);
+        if((classifyService(launch.contract)==AdmissionState::Stopped)!=release.offline)refuse("SSSD active/offline state changed since release");
+        const auto input=detail_i1::snapshotGraph(launch,deadline);
+        if(inputFingerprint(input)!=release.releasedGraphFingerprint)refuse("released protected configuration graph changed");
+        const auto administrative=administrativeProof(registry,policy,"DISABLE",input);
+        stagedArtifacts(input.sources.at("/etc/sssd").tree);
+        if(!residualMounts().empty())refuse("residual SSSD publication mounts");
+        const auto current=physical();if(!matches(transition.publication,current))refuse("released physical witness drift");
+        if(current&&current->content!=detail_i4::renderAssignments(release.remaining))refuse("released keys/surviving projection drift");
+        std::size_t survivors=0;
+        for(const auto& record:journal_.records())if(record.isActive()&&record.undo.backend==r::MutationBackend::Sssd&&record.id!=releasing->id) {
+            ++survivors;const auto& owned=std::get<r::SssdJournalOwnership>(record.undo.payload);
+            const auto found=std::find_if(release.survivors.begin(),release.survivors.end(),[&](const auto& s){return s.id==record.id;});
+            if(found==release.survivors.end()||found->policy!=record.policy.policyName||j::state(found->state)!=j::state(owned.current)||
+               j::container(found->container)!=j::container(owned.container))refuse("surviving SSSD ownership changed");
+        }
+        if(survivors!=release.survivors.size())refuse("missing surviving SSSD journal owner");
+        auto expected=expectations(release.remaining);mergeRequired(expected,administrative.required);
+        const auto cfg=effectiveConfiguration(input);
+        if(expected.empty())for(const auto& name:cfg.scope.data().enabled)
+            expected.push_back({{"domain/"+name,"account_cache_expiration"},cfg.domains.at(name).accountDays.value});
+        detail_i3::validateExpectations(cfg,expected);
+        const auto verifyService=[&]() {
+            d::verifySshUnitReferences(*lease,deadline);detail_i5::revalidateRelease(launch,deadline);
+            if(release.offline) {
+                const auto epoch=d::readSssdReleaseEpoch(deadline);
+                const auto stopped=detail_i3::proveStoppedConsumers(launch,deadline);
+                if(sha(j::J{{"service",stopped},{"epoch",epoch}}.dump())!=release.serviceAfter)
+                    refuse("offline epoch/consumer absence changed since release");
+            } else {
+                if(!release.runtimeReceipt||sha(j::J(launch.contract).dump())!=release.serviceAfter||
+                   detail_i3::invocationIdentity(launch.contract)!=release.runtimeReceipt->invocation)
+                    refuse("SSSD release runtime generation/receipt unproven");
+                SssdVerifiedActivationRequest request{input,domainScope(input),expected,remaining(deadline),SssdActivationIntent::ConfigurationRelease};
+                const auto native=detail_i3::nativePreflight(request,cfg,deadline);
+                detail_i6::confirmReceipt(*release.runtimeReceipt,native,cfg,deadline);
+            }
+        };
+        verifyService();detail_i1::verifyPersistentSources(input,deadline);
+        std::string detail;
+        if(!(current?AtomicFileWriter::ensureTargetDurableIfCurrentState(file,*current,&detail):
+                     AtomicFileWriter::ensureTargetAbsentDurableIfCurrentState(file,&detail)))refuse("release durability unproven: "+detail);
+        if(administrativeProof(registry,policy,"DISABLE",input).generation!=administrative.generation)refuse("DISABLE generation changed before acknowledgement");
+        verifyService();journalProof(journal_);
+        // validatePersistentStateReadOnly reloads the journal's vector. Keep
+        // a value snapshot throughout proof collection and rebind by identity
+        // afterwards; never retain a pointer/reference into a reloadable tree.
+        const auto found=std::find_if(journal_.records().begin(),journal_.records().end(),[&](const auto& record){return record.id==releasing->id;});
+        if(found==journal_.records().end()||found->policy!=policy||found->status!=r::MutationStatus::Prepared||
+           !std::holds_alternative<r::SssdJournalOwnership>(found->undo.payload)||
+           j::encode(std::get<r::SssdJournalOwnership>(found->undo.payload))!=j::encode(std::get<r::SssdJournalOwnership>(releasing->undo.payload)))
+            refuse("awaiting SSSD transaction changed during final journal reproof");
+        const r::SssdDisableProof proof(releasing->id,transition.sequence,administrative.generation);
+        return journal_.acknowledgeSssdDisable(proof,error);
+    }catch(const std::exception& e){error=e.what();return false;}
 }
 SssdRecoveryInspection SssdTransactionCoordinator::inspect(Deadline deadline) {
     std::unique_lock<std::timed_mutex> lock(resourceMutex,std::defer_lock);

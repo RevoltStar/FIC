@@ -17,6 +17,7 @@ struct PolicyDescriptor {
     std::string textDelimiter;
     std::string restriction;
     std::vector<std::string> possibleValues;
+    bool hasDefault = true;
     bool enabled = false;
     bool isSet = false;
     bool valueValid = true;

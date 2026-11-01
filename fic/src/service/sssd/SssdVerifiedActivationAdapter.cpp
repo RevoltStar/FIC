@@ -13,7 +13,9 @@ std::timed_mutex operationMutex;
   throw d::Failure(ActivationStatus::UnsupportedConfiguration,
                    "SSSD adapter: " + why);
 }
-std::string invocation(const d::LaunchContract &launch) {
+} // namespace
+namespace detail_i3 {
+std::string invocationIdentity(const d::LaunchContract &launch) {
   const auto values =
       nlohmann::json::parse(launch.at("launch.InvocationID")).at("value");
   std::string out;
@@ -159,7 +161,7 @@ perform(const SssdVerifiedActivationRequest &given
       unsupported("later eligible foreign snippet outside activation support");
     auto paths = detail_i3::protectedRequest(request.input, request.timeout);
     revalidate(request.input, deadline);
-    result.oldInvocation = invocation(request.input.launch.contract);
+    result.oldInvocation = detail_i3::invocationIdentity(request.input.launch.contract);
     auto native = detail_i3::nativePreflight(request, cfg, deadline);
     d::validatePublicationEnvironment(paths, &result.engine.residualPaths);
     result.admission = SssdProofState::Proven;
@@ -302,7 +304,7 @@ perform(const SssdVerifiedActivationRequest &given
         throw d::Failure(ActivationStatus::InterferenceDetected,
                          "SSSD persistent launch/source generation changed");
       if (!result.newInvocation.empty() &&
-          invocation(after.launch.contract) != result.newInvocation) {
+          detail_i3::invocationIdentity(after.launch.contract) != result.newInvocation) {
         result.activation = SssdProofState::NotProven;
         result.semantics = SssdProofState::NotProven;
         result.diagnostic =
@@ -372,7 +374,7 @@ perform(const SssdVerifiedActivationRequest &given
   }
   return result;
 }
-} // namespace
+} // namespace detail_i3
 SssdVerifiedActivationResult
 activate(const SssdVerifiedActivationRequest &request) {
   return perform(request

@@ -153,7 +153,11 @@
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups]=Supplementary groups for new users
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups][description]=Sets supplementary groups assigned to new local users by the platform's native user-creation provider. Only the provider-specific list is managed; other frontend options may add memberships.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=SSSD cached credential lifetime
-[module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Sets offline_credentials_expiration in the [pam] section of sssd.conf, in days. An active SSSD service is restarted; on failure the configuration is rolled back and the previous runtime state is restored.
+[module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Sets offline_credentials_expiration in days (0–3650, recommended value 30). Apply and ownership release use verified SSSD transactions; an uncertain outcome retains provenance and reports failure.
+[module:IDENTITY_ACCESS][policy:sssd_cache_credentials]=SSSD credential caching
+[module:IDENTITY_ACCESS][policy:sssd_cache_credentials][description]=Sets cache_credentials=true for every supported selected LDAP domain. Does not automatically enable other policies.
+[module:IDENTITY_ACCESS][policy:sssd_account_cache_expiration]=SSSD account cache lifetime
+[module:IDENTITY_ACCESS][policy:sssd_account_cache_expiration][description]=Sets account_cache_expiration in days (0–3650) for every selected LDAP domain. An explicit value, including 0, is required; there is no default.
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime]=Kerberos ticket lifetime
 [module:IDENTITY_ACCESS][policy:kerberos_ticket_lifetime][description]=Sets ticket_lifetime in the [libdefaults] section of krb5.conf. The policy value is expressed in seconds; existing tickets are not reissued.
 

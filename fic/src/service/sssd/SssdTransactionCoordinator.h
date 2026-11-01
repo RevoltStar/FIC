@@ -1,8 +1,10 @@
 #pragma once
 #include "rollback/MutationJournal.h"
 #include "service/sssd/SssdVerifiedActivationAdapter.h"
+class PolicyRegistry;
 
 namespace fic::service::sssd {
+class SssdApplyIntent;
 enum class SssdTransactionOperation { Apply, Refresh };
 enum class SssdManagedParameter { OfflineCredentialsExpiration, CacheCredentials, AccountCacheExpiration };
 struct SssdTransactionRequest {
@@ -11,6 +13,7 @@ struct SssdTransactionRequest {
     SssdManagedParameter parameter;
     SemanticValue value; // explicit Days or fixed true; no account default
     Deadline deadline;
+    const SssdApplyIntent* productionIntent=nullptr;
 };
 enum class SssdTransactionStatus {
     Refused, OwnershipConflict, Unresolved, JournalFailed, CasRefused,
@@ -46,6 +49,7 @@ struct SssdReleaseRequest {
     SssdManagedParameter parameter;
     rollback::SssdReleaseIntent intent=rollback::SssdReleaseIntent::ReleaseOnly;
     Deadline deadline;
+    PolicyRegistry* registry=nullptr;
 };
 enum class SssdReleaseStatus {
     Refused, OwnershipConflict, Unresolved, PersistentReleased, RuntimeVerified,
@@ -76,6 +80,8 @@ public:
     SssdRecoveryInspection inspect(Deadline);
     SssdRecoveryInspection resolveNoEffect(Deadline);
     SssdReleaseResult release(const SssdReleaseRequest&);
+    bool acknowledgeDisable(const PolicyRef&, PolicyRegistry&, Deadline, std::string&);
+    bool provePolicyUnowned(const PolicyRef&, Deadline, std::string&, PolicyRegistry* disabledRegistry=nullptr);
     // Inspection/no-effect resolution use the same shared-resource gate above.
     // No production DisableRelease acknowledgement API exists before I6.
 private:

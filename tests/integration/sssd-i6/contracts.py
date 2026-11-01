@@ -1,0 +1,11 @@
+PLATFORMS=('debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11')
+SCENARIOS=('positive','stopped-apply','journal-invalid','relation-conflict','domain-key-drift',
+           'remaining-enabled-unowned','late-foreign','foreign-relation','package-release-refusal',
+           'cas-drift','cleanup-failure','wrong-registry-generation','journal-finalization-failure',
+           'crash-before-save','crash-before-ack','runtime-generation-change','receipt-substitution',
+           'legacy-v2-awaiting','wrong-physical-witness','legacy-upgrade-applied','legacy-upgrade-prepared','legacy-upgrade-rollback-failed')
+POSITIVE=('registration-no-default','same-value','refresh-10-to-30','three-policies-multidomain',
+          'active-release-survivors','no-owner-with-owned-siblings','offline-release-survivor',
+          'active-last-release','re-enable-new-owner','uninstall-release-only','package-uninstall')
+BASE='4717cfd4af6df9297b1a6234759258a415dcea34'
+BASE_TREE='deec5ba63986ff9cd0ba875e92dda4df4e4caceb'

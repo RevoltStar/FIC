@@ -589,3 +589,81 @@ exact original identity, no staging/mounts and proven original durability may
 abort. Armed/awaiting-disable states gate siblings even if keys are absent. A
 fresh witness-aware reload may prove an already-published terminal journal
 durable; matching config bytes alone never promotes a pending transition.
+
+## I6 production integration
+
+The three registered identities are `sssd_offline_credentials_expiration`
+(integer 0–3650, displayed default 30), `sssd_cache_credentials` (fixed true)
+and `sssd_account_cache_expiration` (integer 0–3650, explicit value required,
+no default). Missing new status entries remain unconfigured; they do not enable
+policies and cannot prove an administrative DISABLE. The offline→cache edge is
+Recommended only. LDAP relation validation remains independent of this edge.
+
+Production Policy objects use the same I4/I5 coordinator. A current owning
+PolicyRegistry and `captureConfigurationVersion()` bind the request to actual
+ENABLE/value and configuration generation; stale objects refuse. The old scalar
+Apply implementation is retained only as an explicitly historical test specimen.
+Production legacy Applied/Prepared/RollbackFailed ownership is recognized and
+refused without adoption, deletion, promotion or a fallback restart. The record,
+configuration and managed artifact must be preserved for separately reviewed
+administrative resolution; disabling a policy is not a way to erase this history.
+No automatic migration or blind manual deletion is a supported recovery procedure.
+The historical scalar writer requires0600/root metadata and cannot apply against
+the native precommand-prepared metadata on Debian13/Ubuntu26.04. Native legacy
+upgrade fixtures therefore generate real old ownership while SSSD is explicitly
+stopped, then start SSSD explicitly before upgrade. This is a test preparation
+step, not an I6 migration/recovery feature or proof of old active-writer support.
+
+New production releases use SSSD payload v3 within global journal schema 3.
+An active release stores a minimal structured receipt directly from the successful
+protected I3 proof: invocation, ConfigDB generation, native code fingerprints and
+monitor/backend/required PAM process generations and connection identities.
+The journal's existing witness/durability contract authenticates it; no second
+cryptographic seal or receipt store is introduced. Offline release records no
+process receipt and instead binds the existing stopped-consumer/epoch proof.
+The receipt belongs to that journal mutation/sequence and its released protected
+configuration graph. It is not an authority to finish a later transaction.
+
+DisableRelease remains Prepared/ReleasedAwaitingDisable until explicit durable
+DISABLE has been saved and PolicyRegistry successfully rebuilt. Under the same
+SSSD resource mutex, acknowledgement rechecks the current complete registry and
+configuration generation, all remaining ENABLE policy expectations, exact
+surviving ownership, released managed keys, persistent publication, protected
+graph and live process/ConfigDB or offline epoch. Those sets are distinct: an
+ENABLE expectation is not an ownership record, nor does a surviving owner prove
+that its value still matches administrative intent. Only the private typed proof
+constructed after these checks can finalize RolledBack and all surviving
+container witnesses in one durable journal operation.
+
+Saving DISABLE and administrative completion are separately reported as
+`saved` and `applied`. A failure after physical release never restores deleted
+keys. A failed save with unknown durability does not report saved=false as a
+claim that no rename occurred. A retry recognizes its own awaiting transaction,
+performs no second physical deletion, reloads current intent and repeats the
+proofs. An armed/otherwise unresolved transition is not promoted by matching
+bytes. Historical v1/v2 remain readable with their original meanings; v2 awaiting
+without the v3 production proof contract refuses acknowledgement and retains
+provenance. No restart is performed to reconstruct historical observations.
+
+Uninstall keeps ENABLE/value configuration unchanged and uses ReleaseOnly in the
+existing UNINSTALLING lifecycle. A policy with no owner may coexist with a file
+fully attributable to other owners; the no-owner proof checks the entire physical
+union, current witness and staging/unresolved state. An orphan, missing surviving
+artifact or legacy/unresolved sibling refuses even when the requested policy has
+no active record. The tools used for native SSSD proofs are optional trust-catalog
+entries; FIC neither installs nor starts missing SSSD or its tools.
+The existing generic activator admission remains mandatory, including suitable
+preprepared private mount boundaries and native trusted input metadata. I6
+provisions neither on a real host; native fixtures prepare them only inside
+isolated containers. See [generic activator contract](verified-config-service-activator.md).
+
+Source-bound I6 native validation passed22 scenarios on each of Debian12/13,
+Ubuntu24.04/26.04 and ALT p11:110/110 PASS with actual installed FIC daemon,
+CLI/IPC, current and historical packages. [I6 evidence](../tests/integration/sssd-i6/evidence.json)
+and the [runner contract](../tests/integration/sssd-i6/README.md) retain the source,
+harness and package bindings, active/offline release, crash/retry, fault refusals
+and uninstall/upgrade observations. This is isolated container evidence within
+the admitted native profiles, not production authentication or cache-cleanup proof.
+I1–I5 retained reports authenticate their historical accepted sources and do not
+certify these production changes. Full-project validation and current workspace
+state are recorded in `docs/HANDOFF.md`.

@@ -189,6 +189,12 @@ PlatformProfile makeBuildPlatformProfile() {
     // module-argument evidence.
     profile.pam.passwordTopologyRuntimeMutable = true;
     profile.executables.entries.push_back({ExecutableId::PackageQuery, profile.packageManager.queryCandidates, false});
+    // Optional managed software/tools: trust-sync verifies installed programs,
+    // never installs them or makes them unconditional FIC dependencies.
+    profile.executables.entries.push_back({ExecutableId::Sssd, {"/usr/sbin/sssd"}, false});
+    profile.executables.entries.push_back({ExecutableId::Sssctl, {"/usr/sbin/sssctl"}, false});
+    profile.executables.entries.push_back({ExecutableId::Ldbsearch, {"/usr/bin/ldbsearch"}, false});
+    profile.executables.entries.push_back({ExecutableId::DbusSend, {"/usr/bin/dbus-send"}, false});
     profile.displayManager.packageManagerKind = profile.packageManager.kind;
     profile.displayManager.defaultDisplayManagerPath = "/etc/X11/default-display-manager";
     profile.displayManager.gdmRuntimeConfigPath = "/run/gdm3/custom.conf";

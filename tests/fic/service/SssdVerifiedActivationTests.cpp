@@ -6,6 +6,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
+#include <locale>
 using namespace fic::service;
 namespace s = fic::service::sssd;
 namespace d = fic::service::detail;
@@ -214,6 +215,23 @@ void profile(const std::string &path) {
   });
 }
 void parser() {
+  struct SpaceGrouping final : std::numpunct<char> {
+    char do_thousands_sep() const override { return ' '; }
+    std::string do_grouping() const override { return "\3"; }
+  };
+  struct RestoreLocale {
+    std::locale previous;
+    ~RestoreLocale(){std::locale::global(previous);}
+  } restore{std::locale()};
+  std::locale::global(std::locale(std::locale::classic(),new SpaceGrouping));
+  const std::string maps=
+      "1000-2000 rw-s 00000000 08:50 260293     /var/lib/sss/db/config.ldb\n"
+      "2000-3000 rw-p 00000000 08:50 260293     /var/lib/sss/db/config.ldb\n"
+      "3000-4000 r-xp 00000000 08:50 100000     /usr/lib/sssd/libsss_ldap.so\n";
+  check(s::detail_i3::parseMappedRanges(maps,"/var/lib/sss/db/config.ldb",true)==std::vector<std::string>{"1000-2000"},
+        "kernel mapping protocol must ignore daemon locale grouping and retain shared-only requirement");
+  check(s::detail_i3::parseMappedRanges(maps,"/usr/lib/sssd/libsss_ldap.so",false)==std::vector<std::string>{"3000-4000"},
+        "native code mapping parser must ignore daemon locale");
   check(s::detail_i3::backendBusName("a.b-c_d") == "sssd.domain_a_2eb_2dc_5fd",
         "native domain bus escaping");
   for (const auto &value : {":1.2", ":2.0"})

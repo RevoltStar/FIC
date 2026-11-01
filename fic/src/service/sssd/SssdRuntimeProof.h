@@ -26,5 +26,6 @@ bool validBusOwner(const std::string &);
 // Pure bounded parsers exercised by unit tests; no authority in their output.
 using DbRecords = std::map<std::string, std::map<std::string, std::string>>;
 DbRecords parseConfigDb(const std::string &);
+std::vector<std::string> parseMappedRanges(const std::string&,const std::string&,bool sharedOnly);
 std::string domainDn(const std::string &);
 } // namespace fic::service::sssd::detail_i3

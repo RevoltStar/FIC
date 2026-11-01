@@ -266,6 +266,18 @@ struct SssdReleaseSurvivor {
     SssdOwnedState state;
     std::optional<SssdContainerWitness> container;
 };
+// I6: facts copied from the successful protected I3 proof, never reconstructed
+// from a later process tree. Journal publication authenticates this receipt.
+struct SssdReleaseProcess {
+    std::uint32_t pid=0, parent=0, uid=0, gid=0;
+    std::string role, domain, startToken, executable;
+    std::uint32_t consumerSocket=0, monitorSocket=0;
+};
+struct SssdReleaseRuntimeReceipt {
+    std::string invocation, configDbGeneration;
+    std::map<std::string,std::string> nativeCode;
+    std::vector<SssdReleaseProcess> processes;
+};
 struct SssdReleaseDetails {
     SssdReleaseIntent intent=SssdReleaseIntent::ReleaseOnly;
     std::vector<SssdReleaseSurvivor> survivors;
@@ -273,6 +285,7 @@ struct SssdReleaseDetails {
     bool targetAbsent=false, offline=false, offlineVerified=false;
     std::string ownershipGeneration, serviceBefore, serviceAfter, stagedPath;
     std::string disableGeneration, releasedGraphFingerprint;
+    std::optional<SssdReleaseRuntimeReceipt> runtimeReceipt;
 };
 enum class SssdTransitionPhase {
     Prepared, MutationArmed, Published, DurablePublished, ActivationArmed,
