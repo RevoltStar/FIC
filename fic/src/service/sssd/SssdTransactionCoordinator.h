@@ -93,6 +93,7 @@ std::vector<rollback::SssdAssignment> targetAssignments(const DomainScopeReferen
 std::string scopeIdentity(const DomainScopeReference&);
 std::string renderAssignments(const std::vector<rollback::SssdAssignment>&);
 #ifdef FIC_ACTIVATOR_TESTING
+void requireOwnershipCoverageForTests(const std::map<std::string,std::vector<rollback::SssdAssignment>>&,const std::vector<rollback::MutationRecord>&);
 struct TransactionTestHooks {
     std::function<void(const std::string&)> checkpoint;
     const detail_i3::AdapterTestHooks* adapter=nullptr;

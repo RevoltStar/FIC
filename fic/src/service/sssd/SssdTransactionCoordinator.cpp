@@ -99,6 +99,7 @@ std::vector<SssdSemanticExpectation> expectations(const std::vector<r::SssdAssig
 struct AdministrativeProof {
     std::string generation;
     std::vector<r::SssdAssignment> required;
+    std::map<std::string,std::vector<r::SssdAssignment>> requiredByPolicy;
 };
 struct AdministrativeConfiguration {
     std::string path, generation;
@@ -150,11 +151,40 @@ AdministrativeProof administrativeProof(PolicyRegistry& registry,const PolicyRef
             if(value->empty()||parsed.ec!=std::errc{}||parsed.ptr!=value->data()+value->size()||days>3650)refuse("invalid remaining SSSD Days");semantic=Days{days};}
         const auto assignments=detail_i4::targetAssignments(domainScope(input),parameter,semantic);
         out.required.insert(out.required.end(),assignments.begin(),assignments.end());
+        out.requiredByPolicy.emplace(ref.policyName,assignments);
     }
     std::string error;
     if(!AtomicFileWriter::targetStateMatches(current.path,current.state,&error))refuse("administrative configuration changed during projection: "+error);
     out.generation=current.generation;
     return out;
+}
+// Administrative ENABLE is OwnWhileEnabled, not foreign compliance. Compare
+// per-policy projections; another owner or a matching effective value cannot
+// supply this authority. Existing physical/semantic/runtime proofs remain separate.
+void requireOwnershipCoverage(const AdministrativeProof& administrative,
+                              const std::vector<r::MutationRecord>& records) {
+    for(const auto& [name,required]:administrative.requiredByPolicy) {
+        const auto reject=[&](const std::string& why) {
+            refuse("remaining ENABLE SSSD ownership coverage: "+name+": "+why);
+        };
+        const r::MutationRecord* selected=nullptr;
+        for(const auto& record:records)if(record.isActive()&&record.policy==PolicyRef{"IDENTITY_ACCESS","SSSD",name}) {
+            if(selected)reject("duplicate active owner");
+            selected=&record;
+        }
+        if(!selected)reject("active I4 owner missing; foreign compliance is not ownership");
+        const auto* owner=std::get_if<r::SssdJournalOwnership>(&selected->undo.payload);
+        if(selected->undo.backend!=r::MutationBackend::Sssd||!owner)reject("legacy or unsupported owner");
+        std::string error;
+        if(!j::validRecord(*selected,error))reject("invalid provenance: "+error);
+        if(selected->status!=r::MutationStatus::Applied||
+           (owner->transition&&owner->transition->phase!=r::SssdTransitionPhase::Completed))
+            reject("owner is unresolved, not completed Applied");
+        auto actual=owner->current.assignments,expected=required;
+        const auto order=[](const auto& a,const auto& b){return std::tie(a.section,a.key,a.value)<std::tie(b.section,b.key,b.value);};
+        std::sort(actual.begin(),actual.end(),order);std::sort(expected.begin(),expected.end(),order);
+        if(actual!=expected)reject("owned assignments do not exactly cover canonical section/key/value scope");
+    }
 }
 void mergeRequired(std::vector<SssdSemanticExpectation>& expected,const std::vector<r::SssdAssignment>& required) {
     for(const auto& value:expectations(required)) {
@@ -461,6 +491,7 @@ SssdReleaseResult performRelease(r::MutationJournal& journal,const SssdReleaseRe
         stagedArtifacts(input.sources.at("/etc/sssd").tree);
         if(!residualMounts().empty())refuse("residual SSSD publication mounts");
         const auto before=physical();out.status=SssdReleaseStatus::OwnershipConflict;
+        if(administrative)requireOwnershipCoverage(*administrative,journal.records());
         const auto owned=ownership(journal,input,before,true);
         const auto found=owned.policies.find(request.policy.policyName);
         if(found==owned.policies.end())refuse("no active I4 owner; absence/name/value is not release authority");
@@ -723,7 +754,7 @@ bool SssdTransactionCoordinator::acknowledgeDisable(const PolicyRef& policy,Poli
         std::optional<r::MutationRecord> releasing;
         for(const auto& record:journal_.records())if(record.isActive()&&record.undo.backend==r::MutationBackend::Sssd) {
             const auto* owned=std::get_if<r::SssdJournalOwnership>(&record.undo.payload);
-            if(!owned)refuse("legacy SSSD owner cannot acknowledge production DISABLE");
+            if(!owned)refuse("legacy SSSD owner cannot acknowledge production DISABLE: "+record.policy.policyName);
             if(record.policy==policy) {
                 if(releasing||record.status!=r::MutationStatus::Prepared||!owned->transition||!owned->transition->release||
                    owned->transition->phase!=r::SssdTransitionPhase::ReleasedAwaitingDisable||
@@ -731,7 +762,7 @@ bool SssdTransactionCoordinator::acknowledgeDisable(const PolicyRef& policy,Poli
                     refuse("exact own ReleasedAwaitingDisable required");
                 releasing=record;
             } else if(record.status!=r::MutationStatus::Applied||(owned->transition&&owned->transition->phase!=r::SssdTransitionPhase::Completed))
-                refuse("unresolved SSSD sibling prevents acknowledgement");
+                refuse("unresolved SSSD sibling prevents acknowledgement: "+record.policy.policyName);
         }
         if(!releasing)refuse("no awaiting SSSD disable to acknowledge");
         const auto& transition=*std::get<r::SssdJournalOwnership>(releasing->undo.payload).transition;
@@ -755,6 +786,7 @@ bool SssdTransactionCoordinator::acknowledgeDisable(const PolicyRef& policy,Poli
                j::container(found->container)!=j::container(owned.container))refuse("surviving SSSD ownership changed");
         }
         if(survivors!=release.survivors.size())refuse("missing surviving SSSD journal owner");
+        requireOwnershipCoverage(administrative,journal_.records());
         auto expected=expectations(release.remaining);mergeRequired(expected,administrative.required);
         const auto cfg=effectiveConfiguration(input);
         if(expected.empty())for(const auto& name:cfg.scope.data().enabled)
@@ -790,6 +822,7 @@ bool SssdTransactionCoordinator::acknowledgeDisable(const PolicyRef& policy,Poli
            !std::holds_alternative<r::SssdJournalOwnership>(found->undo.payload)||
            j::encode(std::get<r::SssdJournalOwnership>(found->undo.payload))!=j::encode(std::get<r::SssdJournalOwnership>(releasing->undo.payload)))
             refuse("awaiting SSSD transaction changed during final journal reproof");
+        requireOwnershipCoverage(administrative,journal_.records());
         const r::SssdDisableProof proof(releasing->id,transition.sequence,administrative.generation);
         return journal_.acknowledgeSssdDisable(proof,error);
     }catch(const std::exception& e){error=e.what();return false;}
@@ -805,6 +838,9 @@ SssdRecoveryInspection SssdTransactionCoordinator::resolveNoEffect(Deadline dead
     return inspectLocked(journal_,deadline,true);
 }
 #ifdef FIC_ACTIVATOR_TESTING
+void detail_i4::requireOwnershipCoverageForTests(const std::map<std::string,std::vector<r::SssdAssignment>>& required,const std::vector<r::MutationRecord>& records) {
+    AdministrativeProof proof;proof.requiredByPolicy=required;requireOwnershipCoverage(proof,records);
+}
 SssdReleaseResult detail_i4::releaseForTests(r::MutationJournal& journal,const SssdReleaseRequest& request,const TransactionTestHooks& tests) {
     return performRelease(journal,request,&tests);
 }

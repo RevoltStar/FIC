@@ -294,10 +294,41 @@ def negative(foreign):
         assert len(records(True))==2 and all(r['status']=='applied' for r in records(True))
         assert 'cache_credentials = false' in OWN.read_text()
         observe(scenario);return
-    if scenario=='remaining-enabled-unowned':
-        set_enable(A,60);cli('disable',O,ok=False)
-        assert not OWN.exists() and enabled(O)=='ENABLE' and owner(O)['status']=='prepared'
-        assert not any(r['policy']['policy']==A for r in records(True))
+    if scenario in ('remaining-enabled-unowned','remaining-enabled-unowned-matching-foreign'):
+        remaining=C if scenario.endswith('matching-foreign') else A
+        set_enable(remaining,None if remaining==C else 60)
+        assert not any(r['policy']['policy']==remaining for r in records(True))
+        original=owner(O);journal=JOURNAL.read_bytes();image=OWN.read_bytes();identity=OWN.stat()
+        configured=CONFIG.read_bytes();invocation=state()['InvocationID']
+        observe('coverage-before-disable')
+        response=cli('disable',O,ok=False)
+        assert remaining in response['stdout'] and 'ownership coverage' in response['stdout'],response
+        assert enabled(O)=='ENABLE' and CONFIG.read_bytes()==configured
+        assert JOURNAL.read_bytes()==journal and owner(O)==original and original['status']=='applied'
+        assert OWN.read_bytes()==image and (OWN.stat().st_dev,OWN.stat().st_ino)==(identity.st_dev,identity.st_ino)
+        assert state()['InvocationID']==invocation
+        assert not any(r['policy']['policy']==remaining for r in records(True))
+        assert all(r['status']=='applied' for r in records(True))
+        observe(scenario)
+        if remaining==C:
+            foreign_before=MAIN.read_bytes()
+            command([CLI,'prepare-uninstall']);command([CLI,'policy','rollback','all'],timeout=600)
+            assert CONFIG.read_bytes()==configured and not OWN.exists() and not records(True)
+            assert MAIN.read_bytes()==foreign_before
+            observe('uninstall-unowned-enabled-release-only')
+        return
+    if scenario=='acknowledgement-unowned-matching-foreign':
+        debugger_disable('fic::service::sssd::SssdTransactionCoordinator::acknowledgeDisable','enable-unowned-cache')
+        pending=awaiting();assert enabled(O)=='DISABLE' and enabled(C)=='ENABLE'
+        assert not any(r['policy']['policy']==C for r in records(True))
+        assert ipc('reload_config')['ok']
+        journal=JOURNAL.read_bytes();invocation=state()['InvocationID']
+        observe('coverage-before-acknowledgement')
+        response=ipc('disable_policy',module='IDENTITY_ACCESS',policy=O)
+        assert not response['ok'] and response['saved'] and response['applied'] is False,response
+        assert C in response['message'] and 'ownership coverage' in response['message'],response
+        assert JOURNAL.read_bytes()==journal and owner(O)==pending and not OWN.exists()
+        assert state()['InvocationID']==invocation
         observe(scenario);return
     if scenario in ('late-foreign','foreign-relation'):
         late=DROP/'zzzzz-foreign.conf'

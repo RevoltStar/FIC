@@ -1,6 +1,6 @@
 PLATFORMS=('debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11')
 SCENARIOS=('positive','stopped-apply','journal-invalid','relation-conflict','domain-key-drift',
-           'remaining-enabled-unowned','late-foreign','foreign-relation','package-release-refusal',
+           'remaining-enabled-unowned','remaining-enabled-unowned-matching-foreign','acknowledgement-unowned-matching-foreign','late-foreign','foreign-relation','package-release-refusal',
            'cas-drift','cleanup-failure','wrong-registry-generation','journal-finalization-failure',
            'crash-before-save','crash-before-ack','runtime-generation-change','receipt-substitution',
            'legacy-v2-awaiting','wrong-physical-witness','legacy-upgrade-applied','legacy-upgrade-prepared','legacy-upgrade-rollback-failed')

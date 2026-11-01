@@ -11,6 +11,11 @@ if action=='cas-drift':
 elif action=='readonly-journal':
     subprocess.run(['mount','--bind','/opt/fic/db','/opt/fic/db'],check=True)
     subprocess.run(['mount','-o','remount,bind,ro','/opt/fic/db'],check=True)
+elif action=='enable-unowned-cache':
+    p=Path('/opt/fic/config/IDENTITY_ACCESS.conf')
+    text=p.read_text();old='sssd_cache_credentials.status=DISABLE'
+    assert old in text
+    p.write_text(text.replace(old,'sssd_cache_credentials.status=ENABLE'));p.chmod(0o644)
 elif action=='configuration-drift':
     p=Path('/opt/fic/config/IDENTITY_ACCESS.conf')
     text=p.read_text();old='sssd_offline_credentials_expiration.status=DISABLE'

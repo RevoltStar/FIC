@@ -631,9 +631,17 @@ configuration generation, all remaining ENABLE policy expectations, exact
 surviving ownership, released managed keys, persistent publication, protected
 graph and live process/ConfigDB or offline epoch. Those sets are distinct: an
 ENABLE expectation is not an ownership record, nor does a surviving owner prove
-that its value still matches administrative intent. Only the private typed proof
-constructed after these checks can finalize RolledBack and all surviving
-container witnesses in one durable journal operation.
+that its value still matches administrative intent. For DisableRelease, every
+remaining ENABLE policy must have its own unique completed Applied I4 owner
+whose assignments exactly match its canonical section/key/normalized-value set.
+Missing, extra, conflicting, legacy or unresolved ownership refuses; matching
+foreign values cannot supply ownership. One shared coverage check runs before
+creating the release transition or mutating the file, then again during
+acknowledgement and after the final journal reproof immediately before terminal
+commit. Semantic and runtime proofs remain independently mandatory. This
+administrative preservation rule does not apply to ReleaseOnly/uninstall.
+Only the private typed proof constructed after these checks can finalize
+RolledBack and all surviving container witnesses in one durable journal operation.
 
 Saving DISABLE and administrative completion are separately reported as
 `saved` and `applied`. A failure after physical release never restores deleted
@@ -657,13 +665,16 @@ preprepared private mount boundaries and native trusted input metadata. I6
 provisions neither on a real host; native fixtures prepare them only inside
 isolated containers. See [generic activator contract](verified-config-service-activator.md).
 
-Source-bound I6 native validation passed22 scenarios on each of Debian12/13,
-Ubuntu24.04/26.04 and ALT p11:110/110 PASS with actual installed FIC daemon,
+I6 native validation including the ownership-coverage follow-up passed24 scenarios
+on each of Debian12/13, Ubuntu24.04/26.04 and ALT p11:120/120 PASS with actual installed FIC daemon,
 CLI/IPC, current and historical packages. [I6 evidence](../tests/integration/sssd-i6/evidence.json)
 and the [runner contract](../tests/integration/sssd-i6/README.md) retain the source,
 harness and package bindings, active/offline release, crash/retry, fault refusals
-and uninstall/upgrade observations. This is isolated container evidence within
+and uninstall/upgrade observations. The two added gates cover matching foreign
+values without ownership and missing surviving ownership at acknowledgement;
+early refusal leaves journal/file/config/runtime unchanged, while ReleaseOnly
+still permits an unowned ENABLE sibling. This is isolated container evidence within
 the admitted native profiles, not production authentication or cache-cleanup proof.
 I1–I5 retained reports authenticate their historical accepted sources and do not
-certify these production changes. Full-project validation and current workspace
+certify these production changes. Current follow-up source-bound validation and workspace
 state are recorded in `docs/HANDOFF.md`.

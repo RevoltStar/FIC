@@ -44,6 +44,12 @@ for platform,row in e['profiles'].items():
             assert account['status']=='rolled_back' and t['release']['disable_generation']
         else:
             assert scenario in o
-            if scenario in ('cas-drift','cleanup-failure','wrong-registry-generation','journal-finalization-failure','crash-before-save','crash-before-ack','runtime-generation-change','receipt-substitution','legacy-v2-awaiting','wrong-physical-witness'):
+            if scenario in ('remaining-enabled-unowned','remaining-enabled-unowned-matching-foreign','acknowledgement-unowned-matching-foreign'):
+                before=o['coverage-before-acknowledgement' if scenario.startswith('acknowledgement-') else 'coverage-before-disable'];after=o[scenario]
+                assert before['records']==after['records'] and before['managed']==after['managed'] and before['native_witness']==after['native_witness'] and before['config']==after['config']
+                assert before['service']['InvocationID']==after['service']['InvocationID']
+                if scenario=='remaining-enabled-unowned-matching-foreign':
+                    assert not o['uninstall-unowned-enabled-release-only']['managed'] and not any(r['status'] in ('applied','prepared','rollback_failed') for r in o['uninstall-unowned-enabled-release-only']['records'])
+            if scenario in ('acknowledgement-unowned-matching-foreign','cas-drift','cleanup-failure','wrong-registry-generation','journal-finalization-failure','crash-before-save','crash-before-ack','runtime-generation-change','receipt-substitution','legacy-v2-awaiting','wrong-physical-witness'):
                 assert o['debugger-seam']['hit'] and o['debugger-seam']['cli']['exit_code']!=0
 print('I6 source-bound five-platform actual daemon/CLI/package matrix PASS; retained evidence only')

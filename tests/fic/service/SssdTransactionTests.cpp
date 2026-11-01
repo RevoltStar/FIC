@@ -57,6 +57,37 @@ static void targetTests() {
         bool failed=false;try{detail_i4::targetAssignments(scope,SssdManagedParameter::AccountCacheExpiration,value);}catch(...){failed=true;}check(failed,"explicit account value only");
     }
 }
+static void coverageTests() {
+    const auto ref=detail_i4::policyIdentity(SssdManagedParameter::CacheCredentials);
+    const auto assignments=detail_i4::targetAssignments(domainScope(input()),SssdManagedParameter::CacheCredentials,true);
+    r::MutationRecord record;record.id=1;record.policy=ref;record.resource="sssd/managed/"+ref.policyName;
+    record.status=r::MutationStatus::Applied;
+    record.undo={r::MutationBackend::Sssd,r::SssdJournalOwnership{{assignments,"scope",1,image()},std::nullopt}};
+    using Required=std::map<std::string,std::vector<r::SssdAssignment>>;
+    const Required required{{ref.policyName,assignments}};
+    detail_i4::requireOwnershipCoverageForTests(required,{record});
+    const auto rejected=[&](const Required& expected,const std::vector<r::MutationRecord>& records) {
+        try{detail_i4::requireOwnershipCoverageForTests(expected,records);}catch(const std::exception& e){
+            check(std::string(e.what()).find(ref.policyName)!=std::string::npos,"coverage diagnostic identifies policy");return;
+        }
+        throw std::runtime_error("missing/excess/conflicting/non-I4 ownership accepted");
+    };
+    rejected(required,{}); // effective foreign compliance supplies no owner
+    auto partial=assignments;partial.pop_back();rejected({{ref.policyName,partial}},{record});
+    auto extra=assignments;extra.push_back({"domain/c","cache_credentials","true"});rejected({{ref.policyName,extra}},{record});
+    auto bad=record;std::get<r::SssdJournalOwnership>(bad.undo.payload).current.assignments.pop_back();rejected(required,{bad});
+    bad=record;bad.status=r::MutationStatus::RollbackFailed;rejected(required,{bad});
+    bad=record;bad.undo.payload=r::UndoRemoveSssdManagedSetting{"domain/a","cache_credentials","true"};rejected(required,{bad});
+    rejected(required,{record,record});
+    const auto account=detail_i4::policyIdentity(SssdManagedParameter::AccountCacheExpiration);
+    auto values=detail_i4::targetAssignments(domainScope(input()),SssdManagedParameter::AccountCacheExpiration,Days{60});
+    bad=record;bad.policy=account;bad.resource="sssd/managed/"+account.policyName;
+    std::get<r::SssdJournalOwnership>(bad.undo.payload).current.assignments=values;
+    rejected(required,{bad}); // a different policy's owner cannot cover cache
+    values.front().value="30";
+    bool refused=false;try{detail_i4::requireOwnershipCoverageForTests({{account.policyName,values}},{bad});}catch(...){refused=true;}
+    check(refused,"owned value must match current administrative value");
+}
 static void journalTests() {
     char name[]="/tmp/fic-i4-journal-XXXXXX";check(mkdtemp(name),"temp");const std::filesystem::path dir(name);std::string error;
     r::MutationJournal journal(dir/"journal.json");check(journal.initializeOrLoad(error),"journal init: "+error);
@@ -273,4 +304,4 @@ static void releaseJournalTests() {
         std::filesystem::remove_all(name);
     }
 }
-int main(){try{schemaTests();targetTests();journalTests();counterBoundsTests();releaseJournalTests();std::cout<<"SSSD I4 contracts PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{schemaTests();targetTests();coverageTests();journalTests();counterBoundsTests();releaseJournalTests();std::cout<<"SSSD I4 contracts PASS\n";return 0;}catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

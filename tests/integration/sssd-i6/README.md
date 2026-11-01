@@ -43,3 +43,13 @@ This does not claim that the old active writer supports those native profiles.
 No journal records are synthesized, old binaries changed or historical receipts
 reconstructed. I6's active/offline behavior is tested separately by current
 production scenarios.
+
+Ownership-coverage regressions distinguish matching foreign effectiveness from
+actual OwnWhileEnabled authority. `remaining-enabled-unowned-matching-foreign`
+requires refusal before Prepared/file mutation and unchanged config/journal/SSSD
+generation, then separately proves ReleaseOnly can free ownership without
+requiring an unowned ENABLE sibling to be applied. `remaining-enabled-unowned`
+now requires the same early refusal for a foreign value mismatch.
+`acknowledgement-unowned-matching-foreign` changes actual administrative intent
+at the existing debugger seam, reloads the real registry and checks refusal
+before terminal acknowledgement. No records are synthesized or adopted.

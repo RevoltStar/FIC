@@ -3,7 +3,7 @@ set -euo pipefail
 [[ $# -ge 2 && $# -le 3 ]] || { echo 'usage: run-native.sh IMAGE PLATFORM [SCENARIO]' >&2; exit 2; }
 image=$1 platform=$2 scenario=${3:-positive}
 case "$platform" in debian-12|debian-13|ubuntu-24.04|ubuntu-26.04|alt-p11);; *) exit 2;; esac
-case "$scenario" in positive|stopped-apply|journal-invalid|relation-conflict|domain-key-drift|remaining-enabled-unowned|late-foreign|foreign-relation|package-release-refusal|cas-drift|cleanup-failure|wrong-registry-generation|journal-finalization-failure|crash-before-save|crash-before-ack|runtime-generation-change|receipt-substitution|legacy-v2-awaiting|wrong-physical-witness|legacy-upgrade-applied|legacy-upgrade-prepared|legacy-upgrade-rollback-failed);; *) exit 2;; esac
+case "$scenario" in positive|stopped-apply|journal-invalid|relation-conflict|domain-key-drift|remaining-enabled-unowned|remaining-enabled-unowned-matching-foreign|acknowledgement-unowned-matching-foreign|late-foreign|foreign-relation|package-release-refusal|cas-drift|cleanup-failure|wrong-registry-generation|journal-finalization-failure|crash-before-save|crash-before-ack|runtime-generation-change|receipt-substitution|legacy-v2-awaiting|wrong-physical-witness|legacy-upgrade-applied|legacy-upgrade-prepared|legacy-upgrade-rollback-failed);; *) exit 2;; esac
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 build="$repo/build-sssd-i6/$platform"
 python3 "$repo/tests/integration/sssd-i6/source-manifest.py" check "$build/source-manifest.json"
