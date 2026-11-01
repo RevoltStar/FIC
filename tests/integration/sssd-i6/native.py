@@ -101,6 +101,8 @@ def prepare():
         if not env.exists():
             write(env,'DEBUG_LOGGER=--logger=files\n')
             experiment('explicit-native-environment-fixture',{'path':str(env),'content':env.read_text()})
+    if scenario=='remaining-enabled-scope-drift':
+        text=text.replace('auth_provider = ldap\n','').replace('auth_provider=ldap\n','')
     configure(text);assert observe_start()['state']['ActiveState']=='active'
     foreign=hashlib.sha256(MAIN.read_bytes()).hexdigest()
     directory=Path('/var/tmp/fic-legacy-packages' if scenario.startswith('legacy-upgrade-') else '/var/tmp/fic-packages')
@@ -293,6 +295,34 @@ def negative(foreign):
         cli('disable',O,ok=False)
         assert len(records(True))==2 and all(r['status']=='applied' for r in records(True))
         assert 'cache_credentials = false' in OWN.read_text()
+        observe(scenario);return
+    if scenario=='remaining-enabled-scope-drift':
+        set_enable(C);apply(C)
+        original=owner(C)['undo']['ownership']['current']
+        scope=json.loads(original['scope'])
+        assert all(domain[7] is True for domain in scope['domains']),scope
+        text=MAIN.read_text().replace('[domain/test]','[domain/test]\nauth_provider=ldap')
+        write(MAIN,text)
+        assert observe_start()['state']['ActiveState']=='active'
+        # Exercise the production canonical scope resolver: same-value apply
+        # refuses scope drift before mutation, independently of release preflight.
+        journal=JOURNAL.read_bytes();image=OWN.read_bytes()
+        response=cli('apply',C,ok=False)
+        assert 'domain/provider scope changed' in response['stdout'],response
+        assert JOURNAL.read_bytes()==journal and OWN.read_bytes()==image
+        assert owner(C)['undo']['ownership']['current']['assignments']==original['assignments']
+        experiment('scope-drift-proof',{'saved_scope':scope,'canonical_scope_changed':True,
+                   'production_apply_refusal':response,'foreign_sha256':hashlib.sha256(MAIN.read_bytes()).hexdigest()})
+        identity=OWN.stat();configured=CONFIG.read_bytes();invocation=state()['InvocationID']
+        observe('coverage-before-disable')
+        response=cli('disable',O,ok=False)
+        assert C in response['stdout'] and 'scope mismatch' in response['stdout'],response
+        assert enabled(O)=='ENABLE' and enabled(C)=='ENABLE' and CONFIG.read_bytes()==configured
+        assert JOURNAL.read_bytes()==journal and all(r['status']=='applied' for r in records(True))
+        assert len(records(True))==2 and OWN.read_bytes()==image
+        assert (OWN.stat().st_dev,OWN.stat().st_ino)==(identity.st_dev,identity.st_ino)
+        assert state()['InvocationID']==invocation and MAIN.read_text()==text
+        experiment('scope-drift-foreign-after',hashlib.sha256(MAIN.read_bytes()).hexdigest())
         observe(scenario);return
     if scenario in ('remaining-enabled-unowned','remaining-enabled-unowned-matching-foreign'):
         remaining=C if scenario.endswith('matching-foreign') else A

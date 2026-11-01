@@ -53,3 +53,11 @@ now requires the same early refusal for a foreign value mismatch.
 `acknowledgement-unowned-matching-foreign` changes actual administrative intent
 at the existing debugger seam, reloads the real registry and checks refusal
 before terminal acknowledgement. No records are synthesized or adopted.
+
+`remaining-enabled-scope-drift` applies both offline/cache policies with implicit
+LDAP auth providers, then explicitly sets the same provider in foreign config.
+A same-value production apply independently confirms canonical scope drift while
+assignments remain unchanged. After fixture restart and a control snapshot,
+disable must refuse specifically for cache `scope mismatch`, leaving raw journal,
+file bytes/object identity, administrative config and SSSD generation unchanged.
+The post-publication scope protection and ReleaseOnly contract remain intact.

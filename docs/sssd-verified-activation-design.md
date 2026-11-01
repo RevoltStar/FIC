@@ -633,13 +633,17 @@ graph and live process/ConfigDB or offline epoch. Those sets are distinct: an
 ENABLE expectation is not an ownership record, nor does a surviving owner prove
 that its value still matches administrative intent. For DisableRelease, every
 remaining ENABLE policy must have its own unique completed Applied I4 owner
-whose assignments exactly match its canonical section/key/normalized-value set.
+whose assignments exactly match its canonical section/key/normalized-value set
+and whose saved scope equals the current canonical domain scope identity. An
+implicit-to-explicit auth_provider change can preserve assignments while changing
+that identity; it refuses with the policy name and `scope mismatch` before release.
 Missing, extra, conflicting, legacy or unresolved ownership refuses; matching
 foreign values cannot supply ownership. One shared coverage check runs before
 creating the release transition or mutating the file, then again during
 acknowledgement and after the final journal reproof immediately before terminal
-commit. Semantic and runtime proofs remain independently mandatory. This
-administrative preservation rule does not apply to ReleaseOnly/uninstall.
+commit. The existing post-publication surviving scope check remains mandatory
+to catch drift after preflight. Semantic and runtime proofs remain independently
+mandatory. This administrative preservation rule does not apply to ReleaseOnly/uninstall.
 Only the private typed proof constructed after these checks can finalize
 RolledBack and all surviving container witnesses in one durable journal operation.
 
@@ -665,13 +669,14 @@ preprepared private mount boundaries and native trusted input metadata. I6
 provisions neither on a real host; native fixtures prepare them only inside
 isolated containers. See [generic activator contract](verified-config-service-activator.md).
 
-I6 native validation including the ownership-coverage follow-up passed24 scenarios
-on each of Debian12/13, Ubuntu24.04/26.04 and ALT p11:120/120 PASS with actual installed FIC daemon,
+I6 native validation including the ownership/scope-coverage follow-ups passed25 scenarios
+on each of Debian12/13, Ubuntu24.04/26.04 and ALT p11:125/125 PASS with actual installed FIC daemon,
 CLI/IPC, current and historical packages. [I6 evidence](../tests/integration/sssd-i6/evidence.json)
 and the [runner contract](../tests/integration/sssd-i6/README.md) retain the source,
 harness and package bindings, active/offline release, crash/retry, fault refusals
-and uninstall/upgrade observations. The two added gates cover matching foreign
-values without ownership and missing surviving ownership at acknowledgement;
+and uninstall/upgrade observations. The follow-up gates cover matching foreign
+values without ownership, missing surviving ownership at acknowledgement, and
+implicit-to-explicit LDAP auth provider drift with unchanged assignments;
 early refusal leaves journal/file/config/runtime unchanged, while ReleaseOnly
 still permits an unowned ENABLE sibling. This is isolated container evidence within
 the admitted native profiles, not production authentication or cache-cleanup proof.

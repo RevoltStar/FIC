@@ -65,13 +65,14 @@ static void coverageTests() {
     record.undo={r::MutationBackend::Sssd,r::SssdJournalOwnership{{assignments,"scope",1,image()},std::nullopt}};
     using Required=std::map<std::string,std::vector<r::SssdAssignment>>;
     const Required required{{ref.policyName,assignments}};
-    detail_i4::requireOwnershipCoverageForTests(required,{record});
+    detail_i4::requireOwnershipCoverageForTests(required,{record},"scope");
     const auto rejected=[&](const Required& expected,const std::vector<r::MutationRecord>& records) {
-        try{detail_i4::requireOwnershipCoverageForTests(expected,records);}catch(const std::exception& e){
+        try{detail_i4::requireOwnershipCoverageForTests(expected,records,"scope");}catch(const std::exception& e){
             check(std::string(e.what()).find(ref.policyName)!=std::string::npos,"coverage diagnostic identifies policy");return;
         }
         throw std::runtime_error("missing/excess/conflicting/non-I4 ownership accepted");
     };
+    auto drift=record;std::get<r::SssdJournalOwnership>(drift.undo.payload).current.scope="changed";rejected(required,{drift});
     rejected(required,{}); // effective foreign compliance supplies no owner
     auto partial=assignments;partial.pop_back();rejected({{ref.policyName,partial}},{record});
     auto extra=assignments;extra.push_back({"domain/c","cache_credentials","true"});rejected({{ref.policyName,extra}},{record});
@@ -84,8 +85,18 @@ static void coverageTests() {
     bad=record;bad.policy=account;bad.resource="sssd/managed/"+account.policyName;
     std::get<r::SssdJournalOwnership>(bad.undo.payload).current.assignments=values;
     rejected(required,{bad}); // a different policy's owner cannot cover cache
+    const Required multiple{{ref.policyName,assignments},{account.policyName,values}};
+    detail_i4::requireOwnershipCoverageForTests(multiple,{record,bad},"scope");
+    for(const bool first:{false,true}) {
+        auto cache=record,accountOwner=bad;
+        std::get<r::SssdJournalOwnership>((first?cache:accountOwner).undo.payload).current.scope="different";
+        bool mismatch=false;
+        try{detail_i4::requireOwnershipCoverageForTests(multiple,{cache,accountOwner},"scope");}
+        catch(const std::exception& e){const std::string diagnostic=e.what();mismatch=diagnostic.find(first?ref.policyName:account.policyName)!=std::string::npos&&diagnostic.find("scope mismatch")!=std::string::npos;}
+        check(mismatch,"each surviving owner's scope must match with policy-specific diagnostic");
+    }
     values.front().value="30";
-    bool refused=false;try{detail_i4::requireOwnershipCoverageForTests({{account.policyName,values}},{bad});}catch(...){refused=true;}
+    bool refused=false;try{detail_i4::requireOwnershipCoverageForTests({{account.policyName,values}},{bad},"scope");}catch(...){refused=true;}
     check(refused,"owned value must match current administrative value");
 }
 static void journalTests() {

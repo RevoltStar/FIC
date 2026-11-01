@@ -657,8 +657,8 @@
     "fic/src/service/sssd/SssdRuntimeProof.h": "29e0dceefe9b4a043f9bdf9e2c9a53f8680cd21b740d8e4f0963a85b77a909bd",
     "fic/src/service/sssd/SssdServiceAdmission.cpp": "afe5b7e3a56c40c9eb5fbfab9043e9eca3031adb3676abaf6cdc4ac0dc61cf4e",
     "fic/src/service/sssd/SssdServiceAdmission.h": "9a8dc6a0f82179e7051d546ad393987240c9043e911046745f55c74f9269a64c",
-    "fic/src/service/sssd/SssdTransactionCoordinator.cpp": "0eac264407f5936e537787c4083a123fe6f8fae95f57c1f4cfb7e87449f7df3d",
-    "fic/src/service/sssd/SssdTransactionCoordinator.h": "b7a01ef6a7bd2eb6c07884b77e9b8643df46ecd317e655e8c519e4d4b697bc91",
+    "fic/src/service/sssd/SssdTransactionCoordinator.cpp": "bb038218e2b3967f62de6768a56a5ecf1530cdeab15d66995a9e1708866694bc",
+    "fic/src/service/sssd/SssdTransactionCoordinator.h": "d3eec091d03b3aa12bf1d5145f1b63e69f7486186e6c2f66f17194528ca9c83a",
     "fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp": "b6d81c57acf85a47868dbffc2cf7ca31f9435cd34dcafae57366241b7c8345ed",
     "fic/src/service/sssd/SssdVerifiedActivationAdapter.h": "c1c905d4e1756f28377841d9acbe669cc8f14badb0fe08d98e574a5821fc41c8",
     "fic/src/service/sssd/SssdVerifiedInputClosure.cpp": "22a6b1b42178115647d0228a5861c39839bb08e458871a924c020e49f41f1421",
@@ -967,12 +967,12 @@
     "tests/integration/sssd-i6/Containerfile": "9715af3ed8c6d56c3d49761e34db2ad31912737e3c62c3411fdea1f00fb84a99",
     "tests/integration/sssd-i6/build-legacy.sh": "2227f1ca498cef951fb63f0d2360cc986e7e07453c5cef04a3e364906ad37d87",
     "tests/integration/sssd-i6/build-native.sh": "a4252fcbd735fc6836bb067e359be2a872ba989699d1a53101a55427b2b1c9a7",
-    "tests/integration/sssd-i6/check-evidence.py": "329a84d15c02c14b1b430dc5589221e8bd4d6b175206e844b5517ca5d4007ba3",
+    "tests/integration/sssd-i6/check-evidence.py": "9be188fc050fc2c3e8d9670f9c4014c13d09493331d9f157c41798ed42a2b177",
     "tests/integration/sssd-i6/collect-evidence.py": "78fb7dac5fe36886bc6d1005b4a698dd685cd20acd423b27ff49d21f26882539",
-    "tests/integration/sssd-i6/contracts.py": "6ed7f28e11e7940528e7752a0d16e151e13feca17408d5fd364b035681f90553",
+    "tests/integration/sssd-i6/contracts.py": "d68b5039fb8cf441ea6ef7e447513bc06cdb1b618e465973ef1c80a78e832159",
     "tests/integration/sssd-i6/debugger-fault.py": "f822eccfcf058f569d8f2d48ea9ffa25d88b02e2f0ee9b363968ba3144a69d6a",
-    "tests/integration/sssd-i6/native.py": "30f4b479f9aa7a50a7fb7de119c9a0a69464773596a3b97269334b25eb053a70",
-    "tests/integration/sssd-i6/run-native.sh": "2830762fea8bb46cef585b1bb65f53ab17cffafba81da283002785dd8dd5393d",
+    "tests/integration/sssd-i6/native.py": "6ed0742683740563b659975da07e1faa10156356f36cf459795cb80519026709",
+    "tests/integration/sssd-i6/run-native.sh": "04e67cc035b3df92763c1d87fe520fa2231dd890608fd6d68070f9fe78e4bcc4",
     "tests/integration/sssd-i6/runtime-init.sh": "808752270bb6b5d81eb6117dc900213fd1d55af8235f868577a4c1dfc8469b10",
     "tests/integration/sssd-i6/source-manifest.py": "349af6769db5164e1d57ecae3da1d0d64d6e76f9d99a1714b8788e31b2ccc65a",
     "tests/integration/sssd-research/common.py": "10d61f183aabe391e455538da4baf3bef1082a51552cb0dacc1560aa6dcc43f1"
@@ -983,296 +983,308 @@
     "debian-12": {
       "build": {
         "path": "tests/integration/sssd-i6/reports/debian-12-build.json.gz",
-        "sha256": "2c3f17024715ccc2783adfa3c1464e23a59fbc1712fd329d0530cf9e96f73e57",
-        "raw_sha256": "96e6713383438e1319663ee65463d5924f85c9453803fa60e37de16bd199c1aa"
+        "sha256": "8573a368115a256a1ece3625a0cbb1c395552ad486df7da74f4cf91b51c41d65",
+        "raw_sha256": "d2039a7b730b201f82d0ff159a5111c44b43a6dfc42dd856ff8e98d92baee0cf"
       },
       "scenarios": {
         "positive": {
           "path": "tests/integration/sssd-i6/reports/debian-12-positive.json.gz",
-          "sha256": "1da84dc6dd4c3494519d931f3f623c5814cabd36c302a6550a905fc9d82abf98",
-          "raw_sha256": "78dc4e009f6fab14cedbffd90970dbbd3cd792e84f3db958e7a59020da47b2a6",
+          "sha256": "0e3893f143c02559c82b0ceb4ee4ab70061f9e3fc8229bdfb683bbddc817f071",
+          "raw_sha256": "70daef06ba9190a7079d58d7a04088fcc6ecbb4d45063e46faef472bb587cdb5",
           "exit_code": 0,
           "observations": 14,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-positive-container.json.gz",
-            "sha256": "f56f624d59c1eb1f603e309011fcfe6db8bcf0862d582f2331bdeb4874874264",
-            "raw_sha256": "4c5d457e0366127874c7a7e5130b766ca449ae3f4b29f97290c78350c8226dcb"
+            "sha256": "ee025b8f671993c59775075420037e3ae36fe7057b67ad2cf16860a9e93f0516",
+            "raw_sha256": "d1f19b00291b4ad46ad7ab851516c7af4803cf5d57ede51f12f43b2783393eb6"
           }
         },
         "stopped-apply": {
           "path": "tests/integration/sssd-i6/reports/debian-12-stopped-apply.json.gz",
-          "sha256": "5dc269410ec2de3daff345673682ea51aa5696a9f09bf0ed87881d374ac03df4",
-          "raw_sha256": "4a72e57e076667f818e8340f1110b02b413e9023b1f819bf45c2e1aa7d275e49",
+          "sha256": "1f568179f3df7a184de234e2d61a801b5f40a13e83aa2cefa4bd82d417f65b32",
+          "raw_sha256": "3a6a60dddf908a5a5df8e37bceb2f304aa94c2ccf9fff517609d6c43b0d7ba86",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-stopped-apply-container.json.gz",
-            "sha256": "59d68c8ac08d5dec2c0cb46ec0bf41d19acd3c34aea71705aad317a6bbea27d3",
-            "raw_sha256": "11cd005ef4c526c211cc92ada313bbecbf9487289c76f34cce3f9210ec895f60"
+            "sha256": "f10ec3c6deec9820e98bc78544c384fdae3643e16a5bc3d010ca0b37c1ef14cb",
+            "raw_sha256": "98edb3c1e18a46651c19cb188659054596b403aec3a63ec61cda3875038d8080"
           }
         },
         "journal-invalid": {
           "path": "tests/integration/sssd-i6/reports/debian-12-journal-invalid.json.gz",
-          "sha256": "951e0006b7491d8a9abd0950b5a6557b7fa9be3676f79e7560e065802d278f53",
-          "raw_sha256": "103467055d0fb294db94cfc4e1b6d231052458c1143b6026bec0d5d2043e57ef",
+          "sha256": "0ad0bd4867d1b71db03f6b29fbe6eb3bfbce1919fd8db8a2efef2c7bf5a40de2",
+          "raw_sha256": "84cd569774ca6f1c626d26b1ae7ed0561826ef69eb934402719d7717c770448e",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-journal-invalid-container.json.gz",
-            "sha256": "4bef40dbc65d06cef9a085d1e34c9af09055013827061fd2db1a0fda998b25ba",
-            "raw_sha256": "bf0b06d4049a9e5847568568af0adee4829b60beeb42e00ab0e7e6b11e10b89d"
+            "sha256": "0be297f53ea673f16fb5c4e7c1b9accee3a8e402044e45500953d57b7212f1b2",
+            "raw_sha256": "203485caa3054cacdee11656244750296b6663ab84e34decab3ce3da88967e6a"
           }
         },
         "relation-conflict": {
           "path": "tests/integration/sssd-i6/reports/debian-12-relation-conflict.json.gz",
-          "sha256": "9c64b684f4e40fa94f081febdb36d284cd424561d76bb29e54721bc4c6019d31",
-          "raw_sha256": "11aad0bb8005a16e4f9f353adfedcf1746ddd074eb414c4c876e6fd51ba38528",
+          "sha256": "eb19944583e0d54c056e4aba60527550f62a686e1b76bfa55d25f99c25beff20",
+          "raw_sha256": "aec40e93a5f4e0a793b9896d4bd937c5c7765816aeb30bb0625efe3ad46c8d2f",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-relation-conflict-container.json.gz",
-            "sha256": "b2b99c1fb1c10bf23d7728dab7a70d790ef0c2536894b5e78178b2bac9e643d9",
-            "raw_sha256": "09da78c1f549ed29adccb44d96ec23090ecb39a081cd8733b241558f169c100f"
+            "sha256": "a02cf23c6614f4fbedcd37f6baab55e01cdf4e8de6c1303431f4c3df1149b5e6",
+            "raw_sha256": "31efa8813aa757c027c1881b4adb5d8fc432b0f7c89ea734a83663ee0d4b38a2"
           }
         },
         "domain-key-drift": {
           "path": "tests/integration/sssd-i6/reports/debian-12-domain-key-drift.json.gz",
-          "sha256": "fc6248378a2f4ec3a54884a4e9ca599fc0111a099723d26710fd6275d06508f8",
-          "raw_sha256": "940990c42f22107b6ce828cc2f6b7ac1214e96658c5572df874aa4305078a98f",
+          "sha256": "2ae4ac53aa665895bf70ed7872e03dd8103b86c619e0db6e6de12cd97f48b47c",
+          "raw_sha256": "67a8a30aaee2c91730fe7e52bbd774062bce22779173c32a7ab756052b7c1a50",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-domain-key-drift-container.json.gz",
-            "sha256": "4756ec59aa9bbbdd163fba513490eace7460d39c0f68e070ba7c7d854553560c",
-            "raw_sha256": "36118097c3be06bb850aa31adc9a9122729d89eb8579b40bf29704a709ff2ae7"
+            "sha256": "24a4352586abcf3698ff4a05d6ffe3cfd39facaef3752272c054fb7126806cb4",
+            "raw_sha256": "dc65c0638c8886bc81c08ec8a18bfc735fa4e9e82313885c7c7c259ce004ef97"
+          }
+        },
+        "remaining-enabled-scope-drift": {
+          "path": "tests/integration/sssd-i6/reports/debian-12-remaining-enabled-scope-drift.json.gz",
+          "sha256": "4d6cb23f6c574f9e89ecf99a1700317cb82238277271c9295690594ea7e7c0de",
+          "raw_sha256": "c881e3efce095fadeb370614cfd16f48946cae3513c99012104f271dfbb2d626",
+          "exit_code": 0,
+          "observations": 7,
+          "container": {
+            "path": "tests/integration/sssd-i6/reports/debian-12-remaining-enabled-scope-drift-container.json.gz",
+            "sha256": "3082fb31a77bfb0ac6c928ef45e6d7a33125f7838564bb609fbf76e0eeeb5c24",
+            "raw_sha256": "0502dc5bc278c976c869fcb45b659efa1c6f4b841fc60a4a733dcffea8e8b057"
           }
         },
         "remaining-enabled-unowned": {
           "path": "tests/integration/sssd-i6/reports/debian-12-remaining-enabled-unowned.json.gz",
-          "sha256": "1ce91e05ffe972d3a1e498b00c3f2fa2fdaf3dc766dae37252804f640f58eeb1",
-          "raw_sha256": "3b8ddda7c949a043ed203d816ceb31408a47211ffe11f4d40c6050cc64feab65",
+          "sha256": "0c6d7e3030191b063519b1295ba3e7ee24467c2fc5596edff22d3095e9d3f647",
+          "raw_sha256": "89a4eb4cecdc81789e5d5da6bbfccf0070c9b7bb7143fb6a0242fc8644308a99",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-remaining-enabled-unowned-container.json.gz",
-            "sha256": "05cb6cdcc35d6e3504e420219c5a08ddbcd3e00761b155791809b6a96616e1b0",
-            "raw_sha256": "8c2523be8f3cfd10f979e119e7e9c7681d5fc377a7c77afcc7d825070eeb1d4b"
+            "sha256": "eb3bebb40867f303f45c999df765dc67201a56425ed67e55ab25bfe542e7d8b3",
+            "raw_sha256": "8bc348337b5349340067ba5584420d9ffabd15412d026de2e4f9fe54e74910f4"
           }
         },
         "remaining-enabled-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/debian-12-remaining-enabled-unowned-matching-foreign.json.gz",
-          "sha256": "f9c49376af57db480ad65eb4edbbc4ac3d34800a80e94f8b4e92bf36dafb3f5e",
-          "raw_sha256": "ff395f598658f9679d02ea1b4f97e86e962f3aa8c45c487d4e7cc30c0aa6974b",
+          "sha256": "abc3413184d099fe9b52d3a5d338129a788c5f50ecca0247578445cc3c10597b",
+          "raw_sha256": "6c9af6c3f69c4c66264186319e7ce7aad475c32261d86a7295200478d1c5796b",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-remaining-enabled-unowned-matching-foreign-container.json.gz",
-            "sha256": "98457e996ca5695ecb224e0f748c3cb9d788d81957398f047e79d217e411df7d",
-            "raw_sha256": "2a61d83cc3506db6b43f9a01e9de9238787503de70fd973853dc663713ce5b43"
+            "sha256": "46a4471f79326e4b248d377053579b568452f0dcfc03ec1da4a4ee1c32fb524f",
+            "raw_sha256": "0ce706b34ad6d0d28e865057b9d9bf978a1846719a84f6a23ac154fe6ea0d436"
           }
         },
         "acknowledgement-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/debian-12-acknowledgement-unowned-matching-foreign.json.gz",
-          "sha256": "f4f7ae700103e9bad5d4473d9c38de530ae629aca9525cbeeb1a3b514765ca3b",
-          "raw_sha256": "5b5caaee54e6ecb71262c3ebdd875c68d56c38b04e1a7b8d6edc3b66a73c43f8",
+          "sha256": "419b846d0293af447bc342ac47d31b19492e39c64ea95318bc0b2de1c5bd57d1",
+          "raw_sha256": "b939f2239ed3241728d80b5b4d28c8cb25dfe6146b9e0c6cc98f446dc47444a7",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-acknowledgement-unowned-matching-foreign-container.json.gz",
-            "sha256": "221faa5e7cdffbea05c68d418f0d73331a5178be5513459f91f0deb0027bf531",
-            "raw_sha256": "eb2ef2d5db94fa8c3f1105efeeca0797663d99948068fdbcfbd635f256308379"
+            "sha256": "d748b0981fd2e1e45905c0974396c577e02ea2f1a852aad1ef1869b2990776b6",
+            "raw_sha256": "abadf8df3fa7fe9fa7bc970010fb3f3520fe912ec90cfc6a06a8d0e5376321b2"
           }
         },
         "late-foreign": {
           "path": "tests/integration/sssd-i6/reports/debian-12-late-foreign.json.gz",
-          "sha256": "4148597122bc3079ac4b9e1d4a3012be67408675dc1e45f4b13a96d7c449f130",
-          "raw_sha256": "8e6edb43198fc9051268d4f920dcf41d9aca4a5d0d91faa989d2b305418bed76",
+          "sha256": "a906c570e1a1b83a88c223b285f9cbeca7cdb4574be374f1ff0582bcf45a7719",
+          "raw_sha256": "8e1c574070bc538e11ca4769a9aaf19bfb6a9c86526d314726fa588abab9f245",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-late-foreign-container.json.gz",
-            "sha256": "a207136fc6f28347a1ed27b520fdc8233498de22a56556be948368e94f3815f3",
-            "raw_sha256": "2e1c6531aeb8be0d507b5fb46b39d08e8a7314ba54a6361cbb1e2d2e960f1ca8"
+            "sha256": "54793603da215237354494ae025635a2c740a4938dd2b73a06b9148b9742d077",
+            "raw_sha256": "010224df23ff0d58c7fdbf74dde8d911501545612e60a2b5f9c610d30b74490a"
           }
         },
         "foreign-relation": {
           "path": "tests/integration/sssd-i6/reports/debian-12-foreign-relation.json.gz",
-          "sha256": "7d1470d670f8c9b1a1bc802497830b8358e7cdc2f577a7f41fe88b5674851379",
-          "raw_sha256": "ce43e56c538afc3a5ab51d6a43b6eb49e0473037dab39f9f1756a92e42caf5e2",
+          "sha256": "aea21f5ed60caf33b08ced67985cd4f6cbaffd812da778b4cff40dc356a2e1c9",
+          "raw_sha256": "6841622147cd55f87e9ffe62fb5fbe28612cc8437feff8b8cc1e8b13ac383e25",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-foreign-relation-container.json.gz",
-            "sha256": "8764c552666d7fd1fe90920fbb00523e241c764edb7c27759829bf2803dc7bfe",
-            "raw_sha256": "bab245185e4dd556ea468a8d4c1b9d98e9288b94d7ac62dca18bca2a09033503"
+            "sha256": "e8899b55eec68593c713f98caa46d492c847064650d27065cd72bb1ed6134f5c",
+            "raw_sha256": "88bc93fc38f82b697266110468ddde3cde97846bc59ad21192fdbed89c8fdff9"
           }
         },
         "package-release-refusal": {
           "path": "tests/integration/sssd-i6/reports/debian-12-package-release-refusal.json.gz",
-          "sha256": "54a137e9d040daa12f0a1ce3f638aca3e1f38561c6f1272ff44f779e3178b907",
-          "raw_sha256": "afb16fd88307fd8f75da4d3f605831711682dc99a6c39c41cea943a79a0734e3",
+          "sha256": "3af7707a2497103b0384f02077fec8796af96776150dfa46aaf75446ef0d6ed6",
+          "raw_sha256": "bb2424104fb0a90641b06aa4db4204463b4501e8b40327b5340a57cdf328cf5e",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-package-release-refusal-container.json.gz",
-            "sha256": "67d959b035d6500f6848a7ed27ddd69c81b9b5aeba593d9bd0fc184dd9476728",
-            "raw_sha256": "a9bced4b4153b6846dd109e86e9676c803a817e2d878fe595b39bcc66a52d453"
+            "sha256": "1c06a6f3b1f8d56085aa074e729a09fd54cc59122f026c21e799915db7d197e6",
+            "raw_sha256": "73244ec0e7f986ff7e9b7b91b3c43169b7bf06f73b23b4cd78eb8dc3eeb20ecd"
           }
         },
         "cas-drift": {
           "path": "tests/integration/sssd-i6/reports/debian-12-cas-drift.json.gz",
-          "sha256": "917025deef2f1d0f0e8bdb28f73dfdace7b50bcede36fefeb6d474e734778a9c",
-          "raw_sha256": "a53f9ebb88aaafa24ebe3499c1a58b3084a34506ee8f7fb360ffeab856dfc100",
+          "sha256": "b11d042ccfaf43133ac775829e5afa50522858c3569237bb1906c1ac6c261d94",
+          "raw_sha256": "5eb4b34f7b9c9ac3a1ebc5258c61eae492134e09a5c0aebfe4b46e6ccdd2feb0",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-cas-drift-container.json.gz",
-            "sha256": "ca2eef333d4c9119d7264b79fbff299bcc685bb69e2dbefbbc607d52a85feb38",
-            "raw_sha256": "8139fc3c144e07645943fa6dd20c9d9c480e4668fd34b8b5b89b3732cafbd2ce"
+            "sha256": "e78b722a42b32e79ac35cd9950df643d5b998a1fd33f05b0030175175b2d303e",
+            "raw_sha256": "bf6816152da334b342e29363e9f8c70e06531b88d1b712bfc3a7824f4ab615db"
           }
         },
         "cleanup-failure": {
           "path": "tests/integration/sssd-i6/reports/debian-12-cleanup-failure.json.gz",
-          "sha256": "0d1c99d097181dd55e12b62a6911f34e8ca0bdc1aaca87ee69cc8f3217475cf9",
-          "raw_sha256": "68dd7b2069dab3df0374377635235c31afa1293e0806ccecd0df5a06c11bd9cd",
+          "sha256": "f5957fda7032b1ee5feb5431d939669787db7811fa9dc51df2376848da6e7eb6",
+          "raw_sha256": "9a9b1846efab3d15b987f2d6ed8bfbe3e1c449452e115acb4df181951e4db6a0",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-cleanup-failure-container.json.gz",
-            "sha256": "f035053b86def7e568b60d9dbb7d8175e363cbe2965c44dc0bd8e05b34754407",
-            "raw_sha256": "79fc681325e59f189f1ad5a83276170b8db66dd0f2c4f494b941621dba25538e"
+            "sha256": "072bdbf5f9e0db59c5132428d1ccff26f2177af3553a6140caf7afb63194c283",
+            "raw_sha256": "a3e3baa2062b0a6f647b6897b6cfd6a2623cb5af807f4dc498e5c33a315e7ced"
           }
         },
         "wrong-registry-generation": {
           "path": "tests/integration/sssd-i6/reports/debian-12-wrong-registry-generation.json.gz",
-          "sha256": "6014ea58d06b3b753ef5411e15211c968a3f88a872d7832232c3856e3409bc43",
-          "raw_sha256": "02fcbcd4da46f4e5661e4cfd282b259df6550e60aa0a0130f852db04776f12b0",
+          "sha256": "fc5a57439cc8a777c23343c023042323713ec554ba8fe55cb5333359dd43e299",
+          "raw_sha256": "86f9769c752e35848a881cc4934a91d56b70619354794657c884dcec21f4d384",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-wrong-registry-generation-container.json.gz",
-            "sha256": "df53553c3ef79728b7fa935a3d2cb9cc3655499a6abbc9ecac58ce4760046781",
-            "raw_sha256": "0c821f53d7897ea136851e6904608b0f3ec23b20f8b2c9dd94288d18e5092d8c"
+            "sha256": "cfda90ba5c7111e79d5fe7beed59a3547774afd79d6fe6fe61472cc21710716f",
+            "raw_sha256": "7cf0dc5f2b7225a84639b38502b0cf1f0d1884e38d8298be8f2b748ab91ca645"
           }
         },
         "journal-finalization-failure": {
           "path": "tests/integration/sssd-i6/reports/debian-12-journal-finalization-failure.json.gz",
-          "sha256": "4ac34647e40983a5995283bfaedf8a00f7b34a0373e64091395eec8cc0a1e234",
-          "raw_sha256": "22041b584588fb252096f8649b287d19b422bb0bad5c349efc0f54e308a13a73",
+          "sha256": "850bdb0dbf5c58dec83a93b38c8f16546cea16508a1c3bd285df7f7f610dc994",
+          "raw_sha256": "9638a627574c829b6dff56c14e7b3c1f5c59f681c2d9ab6887b7b9646adc5c52",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-journal-finalization-failure-container.json.gz",
-            "sha256": "572a844abdf975199e775c47adb75e4eaffb59ab3463fdd1175a27dcb33d0e0e",
-            "raw_sha256": "48e004135db1678abad39ace0303635c3bf704861b7f3a1ec4714929b2f8f35e"
+            "sha256": "4c8211fdfb45789007fe49841c31ab42916b70c268558ed120b7a5f405c2258c",
+            "raw_sha256": "cceda4d0f6ca40c94023aa860a449aa45ecaa434dddc5db8fcb334ce1586cb8d"
           }
         },
         "crash-before-save": {
           "path": "tests/integration/sssd-i6/reports/debian-12-crash-before-save.json.gz",
-          "sha256": "dc17c01be449d8c9690d83fa1a0428023b59765a04b9404d03a89e390e3c4765",
-          "raw_sha256": "cca38aa80809c8044187da89adbd29f87e7ee42bc19604c7623741b52527b7f4",
+          "sha256": "cd34d5e404ad93dc5e1e57020bac7d28105652d859b342d7b7be7415b1b9d43d",
+          "raw_sha256": "c7a8a1c0f2a6cdc0550c34d15d53f39e0ff0e12ad9143890ad8dcacc25dc9974",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-crash-before-save-container.json.gz",
-            "sha256": "4315ece179cb715566e223d0eb1103903c3f39f6ea2e7bc2460224cca5551211",
-            "raw_sha256": "5576a8288a8ef7b37df6f541a78dc87fd0004e55a1aeba496b258b626806e1c8"
+            "sha256": "8838dd29d21931815ccb95947bbf74778861ef4250c75e4778e801361fecaed0",
+            "raw_sha256": "fe0882b697efc4fa3ad883e8eebe006dff5ff004235badb43ada02715b1bf7c7"
           }
         },
         "crash-before-ack": {
           "path": "tests/integration/sssd-i6/reports/debian-12-crash-before-ack.json.gz",
-          "sha256": "a32c062da260b6d4f66db79c3af33fd9b78a413d22895757f953dfed41b49686",
-          "raw_sha256": "c824ace3bf4fd9037edfbd548ccd3dc09133527039f3ba3d5778e3accea06499",
+          "sha256": "d2204916796a6ec01ffce32d766a7f19183ca72627aaefb416449094efc75152",
+          "raw_sha256": "a143557dc74e535a17f7ff28926f380211330c23c2aa04cd911c28c217068208",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-crash-before-ack-container.json.gz",
-            "sha256": "d90f7d43a5099a2ef18bcef91ae6a235d747671fffd590bccc165e82d92a6ef1",
-            "raw_sha256": "1572f2e33edfd07237953cd96d3c216807334b41aedc55fbd5d1d00fa0725ab3"
+            "sha256": "d37f3bbebac80922d22eccea0e29f4559bbba577318351cb5c48980bc0141a27",
+            "raw_sha256": "438bbced82d4c15fb7001dcd2996f968af5239e5acdd3f4d79e723226248f187"
           }
         },
         "runtime-generation-change": {
           "path": "tests/integration/sssd-i6/reports/debian-12-runtime-generation-change.json.gz",
-          "sha256": "6d3af6538475f9a9531bb7ac8245be5b79167a022332ce011a094a475bfc2b2c",
-          "raw_sha256": "9d992727c0d29351b252393f9815ca1eb84c7b4b78966e65d2f02ba4bcad4cb3",
+          "sha256": "e58ac6957314d42ed5cd01ac683b31995bfdd64805d92acfe8e8bb413f2ffdbc",
+          "raw_sha256": "cb0a778be933ae0f6e172bc91594c9598dc8e416d3488a1689ba3ab9b5f75a97",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-runtime-generation-change-container.json.gz",
-            "sha256": "5e2cee2f7e7c4d98ef9f85ac26be3182608ed3e0b8c8ce2f5c9b8ef56ed9ae06",
-            "raw_sha256": "1e4689842484e901959634e797a3a771b113faab8619ce07aeef796b0eee7d86"
+            "sha256": "2875b3f561ba982b1cdae9f04401541f7d91297897dfea40adbbd47b7036ebac",
+            "raw_sha256": "973317c5118254e37da9b91350f97a27cefd5037169d444585ff5adf9c7b24bd"
           }
         },
         "receipt-substitution": {
           "path": "tests/integration/sssd-i6/reports/debian-12-receipt-substitution.json.gz",
-          "sha256": "5b063bd437ee066369d9aa6dfb731e256a6b4215c2f0850b32b181ac7ab05cfd",
-          "raw_sha256": "af7b5555a5b7f55efe7a1d2c6eef508bdf99fc07d10a5dc907a14a1f95b4fbd5",
+          "sha256": "dbc3b27b89d85d1893f062335eb71222118a975d3ddaf2f710c0937d9a6feaa5",
+          "raw_sha256": "2a98604f5a2c50b6a65170ad22d0005bc7c002812a8764e87541f5a941f25408",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-receipt-substitution-container.json.gz",
-            "sha256": "4a48f65954e3b1c82fa2c93ecdfff38399309b8e6eba1206e284189b45534fe9",
-            "raw_sha256": "4355516fa5de041a21b4b4ee91d1c119379d6fff775a3bf7f54407cde8fef298"
+            "sha256": "f7491a1b6a307af1f77c926ba30ec1edf7892f6b38777f3b4e133448672e9ecb",
+            "raw_sha256": "3db6e2ccee002453aa9e3331fd748fc08f89be43d961b6aa86ffe1e527c9f7cd"
           }
         },
         "legacy-v2-awaiting": {
           "path": "tests/integration/sssd-i6/reports/debian-12-legacy-v2-awaiting.json.gz",
-          "sha256": "49b2d93b536752487b5651531fbe58bfe4fbd1d2f3d9bab4b29d2a95c3b1688d",
-          "raw_sha256": "65d9754cec41850d44eac57da92ad32b23d6f944697bc4f3df51520545e7a3be",
+          "sha256": "1d7db524c1807016e4322df0f74e93c509cdf070073e006b754fd7d9ae47911e",
+          "raw_sha256": "7031f89112f63b1e166508e3fb84a5c0105ba64fd42fdf1d58fefa43908a51e0",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-legacy-v2-awaiting-container.json.gz",
-            "sha256": "140b0366696160006af413adfc6f2f9975cc75e394e8d463fc6d85b516b08755",
-            "raw_sha256": "c3be8055868e8e3428aeb86c0b4c46bd9400302f81f2627f30f7a36ecaa9ffb0"
+            "sha256": "d458ec931452736104b9f420e15e441d3ddfb92b409177fe3fabb06583292a48",
+            "raw_sha256": "7df974863419afbecaf9f1f7882a877fe1c663edb9e6715b0badfaf0c2cd25da"
           }
         },
         "wrong-physical-witness": {
           "path": "tests/integration/sssd-i6/reports/debian-12-wrong-physical-witness.json.gz",
-          "sha256": "f1bc4f70a0e26a2c9f46acb6c652fe76630d4041932582306986a990376c65de",
-          "raw_sha256": "d6f82681a374ebba366ea24770fe26b1eb81d205f1ac74fbbf6a48ba427f3461",
+          "sha256": "6696b02c9ae89c8d160f81314b9ab131783ae061a8f6707912e463f0a7b755b7",
+          "raw_sha256": "dc0e05a0b5e0e8faf4c786eb9834d8681b91dc26ec76d1f8d321ec121c628a96",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-wrong-physical-witness-container.json.gz",
-            "sha256": "7b8cb34762a03041526a6482852d709a150bc37ab6604cd702efb02c8a974904",
-            "raw_sha256": "80e6b5956824e935e169555ab49011e955d74792baeb81d13b00977b9e8ad6e4"
+            "sha256": "b2496bc402e0d6ada193cfbc2f8741ce59bf7dbad0054f23475daedf0ca91f3d",
+            "raw_sha256": "6e2c86c92db2800e9278e83444c564d20e2802970fe900eb11266f1cb61cfc74"
           }
         },
         "legacy-upgrade-applied": {
           "path": "tests/integration/sssd-i6/reports/debian-12-legacy-upgrade-applied.json.gz",
-          "sha256": "7f3c969edeee2a0d24b8d9f3b1e87cf78bcc059b32c471da10edfca241741bca",
-          "raw_sha256": "ad82188eb55e3fc105423da76065421f7adac976a149d676068e1349062f2daa",
+          "sha256": "9f4382be24d14ea220a1f6c8735bc74a7a604ba033044a7f309bf923f2c415c2",
+          "raw_sha256": "609e14208eaf433431ff7554377ba744dd8b6af52f3e28e862eaec670499587e",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-legacy-upgrade-applied-container.json.gz",
-            "sha256": "94dd8349c461d41f128ee26263aa57b8e3751f53ab10f076453f779cc4e98ece",
-            "raw_sha256": "c7d379fb4056b135136fe76f4c65bd4422f69dc724a5608868b61cec1fade9f9"
+            "sha256": "2cae2ba6ed926c63e3349961744a401eb042290f9ec360cfc5d6bc3cf2b1b49b",
+            "raw_sha256": "680e316cacc0f179dcdb5308f05aa2ace6496b4f826f447ff9e027de1a2f3b25"
           }
         },
         "legacy-upgrade-prepared": {
           "path": "tests/integration/sssd-i6/reports/debian-12-legacy-upgrade-prepared.json.gz",
-          "sha256": "4e69546a768826258d104a2305d98ca5478e45ca9d18ede68e59b3e14734204e",
-          "raw_sha256": "208ee56af7bd55f5a035ef29a67f155d6f42da03fb25c2f73b2294eaccfb3e5f",
+          "sha256": "fb243a9a673c5d9229e4a3b209eb153435da23b03a57cf9a7f5216e30002ae18",
+          "raw_sha256": "648dd7631fcdb7605e0e3f845445a9902167f2b43361d989c18a8a425e9c2bf3",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-legacy-upgrade-prepared-container.json.gz",
-            "sha256": "162b5717cfe26bc98e6391b3104a747d03783fede7ea726cc3b2478f98adf9a3",
-            "raw_sha256": "531e9f86ee0691f4f452dee3389d891b496de101a00069747eb6046bc6f1699a"
+            "sha256": "9823674cd2fc33fa252775182fef02462d6d303a3b8c4a8d973e8cd848c5b338",
+            "raw_sha256": "4f45bc3fc739a774bed67b8d2d9395742e4dcb0b7352ddb2438c02f1ec7a6432"
           }
         },
         "legacy-upgrade-rollback-failed": {
           "path": "tests/integration/sssd-i6/reports/debian-12-legacy-upgrade-rollback-failed.json.gz",
-          "sha256": "05b91929eebfa7405f55384ca1c54bf6def04961c4d24a60160858d78cd63622",
-          "raw_sha256": "c3d42a8ddec342bf484a3df5f340fe350284a656d1f303f2045d6f199ed44506",
+          "sha256": "25fcf8b4ae57ec41de5e9b44e12a9061b93aaca8d6bf3a1099d7e47255670d38",
+          "raw_sha256": "85b0c51f9d944227d0fc66afd06e825190c06a6b88023549c131f5a432139898",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-12-legacy-upgrade-rollback-failed-container.json.gz",
-            "sha256": "2e37ced88c0975e0f614d6345ff8928b17d4eb9d4a7e58099087214c7d5dadf4",
-            "raw_sha256": "529efc39c2ab7733ab8fbf258b817a295a2803d912f1e1a5b43b157bc0e380c4"
+            "sha256": "694e6878801c03bee711a64fea6e41d1aef2324a6ef5261b8cc2ba8ea6409bd7",
+            "raw_sha256": "eadcded42b52e8b33e82f687a016720e70fa2f7ce0113e30b66503503998ff39"
           }
         }
       },
@@ -1285,296 +1297,308 @@
     "debian-13": {
       "build": {
         "path": "tests/integration/sssd-i6/reports/debian-13-build.json.gz",
-        "sha256": "fd02439108e0d3c90305947dfeef7dba0a21f2d6f70779f0460e3f485ecd45f7",
-        "raw_sha256": "20834403ec86c2ab08477d2e0239c4ee5bc4d95d270d31768ccdcbf682738696"
+        "sha256": "33a7a6645dc32d2c7c1562b00a77b9b402e3932a9cfe6d710c5c1a0154a6794a",
+        "raw_sha256": "bc8b8cca6dca32aea9a010b32b4435dd4ee082d6c8669faf05bd8dcbc29fd649"
       },
       "scenarios": {
         "positive": {
           "path": "tests/integration/sssd-i6/reports/debian-13-positive.json.gz",
-          "sha256": "cc7b7be9a3b92d4cca90b04e08f339a146e06d09c27fa9ed35638144b9c8d2c1",
-          "raw_sha256": "7afaf025c0fb62057dbc8672250252c04f6341b64222669a093bf5dfd6046f48",
+          "sha256": "583b88bec10292235d5f57450b8e678c05fd106006caabadc9b3f3f6194a4af8",
+          "raw_sha256": "aecee1e71a23bc43f9f2ca20f81ec362119ea2dd17a92d780cf479da00fbbc24",
           "exit_code": 0,
           "observations": 14,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-positive-container.json.gz",
-            "sha256": "fa724fd79dd00049bd5b908c5d8c337605fa524de178defcf78bdf5e55d6fcd8",
-            "raw_sha256": "7e18b6b8e820764cb6588c63345d3407ae8a4c89d9db371ca615cdc9a3f0d70c"
+            "sha256": "730b6bf1f65ebb613d957077fc3fc98dfa0fc8e1a6b3f928ffc67e2876f475be",
+            "raw_sha256": "e805fec7e6bdda39b492ef91adc264f0fa3b5222384ac14945858ddf50e83104"
           }
         },
         "stopped-apply": {
           "path": "tests/integration/sssd-i6/reports/debian-13-stopped-apply.json.gz",
-          "sha256": "10d4e4f54435c128c0398ec03836728e4d41a7ee50ab89dcc48ce2a4e8a466dc",
-          "raw_sha256": "3d6dab5f8d6d3e67d49c3ab05a0888dcc9fa283e71758b61f3b79d991231d6f8",
+          "sha256": "1189cf27c6a535f4d7560ce9701ba0ea69b3ceedc7fdf0e0e7403038c1cbabbf",
+          "raw_sha256": "28b0e7d3e905b0e6e7cc82067889bbc30e15fb952a022f4039d41a43bc97da1e",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-stopped-apply-container.json.gz",
-            "sha256": "df7ca04f51c4e57379c7d96b0d1a41e8513250fdc8cdddb9e82868163a2858e8",
-            "raw_sha256": "43952f2e368ab6ff1134d034af7c42371352f595bce250a406151cff72514983"
+            "sha256": "669b7dff1fba15ba9cac72685a0cd575846d6da3c0ac377a45c02645a9c2cfcb",
+            "raw_sha256": "86787e71702dad52233e60bb09ea8b51b6a9760608c9a6a6666e6a87d7a88aca"
           }
         },
         "journal-invalid": {
           "path": "tests/integration/sssd-i6/reports/debian-13-journal-invalid.json.gz",
-          "sha256": "71a00eb882b414e200a2b7d161b31ed64533966927466c363b366d63554b5c9e",
-          "raw_sha256": "87e7fbe01f0852eeb61fc1426aaf51901a2915f05f6e21c2c55f8af22fef575e",
+          "sha256": "0b95aaa643b05fcf8f21b913fccfdb75fd7c9d0d3cc96b2444f6bae22346a11b",
+          "raw_sha256": "071298c5200699d64266345e30cef66925d2c6aa36ffef442bff4febc559e005",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-journal-invalid-container.json.gz",
-            "sha256": "cbb2f54468b8bcd0103bdb1ac7ef71699257af978271d1ebefe35c51dee1f92a",
-            "raw_sha256": "9d67b751c059943e3085320098d4e7adbbc9b8f70092259af520db2022e3193c"
+            "sha256": "615a9b540e74bcb0562e552783f30d35558b37c6c7223e66af47318ccb4720df",
+            "raw_sha256": "0e16732e16fa4722d0abac5e8a4738168846af766e65ceb874781ab77fdcab4d"
           }
         },
         "relation-conflict": {
           "path": "tests/integration/sssd-i6/reports/debian-13-relation-conflict.json.gz",
-          "sha256": "e720e12bcdd358fb57d8cb95176a86c957954b44ea5f4b92f5460368f5f704ed",
-          "raw_sha256": "0ab291e927c19947858d72612344f611c353b91629dbfc73c9490d4ee499773e",
+          "sha256": "5d15344241b228830ca8fb40333a09209cb7e84549c597ba0bd7e266eafc4c07",
+          "raw_sha256": "bec8689862f28f621f3c86e10acf2423573aa78f9f2282c12fee2264c6090e24",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-relation-conflict-container.json.gz",
-            "sha256": "1d82c382d143acd92c5ae5524eaf89201d2971e74375ecffa511e25157f3e457",
-            "raw_sha256": "8b71b4cc017c6aa412a1e72c36d31871b14d0dafbf81f586a44fc8e542b1916a"
+            "sha256": "4e396305c524b5acb4679dd3f3dbbb490698377961ae247f6e01b775c4ba198b",
+            "raw_sha256": "b275df4569602c153617e8b604062d1768a43b2d9565624249e282152c3df586"
           }
         },
         "domain-key-drift": {
           "path": "tests/integration/sssd-i6/reports/debian-13-domain-key-drift.json.gz",
-          "sha256": "23a3def682670d872e1edc3aeeec36a79ac6485e3440d0020b14dd40482cf4bc",
-          "raw_sha256": "12fd805200802c43e7a43ec5f7e149388534a795c0782ccf2566e8547375ff6f",
+          "sha256": "951e0c0805c6722d01c06f39e40626fc87386d434dc8056fb88f801c24c8fe83",
+          "raw_sha256": "1fb0cea7e338a1646607b624be0fa7165d621745e6eb54c472b5687f0c23064c",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-domain-key-drift-container.json.gz",
-            "sha256": "98d2a716ae66e5e08d9286b624bfdec2c179a23eaa4589253270a6c68fb2849c",
-            "raw_sha256": "a78321a88ec1ab8b69daff97667d33639bb061b7c9741dff51881a1bc13554c6"
+            "sha256": "64bdd7d1ee0deca21ff769bbb37e7f7ca813e907826128a54c2b269182e7772f",
+            "raw_sha256": "31fb117b5f104edd4d3fe2c83346cd2ae70a2d7b6249f86c3d90ab751dbf41d1"
+          }
+        },
+        "remaining-enabled-scope-drift": {
+          "path": "tests/integration/sssd-i6/reports/debian-13-remaining-enabled-scope-drift.json.gz",
+          "sha256": "fb3c53427dba86511dc41bf5d985d13a28790a25a8aafbe97e4ee7e11528c027",
+          "raw_sha256": "36e3cf08366d1e19982762f221b8ea4e7e52f5774eb276f1ea6ade0baebb4c5f",
+          "exit_code": 0,
+          "observations": 7,
+          "container": {
+            "path": "tests/integration/sssd-i6/reports/debian-13-remaining-enabled-scope-drift-container.json.gz",
+            "sha256": "e31d5c9039972902a111d7a33168ee20b93c3da07eff1b5842abd5e66cb894c1",
+            "raw_sha256": "b50ab70662fc9bb70599a016925a345824336b695f46c64afc29bb35e0a03531"
           }
         },
         "remaining-enabled-unowned": {
           "path": "tests/integration/sssd-i6/reports/debian-13-remaining-enabled-unowned.json.gz",
-          "sha256": "4a469549fafe213d910e075938658b0a0d24639fcd7f39205569c27d3974ad0c",
-          "raw_sha256": "fe1344b9a5a57e68806560d08306bef9b32526b06701b10a93e2992486ec1ce8",
+          "sha256": "d2f5167edf7fca69d8688319bedb6cdae6e0730d45716a0d58d14ff9ad22743c",
+          "raw_sha256": "9340a8b591d6fc4b7b6086030a3dca86f75b56e7266ebc5cdeb21b18aedfceec",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-remaining-enabled-unowned-container.json.gz",
-            "sha256": "3601a6fb2f0ab97c5f9cc8d3f2133f5246344b547547ba2cda604711127c69fa",
-            "raw_sha256": "d1db725457b9ff2ad2fa4771937d8619e286aea3b354d223ab73791a1d1c76e6"
+            "sha256": "1c867595d3bc610ebc77e06937a5b027551c195ced5839523e59ae544d250c89",
+            "raw_sha256": "d3c270876f32800805a06a1c4f8c04fa7e597c225f72ce08db41ec4dfe76410c"
           }
         },
         "remaining-enabled-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/debian-13-remaining-enabled-unowned-matching-foreign.json.gz",
-          "sha256": "3d0ab63011bae32e85fd5014a1254c91ee643788d56331545abb6fe2e8742e72",
-          "raw_sha256": "efeb8bae12fa5401c21b2c06bfe49a3374c3a2586e40d3ea62590ccf1620d81e",
+          "sha256": "d62256c1551fba543c99d00320a8afdbfd773de356e2724129f109c8a670d71a",
+          "raw_sha256": "3b67ba60cc404ac279fbbcd9f6040d94186cdae1429b942ca899e31ce94542d2",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-remaining-enabled-unowned-matching-foreign-container.json.gz",
-            "sha256": "d99f7dafd60adfbca022666bcfd44df439f20ea5293be7f722c219eca54b4f91",
-            "raw_sha256": "12b7f8d7580e16813d25db087b969c763ece5c525786ea450b66099d85530599"
+            "sha256": "0761dda631c406653b986c7a67cba6b466262cb21ac33ed2c1164ff4961d0c62",
+            "raw_sha256": "1a1467d2d016169ad64c33b29da9df0a0899f81995ba14ad886282b3be9613fb"
           }
         },
         "acknowledgement-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/debian-13-acknowledgement-unowned-matching-foreign.json.gz",
-          "sha256": "cafcd50f166154822095001f531a3bd22ce97337de8b3baabec72518eb840051",
-          "raw_sha256": "c65e481a7b5e6c26e151b464373b1b1438b39d41182ea7c4c092a031c17316d0",
+          "sha256": "8a0f2d10619d7bec8c38c2b6a87c7ffda0a9cf3fa283cb23a11677a4de757433",
+          "raw_sha256": "35ae79e9e8d2ab12100ac9f362be13147b75ebf02847e9f05c01e652d991fa7b",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-acknowledgement-unowned-matching-foreign-container.json.gz",
-            "sha256": "6501f492e359f51c2c375afa09df3a1b35114a4bc4387da04a037ff52111de9c",
-            "raw_sha256": "a787701ac8b796e82ac0e80f136b17b53acb14c7682be2a0445eedd015b86b80"
+            "sha256": "f9750b536507b06088d8e9e0afc05075b8bca1864b0dee0483aedfadc19f6f5d",
+            "raw_sha256": "00fc98b3d8dea1b014500548d0aeb0b3893d06d2ba00a5c238bcbac02a089ec9"
           }
         },
         "late-foreign": {
           "path": "tests/integration/sssd-i6/reports/debian-13-late-foreign.json.gz",
-          "sha256": "51fce6ee8ddd496b5b668d29160216a47e730934b2ae8a447d14c6767a0b4a2c",
-          "raw_sha256": "f269258509b907d6fef50028fa7548009669b9630e94f2f190452f94650a7e0b",
+          "sha256": "762a4916ac828cc5c1f2e97c536298e2040ed97f3bc9b0ea97126a345096b4e1",
+          "raw_sha256": "de8abfd9acc523b6a4fc53ea11e5b3a9fce42601c9e7d38b3f234dedbcf7b66a",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-late-foreign-container.json.gz",
-            "sha256": "775f3985c683878db228260e2743abae857c8a9570d8198d9d89f6f856835b56",
-            "raw_sha256": "ed0d39be390cfcf52d986829e8d79dd6c58ccc23291fb2deaa223ba83a274397"
+            "sha256": "ca57255a054456e544bf6d094dd604defbf2c463ecbcf109b82dab559a851747",
+            "raw_sha256": "1e89a7ff34f2417ee22e69fac52b600224cf860014b015d7804c9a3707adcfb4"
           }
         },
         "foreign-relation": {
           "path": "tests/integration/sssd-i6/reports/debian-13-foreign-relation.json.gz",
-          "sha256": "927b2f2e2ca0d6903d8167c85535a7e75aef59af22bdb8ea98b1b9e75fb41ee9",
-          "raw_sha256": "d3912e4c2fe5705f1b00571e868598eb62c2f8d2a8e907e436ad0219a3bb2fa9",
+          "sha256": "0a46702153048f07258a07dd57125aa91d0566f24d6b576e297ec8f87855cb98",
+          "raw_sha256": "22534bb44210c9a015a2443cd5f0bcc488b00216fc39dd97bcb26c0223c90c11",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-foreign-relation-container.json.gz",
-            "sha256": "c4007b36cabfc83cc6dd2794dfe00c5d35f9f86a67504f33354adca123068f01",
-            "raw_sha256": "42b3d779d52357dd75795fc74e3def4bcbc7011245c47b067c2a5df47f506fab"
+            "sha256": "55f091a27c1f014a16e05a842847365188051186c83eb82b827207b14c477586",
+            "raw_sha256": "c37bef27280397b5fd7ec675c80e9206791235fa5c11453fb4d520d66015539d"
           }
         },
         "package-release-refusal": {
           "path": "tests/integration/sssd-i6/reports/debian-13-package-release-refusal.json.gz",
-          "sha256": "87c8bef76f73bd321b5b85358971cfa55b1342dfef5dbdd724715a9f3b952014",
-          "raw_sha256": "4c2f0480b36d4ae921a06d52ead3152b8100adbae70527586022515a3d06c856",
+          "sha256": "cc128b3416d262b3697ba4c633b54cf88adc22ca23103e97ad0cf9f0b2b99a23",
+          "raw_sha256": "54b363cdcf3c7ff5ef6d6ad25c58c460c11613acaacc5a22506a8bab1194dfa7",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-package-release-refusal-container.json.gz",
-            "sha256": "1c7a9682ccad24982bc26de615559f31d40c4e8b7e86d193246df164c5605e45",
-            "raw_sha256": "76bc08016c34a838039a9692a93568f9a498db9605b0b1f2f83d807a2239e9b9"
+            "sha256": "06a19679e007ed572d17f9b3dd7ff39604c0cc03b5bb456659bebd0f71f1dae9",
+            "raw_sha256": "c2f3f3d584322356cbed9c3df3af9d91754ee3d5e70e3f5dd0828a445ef4d2c1"
           }
         },
         "cas-drift": {
           "path": "tests/integration/sssd-i6/reports/debian-13-cas-drift.json.gz",
-          "sha256": "3b7f6b7c08f6adfbbf83bc3c302700f5f6ddb3b0e9c0ff7a63329042d13e7df6",
-          "raw_sha256": "7466b50cc3a2287b4dda3ed80d99c691bc81fbb4ec898bf898f5b1186ba53dd4",
+          "sha256": "77a9f96263e361a284c62eba8eb56a98b857639bffdcccc6c0345a4f578bbecc",
+          "raw_sha256": "da358d39f21d0561366e7c1a2891ecd33fc8ba598688c7f859c4b0f7b486290f",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-cas-drift-container.json.gz",
-            "sha256": "7e684a13fc3b2c9ad1ec2d6b569acb8e299842ab49ad7b90a225771da476bd37",
-            "raw_sha256": "f18f051c009a2d2a35148a86a6b18bb3518af2bcc0052e3ef073f84ad69514a8"
+            "sha256": "05b70120d8e4719b1abe68c2e4c4fb2b15ab2361b81d44e4ec787761b1afeeda",
+            "raw_sha256": "1334023a194ff98e5519b7b51c8953f57148ac810345c81aff9beeda73e1accf"
           }
         },
         "cleanup-failure": {
           "path": "tests/integration/sssd-i6/reports/debian-13-cleanup-failure.json.gz",
-          "sha256": "6841d3e4921713fb400b17c111c0dbd764574e465cc11ef6796219b68ec89e76",
-          "raw_sha256": "50d2267a884c98be068f8f22b1847147645a55c2e126b021bf7f3ce20761e406",
+          "sha256": "8dc4223312cd24fd63d45975ec55ae5c20e8a677ca7eb3ca2faa468b35fc237e",
+          "raw_sha256": "7edfd26d1a4020a8ca50a35157ea1c1f99e233ec1503cec7bfb5aa797c843d96",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-cleanup-failure-container.json.gz",
-            "sha256": "31a45b614d788414d68fce9a7104c279fd4150ce94f2b5a4fa6642d1b319dabf",
-            "raw_sha256": "0f92bb7694a28b8043ab7f3ae3be59aa84976f8745bcf9a582eca463fc18071b"
+            "sha256": "c24a1c43cd095cac6fc96c406f2b26b22f38adcdc9f8565926f0b0628460f51f",
+            "raw_sha256": "bb6676919b7b84d72eef5a921d961f5531c14b6e66f0d305c2e022d3964a5d62"
           }
         },
         "wrong-registry-generation": {
           "path": "tests/integration/sssd-i6/reports/debian-13-wrong-registry-generation.json.gz",
-          "sha256": "d306fd9f1b998c246f201d518cf1da613f216793a91241aca7d379a87d1f1239",
-          "raw_sha256": "fc508a2e3e7ba80226f08453b9efe10b1760e9abe757466d1372cafc73517dff",
+          "sha256": "3c2ebed4040458722fe57a9cbd3ff118c920b3f29f85aa4719c634f2cb2fcb29",
+          "raw_sha256": "f048eba7356bad019801bec18b73c61fc179a9cc2990cc8cf62b7cb17695380b",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-wrong-registry-generation-container.json.gz",
-            "sha256": "fce11d6718e24d0b610c28781ebbbcfecf1bb678b418cc090c61b749400f9486",
-            "raw_sha256": "b7558b6dfac68784cde15f82488fd7c3a8d34ba023b06ea82b8f75b7cbb28aff"
+            "sha256": "2c87ac920a2f60f07acfce88e834c6805327eea97e2df6a526cc7a130b9f1344",
+            "raw_sha256": "c25ef33eb1a43c2ceddf56131e23f6c75be7c7b7b928795a4392c260c2a51532"
           }
         },
         "journal-finalization-failure": {
           "path": "tests/integration/sssd-i6/reports/debian-13-journal-finalization-failure.json.gz",
-          "sha256": "8b070c8159fc64a4822d4ec391ad5a69ac6babe89504fb6d18f34ffd19aa790d",
-          "raw_sha256": "5012578f1123d5117ba8ad74d397152f42090581c77da8fa0ee4d36c2b72270c",
+          "sha256": "57fbe133544da28919377fd3254348d3df123db65fa2830be80ca46bfdbde036",
+          "raw_sha256": "f36c3844246840656ee08770fa286bb0a03d6fcaa924a809c8f7cb67c2011e4b",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-journal-finalization-failure-container.json.gz",
-            "sha256": "8666c110224c6b8af17aef6f039fb0be912926cee904cb049a37835cf3ed801f",
-            "raw_sha256": "6bc2ac56db2c2fef7f87f762836f9ca2847ffda26002a1ba7313628bf53b64d8"
+            "sha256": "358d7539203a99d5deca6e9d311ee53a1e7738b087446bcd89af31f35763fd40",
+            "raw_sha256": "228d29b6cb2af23c07d4e2f064ea5035c8350334c8692670ff1d114f44bf5c43"
           }
         },
         "crash-before-save": {
           "path": "tests/integration/sssd-i6/reports/debian-13-crash-before-save.json.gz",
-          "sha256": "d37badb48309ce6f419137477819d0793837fbcf64e9f709b669c8e569cb14cb",
-          "raw_sha256": "293a25151e6ba9d28f2a7d6f13c86a5980845dc6b604905a82a3dc95761c95a3",
+          "sha256": "4ce83f8734f93636916b6ebdb4a81bf8611eefd6888e258dec21d76afb7d0d3d",
+          "raw_sha256": "d9779d3147a791e084264835b12fbc8a61a3afc0fb8dc9d003e2f4edd1a4d0e0",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-crash-before-save-container.json.gz",
-            "sha256": "a3c3aef9680469e4d948e4c661499bd93aab2db5577c31a9b24d2bb1a50033ad",
-            "raw_sha256": "e6ad43bbedfacc2dec596fd75def3e02fb799c22c5063f9fa290f2480d607eab"
+            "sha256": "2d9f52f4ae5bc1bc085dedd065fd889470afba52f907a6281d3c94dd8e483d03",
+            "raw_sha256": "d79ab020e769a808b2765529ff84231da12358feb25dd4b0cbb300f39d1f8c28"
           }
         },
         "crash-before-ack": {
           "path": "tests/integration/sssd-i6/reports/debian-13-crash-before-ack.json.gz",
-          "sha256": "a040fe44bbbe63a3790613360b5cdb8d338d89d0dcd75018631492d0efabc431",
-          "raw_sha256": "2f87b99be8b3a2ca6f48cbfa8136ff4bc9d917f15250359ca1810214c4fd0c86",
+          "sha256": "5110c2ab18ef9a1ca8f09eb750253511e6e6a43856d7f1fb4c460b2a210a103c",
+          "raw_sha256": "0b6698eb37233c5f1ff3f76883e8a3ba59652766b6cefeee47b16019199037ae",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-crash-before-ack-container.json.gz",
-            "sha256": "a794b29124258f0280fd93702e9209019583c51e80e14102e07f986d5055a8cc",
-            "raw_sha256": "5bcd0a3ebbe50142e39fb3983809977edceaccc89643971f5f1318ccdaa5b02e"
+            "sha256": "bc3af45879466fde9a2b8d31146492d68c7a4646af6228aa4caeabd11c1b682b",
+            "raw_sha256": "fc524711726ac2058213d2953e0929a3e966b5e2568356930eb115761e75b191"
           }
         },
         "runtime-generation-change": {
           "path": "tests/integration/sssd-i6/reports/debian-13-runtime-generation-change.json.gz",
-          "sha256": "9e0e4b05b091da1783154073337207869b3866453d56d73574a30a3d2b57b25d",
-          "raw_sha256": "51dcf6c4255e1150615e36a79c606ba278c0f09c4ffce51863efe1d9efc99665",
+          "sha256": "3df6e9b03650df4201083c7ff15a0cf157607214b8f4a936189c21bd8592a6bd",
+          "raw_sha256": "43e581317da2099c7d1271da5ee67eb96e41cc031f23c9e3598942e98e3be03f",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-runtime-generation-change-container.json.gz",
-            "sha256": "d91d234c6a79729fd9067899812bfe7a6bb246404406f07556f592437d24755f",
-            "raw_sha256": "c049ee403288df706cc78d565cd8240c404eb87e961e54dcf16ec943d81bfb01"
+            "sha256": "ab9a6a0a95446120e3e815dd50c481c49576c08424ff7ea1df309a7753793ef1",
+            "raw_sha256": "7820f5850764b8c87f969e03e70ed71a17c30fbc2a9bf3b383ea0828c0777f6b"
           }
         },
         "receipt-substitution": {
           "path": "tests/integration/sssd-i6/reports/debian-13-receipt-substitution.json.gz",
-          "sha256": "fe6a54cb482e78fa31f6f7b078716933a4e76d04fe7fcb302e13d4cf42b29f55",
-          "raw_sha256": "01c68183f80e842263107f755328e4941a76f44894fe2aa124ac7bb8e4093ed5",
+          "sha256": "8ad39c34487d2a66cd39d5c97cabccc509a34671984f5420e79d2a28980525e8",
+          "raw_sha256": "294d4f89befeb151415ec2a47514816b9b971a0e8458093d0e76c05888401465",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-receipt-substitution-container.json.gz",
-            "sha256": "f4022dd693a7dacb259dca9211313699fa83ec25263fecead2d1f11c5cf3eef1",
-            "raw_sha256": "b87b567d9aae85e683f8e6b490e67f170ca477581b82705b87f2967571e88eed"
+            "sha256": "8b8c8a37dd3ca5388054c9599f5733a1461eb66b4c38dc721eba7cdfdae0ab74",
+            "raw_sha256": "d352d0f7f389fc731c2eda8229e0f5148269130f2f785f0ccb09920c80305d7d"
           }
         },
         "legacy-v2-awaiting": {
           "path": "tests/integration/sssd-i6/reports/debian-13-legacy-v2-awaiting.json.gz",
-          "sha256": "d5e90d04d82cf5d0cb685746fbfe222d857c325f6a2ffbfa08629ff7158d33af",
-          "raw_sha256": "60e7750c8e9f20eb209e34242af125f4e314f096e3b0e7358d99efdee80a5eec",
+          "sha256": "786857d441b4a7dfc0681eecf4928f3c159f20f9b33239b32d98ffcb0195b0b0",
+          "raw_sha256": "1bf981e32022fe398ccb605ab520ae98b473ca15686ea4dc8cf301c7b3033d95",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-legacy-v2-awaiting-container.json.gz",
-            "sha256": "ef5dd0595cb163c1e79a93916ef46789b19fd829fcaa72cda03c4c54e3034de4",
-            "raw_sha256": "36987dd5ff3841314ce182bd252797ed8b8c78705c39e5bba4660016b44f84dc"
+            "sha256": "b2b7f72e206ccec6c0cbf866a8e75bb34c0ce1fbaeff60b62e42b4286cc00b07",
+            "raw_sha256": "0abca9cdf41b3d556f001f8ccbf2fcdd98f045719cd91fd918b731db63d14707"
           }
         },
         "wrong-physical-witness": {
           "path": "tests/integration/sssd-i6/reports/debian-13-wrong-physical-witness.json.gz",
-          "sha256": "fa80c61dfca79539f7376238ef1a6aa44cf97d940445f54d8f0615eed76cef5c",
-          "raw_sha256": "817c4de87d8f03ac0bcf82df8b20dee304f0e5f6ce54ac03205ad2ea6dc23e74",
+          "sha256": "3a7b5299c7315a8cffeb5654c8d33891805e9acb31e148552c1f994e0200f103",
+          "raw_sha256": "5c4f2600c91c5b3d1a71c7be410722469eead0c923fa702a3764e209f9ed9a3f",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-wrong-physical-witness-container.json.gz",
-            "sha256": "fe76955e358c2921bf061ca7e17ca89edc0d37ee2aae0fb77f9e92803fe527bc",
-            "raw_sha256": "c858584f0fe5cc3ccec8786197697597ee4c28ad7044db3af795ec009adb9110"
+            "sha256": "0659f63282762b8c82260c354a5ccfe2a345cb465e7eaf09fb48d2573de5c5a0",
+            "raw_sha256": "70940987b15498f29c79df41f38fb7dc1fcb683f1fd8a12cac1987330680bc05"
           }
         },
         "legacy-upgrade-applied": {
           "path": "tests/integration/sssd-i6/reports/debian-13-legacy-upgrade-applied.json.gz",
-          "sha256": "7f396e09a553dec94c1070a782f83a740e0c7849aa2db02a6e3bbf3e115bbb0f",
-          "raw_sha256": "4de38107e028b9d18149d270563ed8f7e78187229297c127058d42c67c8410c2",
+          "sha256": "23bfb854b9f1be56779d49654775441b50c0c18596d9c3f218a1ad0acff53f94",
+          "raw_sha256": "2e2df6ddee1d23f3752f8fcfdb46cce7f8c279a076ea1c5a1e34592f9e3cb5d3",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-legacy-upgrade-applied-container.json.gz",
-            "sha256": "a60acf095682f38c39d73cfbd91a15a13bea6079f3c2f664d3c1fb05d5b65ea2",
-            "raw_sha256": "50592e76a1624a6677ad84952ee8070ed4d7958b88bf7d98d45c14720c13cab9"
+            "sha256": "54143b20e9c7b8c1fb82b40337c8e77a67f4541b43956a717c338a0cd7ff4ac0",
+            "raw_sha256": "9af1c5906ce25273ee9fbddf8c956fcf82dc8852ff140371c6272e9240346d5d"
           }
         },
         "legacy-upgrade-prepared": {
           "path": "tests/integration/sssd-i6/reports/debian-13-legacy-upgrade-prepared.json.gz",
-          "sha256": "de78df246e2ed4729f1a5f277dd44df51aab82e1bf848ed6e7a5e5b4f0bf8960",
-          "raw_sha256": "5267a68f6940bad08df701bc08899dae890db887a912682c5ebb95fd960601e5",
+          "sha256": "0098dadb881da50e0c973fc638f3cb511449a63c1f0ba7db8deacd020a945b99",
+          "raw_sha256": "7387837f8149d451ea34027f0ba1e37d8c657c5ea4d47ea4b9d15ae7d36927f5",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-legacy-upgrade-prepared-container.json.gz",
-            "sha256": "0d3561052f03f8df42bdb33c4e8b57f18b925c69897957dd9d7b4308fc6c0f33",
-            "raw_sha256": "eeb192fe3f557bed95d4aa4829e35f102cc200a9025b611672cb5bc021fd0601"
+            "sha256": "dcea7a86f92926270b0f6a4f092bf27f800f98b694fa57370308c66038c47091",
+            "raw_sha256": "719350fb4a1deb35fc0218a6d2a1365c6d3d5c125bfdab3968ec8e4e04a045a7"
           }
         },
         "legacy-upgrade-rollback-failed": {
           "path": "tests/integration/sssd-i6/reports/debian-13-legacy-upgrade-rollback-failed.json.gz",
-          "sha256": "ef45f43e42246759e75c10a28ae6638bbbc425a0bbbf14ebc655d600e7a81457",
-          "raw_sha256": "514854868072a32ced50a3fc9949b3b639734011360c5968a5b3961cfe50f329",
+          "sha256": "f7910ec34486115425f99ce83f9dd5c7c265161852011169f2d459136ab876f3",
+          "raw_sha256": "47b85063e6c125537d8e1799227dea113516d3e51f827c8946dadbb38bc43fda",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/debian-13-legacy-upgrade-rollback-failed-container.json.gz",
-            "sha256": "bec56ab0d8fb2fc2a2634be140c02fe77328789dbafa5f680d8b9cacba7a02a6",
-            "raw_sha256": "f28fbfa4f0b484d28d3be19ad6c5df91e1371c9d4797bf1f30c9a0d839e1c918"
+            "sha256": "d57e05b07b96e3b65e24b3fd7403ea28f2a18639f8547f75ee10202b3599d52b",
+            "raw_sha256": "0df03fae4e26b107f11db8e01b293d3f26b9649a471a28d06802dd40c44af1af"
           }
         }
       },
@@ -1587,296 +1611,308 @@
     "ubuntu-24.04": {
       "build": {
         "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-build.json.gz",
-        "sha256": "7df29e384790918ccb023bf8e575ead9daedb476bdeecf939eb1fc5fb7630907",
-        "raw_sha256": "050bf17fe63d3e8585a53b6d393dce76e8274ba27acddb589aec0e08282c9993"
+        "sha256": "361f7f372f531b155dfa47fe2d0b4b90f6dee4fce37bcbd1ad52dbb6c791ef86",
+        "raw_sha256": "1371dc7f22450dd8722bf709c4247ad77276b3a43bcc04b53b2ddca084d78d22"
       },
       "scenarios": {
         "positive": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-positive.json.gz",
-          "sha256": "a60772fa3f07220ced1e4d986e409b8e14be73b2cfad14c7fdd294c7def48816",
-          "raw_sha256": "3d665fcaa515456875c58bf214c935472d08725f0586a065dfd51496f9ab6b60",
+          "sha256": "3bc798e137c19f771e799f320adecf12c9e2f3df80ec262316e89b23a8956349",
+          "raw_sha256": "73429c070a009714307df4596beeaa85b2fe016f41db6f48938e5762e2520e9d",
           "exit_code": 0,
           "observations": 14,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-positive-container.json.gz",
-            "sha256": "c03b5443f3722f1e4ef514623e02ea9da2b0bb5ef98bbc67a8274fee400314c1",
-            "raw_sha256": "617425e879a4a8d9fe34d84b8df3d7ef3170ffd5c63c35212ad0579bcca58e72"
+            "sha256": "0b05aa226cbab583a850a69c1ec313a237d1c1007fe82af08dcf490c980f7ffa",
+            "raw_sha256": "9831a79eb91f2a8d311ceac99dff32859ae0ad808670b45b18018e64e9c54d17"
           }
         },
         "stopped-apply": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-stopped-apply.json.gz",
-          "sha256": "56ed2839c630bfa0fa7a112e6b301ada41e42c80813feb3f5b55b42dd7b0477e",
-          "raw_sha256": "57b07ab7a8077a28b0025436139e026f40ea51bc258a8ccc1476bba7d198b7bd",
+          "sha256": "ed8a0936b9d535243fb8b9532ba5b116a39c2673117ce5c06efd13e91d1f6cac",
+          "raw_sha256": "e4a9533607804b48756a036b603417f095c1b1e0a3df18ac7b29b9b34865ece6",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-stopped-apply-container.json.gz",
-            "sha256": "ea26d4a333f81cb947d2e299ebfc2519b44f186ad24b4180f9250fa0100d399d",
-            "raw_sha256": "d94ece51ae446cc1d4d6111b99daa4190b507a4e94ad84aae736c18abcc84de8"
+            "sha256": "c5d7dfab2d99d8bf937936ddca951a6e70aa90de1fcd8a82a04c79023b2247b8",
+            "raw_sha256": "68b4849c235a8f129123a400d5638e6890b8185676b379e53ea514c409de4b87"
           }
         },
         "journal-invalid": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-journal-invalid.json.gz",
-          "sha256": "b868b1b6d56dabbc05fff5ea903df1e0d94e90b8c6eb0c0f8049cdb8bd0159e3",
-          "raw_sha256": "fa907a56dfa1af998de63b9d887bc1e3757c4debb75702c4ff66f02c3aecfade",
+          "sha256": "201017c726143576bc94de42fa3752ebe9ec9f3f0378d75766745514a0a0248d",
+          "raw_sha256": "15133ce802eb97e9c91b9dfe2e2d499aa2d67c91dc0db930a6b3a7a1f498691d",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-journal-invalid-container.json.gz",
-            "sha256": "34609758f597cd0910c7a9727485f7920ec84ee0f89eb49ce09dd796620628ca",
-            "raw_sha256": "b58de27e7d1454678b6b073281c655efd1580089bc6f9215115adb9f05cbb36e"
+            "sha256": "473637de65314cd84a58d1ac79c97c9b5d664a1c5ddec4ca32b44eb47e5061c7",
+            "raw_sha256": "7e03906579ff0a4a4a2d138a07615dc506a3da528f72a52dd1f814b4f457e0ef"
           }
         },
         "relation-conflict": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-relation-conflict.json.gz",
-          "sha256": "55d42e90a1923812e60096601605268844c21d8aaa5c744acaf44ac3d1581fe9",
-          "raw_sha256": "acdaa0f8ff2a8fd8de57e1e4a3dc409bfae6e900723cc818570244991d86ed0c",
+          "sha256": "c4dd87abe1b3c4bea646767ea5a64b2c580cfcff2c226c103d1a1c05f9f2decd",
+          "raw_sha256": "66942e918ae4fed64176dc9259bca0945ec248f3812c7c71c5fc7fe244564a5c",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-relation-conflict-container.json.gz",
-            "sha256": "f5dd98ecdd46d4b8af232dd3ff73e99c9b80262d22ddeb9399ff29c9348aee82",
-            "raw_sha256": "de8d0347109d5f7432a1a33f3db8e7338109e07203b32320e8a4df2baf56372a"
+            "sha256": "13a2a278da013417705e4bf41c4e3e3b668885d96b2c14fa0d6e80cbab029537",
+            "raw_sha256": "6765efe82bd6e41a37c09de62084df88c3a191a442687817ec389a3f7f70fb1a"
           }
         },
         "domain-key-drift": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-domain-key-drift.json.gz",
-          "sha256": "867f5fe036a385234203ec891aed75530db0a21c5f6bde88825b083e7784f12f",
-          "raw_sha256": "7be7491c2ee64393a5f7fb8e0d630fd89c09ad0c640b9756c2a08e5586bbd7cd",
+          "sha256": "65f3e5b19c09357220713298f3db430141fead255672eb0926e2b5569d7e49b9",
+          "raw_sha256": "223a9be5f143e3ec58ca7457464815071a43ab6fba1ac0b9f5af67d08f1d3c3e",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-domain-key-drift-container.json.gz",
-            "sha256": "58f3fcd1b42c4c947ee957f5158e1a9f40ff58d9761f833e2185fb7ed5ab2855",
-            "raw_sha256": "2f552ac53d6438efa1d2dc5999f3e24f0bea2eea71e384b8263be1231e652e42"
+            "sha256": "164575c66ed71274c31c97ca94d771ad0cd7957d184c4f9debcc238af767f581",
+            "raw_sha256": "dbf57e75a74e73d50ff9a0fcde1c7271ab0a861e2c169c205d0e74ca28c9f98f"
+          }
+        },
+        "remaining-enabled-scope-drift": {
+          "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-remaining-enabled-scope-drift.json.gz",
+          "sha256": "cb66ac8802059741fad549376a5102edb195a95f243f2ec56caa8c35d897820c",
+          "raw_sha256": "8b5f8f53c788d2f7a1543da11c8d4fc2357ab8d07bc49b5c64ca5a5e86d1dd41",
+          "exit_code": 0,
+          "observations": 7,
+          "container": {
+            "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-remaining-enabled-scope-drift-container.json.gz",
+            "sha256": "d5b44f8ffc34f097962a8a80625235b1c6cdedbdcdc3b0dc98ce739c2dc6018e",
+            "raw_sha256": "b91a62c03d763b6c8e4f628a1332f522fbf426f83f71a803a70882a3253cea2f"
           }
         },
         "remaining-enabled-unowned": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-remaining-enabled-unowned.json.gz",
-          "sha256": "b21adb2aa117591a1079c4cb848399b09cc7904558b467c2b665dbbcc1e47505",
-          "raw_sha256": "d219aa3a4661894e5c85ecfa9149c25d71f09177bc9a0614562e5be2973b203b",
+          "sha256": "c4ba7b7c3b7cb6bc96ed2454fe8401e37b43bfa75f72abd8da40f65bb3cd8c56",
+          "raw_sha256": "43ac2ce1d5a366f749fc4dbc1f82814c1b9cb71a5d96a8cb7e1c2a3bfdd7cdae",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-remaining-enabled-unowned-container.json.gz",
-            "sha256": "8dda93e3f585ea151bfefa9c9d90547612c5ecddf7245e977307580e21a4e976",
-            "raw_sha256": "ef33ce21342d88e2b66e8e11820df12253856b062531f2e2191d6c0b0934a35d"
+            "sha256": "2b3fbc49b64d68a2ce05eb367b3add028f2867dfa4f361c0dbf761a03500a8cf",
+            "raw_sha256": "9257a930033e344889f845d52f1cf84ab7ea49299b955e1452b4a3705baa039f"
           }
         },
         "remaining-enabled-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-remaining-enabled-unowned-matching-foreign.json.gz",
-          "sha256": "bba1d012e19fc20e9615e012e687cde78747ef9c86c933cbffc121208b1aecb4",
-          "raw_sha256": "caaee40f106ca6488e9e777c3195ccac56b91d1dd8d2a25dda9d32982e800e80",
+          "sha256": "1401bb2efcad4b00948699d6e8df1e37f6fa096ab9b3783ebbe64333c339f177",
+          "raw_sha256": "14f64f9ba5da96b25299dc6cf2e624bacc846ec43d02e05c6645e00dabe8458e",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-remaining-enabled-unowned-matching-foreign-container.json.gz",
-            "sha256": "253d3feefd2e056301940f4868fe71a328ec613f4412f425cc955cace2d3167e",
-            "raw_sha256": "a803bc7fe5c32444a8609945c1942da726a81b70e1be18c2e164310026de27db"
+            "sha256": "4b8974bbadcd639f723098b9fe19e49ca444dc126fe63158fa16fa7d5f2984d1",
+            "raw_sha256": "e10c14acfcccab1f076101ae89e2ecfd4a31e980e2ff1ca534f155bdaabc98d0"
           }
         },
         "acknowledgement-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-acknowledgement-unowned-matching-foreign.json.gz",
-          "sha256": "1023362aac56b7b38ea807db9c9b09a2cb9cec2d89b7289d8638ae51eac6475a",
-          "raw_sha256": "7d9d412b987d42fe6f3cd6581e2c2688749aa6747e4b33c3431dc566da3a1574",
+          "sha256": "ea8620cc60b6c4c88c3d4a3d73f64601d2d1af53cfeae84380283295ebe4b26e",
+          "raw_sha256": "5fb919aaf141d8573fc118e9328d3bc8e919d4cedf09591d11ec06759cd64f0f",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-acknowledgement-unowned-matching-foreign-container.json.gz",
-            "sha256": "62d83011ee9090de30fd49f016689f91cd44faa59d76710517667033cf94b661",
-            "raw_sha256": "c236e43af39d0064473015bc8480b7fb8780f580cd5bfd00d82c09c9a0e4b486"
+            "sha256": "fd75d3394f1dfb52b10f42e131077d90d92e1ffe44a818808a6552630a616306",
+            "raw_sha256": "2e9cafb3c0e18eab5ddb88c69314f0c1251774263777562589132c1d161f4b3f"
           }
         },
         "late-foreign": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-late-foreign.json.gz",
-          "sha256": "f2c662f78adceaa3104abc53790edc76766aab83fc4573e6b2f0f253bc42637d",
-          "raw_sha256": "21f1da281f96783bb1a31e472c2502907abcca38607bb571816365548a60b3c1",
+          "sha256": "3b6aa9486d8b290ef9800f5d50b9c6b92ab25e0f7eaa5b00c0bcd7ba6ebb13f9",
+          "raw_sha256": "8ba4705dc39982cd0c5acce5fbfc825ac9ccc9057a48d003e615ddd92dbdf347",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-late-foreign-container.json.gz",
-            "sha256": "6f4a0f9f8cf888a5f6ff5ccc19bb1e698ca90130f72dbb27f470648e7fe3c7a0",
-            "raw_sha256": "35616cd1aeb85fea12c586f13e01412735a02c613a008936f5946bc82113ac3e"
+            "sha256": "2d9479d214528e8d57dc10f5a187735588cd256e0316c9dbb4c3b9fcc873a6a9",
+            "raw_sha256": "f904f25d4cc1bcc2e24dfe4e649ebbe3bac0ee59d7f99677a0b5a3778207350a"
           }
         },
         "foreign-relation": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-foreign-relation.json.gz",
-          "sha256": "40c8f4da02a2067973d1b09a5cbe49602dcd80f4c4f51c5ac32ca58f3b214505",
-          "raw_sha256": "c33b84f8cb71b4cf15bca19b786bc3432c9c6217fe6ae9c234f85d98bb1cca70",
+          "sha256": "28165978ac81cf64246b98b9e5e89d8e417e8af2eabc220759eb155efbf39834",
+          "raw_sha256": "3dd0f7dd49d8e947fdd349a4a0bd7c9d8812916910f2b393644c7a20283e8eb5",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-foreign-relation-container.json.gz",
-            "sha256": "3c9dbccd9ceb1cc2179e9d862d170db60ebeb2c2eb519db6531460544e2ca1f1",
-            "raw_sha256": "555f27516b107ad03a303a18912293871e372741d7447e6b1b2b0e143895abe7"
+            "sha256": "3cd2f42790d3b24a3845e916d4a9dfaa3ef197b3a8ad117bff5b24f8c1608499",
+            "raw_sha256": "6c30bd0bc46c178230ab25fd630c459f4b3091bb01b12929d27ab30a3f41ed19"
           }
         },
         "package-release-refusal": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-package-release-refusal.json.gz",
-          "sha256": "8d0e7949e23e1338a923437ed51143c83dbe893eb15e43b375cafd499b515b9a",
-          "raw_sha256": "49a5e7511fbdd962aaa139e801ffb7d0247da13c6d1694e15c363eda192be0a0",
+          "sha256": "92439100dce319b8a13b7091d1373d9f80589e0b128629d1ad8ad88f1c500715",
+          "raw_sha256": "4a5427c0b73e5374468a3241199c199acff7a43ab5ef0142ce834d57ad95afbb",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-package-release-refusal-container.json.gz",
-            "sha256": "b41e56417ccc9fc32f7c3abfa24d6e5c79186b58237080c6e66eeda69b5af6e5",
-            "raw_sha256": "2384c4f08162f163be50771b0fcf3be951f650149e3973dd718687bd30ec2f6e"
+            "sha256": "db17794307dbcd6cc58dba027dc22b96f20a87df058b57a4ae18f821548397f8",
+            "raw_sha256": "6e3ff48fdc1375d9cee8b35cd38050bdbe8de110e9b9160f5a8ad078e359b039"
           }
         },
         "cas-drift": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-cas-drift.json.gz",
-          "sha256": "6bbb52f2a86b27d9d04bf6838e437e9fa01a170d35dcd0f0220d40b17a57b5b6",
-          "raw_sha256": "a1ce5e199127e78810b7d4a124df7ac9a8841c7a342888904a3e6595af732a5a",
+          "sha256": "d5cc396e51c1f8691c08af34728448dd0e1d12a343cee6296f0c3b5dc49ae4ff",
+          "raw_sha256": "08ea2ef1fa6dfd359100da1fedede7c9edcc74999bb7b25f0e4b5c95cd4fef6c",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-cas-drift-container.json.gz",
-            "sha256": "9e410555d49ee4a5b0dbc64f384b52974e98bf710d3b35688f22c59d17ff087d",
-            "raw_sha256": "0851112a1d7be1007f232259d1e43fefbcd9b463f452ce8c5ba88198fd4cd4e9"
+            "sha256": "e6786c6b481e698ec7f18981b6025a58883f8a47b85b25a767c9a87d6d4d7275",
+            "raw_sha256": "bc349238848971108e3e5abad81dcf8d23d31d91bb729748d07140bc6b3670e8"
           }
         },
         "cleanup-failure": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-cleanup-failure.json.gz",
-          "sha256": "71855796248b48ae30765b3189a4df575ad8f035f698910218bf8601b8603ee3",
-          "raw_sha256": "c5bb552ed57297671ecd877dd3db20d7d354da027e37f5b479a5b2efffb314af",
+          "sha256": "70aab9a0a1bbb1aa8f7d892c190ec03d7fe6752d3364a1f5249362d4047b88a4",
+          "raw_sha256": "b017d5b039b646a629af3fc82fb889c830e0851660fd759a004c302734a5851c",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-cleanup-failure-container.json.gz",
-            "sha256": "aa622d9c6f66a0af7f1f1d02bded035edfe94f5840592e9d26eb66f25c725df8",
-            "raw_sha256": "e1d3384dd380310ddfa7011476b85521a7798f2da5f19d9cd6ad94acb5c775e1"
+            "sha256": "676851075e7cafdc6f35fd259cd304e986c87f06870d356fd7b11621bebc1c29",
+            "raw_sha256": "af5e36acb4b5d88b1e417e395fe8b8dc9aaaa5ca75417ebab6896bc96326a1c5"
           }
         },
         "wrong-registry-generation": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-wrong-registry-generation.json.gz",
-          "sha256": "ab3111653f3805dd01ecdfbcc9d229f69163cf1717962d8cdcc065500f138ef7",
-          "raw_sha256": "a9269bba823a8c6b1db127dde281be4cc9b5a315a5a9c1aa1d061a13eebecb87",
+          "sha256": "75437e7670d0baff2a8c19dc3a54f8063223bba81cb37781e1f283bdd94b0a2b",
+          "raw_sha256": "46f9b86abe659a9af18704176c6fbe2d2697d3f158540449c18a14d5e3792189",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-wrong-registry-generation-container.json.gz",
-            "sha256": "69033c9b5e75e36fd347f86082ff50d19cfece35268eaea412f27a78ea2008e9",
-            "raw_sha256": "d41d6321e20234ad344f9f85281292539abb37319b0ac6f7981fe910bc09591e"
+            "sha256": "bfcf8c67aff00b4375b95a25f2228addc799438ce6755a4e34812091ce29e4d8",
+            "raw_sha256": "0e4cbdaa53bffebbb27b59d45d21668dc96a6227a2ef253d43321541384a5321"
           }
         },
         "journal-finalization-failure": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-journal-finalization-failure.json.gz",
-          "sha256": "4b58ee64ae771b497a0e92feda8a8f23622214b5911eb235a8cb7b432294c85f",
-          "raw_sha256": "76964ca3665d0c67288d48431e434e0a22d4bc4fbb354d52f35cd1dc22868033",
+          "sha256": "240db97c3de9d473e42a35665a93c8999bcfe3315195c7ee44ef8cf8271a9188",
+          "raw_sha256": "eff8f4a204ef44bb12acf8d1d9c15cca508d5b3369fc0b52fd6cc04084dcce26",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-journal-finalization-failure-container.json.gz",
-            "sha256": "853e05981b6fd3d7636adcf2558e4853139fea14641d8061ab72fe006a98d0fd",
-            "raw_sha256": "fdc430b9452b52dfc2acd79cd6247f8929d4fe3933ccc5593f398bfb5adb6cf7"
+            "sha256": "bb0108d9f2556deda08870ccafebd54162ec89203e403807e41333f08d02848d",
+            "raw_sha256": "2e371952711ed744e2164d6c7c23993982cfbac786f19dfd82b5fc66ba4ce257"
           }
         },
         "crash-before-save": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-crash-before-save.json.gz",
-          "sha256": "2e299362b63d162ce7c594ed5adbf23cfb6ba4fbf4c6ee8c074756c9c51a771e",
-          "raw_sha256": "568c4c0715a7827e1f288b0e33f71aebde986006afc3963994cf9d79b87fa8cd",
+          "sha256": "7bb0fed6051a5559579cdd7420f0a5dffe498c665aba0717c5967c1d542cbc03",
+          "raw_sha256": "8b73be1646c6da0c40073c44a00719a9f457d73be999d976bb0285771dd3c62b",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-crash-before-save-container.json.gz",
-            "sha256": "50a83f5119e7e2fe5c515456e0ed5411ed2f60ccc4cf042bf93dc5f3db060a67",
-            "raw_sha256": "e175ebe2902464e037641b12c89bce779af2e633bbd817b68e6c67744f185d68"
+            "sha256": "a9729c099331eede70c497e709f1e80387c4cc455ebce37af6f106d127e1dccb",
+            "raw_sha256": "dcde9e777c0954147daad558d828fcfa5c90552f57408c491bda892405456d3b"
           }
         },
         "crash-before-ack": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-crash-before-ack.json.gz",
-          "sha256": "30814d57726a6862aad890d32e887546db1c48c3302897402d3504f76853200b",
-          "raw_sha256": "934bf70e6c0a582ab97afbc0caebdb96f1797a2ace73b2994c8c4999920a858b",
+          "sha256": "5f24f2b4a1e16833af248382794a293193ce14cc946d98bc0ed167277b9437db",
+          "raw_sha256": "9b66785d92a2d06fe7fa91e2671daef3ec9a7e2892d078c53727a406edc98ac9",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-crash-before-ack-container.json.gz",
-            "sha256": "d4edab44b12b1b93e6b8193980067918252747a4618669ed75761beae197e498",
-            "raw_sha256": "61f8555b92d0ee7049b2ddde17138f6a4beb3b724dd043b2083bab35ee396ae7"
+            "sha256": "1b6885b4d28bb0144150debda3f55a4d3c34381f733b307c50fb9cffd36f9e12",
+            "raw_sha256": "37f19cd8bbf555025f3f149e18eff07cece9651f15cff5dfaf4ee9391831296c"
           }
         },
         "runtime-generation-change": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-runtime-generation-change.json.gz",
-          "sha256": "5ad5b3fa97ee645e6dc03d1d6823fe2efbbae97a869d2cc74097ef26882a2af0",
-          "raw_sha256": "5f658eed5e003f9904f710ebfffae06d06dca1f677b06e50f52d54ca9914bb19",
+          "sha256": "00cf583afc12059011832f2d3683cdd9dc2ab01abb37b419fcc093e333e7ca89",
+          "raw_sha256": "d2048732da492f5dc13483aa466444ba83ca568be6bccd32dc8a3c22f9546758",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-runtime-generation-change-container.json.gz",
-            "sha256": "9e505e92e95b50a82f9b5d1861fd90a7c22cae73ddeb3b07bf5af5d1caa96920",
-            "raw_sha256": "37b4292aa2054d9d13c303d25df8fa5553437abff4b8a3e471e7f002696fd1a7"
+            "sha256": "0371c57a87f6f561f6d41e1cb24931300a8f24b18ab24bb489ce1af5d847630c",
+            "raw_sha256": "38445a277aff2dabd647dd47daef0ffa7dfec354fdd290b365a0e815151b8ab1"
           }
         },
         "receipt-substitution": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-receipt-substitution.json.gz",
-          "sha256": "991dcc395898ffd705716594a83dcc0ccc47ce8c1e188260d0170845e4d4f6b0",
-          "raw_sha256": "d444037474875c171d8b622d8bd93985e41056a3ea9ee3f0906d72df75aa2f6e",
+          "sha256": "7ce7104375a1fabd8365770a91137ac2ebbc70a4e54685aafc35b7d84d2bdde9",
+          "raw_sha256": "a6b4169e1dd3230031d0eb55dda3e52b0d645850e75eaef7c2a62495792a812d",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-receipt-substitution-container.json.gz",
-            "sha256": "8fb3f81d94c5faa788d8d26763827ad32e1483341857d7d658270b4f76ff8737",
-            "raw_sha256": "05ba081dddc884b1ef480e99e1bd800fdb00d098643352660be7b821abb45074"
+            "sha256": "0cd9d21790762a9b6afc14067d4f02f2835b4007c251c9773c72ae31f8513493",
+            "raw_sha256": "c69d2924a1176918b9b94623c400a2c6e9b982ef98ad4aaa8cd1d598e6d5b5b6"
           }
         },
         "legacy-v2-awaiting": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-legacy-v2-awaiting.json.gz",
-          "sha256": "363688f8021e24a801ffedc00f31b93071a982c330a3ab50c59fc3524c4c442a",
-          "raw_sha256": "11534f4d5917f0e20bcf9b67d9d5f28e1507d70442742165ee2e797876d1426f",
+          "sha256": "7d6dee745daf3acd9e5af18ad73da6e73e5bc47781d5e99eaa1e3a8d6c978075",
+          "raw_sha256": "5bb060aaefd24d6ee79e07d13654da4989d800fb8fb6a29c58f4cf1f3c954820",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-legacy-v2-awaiting-container.json.gz",
-            "sha256": "1d72cb468765f50028cb3cf3e94d027b3194200fe290e848d5bd642c1f9aebc9",
-            "raw_sha256": "c4022b9cee83b011eb03406848b3549a1d6d3cca9c93903f5731a8019b11857b"
+            "sha256": "f00a078138ca8fcb8d86620bf1b7d681ba5a14e688803a0814ebc03ae2be1d1b",
+            "raw_sha256": "e0d3a460e39d49aad11136467b2a7a3f8673b1b62209ab2a0a760f52a5fbaeab"
           }
         },
         "wrong-physical-witness": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-wrong-physical-witness.json.gz",
-          "sha256": "c3c4de7f62e5e7721fedaa247679814a846248ea78c9ff40377bf698e2ab02aa",
-          "raw_sha256": "c4a1060fd9a29aa779330d89456e7582651773c80559a23beb5b3b99b81e3b50",
+          "sha256": "c19e884ab9149f6feb68fb0cf90f12883e84ff4565bea26fc87da592a3075d9e",
+          "raw_sha256": "7105060d04d38207102b55e60808146af178410959b944d649c326cde5024074",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-wrong-physical-witness-container.json.gz",
-            "sha256": "90e2a1bedef40824f92ec413a6b737844cd80df8552753cefde0bd37e65ee3c9",
-            "raw_sha256": "523f7b03fc38b2e8fab5d8b4d5ec85dfe649639ee1137f9cbf8223c79c382b3d"
+            "sha256": "70076e7eac4ff49c642fb35e57520632cf38dc93f5c3730a62fe3edea79efbbe",
+            "raw_sha256": "3f0ce92db1ffa30c3643e7145807a1553c9e4f6bb655b283e08a4d0a2d2ef9dd"
           }
         },
         "legacy-upgrade-applied": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-legacy-upgrade-applied.json.gz",
-          "sha256": "0379492328bfdd8bd5b11db45e6beca15efd4be454e61eab1fc2ba1431c71528",
-          "raw_sha256": "b70a99dbc7caa421311ccc592b79a56bdbeb69e7273da9758577928633abc878",
+          "sha256": "63e741b4cb9e85202a358943ccf9fce06d69ddc290284ee8ad14652ac2040490",
+          "raw_sha256": "63fa21d49eae0ce267068eff07cd1241884adda5d2ff2fe214cd723d414ec51a",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-legacy-upgrade-applied-container.json.gz",
-            "sha256": "7f2a2cc45b7497d20ffe030f7fccd2fa86011f16d819949bace3b09168ed3aec",
-            "raw_sha256": "45753d44038ec71fd729090f6a1c995cc26174377211ba4c616d3cd1420677c2"
+            "sha256": "5c1819a596bf67780ed4c99d65a46db3eab18f87f28c101f946207f3b4e48e36",
+            "raw_sha256": "337dc7142cc3b3fd71278ec3b6fab09cfebac8d53926d53ca78f2c5c9cd26c66"
           }
         },
         "legacy-upgrade-prepared": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-legacy-upgrade-prepared.json.gz",
-          "sha256": "358cc9427601fd64fc1bbcee7640828295cb7bab867b7560bdaeff834c903f65",
-          "raw_sha256": "a6dba909662465f4bd0793a49e72492bc5c8d19225eea5bbbc48860ac572dedb",
+          "sha256": "b49a818d0dbea209ced0cd5b2a1b93c1e8afa17c43ec2aec5dfae75ec2bd2ba1",
+          "raw_sha256": "fe9de8ebc0aa0a6c5dbaf5c9177c9fdb783708a38a75f55a1b2f06432eb7cbc7",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-legacy-upgrade-prepared-container.json.gz",
-            "sha256": "313fc2eb135e342e1be88958138d49a17803d3a48881b570d552c6b55c2a435c",
-            "raw_sha256": "8a68061ceb228e78dff40d1dff6146bd95bdf4c4836479850a5390d3b62070f8"
+            "sha256": "e5edcee023e699040b9c7a3145e2c89e279f68fe8b472f5e69dafbc0728cc83b",
+            "raw_sha256": "e3050ce0c869e3be683304559cc0794183c4f4b8bd6562966bad3cd679d228b7"
           }
         },
         "legacy-upgrade-rollback-failed": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-legacy-upgrade-rollback-failed.json.gz",
-          "sha256": "a2c998438154ba5287a178edc744ac764bb3b16abd9bb791269f7b344ea83de7",
-          "raw_sha256": "67983d9e1156cd62dfd7d2f1c994cd78b8e379b2cb7b4fba7385826f7d2afe4b",
+          "sha256": "703d53e28aceaab2cbd5f83b7acba0f1f14d785932188cdbe04565b61c37811e",
+          "raw_sha256": "84e63172560ae9d10b2616506b89f4a5d520f3e815141537d44349221a3b2cc1",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-24.04-legacy-upgrade-rollback-failed-container.json.gz",
-            "sha256": "640f135982338d8f933241282c8f41e64e2f5cb4ea0daa7316522f874a7806d3",
-            "raw_sha256": "5a26b0cf2f9dfe6cecdcc01ea0a88d81dc1c10d1dff5fded83a1c2f58ab0ee95"
+            "sha256": "7371bc74beba6aee4e80c912173ac59e56033a0104e31f8b35ed4d5d8228230d",
+            "raw_sha256": "081745815dcf6cbeb4521ba4a4dd1641932ba2094feeab2f70c0ef35870057b1"
           }
         }
       },
@@ -1889,296 +1925,308 @@
     "ubuntu-26.04": {
       "build": {
         "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-build.json.gz",
-        "sha256": "9c6e29450f725fd1439ddd1a127b595da6c974356c8ee6bbae9f7380cf92a82d",
-        "raw_sha256": "8480dcea4e4666e21d58e1c01cb52658f64daf2dee512e43bbf65f4a83568b17"
+        "sha256": "748f27dc48b8961a2a47bb72ed9bc194cd073b475c349b907357de4382ada7dd",
+        "raw_sha256": "017a9985c807a7d79b738d6cffa2dae881304c2a06d4166b9f4813cb3ab38d4d"
       },
       "scenarios": {
         "positive": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-positive.json.gz",
-          "sha256": "fc9caf9ccedc480b64f1fb667247f05a3fcb61dff512ad69387d5228115179e1",
-          "raw_sha256": "9e1e9ac0f44720a715996527c85c76e021111a6137fae9ddd658ed9d0eec35c7",
+          "sha256": "b2b4fbe7927b4babc639c47ebfaa599b2bfeec73216a73d2433a43519a61558c",
+          "raw_sha256": "238f1ca1871db02a40fdd1458b0e3d8200a7ce9a3cefd3a66fb54ecea00bfd2e",
           "exit_code": 0,
           "observations": 14,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-positive-container.json.gz",
-            "sha256": "986edd75c2d506a778dcd453d694f05e50d4c2ff2860e4db20b169842cb53a41",
-            "raw_sha256": "8e141cb567852fde82c072589470d228d39585fd299ffa60e2b8515044393511"
+            "sha256": "72ccd8aaf6e0db21b8ad980009822f0f42027d79cbd6a0ed68ae35ab1a20978c",
+            "raw_sha256": "ee5bd5682143d985068419ef1c8fba8822c8404d709c21fa6c0d6f11c15f2153"
           }
         },
         "stopped-apply": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-stopped-apply.json.gz",
-          "sha256": "d448c762cfe12106a86613f51e5fa86fb7d3c74743e60d5803a43a20028c058b",
-          "raw_sha256": "5ea85189b439d1a57434870ba56f732f8c1ad9416593bedda26a88ad7673929d",
+          "sha256": "eab44be9cf6cbe64674e8fe533400b6eed32e05eb7accd6a72e85a0dce6f2558",
+          "raw_sha256": "ce6d69c22a3e598a77838f347df922822b121f66d3e21917df930300f22e5e20",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-stopped-apply-container.json.gz",
-            "sha256": "ef55adb9aa62b6b46a26180e24405ae71334b14aab087b68195f687c8a98c42f",
-            "raw_sha256": "eda4f16d09f4e3451385838745dd2749338765afef4ee8c428a4db9970b7c43c"
+            "sha256": "a4e4f1571ae97c2bcb9ea16938229783e64cf67eb6e177cbce18434c60038a9e",
+            "raw_sha256": "2e538fa7fc13e4397bfc162cd6b07f25313698112bbdfe1db16b0095348ded0c"
           }
         },
         "journal-invalid": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-journal-invalid.json.gz",
-          "sha256": "8f56a6d3695708f8f5589eb799ad824d00a6a4316bf740ab290c35fe2a87c167",
-          "raw_sha256": "9878f4f7405f8f33468b2f93e7c4a364781de225c7aa66563004065c60602911",
+          "sha256": "cdbbc113be1a5502c70a5cddf5c61ac26c71f52b335abaf3a57dd0c61f84cfb1",
+          "raw_sha256": "8660e40c51f6779b677d3698ac69f1517e4bbad7df5e93323d10bf334c673cf4",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-journal-invalid-container.json.gz",
-            "sha256": "c42104c0c41fef3e8041a1d08a312e549c3d1cd95b0a1f5bfa5519ee76f1cd32",
-            "raw_sha256": "01377f0d977ba6d302fd89c849ae7253ae49547dfc152f822736c93076dbed71"
+            "sha256": "6cf74148f2189199fd3ce79d35afcf7017f97983fed0984aa6d2f99a289b9545",
+            "raw_sha256": "d4a1b6d18cd8535f7a0b87a46443e672161c5dd60bec5c5616147fbadc518e23"
           }
         },
         "relation-conflict": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-relation-conflict.json.gz",
-          "sha256": "650e6b862238e84465f5d8c8476df5bc8ef4d235569b6181f14f5bc2d97a50a8",
-          "raw_sha256": "46c47e032ff0ce6fcb74c6fd3d0afdadff7783a851050f00a9c7d4c25385b450",
+          "sha256": "53540a313f400f21c2f86b5a9247066849dfe5136e94757569d6d779d38f1aa0",
+          "raw_sha256": "fb4cdc8096b1ed6d6a52dc7fc1fc2b04dd75a24187dfa322f3aa3dfaa91694cf",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-relation-conflict-container.json.gz",
-            "sha256": "c6084387cfc31dd381d4988f5ccf037502f3dd51cb2de1077ce4649fea86aabe",
-            "raw_sha256": "fb21334cc77f924af4d6dbfe114c9561a16e09c635a6340506595dd708924c55"
+            "sha256": "f73b2ae20f999abc2a404a2542ccf194cda62351dc6f7f6ef271442bb6983e94",
+            "raw_sha256": "554dc366aa3cd89bb4e57e37514071440734746ad69321c0c98d54a018b9f9a9"
           }
         },
         "domain-key-drift": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-domain-key-drift.json.gz",
-          "sha256": "e161a3fb76b9c9ce4783f8a31f070965c648796a401a7b1d74f59f437ebe087a",
-          "raw_sha256": "ed5fc5d72f4b6c07543f5a663d566b90c24ecf3819ef15e20a7ed0d51c1b932f",
+          "sha256": "0a1045b0baa75bc10d5f8acc31b5c947aa2d4231825175c540f78cdbcd1dfc8f",
+          "raw_sha256": "d2e0e546f593f5fd1d0c59a0cacd4375a590dccf5d086d90479f4a9139afc517",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-domain-key-drift-container.json.gz",
-            "sha256": "431bb1acda2da49d90e337303de846563074fc1c508c679000ddb4749e7ee50c",
-            "raw_sha256": "f3cc1464628bcc4a926eaec3bda358ced8ae299bbcdd494fb9e84f1f569cb8a6"
+            "sha256": "6a3bb790fce34c045a231f8eb1d17a513ab33ce26c6e5e48cccd05fff315adb9",
+            "raw_sha256": "7152a327f2898853f767f5f7ffbe10b3430749bb4f354e9490b9f72b618b6169"
+          }
+        },
+        "remaining-enabled-scope-drift": {
+          "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-remaining-enabled-scope-drift.json.gz",
+          "sha256": "61695cf9bfa372e7e5956f1f303f7e3678167bb8bd776bcf29819f7944b7473b",
+          "raw_sha256": "5ff93958734422d83e4c2f048839510b5451262e52a953513f6ef99b53954de3",
+          "exit_code": 0,
+          "observations": 7,
+          "container": {
+            "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-remaining-enabled-scope-drift-container.json.gz",
+            "sha256": "e4b5dca623d43134f18ed899285b92d88d8a02fdd125ad124998de1bffee49f7",
+            "raw_sha256": "178a8a3b2a7426d68f3fcb0f66da6488de91dd47d07d8f27f679f073b9ac2c9b"
           }
         },
         "remaining-enabled-unowned": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-remaining-enabled-unowned.json.gz",
-          "sha256": "0c0f75f448bb0d89e952cd020731dc7f14462e0df615d365730c76e18a8012ed",
-          "raw_sha256": "194765f7a504f83d13882e3fd3a683e0f0b228f86555a904625094c8a1d70ba0",
+          "sha256": "a8f0448f81fe6ef031a9f86ba147fcadacc4b3e206ae5c3e8f61cf0d0317e307",
+          "raw_sha256": "242fd4b92667a96ac21a2b1bff340c8d6a9c5d74d0130fecc0ab1cd2678e4ba0",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-remaining-enabled-unowned-container.json.gz",
-            "sha256": "16926c2b2ad20396546917896a75388400d7aff5097892e5d4965a67856e376a",
-            "raw_sha256": "15456fc9954f6dab37f05d0f84039c0b7c81890c458728497af630ad2056ab6a"
+            "sha256": "14e9920cd65b5ae30bd9b86f00337fbd3afe9306c46bcf1de0f7f917799b63a1",
+            "raw_sha256": "81580b83572bcaf90a4709bc42d4ecc2647c7d5913a54797f6f1a235fbaebf33"
           }
         },
         "remaining-enabled-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-remaining-enabled-unowned-matching-foreign.json.gz",
-          "sha256": "a6a7fd88b0314b06ee5d8e358247564feb595d78084f495a7bdbf981bc03ddac",
-          "raw_sha256": "4c76476afbabeb478685e4877bf156813e18f30e92591ace686b0102b564578d",
+          "sha256": "4397e65b1662dad7159789a3ac1e1acad917bdde7a9f7fcb5468749b7713117c",
+          "raw_sha256": "09cdfc0015b5429b273aec2927e62deb56b5a26358af150093b8b85bc5854543",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-remaining-enabled-unowned-matching-foreign-container.json.gz",
-            "sha256": "aa43f265a8aeb69d9e3acfeeb0c7425ee512c0630488323b508c946d227cc68e",
-            "raw_sha256": "89293e2e1f49879954e5c223dd6ca25b73af90f93dcb94218787197b1d8119c2"
+            "sha256": "cd26722436a79bb8fd87c187ff43df26a3b57a9c9b6e8f82b83e7a2d1245a6ab",
+            "raw_sha256": "da0f8fd9e5155d766e2cb27792592f075f29f98dd0cc9df07c31e67dca821271"
           }
         },
         "acknowledgement-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-acknowledgement-unowned-matching-foreign.json.gz",
-          "sha256": "277a093af8ad146cecc2bb9f6a9c00ca2bebb347584182272579debbcd7203e9",
-          "raw_sha256": "6e06225c40381131a84427a040ec12d77c6974fed3ec50b8f3e79ae2bea155f9",
+          "sha256": "a17030d635e000d11b8b653fc27e76215cf34bfb3dfcf4866b568ce97559756a",
+          "raw_sha256": "bb22ed2423adfbd8e60e785fcc6d080e60dac827147fd92738d9a2137634f203",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-acknowledgement-unowned-matching-foreign-container.json.gz",
-            "sha256": "21f4f5ea13e79cc855fb1d17b3fbfa9eebd755bfd5f6f906cc8022a6c8d6e739",
-            "raw_sha256": "1bd93634a32e8075ab97c1f563715b09f452ffab36cc0d0c43d60b921d8b9455"
+            "sha256": "d596d937da3fae7d8a9fbbf81487d091287bf6e8a400b97a8c827ea17a678d71",
+            "raw_sha256": "f6290199db7567dfdbf9fc959c759f5f5da1f14f58245add714dbdbea7c2ca58"
           }
         },
         "late-foreign": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-late-foreign.json.gz",
-          "sha256": "44f66681946dd21ddf99ba4086445aeacea4e0456345f0bc338cd57b5c833c40",
-          "raw_sha256": "2ea7afc6ca1d8abbd154f291c5d1c1f056cd2b46ec453a77c5d9d141642eff35",
+          "sha256": "b94631d74f47190e6004886428e408d982187b627475864ecf17b4baada3ba20",
+          "raw_sha256": "29337246b96abf6268b6e83620c2a29297062e46df2861469279a4eacdb84217",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-late-foreign-container.json.gz",
-            "sha256": "fa6fa37b4e7c3f2859fa3f2de123cb947617e524452ad157f94187b4de8bf432",
-            "raw_sha256": "86f03d6b1eda2063aae4d5e22c37a72e46aa147e7512c9476679ffbd0a598df3"
+            "sha256": "3c0657786b4647f8220d6d7426f29d6b20368a48bc96fb351c0ed7e9f3c64e3c",
+            "raw_sha256": "550480fec74e3c5900c507dda083461be722249627d05f584bb7c1b73fcedcc6"
           }
         },
         "foreign-relation": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-foreign-relation.json.gz",
-          "sha256": "c51b19ccf71ac54d80a6a1f635828b01c8e0c080d8b1092f79b2a796311055a3",
-          "raw_sha256": "0ced24294e5af817258fad3d731bd779eb056167d97d6abee8b9367a84019cdc",
+          "sha256": "ee2ae0d04777680721f371a4f1b4f8ee1ed326fe86fe167c5e581f25bcb76502",
+          "raw_sha256": "3689016dbe0c16227bc0aa1fd773075730b95f7903931d0bc3b57cd6bf75e181",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-foreign-relation-container.json.gz",
-            "sha256": "df7f85ecce4770b8d829b30337d2723fb0cda132c18ae41133b900fe478ca832",
-            "raw_sha256": "319de313dc7c94b44ed7d326642c4b00b65d07e61973d58f8fe47dfa3119a0b5"
+            "sha256": "6ec3ba12c3832a3d79c60a0b45d115268e22561ed4125c03662ee5cb825766ad",
+            "raw_sha256": "5557e12e325d2a889ee6851883a9c9cde955f239888f0d22d917570201b33988"
           }
         },
         "package-release-refusal": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-package-release-refusal.json.gz",
-          "sha256": "eea9ff051bd5700cd673d3938564e2a5f6f73106a05a9f488192f4e350f9c410",
-          "raw_sha256": "49fe657ca96f5387528d5db0fe21027004957415f0e093353bcda355a457fb08",
+          "sha256": "545b9a5f13f29d7f170ef6b57c15319c8c0d2c9582a7f0d44e871796212accce",
+          "raw_sha256": "0569f9cd13f7c4138dd8d81e716bd726a6bcfb3ebb69cfafea031fe82ef4fd44",
           "exit_code": 0,
           "observations": 4,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-package-release-refusal-container.json.gz",
-            "sha256": "1fab6add019575bfb9fe02a185fa8769e3af6e30c2726c1b7bac16cb5d75f401",
-            "raw_sha256": "b66d42e76da8c5a09e3de9b3df3e7c27cd427d6733d514b424c86b459291cf77"
+            "sha256": "94d72cc8433b29501c793a7eebd168c92ecc92fad5eb43f565f58537e597b305",
+            "raw_sha256": "5f741c1132eda10a54d1395895ba0a3add420217762679d3f44dd4eed082aae4"
           }
         },
         "cas-drift": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-cas-drift.json.gz",
-          "sha256": "40da5cbfd422696a909f9ba0f28c405f0c1583c79e060defa16c35a4b57149f7",
-          "raw_sha256": "93934c603ef08bb384d0ebef1d3237c257b2cf9cfeb189cde7e19f60061a1b79",
+          "sha256": "4da8c529ae5cf6dfc453f12d1eb4ac8dec519eba77f0c5e93f75b841a44b650d",
+          "raw_sha256": "423f7e89f5ce1a4162b230014f2d650074bd8a7b363659fb32ef9846f772dc95",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-cas-drift-container.json.gz",
-            "sha256": "681036792a9f238166ff8703abec90572a8731125071fd6e32cd5445ab82f017",
-            "raw_sha256": "4ccf9a6da1304503b9b8b1be4a513af3a3ef0455948d7829c8deb5e9d7c79ab8"
+            "sha256": "898ca0587f13705a70398ac7b471333c8d0e653e73517228c520ba553840e5e8",
+            "raw_sha256": "7fbadcc70e18ff8d2f22695e8a61159c81402bb9583eb11b8f171ff9fbe81403"
           }
         },
         "cleanup-failure": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-cleanup-failure.json.gz",
-          "sha256": "f6d1916146576b3fa8da07df42238577f14706a840babf91a7193cc90dfc6a56",
-          "raw_sha256": "1622616b94ddc73eeb1d3f214bbcf2448420c96dbfed3b850222071d48dab77a",
+          "sha256": "eb5d76423d2f45c0a6bf8377a78bacc5aa357983b10a0c6d37f354d97196319d",
+          "raw_sha256": "84b4b33a53cde65b18b1dbad1ec25870a6a9279b8284968d1c5267ac85b4e49e",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-cleanup-failure-container.json.gz",
-            "sha256": "8655ca7005d43b0c40646dc23e5ea825e4693eaa770f37d63cd03419072d24e8",
-            "raw_sha256": "3e06cda04cf7171542796960bc36803106f48f9ca43e9962df9dfd261ba716dd"
+            "sha256": "4a72fc14eb5585a638c9d0b5c30f85da588f6962b55c4b4192d61c7eab5c84ee",
+            "raw_sha256": "40324a801211cce8ed6db79dc7dab6cf7a234531b55fb86b61e1898ef1efa3ba"
           }
         },
         "wrong-registry-generation": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-wrong-registry-generation.json.gz",
-          "sha256": "6b81e0ddb720cec7f502c7a6e002ab4f456f09bc722daca84afbbdaf968119fa",
-          "raw_sha256": "65a362d34dd89a4af16e7d2c72442ada75e89aa0ab47210adec7212c3a4a9a3e",
+          "sha256": "4cd8dfe1ffa480b9d6e3a496b6cd14ce6ce086d09d2626b843a8d4eec725e497",
+          "raw_sha256": "91f0314f0b73b2018ffe7630e266694fb74aa9cef474f0dd87de125cf2db5a6a",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-wrong-registry-generation-container.json.gz",
-            "sha256": "091ad773205497cd170b06c250acc8aa26d8fe9c8f6d6d79b68da7f77c471da9",
-            "raw_sha256": "bf59305d430ab602af845085c379739ca4bad7c471403758ecf100b035405f0d"
+            "sha256": "dc40ee089f055b32413d9b14f7ce286b7fb96b993d9a78d8f81026faf0cbdf36",
+            "raw_sha256": "035016cbc5e9980f24511d0ccd9a7384903dbf951649ad5432e67a9e2551879e"
           }
         },
         "journal-finalization-failure": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-journal-finalization-failure.json.gz",
-          "sha256": "2514a21b5da1a358c8b459a6af5e898161f1288e611c5237c88a274dbe6f4894",
-          "raw_sha256": "8311d0dd4717abd2025986ea50af03361884bb2ec4ea6078ad8bc249c6354058",
+          "sha256": "af5b49ace45a920362cc07a00b18300e13579c1867dfea5eb7ef62bcd4942e4c",
+          "raw_sha256": "ff175de13cdedfa88f26ea63fb0cf93afe3c4ca6bb4a17982757b5878f5d22d6",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-journal-finalization-failure-container.json.gz",
-            "sha256": "552686fd18a7644fa5e812f8d943cf1805e504aad2c0a4ae274109a9d152d426",
-            "raw_sha256": "553218c96fff3be4c1dd8681f0b73b053ea5b8c0558aa1bfb225180dd442a8c0"
+            "sha256": "2a92762496a9003214a7a964e89a97a53293d25828a134368a8d36083d489283",
+            "raw_sha256": "58a9efadd450eb6dcae4d9e553168a38b701318139381baf2c6ec0748dc55be3"
           }
         },
         "crash-before-save": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-crash-before-save.json.gz",
-          "sha256": "a8c0bcd489c89d6df1d82d3b57b4decc66cd8910bec19b5fa206b3bd22bd4fa9",
-          "raw_sha256": "3e7aee72b745c677a41ae208978249fafdf3eb7881ae424683a29c1b0ef50292",
+          "sha256": "a9564a528b5e88c2ac48034011b7e810ad55f2b004c825dce4d98738397a7284",
+          "raw_sha256": "39d49799170fe3f83c69d75f1369441a2146146ae20dc747ba6fc08f511b443c",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-crash-before-save-container.json.gz",
-            "sha256": "d65d5187959e548f2999499b1b141a00e4ac0842922a7b59fe0a55012e2c935f",
-            "raw_sha256": "656c2021b3dc7cb9d5651ab66bd6e6137b22df7d4c74b17972ff65776a5c6f09"
+            "sha256": "658fca3494013cb8f4b54780db4c4b0567daed1cd41946fc0b7cb71f3dd72759",
+            "raw_sha256": "1292fb6bee2d8cc8eb5ca91250a3b54e8ad02599188e3018f6812475b73eb47a"
           }
         },
         "crash-before-ack": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-crash-before-ack.json.gz",
-          "sha256": "c6aa7d19553dfc46295a59a34932e3432c2b3e3e97fa0f7a8d11add83d603284",
-          "raw_sha256": "13636031845a6335c1a112172280f49717739c5d7dc14d894934adeabb3265d6",
+          "sha256": "df74c8f06e3a266f7a53c53a4c60cc2f3f9c5a8004301a5bd2e8f7d604e79d87",
+          "raw_sha256": "9c3330de13d0c1e8b1b5408ba44ffe75125bf6951e85f772c837767a29405141",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-crash-before-ack-container.json.gz",
-            "sha256": "9ed0b6fb25649ad3fbb419f6671f0cf1992408a4552399f90de655396499d778",
-            "raw_sha256": "c6ecd1ff52ac4f2d5505048f460b0ed104072bead497e5b57eb91ed0513cedbe"
+            "sha256": "8c10b90d5bd04f8252d0b6c2798b686eb238d137980ddc417cda2a9183f5afc0",
+            "raw_sha256": "25ba9bdd4ef290699fffa941fb9ef2274ffed3b769c6544216e3d2ed98389ef8"
           }
         },
         "runtime-generation-change": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-runtime-generation-change.json.gz",
-          "sha256": "344e71b1988ceeb1387919a167de81813ef862cb12d1da9c846b79b89bcce175",
-          "raw_sha256": "11dd6d537dde19a3a3d6faeac4620dc74b8dc15535219feee16bd326bdeade6c",
+          "sha256": "534c68682b92e88e3eb8e0072dcb8417f27cf7ec931caa37be5cd078d96e5718",
+          "raw_sha256": "eb92220f7e2ab53257e72c27179fa7a01bcf9117ea90bead89330a31a53f18a7",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-runtime-generation-change-container.json.gz",
-            "sha256": "dbb983c5a26e3dfd7d9c523ed20ef3ed087ae92a18c9ea6c0a6d16d15a3d68b6",
-            "raw_sha256": "cd25d76539f030a68155a7427ce410b28a6428811c23e04a412e5f0018dbd1d1"
+            "sha256": "4de7561d4d87202626057547950788a492e1cb986a8d50c7f54c2323086e5945",
+            "raw_sha256": "545937974306e2290182fc904ad26180875e8d7e7d71e8aee24622265e8a28bd"
           }
         },
         "receipt-substitution": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-receipt-substitution.json.gz",
-          "sha256": "460b048fa950e4b79bbaa3884f3dca540a00ce46630d26cca0933f7a52ce0e31",
-          "raw_sha256": "06f233960095c3d5be5e241a0c08dc9bbd4477afa83d972f3bdf250dfc5df55d",
+          "sha256": "c99393e018204950c343c781a7ea502d5f11dd2975b0fddbe078c33b7f1de4a4",
+          "raw_sha256": "1812837f5b785bd12cb19e90c3fd29aeeb5133feb79c14c6942589c413efc555",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-receipt-substitution-container.json.gz",
-            "sha256": "5a34c80bf87a895e208870e244da551eb4df284196610f9e1360e639711bbc83",
-            "raw_sha256": "c19a133e1db23aaf5b4e5dfee9ff095a19449c9272c59816d375c9c5c293afe7"
+            "sha256": "50bee8ec9fbf14b857b237fd58b9ec580b156d217005050eae5d2bed1f76ce0e",
+            "raw_sha256": "044723b2b6b865ab055aec70fd9fa071c00e69777bc84629efaf55c2168fd60b"
           }
         },
         "legacy-v2-awaiting": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-legacy-v2-awaiting.json.gz",
-          "sha256": "cba5237c70e1de8d1fa73d79c333af733af80fab75e3933c31d6ac9753afe853",
-          "raw_sha256": "8c8325fe4a7a8d1142a4ffe2c4d967d6db890f68a93b62f5797bb041e3ca2a1e",
+          "sha256": "111cafad407fb1366c192775bd5ec28dec5827e8ab23f3946f155ae4d14d5ca4",
+          "raw_sha256": "44c017a4e3d729cf4a43e319d293e0a391f2367e4dc26f7ff394c10b905bf287",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-legacy-v2-awaiting-container.json.gz",
-            "sha256": "f80a9b42e2e65b2e89b66124efa664129ecc37b3910a5a9b0cf87ea0d93fc24c",
-            "raw_sha256": "c010fd7929b2d2c975d2a4cee5ec3e6193423603d7a692287939266a7f18f3ad"
+            "sha256": "87b7aa2d15e70c5eefc07a4f4c18f8ced05026da6e0aab966a2e206e445340b7",
+            "raw_sha256": "8d2ecae21c17b1ef918f4d829133ea940a500b0d31ca0b792de38008398e733d"
           }
         },
         "wrong-physical-witness": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-wrong-physical-witness.json.gz",
-          "sha256": "5fd5e404658e3ec92347692bd8612bd39cb2739ae0ce79b13c55e46e67875413",
-          "raw_sha256": "7299f751bcb0984072024f0ef1ed2ccc908a80a829394af0cfb983a5870dddbd",
+          "sha256": "6c931e8eec3900c2a6da020736a955909d5230546247d7ff352d2988535281da",
+          "raw_sha256": "0e5b01c4b3b99a5f4fe06b32ff6713e51c2a515ae7af6b8a035172ced4c8de6a",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-wrong-physical-witness-container.json.gz",
-            "sha256": "b4935aa814d96fecb5977170fc03cd0342b6d36f8efda71ed7dca7044ee45849",
-            "raw_sha256": "e5bf5b08a85e87563db7b63d754668ed9506dcc1ee36f3364b0356a816505bb5"
+            "sha256": "41fbe32ed8207c11e6405338b562d323da0cc88939903ee249845ae61d451aca",
+            "raw_sha256": "6a3a1179c8db99bf87d32a56bd5f07d1d19245f5f6ae8c5449ca21de5086f365"
           }
         },
         "legacy-upgrade-applied": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-legacy-upgrade-applied.json.gz",
-          "sha256": "8397fe6ff1adff5c6dfe2635dd79f2bb9a11176598fee2b3af857106113a8f85",
-          "raw_sha256": "e149629d0a765c840628aa38e55e1100509a677326e05a32697ec774cc683a56",
+          "sha256": "7b571093b0f1108e43dc24b5f876547e7bf9fac1edd294a02449f454715d3739",
+          "raw_sha256": "e19e87398f7db24db72ac7f4ac013dadda3a28636fa4bdf14ae13806ab430e49",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-legacy-upgrade-applied-container.json.gz",
-            "sha256": "b32f7e71de73cc4d4f0f4ad7f618fdada2a76a0e8baf9311d343d98925a5409c",
-            "raw_sha256": "729ec760dddd8d525dcd2dc86242c8bbd95f8145cb259c128bff867e3e8d31e9"
+            "sha256": "421d453b67d56a77fbb548b6e982dcc6b6fe5b9a01b3a3f7f046fe864e1b3981",
+            "raw_sha256": "1930853836bda0d1b334cd8170e02e3fbee69c38b66408092457cfceadd7d3b9"
           }
         },
         "legacy-upgrade-prepared": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-legacy-upgrade-prepared.json.gz",
-          "sha256": "e5bba325d2ad4bb17790628b3c6504647c40c10a6e7c1865ff31ba5ea9a1f664",
-          "raw_sha256": "e65e578c401363e60e450792fa79edc4ad75cdd3c1f5121c7b3f07ef66eeb146",
+          "sha256": "64b1fa1f144c819738daf5e8e168a14696ff009b97be50c4eaf94adef9127d5b",
+          "raw_sha256": "3ab6a0e51b90859d451643b6af2f161094c653506f086415de884b3755466f2d",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-legacy-upgrade-prepared-container.json.gz",
-            "sha256": "350911419034241162bd0b9d54076296df8edd6a04e292bccb4b1377bd424dba",
-            "raw_sha256": "5a91c4c52b6039d1cc2d900ec270d5e81f8c50b2d42432112d5a273e72673190"
+            "sha256": "36c777cb509057508616d7bbfbe7d5838fbe102b3d53207ad6cfedfc2c9f9578",
+            "raw_sha256": "0e84a14d6c24c6924567fa1596f09b8857808673f99621011f4bb5dc1df613c3"
           }
         },
         "legacy-upgrade-rollback-failed": {
           "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-legacy-upgrade-rollback-failed.json.gz",
-          "sha256": "1ca7afcd21ec65a42ad175edb1e83933cd00e742cb7bae73e2fa27daab184aad",
-          "raw_sha256": "167ddef271660284ebd9838458245d66b86b0501daf50c7ca7d33246a4a2fa42",
+          "sha256": "dc0e3f5201ddf3781e19337f4fdc0d9dd01ce68f2817393102969f6351b49ba5",
+          "raw_sha256": "5ab5ff51448d386985e204e87397303f59aa0a194e78abfea4508797c9c0819d",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/ubuntu-26.04-legacy-upgrade-rollback-failed-container.json.gz",
-            "sha256": "239ada80e046edbd0325527abb75e2d1b74657142bb6be11dda42f4c5dbc3f10",
-            "raw_sha256": "424e62bad4c449b932e687f186f69b04de7cd56e9e1e295da3c30d7c7079f4a2"
+            "sha256": "5128fed4e74af2250e296c82d765d8fabb4183a60461caec0a55b31a7ce0dcc2",
+            "raw_sha256": "89da87e695c936f6fa3dd6bfa3a34c07600b8816def4f05cb898025a94115d7c"
           }
         }
       },
@@ -2191,296 +2239,308 @@
     "alt-p11": {
       "build": {
         "path": "tests/integration/sssd-i6/reports/alt-p11-build.json.gz",
-        "sha256": "df2bf0b39429c8101da38f8b15130290c773a56a95640f07a37d7c2f1e689da5",
-        "raw_sha256": "1efefe363c220184bcf351b12ef42d182f84cd381843591c70f9706ac6887867"
+        "sha256": "e67fb0cce9f21219a92a20a63cd9af86237de9242d24d6429c4313dd3717b045",
+        "raw_sha256": "55e91c4608599f2488192636fdbbe97b6858845116de7f741c54fd43b818e6e2"
       },
       "scenarios": {
         "positive": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-positive.json.gz",
-          "sha256": "ec867bf01f14304f77c2eda579fb09df827dc132697ad2ea325af208ac293eae",
-          "raw_sha256": "b6690913222e8eef38325da8f77c2c5177da14ad5a7b84bad84c27d54b749804",
+          "sha256": "21dab5eb7ac55a3ea2d8ca61267b35fe619aa2c9997c52b8f8197389eb1bcb36",
+          "raw_sha256": "8e0d358c4fdc26c368988d216f525de3ff072ef136f7e18bf84fd46b8cd7660a",
           "exit_code": 0,
           "observations": 15,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-positive-container.json.gz",
-            "sha256": "8e128bd53d15d9645c4b00e07663c1d2312bc6d4c3b7d7a144d8c141fc45f077",
-            "raw_sha256": "08dbeecfb1d327f733fc7db51dd9ba5cfb7c0b25bef141f184ef46744c14d912"
+            "sha256": "893cac9d2957512da4f1961377f0897e7d9317e33bd17b2b7e62eda5e970efc9",
+            "raw_sha256": "dfefaa45cb7159014e1ef0f7f1fa44811e712d415543b2d134a77d31cb4fcb9a"
           }
         },
         "stopped-apply": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-stopped-apply.json.gz",
-          "sha256": "a56512655ff02cdf66eda624cb606cbebb6d99b8ba8ff2cb521c68a794aff463",
-          "raw_sha256": "c03b9e28dcd28a506c6971ab77e39fce8f48d75bfc8b9b38a6927a94d6fec506",
+          "sha256": "14d7bc4cde1fba6590aaf862f07e186daad878f5d7ba18b07d5a1a7e7b405490",
+          "raw_sha256": "3ff3f9e21bfe0ff9f86a43cb5fec000aaa0f8a65828390a8d2651be898bcedde",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-stopped-apply-container.json.gz",
-            "sha256": "fd4298c9cea84dad9916531cb8da5ecc47d8145ab8928f5cd3447d1441f2563e",
-            "raw_sha256": "19faa2af1efd450270aba6d5e056d828dd884e4d5dcdf0e625c0b9ee286b9d5a"
+            "sha256": "70bf1986e1b3bab3c33ffdbbe9c5eac6824469c53abf477a63b306941a14b3b2",
+            "raw_sha256": "1b06158375a90bdc5f3d914f3714d24918e2ff5efac2eeb8710a10f58e3e2688"
           }
         },
         "journal-invalid": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-journal-invalid.json.gz",
-          "sha256": "14f5253280fd44c4478c5d3af252c4cd555830e2629576cac690ba8108502de9",
-          "raw_sha256": "0bed667081a8f0795d33679b750788a33c0aff34e6d345078c4eeffc47072d82",
+          "sha256": "cad850bd4b4d08eae13404c077607fe7e391d496b24e541bf1f7dd9934cbad54",
+          "raw_sha256": "0b93cd7ca8150b8262fd12f0a7ee6294172e54f6ade8a03cb5922f422c4ad004",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-journal-invalid-container.json.gz",
-            "sha256": "6b99152b1977f5fd67f1e01d44696c3c98df88479454651354d9d87a7ef47646",
-            "raw_sha256": "ef1dc3a915ce5368d2679f091b9d8fccb5bacd31ec73af9cb20f0e703ffb8f79"
+            "sha256": "7a1eca7b3b4866a2075433761bc1126e79faf2bee62977891d2fbd89453b45cf",
+            "raw_sha256": "29f9fc179ce0594bc4f0d2f10e9853f50bf98491c0b64d972ca069860a05b224"
           }
         },
         "relation-conflict": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-relation-conflict.json.gz",
-          "sha256": "9e3db5b787a942948fcd85b8aba9937bc0f1ad766cbc4b770b2fd26931c8f426",
-          "raw_sha256": "195375cf2f3523d864f497d8fe38ef00fc09748af391add5f96678d7004ad58b",
+          "sha256": "a3cb370045780c7ff822ed86b76316443427959bc79de3a18545dbfb26295dcf",
+          "raw_sha256": "a7243becf802c142be9076779b1ab7387e31d6caf2bfe7c9b7d2fcc21615f766",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-relation-conflict-container.json.gz",
-            "sha256": "8c4b96e5fc9ef53960ae814a231200d6466517666b830178d451935e66c09054",
-            "raw_sha256": "cdc79bdef41ed085ccf66489e06335920f992baf38c6735d8733bff67db5b0b4"
+            "sha256": "6f1220d1a29db36e26a0511de3e0330255e8b82fab06e93f1bec946aff7658e5",
+            "raw_sha256": "9010f99974a4aa3ce0fedeb9a4acd2862c44a61f3ea3f74dd3fbffcdc10cf8ea"
           }
         },
         "domain-key-drift": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-domain-key-drift.json.gz",
-          "sha256": "be033b9432eb7ea3bb58c225d8a6beff3a1ac439a3dea15668f01fe038a4ea52",
-          "raw_sha256": "78e71fa5ab31a349f38b660c3a354ca894e67b785609c39a06ecba80cc20232b",
+          "sha256": "6f2157aea7d3dc39ffaca05217b470e8532259c279996bfe6eba8359b3bc19ef",
+          "raw_sha256": "406fdcf649fce56ed8210e049337672ee579294419021cd9f0ce4a8386d56c9b",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-domain-key-drift-container.json.gz",
-            "sha256": "15bc3c56923bb3db087f0bfcfcc57c6a37a49ab9e5daf4bf6370b6e88540db60",
-            "raw_sha256": "cc7064f7c205b14fb8e4fe4a33fd02385692fff5b20fd10f86569c830b445a8a"
+            "sha256": "bf31ccbabec0a8249ab33ec1d75e20119a2e00d1daf1b4d93dadfbbfa83c9df2",
+            "raw_sha256": "2999bb231f8128e99b3cc4aa01e23ce954c0afbdf33d8ea17996f2e124c331a5"
+          }
+        },
+        "remaining-enabled-scope-drift": {
+          "path": "tests/integration/sssd-i6/reports/alt-p11-remaining-enabled-scope-drift.json.gz",
+          "sha256": "caf888f43a7db2aed14fdd9d32ec14c55b794ab78f65bd0d3358f56c1d80c709",
+          "raw_sha256": "d716b310d5f5a5d5cef4a4faaa5903111af98fcdfa23e288942e8af5514cd519",
+          "exit_code": 0,
+          "observations": 8,
+          "container": {
+            "path": "tests/integration/sssd-i6/reports/alt-p11-remaining-enabled-scope-drift-container.json.gz",
+            "sha256": "ba8e8ca3ec6b813be0e11bfe0ba24f1a366856a84b886ef6e4206edf0e33f76b",
+            "raw_sha256": "fd290c876cdaaea894194c94f66b5c5cd42bc4c596f9556cdd68201d10e58384"
           }
         },
         "remaining-enabled-unowned": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-remaining-enabled-unowned.json.gz",
-          "sha256": "8239dc20048e5b4f3d0dfe9c5902fb45065aea890cecb87c87af6b6515f12507",
-          "raw_sha256": "44dc7a41aa1973843821e9a6ecd74bf451dda6ec439806c6b839aeabee8259ae",
+          "sha256": "c6596b5fdb0df3e8d3581bc6fac71eb19ff8438be2de8cad9dcb35180c760393",
+          "raw_sha256": "2022742bab8c7b8bf5fd6157b7590c39b70402b065ddd1bf38133356e0c8598c",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-remaining-enabled-unowned-container.json.gz",
-            "sha256": "3549b2162b12b4797805e75b029c1524ee520af9b90d6448135a1e7f81b95c26",
-            "raw_sha256": "5e6fdd0317b8e60116b070d090d52ee7f6f97dba6ed0e5186b29758dd41afdfb"
+            "sha256": "bb35a0ee18c7537ae5f1d0f907d19ade345fa17a7480b00fc1e25d1fa5381a14",
+            "raw_sha256": "c50e75305a400c761b9a0969a516958369a4f99e5f338284ceb4797deeec92a8"
           }
         },
         "remaining-enabled-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-remaining-enabled-unowned-matching-foreign.json.gz",
-          "sha256": "f02ab5863a8bb1cd9dd05c82edea8b378d907d87e035f029cde17332ab5b1b7c",
-          "raw_sha256": "f6f9d897d02354d76914fb8e695f8589916fa067d0bf16ecc673b05dbd611f3f",
+          "sha256": "5c7d662207528858dbd6f8020dd9919f113758b652142873fbb9857fd7a54679",
+          "raw_sha256": "1e6690533bd375ccdbd5f183e1aae4aaa4faf62fe615e11582b123be6055d8a1",
           "exit_code": 0,
           "observations": 7,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-remaining-enabled-unowned-matching-foreign-container.json.gz",
-            "sha256": "3468fb1d47d37b975386ed85eec9302dd4b429269f7aa5211f637fcbbe7877d4",
-            "raw_sha256": "b85c0daec4a837c2a697b66ee56371a363e8c859df491512a31aa8b99841e9aa"
+            "sha256": "6e31785ae57399cd7c95ce09e265dfca2a5da3c2885eee2f5d724fb930305549",
+            "raw_sha256": "6759b772cb4ed4c16c9e415c797f200ed230cae52a27d4d3efb858d4ab98a073"
           }
         },
         "acknowledgement-unowned-matching-foreign": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-acknowledgement-unowned-matching-foreign.json.gz",
-          "sha256": "242a74420491ef51251eea8fe17328a16d2193ce6b7ca0af38128f150dac63f6",
-          "raw_sha256": "0116476894f609887b229ec308f217fca67c13c9f2286a87b0b65f2f3efa37b1",
+          "sha256": "c6fd1b2f4dc8140a97d789ab5519c216129ff42c4c554c1b523d909cedc9d6ba",
+          "raw_sha256": "8bdafe7a881152141f0a562beda82a4c69d13c9d12206bde5ce999cf809a93cd",
           "exit_code": 0,
           "observations": 7,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-acknowledgement-unowned-matching-foreign-container.json.gz",
-            "sha256": "21272cbc118d4ba0f3da2b0673f5dffd060ae2981114b22c57c21454210e7886",
-            "raw_sha256": "6133303aafee19c70ffe5bc6b57f3934dc5e6edc7610bf1df04322aa6b142244"
+            "sha256": "eb8aa7c0d443faad6b953215f9744de38174e7c445ae1a0bd7f402275fdbbba6",
+            "raw_sha256": "8ca022659b305af0e4a1c7ece20701eaee2dd0fa44157686d567d54fe53dc86f"
           }
         },
         "late-foreign": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-late-foreign.json.gz",
-          "sha256": "b5d10720d6cd82dfb968adf4160f34bb7556619992388430f5bc7430f089f077",
-          "raw_sha256": "5f2cb90bd424f232dffe6be5dc20d90e6d9ce2589c0d069f1526773f16e14049",
+          "sha256": "946f0a668b7f499556601626d051b0a3e0109ea1128e1f61595fa5d127a7bed0",
+          "raw_sha256": "dac4da29015fd192cbbd154f0405f516659b29fd0fc81f0130c886f405f7442e",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-late-foreign-container.json.gz",
-            "sha256": "04bec9add26b704356be9af3de6e50410f550331d54b59cf50452ac1528274f4",
-            "raw_sha256": "8ac457c563f9c136be67ebc723653e2292ea938ed03a03d43218e2c6129202c6"
+            "sha256": "7d51afb2ab58243a4ede78586769d34f4d9bc466ea876220ae2aeb7e244fe899",
+            "raw_sha256": "38a41d5e7022d9bca20c30fb8d4e367b0cb6aa796d2dc3d65f5c67636087bd8a"
           }
         },
         "foreign-relation": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-foreign-relation.json.gz",
-          "sha256": "77d1554969fa3b9c68b3a7da02dd6bdd914bee9eaf6bd41dae96b49731a0d156",
-          "raw_sha256": "b7350fbeecc06d6f4266946ccef9cd1a3add93b9d242dd52898c22cdebbacf58",
+          "sha256": "1c596982480ca37fab172a016dbf393e7dc60ca64573bbeea0b162c32b7cbc85",
+          "raw_sha256": "3e65b919e672c15f5a0c649df6ba30c34e381bd2b47155c2587c165fdde10b6a",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-foreign-relation-container.json.gz",
-            "sha256": "642963d78d06a2774ffe580b09cf6eb412761f615d8e3b4d027c63438fb43437",
-            "raw_sha256": "6efc67149d7033a7be116ba532117734714080e8d849cd4e3362baea9e52396b"
+            "sha256": "dc7d588b04950451bcafcb7b0e42b398a56b6637964feb44ceccc4c1e321f5d6",
+            "raw_sha256": "309521b2dcba3c72560e72b2be7cff34aea240d46fc8e5ad476731557759aaa5"
           }
         },
         "package-release-refusal": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-package-release-refusal.json.gz",
-          "sha256": "f9dc541055053125cce3a59658ffc8b6546a881101ce6baa281712df7aab4d97",
-          "raw_sha256": "f2120eaeb57941ff4f9c4f6dfe91601cc35061a7f1250afdfa0c4034c609c114",
+          "sha256": "a0f42b4710b484094310af05e6ec4f7eb8381da7e1f985fbe6cc4d26363fbbd3",
+          "raw_sha256": "4a934efd5af3edea3534786e4a698ce91f0641a3066acf5b236ee5332861f0ef",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-package-release-refusal-container.json.gz",
-            "sha256": "c8cf4941725fbf739292dece5f2a74df8d8c9da14718d5d35e03f918d0456fec",
-            "raw_sha256": "d056ed72519e9687fa12e6a153e38afe94daf09f70f84e78f3ae9010fedefdc1"
+            "sha256": "c4e124a73068ae12faf911caa206ba62ea41f53e5281c2c76c5ea3fa75256be7",
+            "raw_sha256": "451a2167542bb243400bb23bcc1166ec92de6688db5a3a05f43d079acd7807c2"
           }
         },
         "cas-drift": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-cas-drift.json.gz",
-          "sha256": "26fd2d79096c73b914c623e49cd09d863802a6ddb1936678d06464ec507ddd1d",
-          "raw_sha256": "d610d3eb8ba6b6ac573ca67fcd7cde681a8ea05733933c886fc603fe95f31f50",
+          "sha256": "b22b0e3ea974668bafc8bb15cad80414d60ac06e7c3ed7bde96ed710886e61a6",
+          "raw_sha256": "0ebb646f752a460ff7bcd5d54b85285d98b15e0357a7165676200ad8a0a37311",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-cas-drift-container.json.gz",
-            "sha256": "e9cbd406fbe794ac72a1d94e4b61ac50911130dc828c353afa09c9247300532e",
-            "raw_sha256": "4dd54a1d0cb6ff97f75e7cf02c5ddb98cce217de204bab62feab2de56bc90510"
+            "sha256": "c34bc3f6677da428d6f96f53a2c671f3d3eca3fb2f92bbd942e8c11d211e16e8",
+            "raw_sha256": "5557d6c195feefd7cde7730e49dbbc738141f19032cb24670f4be60df8eda509"
           }
         },
         "cleanup-failure": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-cleanup-failure.json.gz",
-          "sha256": "81907ec5f6ad1ee70cda3ebe02cba447c691cf759401f1632b7a0b3f3012b31e",
-          "raw_sha256": "d96b7883bb896b2d645abe0ac17b4dcb2e7b5830d5b79ac2d2f8b87e7f053cbd",
+          "sha256": "364aef887250b67c97b7f7e4969ccdb46114401415d1ec4fdb7ee80d221bf135",
+          "raw_sha256": "eae88f92977cd2e3b065989af58215547c8e00c9d410e47771af82864ecb7168",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-cleanup-failure-container.json.gz",
-            "sha256": "6163549b39fcc19785e786c63969e64a099b860155a8caa54be2bb58c915165e",
-            "raw_sha256": "fa464762e20ad1ef5ac31692c8b4d463b10529f8e4d5521ab2f9d51cff086325"
+            "sha256": "df03ab90bb1dc39980b06ed6000a2df936b103a8f5311961b4c328d9a543342a",
+            "raw_sha256": "e44992913e20dbfcf0f5d4ec4ea9880db6ebc5d8218df15aa8df36dfeb2aee08"
           }
         },
         "wrong-registry-generation": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-wrong-registry-generation.json.gz",
-          "sha256": "82c0224e88529684ad6d607aef48e15589302a11882cc7a632ffdf8659b4dd31",
-          "raw_sha256": "af9919a17920b634456c5e53a90a32ba1505f4504018264e693f347aa39eb80e",
+          "sha256": "2ab0a40e39a12bf56e2985f447b779731ae9b0745152cb8ec45d7178b69edb91",
+          "raw_sha256": "e4898b4b469238e2e8b2a0ed41eec4383e64aa3df45869da9b5c188851fca2c6",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-wrong-registry-generation-container.json.gz",
-            "sha256": "936d4c75fd9751647d218bb412f93a5885cb52a546580c7da39e04fd60412205",
-            "raw_sha256": "1d1e9e3e0b8697c1df87d11967d4431a0d1ab56ee0164049799fa33cc4479623"
+            "sha256": "d21039ed54e4ae049b3a27f5781fb6313067e9a3340aee1308ac244c813e23e5",
+            "raw_sha256": "6e2fba4bc313d1ed6163ac6382799d3b7d025a1e9796452ad1bbc57f3986aff4"
           }
         },
         "journal-finalization-failure": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-journal-finalization-failure.json.gz",
-          "sha256": "d17827f6200866722fcbc6a9e69e789e89b30a31b0b835922ce2a2a1bcb86a2f",
-          "raw_sha256": "184291119a4405c78fcd02c3d0f850db0299e9440897198311cb003be614d48c",
+          "sha256": "01f40d2191fd175c613657168898c161fb35caf1dfcb5db4f25ad353da82ae4f",
+          "raw_sha256": "3d0f0925ad7e1bfc67decb30c8cba77406ccbb193a3731edd586b7db49784435",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-journal-finalization-failure-container.json.gz",
-            "sha256": "df6e2a9d311f5aedead5da61a8fae59369a4d09b80dbbaefa28d39b6f7b5d0d3",
-            "raw_sha256": "3db4ba9d431a8d52584f9038398362450716a293967d61193d9a02ddb34c9b2c"
+            "sha256": "466e33e2f9f4fa1acc4360924d776a29995ddbae8baf00911f80de34499a209c",
+            "raw_sha256": "fd7a0353f2ee65db147b0c5fe3b31fa8bb605b1db17a16e25f11a81db94e2f97"
           }
         },
         "crash-before-save": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-crash-before-save.json.gz",
-          "sha256": "773a7aac7dc1038658c28aa8a3f9652bb193dd535f2f110aea1f5af57f621ab6",
-          "raw_sha256": "52ee245ee98ae8bdd79db5ef981d74cdc68d2f90c1cb7151ecd38b3e152b2bba",
+          "sha256": "a29c04ef546622feb48de943c3bb8a124f425060201bbda87fecffef3497f812",
+          "raw_sha256": "f0d88ec6c86b3a1fed4fa2656d62a199556a156ac611ee4ed2614921eccef281",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-crash-before-save-container.json.gz",
-            "sha256": "2c59ea5354ec4e32095c4c03756616a45a72a5d2da6fa87703ddf6facc3c73d9",
-            "raw_sha256": "7268a41aaad46072f709e1648f69481ebcd0acd03a4de9efe2fee8d35f7e70eb"
+            "sha256": "88981b15587ca52a0af8a251a33ab5c242d5acf28885866f4b4b757f7aeb530b",
+            "raw_sha256": "e52e6dfe90246d750c4447c823b976d4d8957a71daccf42645f3ee42fdec80cc"
           }
         },
         "crash-before-ack": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-crash-before-ack.json.gz",
-          "sha256": "2c61ae926ce5a3d26c09aa932f8f520d4d7a9ce4cf28c901f97668808e372f55",
-          "raw_sha256": "7c3bcd8a092be81d351e5b1701827019027191f037bd1a02d9777870bfc03bd6",
+          "sha256": "4ab6335932d9d923de0a33d2d0e734b2875080c8f0b98a1776160a9e90dd8137",
+          "raw_sha256": "b0d9a009cd517b36ca9b3a8db119905b48e5997c4be74beb02a28fc8972068a0",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-crash-before-ack-container.json.gz",
-            "sha256": "39c554bb5202f61c782830bded622a49328a99904691b719a12034b7fab636b9",
-            "raw_sha256": "ed72f768dff8d88c1c8c75aa0a4ee1de2edcdcac6c6961eb838fe93f3717efb9"
+            "sha256": "30ef63687567b17a40a84d262a3c6cb28106370a06c4a852040b323152b445a3",
+            "raw_sha256": "75516b57f6410c5659d26bea5cf1ad6d9819b695cfa628d284ff3350619cd938"
           }
         },
         "runtime-generation-change": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-runtime-generation-change.json.gz",
-          "sha256": "826bec11d588620327acac0f28bd966ffbd2c9489b4d564db7931b05883c5346",
-          "raw_sha256": "0b944a3e0e3d06629694e7fdc99c52ec9be67747845793493fa573f0180a097c",
+          "sha256": "b5a32cd8dc4d2483855b395ee28c15fe4044bdc5d5f803a9d9951f7d50b18741",
+          "raw_sha256": "f8dc6f8ef6155e7c78e9d4a7439ebf8df95d1d3eae2d238942cc961c031a7ead",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-runtime-generation-change-container.json.gz",
-            "sha256": "05858774316a300ab9aeb25e1129878b3287a4110712319ab1de5b326b1cc12b",
-            "raw_sha256": "aa60beef6ac24a74d527e6d7929ea059081716d1d810977aa17df2a38dc4d18b"
+            "sha256": "5f5033b997c0834ade03bdd38f11e01b97ca6e0f22ac82f3b7692a68fc650e1e",
+            "raw_sha256": "296a79dee7ac30cf2508fb4831872fc1e06e3217b21810451ef4518777b84832"
           }
         },
         "receipt-substitution": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-receipt-substitution.json.gz",
-          "sha256": "d5473211e6746450d26b49055d1cd499497cb9e1c79f08c512a3792294132e11",
-          "raw_sha256": "1e2c72246bb839213e34044938bd9ecfab90fc5e1f911b8c7c3f266503d2fae7",
+          "sha256": "3f7145176896e92b2b0a0326303cb493c75152e803d85ed0c20bf9c6e46f1047",
+          "raw_sha256": "c964e1e00f7b56507690febd01066c25ba2340ff6d5f88c854d642bc2bccb9f0",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-receipt-substitution-container.json.gz",
-            "sha256": "01026467b08aa8128a7dad583bf58a5937eba9ff8164b579401e5537e79b2fb5",
-            "raw_sha256": "0651c1eca157fbe4fbbf0d66e505ccf400bcd612ea85a232f45fb34e33b18251"
+            "sha256": "efdadc05b64ff50bda3b093b921dc01301708cfe0a48186efb085bd6928f70ac",
+            "raw_sha256": "d934412219aa97bdc7881190a4a2642cf158f14461b005913fa2d57b59bbc975"
           }
         },
         "legacy-v2-awaiting": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-legacy-v2-awaiting.json.gz",
-          "sha256": "fcc339dd90fb30e9a71e1f37c23613daea3ba487f80e1756dbf47d2642fcc077",
-          "raw_sha256": "3a8792c068d58a0a62581a44cb86a3a70185bf49949f9619aa504cee7f1727d5",
+          "sha256": "8caf31cf771e22a8cb5535d785378d17fd125252f577601f7e948b5ee2d7ffb3",
+          "raw_sha256": "99b1f694b8fe9d02d9aa3191aa5c9560652e6a67f6ba9fbc02fbf66527078404",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-legacy-v2-awaiting-container.json.gz",
-            "sha256": "b52717b47807034879224a18715f8cd074b929acfc412ba14cc96848fadd56ec",
-            "raw_sha256": "7c45255f9a1fd761ecbdb7e9aa9892ffbaa4bca039eec5f0e35373ad49794446"
+            "sha256": "ca44b183340d80909eedbfa33c705e5db3bc8e0c0da5af4f3f53c05a6efeec79",
+            "raw_sha256": "a520740cdabce66f944300776fabcb812a64760c038456b234ccbdd744b5a133"
           }
         },
         "wrong-physical-witness": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-wrong-physical-witness.json.gz",
-          "sha256": "d5d0f75869c2a876202295b71ab9006b4f95b014c7b134fa1a3dfa848d72dce3",
-          "raw_sha256": "0848b4edb46cc3698bd28cbed0d2b1cd423e5498f794bdb835df31d2fa786f3c",
+          "sha256": "33b283433798abc8362939d6ddc79a70295cbb7e235a6adb2072104ea66ea484",
+          "raw_sha256": "b083c50ca80e0b82188ff0fd6b2ebf87114b3942fc7c6e14538fd597817ab193",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-wrong-physical-witness-container.json.gz",
-            "sha256": "d9e2f402bc49671e71a5f050e9bb055290f161016761d6071fae601d5e6fcc12",
-            "raw_sha256": "631282b96891d01617a5789b5c524ff4ea74ccf6ccb5ad153e7b57cd352e21d2"
+            "sha256": "ae053dcb60ddb7cdf07d4b38fdaceba3726196621dabbfb23bd5a67cb24c22ce",
+            "raw_sha256": "8fc8364cd8a763bc036237c713230d402da256c555a375a33468adf54be2bab3"
           }
         },
         "legacy-upgrade-applied": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-legacy-upgrade-applied.json.gz",
-          "sha256": "a920863b57b592b699728c27a6c97333a3ad1a52fd65f8d18d1bf6abd35488db",
-          "raw_sha256": "d66497cd9c01c706a76b37abae8a6be812a1280fba473a69c5deb86902461524",
+          "sha256": "b42172fea648f6e50b9850270c2e72c4e49de188ef15c5fdfc762ab6a6685456",
+          "raw_sha256": "bb51b1dd67c7f4a4669bf10ce9bdf2b62f09bc78b3aede12a5ff6ba76c610073",
           "exit_code": 0,
           "observations": 5,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-legacy-upgrade-applied-container.json.gz",
-            "sha256": "41e916443b2f3e3d012948556ef08eda5b38b2e573c5c9706308385e721d2ad0",
-            "raw_sha256": "df0ac2103c8c494d38884ad77f653d85f557e3bf59aaf4bbf13da236c9e0d784"
+            "sha256": "3eb41ce78bc8490d0531a72d0ec3640c21c9812d5285e2dd523b64aca3f32cab",
+            "raw_sha256": "86fe5f2e2e97b363e831971291be025a1ace3ed345326380c6fef7bb8ef7edde"
           }
         },
         "legacy-upgrade-prepared": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-legacy-upgrade-prepared.json.gz",
-          "sha256": "1e9623753991e9ae956ed514b0e84121bc36fc895640a2806f4907e561107bb6",
-          "raw_sha256": "45ffb1968806dac0640ca70501ec36b0b51d7c8671f129b8a5f8cd3fa23e852b",
+          "sha256": "642e4acd989fd3713cd406827044d60e2775c24f2b7bbf905d74f909ec764cc1",
+          "raw_sha256": "178f87bbcb862aad7710a555a318468060de477d09bb2516286f565e73bef265",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-legacy-upgrade-prepared-container.json.gz",
-            "sha256": "27e2ff0bc137e29936616b23aead052f93df6555588ddce1f1692b510f30e9c2",
-            "raw_sha256": "46105f5f4441945174bf0737ac8a13356e450ede9ed059af52d5eb8b5442abfc"
+            "sha256": "6635562295d019c3a7624bc9314a311ec40a959c60e5ef00b24da13eac307323",
+            "raw_sha256": "56976c12a33d2da99a72f0b56140d6379b3d4450bcc0f3d24ee4b7a6bb136d3a"
           }
         },
         "legacy-upgrade-rollback-failed": {
           "path": "tests/integration/sssd-i6/reports/alt-p11-legacy-upgrade-rollback-failed.json.gz",
-          "sha256": "ae4034c92262418b753d8c82c05d25b5b853f522a577713dbafea0c848fc7d55",
-          "raw_sha256": "7150c98377d03aeead1c6ca71a2dbbd4ce60f96bd82bd35716b9d08ce77ca0a0",
+          "sha256": "4a651c7a57b596c949dee05c51588429035a25ac39501ccbfe30f572747e5b7f",
+          "raw_sha256": "59fddd30734d4379a2f73edf61b70d958d6fb5b87415c297d280fb321b387603",
           "exit_code": 0,
           "observations": 6,
           "container": {
             "path": "tests/integration/sssd-i6/reports/alt-p11-legacy-upgrade-rollback-failed-container.json.gz",
-            "sha256": "38cabce9bf1b00c42516cef17812a2d695758df0644f755a092771328d75bcd1",
-            "raw_sha256": "bbff1d40587cdd606adcf157e9c5e0e716c168c50b8157a15c9aae64c0126654"
+            "sha256": "6f1fdae14ab0b5da3709be79d104f772e6969a3cbc7c161086f6beb004a0ace7",
+            "raw_sha256": "bd1eab6fed6b076dae31513239975e915f55156e000f16215fbbc6ec650d7588"
           }
         }
       },

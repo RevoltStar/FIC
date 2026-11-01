@@ -162,7 +162,7 @@ AdministrativeProof administrativeProof(PolicyRegistry& registry,const PolicyRef
 // per-policy projections; another owner or a matching effective value cannot
 // supply this authority. Existing physical/semantic/runtime proofs remain separate.
 void requireOwnershipCoverage(const AdministrativeProof& administrative,
-                              const std::vector<r::MutationRecord>& records) {
+                              const std::vector<r::MutationRecord>& records, const std::string& scope) {
     for(const auto& [name,required]:administrative.requiredByPolicy) {
         const auto reject=[&](const std::string& why) {
             refuse("remaining ENABLE SSSD ownership coverage: "+name+": "+why);
@@ -184,6 +184,7 @@ void requireOwnershipCoverage(const AdministrativeProof& administrative,
         const auto order=[](const auto& a,const auto& b){return std::tie(a.section,a.key,a.value)<std::tie(b.section,b.key,b.value);};
         std::sort(actual.begin(),actual.end(),order);std::sort(expected.begin(),expected.end(),order);
         if(actual!=expected)reject("owned assignments do not exactly cover canonical section/key/value scope");
+        if(owner->current.scope!=scope)reject("scope mismatch");
     }
 }
 void mergeRequired(std::vector<SssdSemanticExpectation>& expected,const std::vector<r::SssdAssignment>& required) {
@@ -491,7 +492,7 @@ SssdReleaseResult performRelease(r::MutationJournal& journal,const SssdReleaseRe
         stagedArtifacts(input.sources.at("/etc/sssd").tree);
         if(!residualMounts().empty())refuse("residual SSSD publication mounts");
         const auto before=physical();out.status=SssdReleaseStatus::OwnershipConflict;
-        if(administrative)requireOwnershipCoverage(*administrative,journal.records());
+        if(administrative)requireOwnershipCoverage(*administrative,journal.records(),detail_i4::scopeIdentity(domainScope(input)));
         const auto owned=ownership(journal,input,before,true);
         const auto found=owned.policies.find(request.policy.policyName);
         if(found==owned.policies.end())refuse("no active I4 owner; absence/name/value is not release authority");
@@ -786,7 +787,7 @@ bool SssdTransactionCoordinator::acknowledgeDisable(const PolicyRef& policy,Poli
                j::container(found->container)!=j::container(owned.container))refuse("surviving SSSD ownership changed");
         }
         if(survivors!=release.survivors.size())refuse("missing surviving SSSD journal owner");
-        requireOwnershipCoverage(administrative,journal_.records());
+        requireOwnershipCoverage(administrative,journal_.records(),detail_i4::scopeIdentity(domainScope(input)));
         auto expected=expectations(release.remaining);mergeRequired(expected,administrative.required);
         const auto cfg=effectiveConfiguration(input);
         if(expected.empty())for(const auto& name:cfg.scope.data().enabled)
@@ -822,7 +823,7 @@ bool SssdTransactionCoordinator::acknowledgeDisable(const PolicyRef& policy,Poli
            !std::holds_alternative<r::SssdJournalOwnership>(found->undo.payload)||
            j::encode(std::get<r::SssdJournalOwnership>(found->undo.payload))!=j::encode(std::get<r::SssdJournalOwnership>(releasing->undo.payload)))
             refuse("awaiting SSSD transaction changed during final journal reproof");
-        requireOwnershipCoverage(administrative,journal_.records());
+        requireOwnershipCoverage(administrative,journal_.records(),detail_i4::scopeIdentity(domainScope(input)));
         const r::SssdDisableProof proof(releasing->id,transition.sequence,administrative.generation);
         return journal_.acknowledgeSssdDisable(proof,error);
     }catch(const std::exception& e){error=e.what();return false;}
@@ -838,8 +839,8 @@ SssdRecoveryInspection SssdTransactionCoordinator::resolveNoEffect(Deadline dead
     return inspectLocked(journal_,deadline,true);
 }
 #ifdef FIC_ACTIVATOR_TESTING
-void detail_i4::requireOwnershipCoverageForTests(const std::map<std::string,std::vector<r::SssdAssignment>>& required,const std::vector<r::MutationRecord>& records) {
-    AdministrativeProof proof;proof.requiredByPolicy=required;requireOwnershipCoverage(proof,records);
+void detail_i4::requireOwnershipCoverageForTests(const std::map<std::string,std::vector<r::SssdAssignment>>& required,const std::vector<r::MutationRecord>& records,const std::string& scope) {
+    AdministrativeProof proof;proof.requiredByPolicy=required;requireOwnershipCoverage(proof,records,scope);
 }
 SssdReleaseResult detail_i4::releaseForTests(r::MutationJournal& journal,const SssdReleaseRequest& request,const TransactionTestHooks& tests) {
     return performRelease(journal,request,&tests);
