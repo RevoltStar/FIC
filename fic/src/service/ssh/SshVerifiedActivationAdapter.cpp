@@ -14,6 +14,7 @@
 #include "modules/net/ssh/SshInputAuthority.h"
 #include "modules/net/ssh/SshRuntime.h"
 #include "modules/net/ssh/SshManagedBlock.h"
+#include "modules/net/ssh/SshConfigSyntax.h"
 #include "platform/PlatformCompatibility.h"
 #include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/integrity/ContentDigest.h>
@@ -103,11 +104,17 @@ void validateLaunch(const d::LaunchContract& launch, const detail::InputProfile&
 std::map<std::string,std::string> metadataIdentities(const detail::PersistentMetadata& state) {
     std::map<std::string,std::string> result;
     for(const auto& [path,root]:state.roots) {
-        Json value=Json::array({root.mount,root.device,root.inode,root.mode,root.uid,root.gid});
-        Json files=Json::object();
-        for(const auto& [name,s]:state.attributes.at(path))files[name]=Json::array({s.st_dev,s.st_ino,s.st_mode,s.st_uid,s.st_gid,s.st_nlink,s.st_size,
-            s.st_mtim.tv_sec,s.st_mtim.tv_nsec,s.st_ctim.tv_sec,s.st_ctim.tv_nsec});
-        result.emplace(path,fic::core::ContentDigest::sha256Hex(Json::array({value,files}).dump()));
+        // Directory rename changes timestamps, not its identity/authority.
+        // Exact manifests still prove the complete file/negative-set membership.
+        result[path]=fic::core::ContentDigest::sha256Hex(Json::array({root.mount,root.device,root.inode,root.mode,root.uid,root.gid}).dump());
+        for(const auto& [name,st]:state.attributes.at(path)) {
+            const auto file=name.empty()?path:(std::filesystem::path(path)/name).string();
+            Json facts=Json::array({st.st_dev,st.st_ino,st.st_mode,st.st_uid,st.st_gid,st.st_nlink});
+            if(S_ISREG(st.st_mode))for(const auto value:{static_cast<long long>(st.st_size),static_cast<long long>(st.st_mtim.tv_sec),
+                static_cast<long long>(st.st_mtim.tv_nsec),static_cast<long long>(st.st_ctim.tv_sec),static_cast<long long>(st.st_ctim.tv_nsec)})facts.push_back(value);
+            // Prefix separates a root descriptor identity from its entry facts.
+            result["entry:"+file]=fic::core::ContentDigest::sha256Hex(facts.dump());
+        }
     }
     return result;
 }
@@ -182,12 +189,18 @@ Capture capture(const ActivationRequest& request, bool published = false, bool p
     return out;
 }
 void validateCaptured(const SshVerifiedActivationRequest& request, const Capture& observed) {
+    if(request.allowReleasedPortSet&&(request.intent!=SshActivationIntent::ConfigurationRelease||request.policies.count("ssh_port")))
+        unsupported("released Port set is not a selected policy contract");
     const auto closure = detail::validateClosure(request.reference, observed.bytes, request.policies,detail::inputProfile(),request.intent);
     for (const auto& [root, entries] : observed.attributes) {
         for (const auto& [name, st] : entries) {
             if (st.st_uid != 0 || (st.st_mode & 0022)) unsupported("SSH tree requires root-controlled metadata");
             const auto path = name.empty() ? root : (std::filesystem::path(root) / name).string();
             if (closure.hostKeys.count(path)) detail::requireSafePrivateHostKey(st);
+            const auto input=detail::inputProfile();
+            if((request.policies.count("ssh_port")||request.allowReleasedPortSet)&&S_ISREG(st.st_mode)&&
+               (path==input.mainFile||path.rfind(input.fragments+"/",0)==0)&&st.st_nlink!=1)
+                unsupported("SSH Port configuration hardlink aliases unsupported");
         }
     }
     const auto input=detail::inputProfile();
@@ -205,7 +218,7 @@ RuntimeReceipt runtimeReceipt;
 std::mutex receiptMutex;
 std::string referenceIdentity(const SshVerifiedActivationRequest& request, const Capture& observed) {
     Json paths=Json::array();
-    paths.push_back({"intent",static_cast<int>(request.intent)});
+    paths.push_back(Json{{"intent",static_cast<int>(request.intent)},{"released_port_set",request.allowReleasedPortSet}});
     for(const auto& p:request.reference.paths) paths.push_back({p.path.string(),static_cast<int>(p.kind),p.sha256,p.manifest});
     auto boot=d::openAbsolute("/proc/sys/kernel/random/boot_id",O_RDONLY);
     // procfs virtual files have zero st_size; bounded descriptor read, no path fallback.
@@ -233,6 +246,8 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
 #endif
     try {
         d::validateRequest(request.reference); detail::validatePolicies(request.policies,request.intent);
+        if(request.allowReleasedPortSet&&(request.intent!=SshActivationIntent::ConfigurationRelease||request.policies.count("ssh_port")))
+            unsupported("released Port set proof requires Port ownership release without selected Port");
         if(request.intent==SshActivationIntent::ConfigurationRelease&&!request.additionalPolicies.empty())
             unsupported("release requires all remaining selections as mandatory policies");
         for(auto it=request.additionalPolicies.begin();it!=request.additionalPolicies.end();) {
@@ -247,14 +262,14 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
             !fic::platform::validateHostCompatibility(profile, "/etc/os-release", error)) unsupported("SSH verified activation v1 supports Debian12/13, Ubuntu24/26 or ALT p11 only");
         d::SystemdActivation service(request.reference.unit, deadline, request.reference.paths,activationProfile());
         std::unique_ptr<detail::UbuntuSshSocketFlow> socket;
-        if(ubuntuSocket())socket=std::make_unique<detail::UbuntuSshSocketFlow>(deadline);
+        if(ubuntuSocket())socket=std::make_unique<detail::UbuntuSshSocketFlow>(deadline,request.allowReleasedPortSet);
         auto launch=admit(service
 #ifdef FIC_ACTIVATOR_TESTING
             , tests ? tests->admissionWait : std::function<void()>{}
 #endif
         );
         std::unique_ptr<detail::AltSshServiceFlow> alt;
-        if(altService())alt=std::make_unique<detail::AltSshServiceFlow>(launch,deadline);
+        if(altService())alt=std::make_unique<detail::AltSshServiceFlow>(launch,deadline,request.allowReleasedPortSet);
         const auto combined=[&](const d::ServiceState& state) {return socket?socket->combined(state):alt?detail::AltSshServiceFlow::combined(state,deadline):state.properties;};
         const auto admittedLaunch=combined(launch);
         if(!request.expectedService.empty()&&request.expectedService!=admittedLaunch)
@@ -319,6 +334,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
         });
         const auto semantics = [&] {
             checkBinary();
+            if ((request.policies.count("ssh_port")||request.allowReleasedPortSet)&&!runtime.validateSyntax(error))throw SemanticFailure(false);
             if (!runtime.validateConfiguration(error)) throw SemanticFailure(false);
             for (const auto& [id, expected] : request.policies) {
                 auto verified = runtime.policyValueCompliance(sshPolicyDirectiveKeyword(id), expected);
@@ -327,8 +343,8 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
             }
             checkBinary();
         };
-        if(socket) {detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();detail::UbuntuSshSocketFlow::effectiveEndpoints(runtime);}
-        if(alt)detail::listener::effectiveEndpoints(runtime);
+        if(socket) {detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();detail::UbuntuSshSocketFlow::effectiveEndpoints(runtime,request.allowReleasedPortSet);}
+        if(alt)detail::listener::effectiveEndpoints(runtime,request.allowReleasedPortSet);
         semantics();
         d::ActivationProof proof;
         proof.profile=activationProfile();
@@ -539,8 +555,11 @@ SshPortSourceMap SshVerifiedActivationAdapter::capturePortSources(const std::str
     }
     std::set<std::pair<dev_t,ino_t>> identities;
     for(const auto& path:paths) {
-        AtomicTargetState state;std::string error;
-        if(!AtomicFileWriter::captureTargetState(path,state,&error)||state.content!=observed.bytes.at(path)||
+        AtomicTargetState state;std::string error;auto file=d::openAbsolute(path,O_RDONLY);struct stat info{};
+        if(::fstat(file.get(),&info))throw d::Failure(ActivationStatus::InterferenceDetected,"Port source descriptor unavailable");
+        if(info.st_nlink!=1)unsupported("SSH Port source has untrusted hardlink aliases");
+        if(!AtomicFileWriter::captureTargetState(path,state,&error)||
+           info.st_dev!=state.identity.device||info.st_ino!=state.identity.inode||state.content!=observed.bytes.at(path)||
            !identities.emplace(state.identity.device,state.identity.inode).second)
             throw d::Failure(ActivationStatus::InterferenceDetected,"SSH Port physical source identity changed/aliased");
         out.files.emplace(path,std::move(state));
@@ -549,6 +568,68 @@ SshPortSourceMap SshVerifiedActivationAdapter::capturePortSources(const std::str
     if(!sameInputGeneration(out.reference,final,false))
         throw d::Failure(ActivationStatus::InterferenceDetected,"SSH Port graph changed during source mapping");
     return out;
+}
+namespace {
+void replaceInputDigest(ActivationRequest& request,const std::string& path,const std::string& sha) {
+    for(auto& root:request.paths) {
+        if(root.kind==ControlledPathKind::File&&root.path==path){root.sha256=sha;return;}
+        if(root.kind==ControlledPathKind::Directory) {
+            const auto relative=std::filesystem::path(path).lexically_relative(root.path).string();
+            auto found=root.manifest.find(relative);if(found!=root.manifest.end()){found->second=sha;return;}
+        }
+    }
+    unsupported("authorized SSH Port mutation outside captured input set");
+}
+std::vector<std::string> foreignPortProjection(const std::string& bytes,bool main) {
+    std::vector<std::string> lines;std::istringstream input(bytes);std::string line;
+    while(std::getline(input,line))lines.push_back(line);
+    SshManagedModel model;std::string error;
+    if(parseSshManagedModel(lines,model,error)!=SshManagedParseStatus::Ok||(!main&&model.blockPresent))unsupported("invalid SSH Port mutation markers");
+    if(main)for(const auto& block:model.policies)if(block.name=="ssh_port") {
+        const auto parsed=parseSshConfigLine(block.directiveLine);
+        if(!parsed.ok||normalizeSshKeyword(parsed.directive.keyword)!="port")unsupported("invalid owned Port assignment");
+        bool removed=false;if(!removeSshManagedPolicyBlock(lines,"ssh_port",block.directiveLine,removed,error))unsupported(error.c_str());
+    }
+    std::vector<std::string> ids;for(const auto& wrapper:model.disabled)if(wrapper.policy=="ssh_port")ids.push_back(wrapper.mutationId);
+    bool restored=false;if(!restoreSshDisabledLines(lines,"ssh_port",ids,restored,error))unsupported(error.c_str());
+    return lines;
+}
+}
+void SshVerifiedActivationAdapter::validatePortPlan(const SshPortSourceMap& source,
+    const std::map<std::string,std::string>& targets,const std::map<std::string,std::string>& policies,SshActivationIntent intent) {
+    const auto observed=capture(source.reference.reference);validateCaptured(source.reference,observed);
+    if(source.reference.observedMetadata!=metadataIdentities(observed))unsupported("Port plan source metadata changed");
+    auto projected=observed;auto request=source.reference;request.policies=policies;request.intent=intent;
+    const auto main=detail::inputProfile().mainFile;
+    for(const auto& [path,content]:targets) {
+        if(!source.files.count(path)||foreignPortProjection(source.files.at(path).content,path==main)!=foreignPortProjection(content,path==main)||
+           (!content.empty()&&content.back()=='\n')!=(!source.files.at(path).content.empty()&&source.files.at(path).content.back()=='\n'))
+            unsupported("SSH Port plan changes foreign bytes or EOF framing");
+        projected.bytes.at(path)=content;replaceInputDigest(request.reference,path,fic::core::ContentDigest::sha256Hex(content));
+    }
+    // This is bounded structural preflight, not native execution over old Includes.
+    validateCaptured(request,projected);
+    const auto graph=detail::validateClosure(request.reference,projected.bytes,policies,detail::inputProfile(),intent);
+    if(intent==SshActivationIntent::SelectedPolicies) {
+        std::size_t count=0;for(const auto& path:graph.order)if(auto found=graph.globalPorts.find(path);found!=graph.globalPorts.end())count+=found->second.size();
+        if(count!=1||!graph.globalPorts.count(main))unsupported("Port target must have exactly one effective global source");
+    }
+}
+bool SshVerifiedActivationAdapter::sameAuthorizedPortGeneration(const SshVerifiedActivationRequest& before,
+    const SshVerifiedActivationRequest& after,const std::map<std::string,AtomicTargetState>& installed) {
+    try {
+        auto expected=before;auto actual=after;
+        // Planning uses release semantics to inspect foreign Ports; final capture
+        // re-applies the real selected/release semantics independently.
+        expected.policies=actual.policies;expected.intent=actual.intent;expected.allowReleasedPortSet=actual.allowReleasedPortSet;
+        for(const auto& [path,state]:installed) {
+            if(!AtomicFileWriter::targetStateMatches(path,state))return false;
+            replaceInputDigest(expected.reference,path,fic::core::ContentDigest::sha256Hex(state.content));
+            expected.observedMetadata.erase(path);actual.observedMetadata.erase(path);
+            expected.observedMetadata.erase("entry:"+path);actual.observedMetadata.erase("entry:"+path);
+        }
+        return sameInputGeneration(expected,actual,false);
+    } catch(const std::exception&){return false;}
 }
 #ifdef FIC_ACTIVATOR_TESTING
 namespace { thread_local const detail::AdapterTestHooks* policyTestHooks=nullptr; }
@@ -718,11 +799,11 @@ std::map<std::string,std::string> SshVerifiedActivationResult::observedFacts() c
 }
 bool SshVerifiedActivationAdapter::sameInputGeneration(const SshVerifiedActivationRequest& before,
     const SshVerifiedActivationRequest& after,bool mainMayDiffer) {
-    if(before.intent!=after.intent||before.policies!=after.policies||before.reference.unit!=after.reference.unit||
+    if(before.allowReleasedPortSet!=after.allowReleasedPortSet||before.intent!=after.intent||before.policies!=after.policies||before.reference.unit!=after.reference.unit||
        before.reference.paths.empty()||before.observedMetadata.empty()||
        before.reference.paths.size()!=after.reference.paths.size())return false;
     auto expected=before.observedMetadata,actual=after.observedMetadata;const auto main=detail::inputProfile().mainFile;
-    if(mainMayDiffer){expected.erase(main);actual.erase(main);}
+    if(mainMayDiffer){expected.erase(main);actual.erase(main);expected.erase("entry:"+main);actual.erase("entry:"+main);}
     if(expected!=actual)return false;
     for(std::size_t i=0;i<before.reference.paths.size();++i) {
         const auto& a=before.reference.paths[i];const auto& b=after.reference.paths[i];

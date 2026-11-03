@@ -74,12 +74,14 @@ std::set<std::uint64_t> descriptors(unsigned pid) {
     }
     return result;
 }
-std::vector<std::string> effectiveEndpoints(SshRuntime& runtime) {
+std::vector<std::string> effectiveEndpoints(SshRuntime& runtime,bool releasedPortSet) {
     std::vector<std::string> ports,listens;std::string error;
     if(!runtime.effectiveValues("port",ports,error)||!runtime.effectiveValues("listenaddress",listens,error))fail("native endpoint proof unavailable",ActivationStatus::ReadinessUnconfirmed);
-    std::set<std::string> uniquePorts(ports.begin(),ports.end());if(uniquePorts.size()!=1)fail("SSH verified profile requires one effective port");
+    std::set<std::string> uniquePorts(ports.begin(),ports.end());
+    if((!releasedPortSet&&uniquePorts.size()!=1)||uniquePorts.empty()||uniquePorts.size()>16||
+       (releasedPortSet&&uniquePorts.size()!=ports.size()))fail("SSH endpoint Port cardinality/duplicates outside explicit contract");
     std::vector<std::string> out;for(const auto& text:listens) {
-        auto e=decode(text);if(std::to_string(e.port)!=*uniquePorts.begin())fail("explicit ListenAddress port conflicts with effective Port");out.push_back(encode(e));
+        auto e=decode(text);if(!uniquePorts.count(std::to_string(e.port)))fail("explicit ListenAddress port conflicts with effective Port");out.push_back(encode(e));
     }
     std::sort(out.begin(),out.end());if(out.empty()||out.size()>16||std::adjacent_find(out.begin(),out.end())!=out.end())fail("native endpoint set outside supported profile");
     ifaddrs* raw=nullptr;if(::getifaddrs(&raw))fail("local addresses unavailable");

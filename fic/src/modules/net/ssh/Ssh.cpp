@@ -2,6 +2,7 @@
 
 #include "modules/net/ssh/SshConfigSyntax.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
+#include "modules/net/ssh/SshPortTransaction.h"
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/net/ssh/SshRuntime.h"
@@ -405,6 +406,11 @@ bool Ssh::apply() {
         if(this->moduleConf->hasPolicyStatus(id)&&this->moduleConf->getPolicyStatus(id)=="ENABLE"&&this->moduleConf->hasConfiguredValue(id))
             additionalPolicies.emplace(id,this->moduleConf->getPolicyValue(id));
     }
+    if(verified&&semantics==SshDirectiveSemantics::MultiValue) {
+        const auto result=applySshPortGraph(*journal,this->policyRef(),expectedValue,*this->sshConfig_->loadSnapshot(),
+            serviceBaseline,additionalPolicies,currentConfiguredIntent,beforeWriteHook_);
+        this->log(result.message,result.ok?logLevel::INFO:logLevel::ERROR);return result.ok;
+    }
     const std::map<std::string,std::string> selected{{this->policyName, expectedValue}};
     if (verified) {
         try {
@@ -544,19 +550,6 @@ bool Ssh::apply() {
             payload.wrapperFingerprints.emplace(wrapper.mutationId,fic::core::ContentDigest::sha256Hex(wrapper.originalLine));
     // Get the exact writer serialization from the shared writer itself.
     SshConfigFileHandler target(*this->sshConfig_);target.lines()=planned;
-    // Single-file Port ownership cannot suppress Included Port directives.
-    // Check the exact prospective image before Prepared/CAS; keep the existing
-    // strict Port postcondition rather than normalizing duplicate listeners.
-    if (verified && semantics == SshDirectiveSemantics::MultiValue) {
-        auto projectedOptions = *runtimeOptions_;
-        projectedOptions.plannedMain = target.pendingContent();
-        SshRuntime projected(projectedOptions, executables_, commandRunner_);
-        if (!projected.validateSyntax(planError) ||
-            !verifyEffectiveValue(projected, semantics, this->sshParameter, expectedValue, planError)) {
-            this->log("SSH planned Port configuration unsupported before prepare: " + planError, logLevel::ERROR);
-            return false;
-        }
-    }
     std::string recordError;
     const bool prepared=refresh?
         journal->beginSshRefresh(mutationId,payload,

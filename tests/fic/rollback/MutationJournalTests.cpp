@@ -3004,9 +3004,28 @@ void testSshMultiFilePublicationContract() {
     fragment=mainState;fragment.identity.inode=3;fragment.content="fragment target";
     SshPlannedFilePublication m,f;m.before={1,1,0644,0,0,std::string(64,'a'),true};m.targetSha256=fic::core::ContentDigest::sha256Hex(mainState.content);m.replacement=true;
     f=m;f.before.inode=4;f.targetSha256=fic::core::ContentDigest::sha256Hex(fragment.content);
+    {
+        TempFile fresh;MutationJournal first(fresh.path);MutationId initial=0;
+        require(first.initializeOrLoad(error)&&first.prepareSshPortInitial(record.policy,main,target,
+            {{main,m},{"/etc/ssh/sshd_config.d/10.conf",f}},initial,error),error);
+        MutationJournal restored(fresh.path);require(restored.initializeOrLoad(error),error);
+        const auto& p=std::get<UndoRemoveSshManagedPolicy>(restored.records()[0].undo.payload);
+        require(p.transition&&p.transition->initial&&p.transition->previous.value.empty()&&
+            p.transition->target.includedWrappers==target.includedWrappers,"initial plan invents previous ownership");
+        require(!restored.setStatus(initial,MutationStatus::Applied,error)&&!restored.abortSshTransitionNoEffect(initial,error)&&!restored.discard(initial,error),"initial Prepared escaped typed proof");
+        require(restored.noteSshFileAttempt(initial,main,error),error);
+        require(!restored.abortSshPortNoEffect(initial,{},error),"unknown writer effect was inferred absent");
+        require(restored.abortSshPortNoEffect(initial,{main},error)&&restored.records().empty(),"inline NotInstalled proof did not discard initial intent");
+    }
+    auto attempted=m;attempted.attempted=true;const auto beforeAttempt=file.read();
+    require(!journal.beginSshPortChange(id,target,{{main,attempted},{"/etc/ssh/sshd_config.d/10.conf",f}},false,error)&&file.read()==beforeAttempt,
+        "new operation adopted observed/historical publication state");
     require(journal.beginSshPortChange(id,target,{{main,m},{"/etc/ssh/sshd_config.d/10.conf",f}},false,error),error);
     require(journal.noteSshFileAttempt(id,main,error),error);
-    require(!journal.abortSshTransitionNoEffect(id,error),"attempted multi-file operation was discarded");
+    require(!journal.abortSshTransitionNoEffect(id,error)&&!journal.abortSshPortNoEffect(id,{},error),"attempted multi-file operation was discarded");
+    require(journal.abortSshPortNoEffect(id,{main},error)&&journal.records()[0].status==MutationStatus::Applied&&
+        std::get<UndoRemoveSshManagedPolicy>(journal.records()[0].undo.payload).includedWrappers.empty(),"inline no-effect abort lost predecessor ownership");
+    require(journal.beginSshPortChange(id,target,{{main,m},{"/etc/ssh/sshd_config.d/10.conf",f}},false,error)&&journal.noteSshFileAttempt(id,main,error),error);
     MutationJournal restarted(file.path);require(restarted.initializeOrLoad(error),error);
     auto p=std::get<UndoRemoveSshManagedPolicy>(restarted.records()[0].undo.payload);
     require(p.transition&&p.transition->version==3&&p.transition->files.size()==2&&p.transition->files.at(main).attempted,

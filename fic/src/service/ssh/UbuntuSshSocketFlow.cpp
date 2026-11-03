@@ -145,7 +145,7 @@ UbuntuSshSocketFlow::Snapshot UbuntuSshSocketFlow::observe(std::chrono::steady_c
         return out;
     }
 }
-UbuntuSshSocketFlow::UbuntuSshSocketFlow(std::chrono::steady_clock::time_point deadline):deadline_(deadline),original_(observe(deadline)) {}
+UbuntuSshSocketFlow::UbuntuSshSocketFlow(std::chrono::steady_clock::time_point deadline,bool releasedPortSet):deadline_(deadline),original_(observe(deadline)),releasedPortSet_(releasedPortSet) {}
 void UbuntuSshSocketFlow::prepareRuntimeDirectory() {
     const auto launch=d::readLaunchContract("ssh.service",std::chrono::steady_clock::now()+std::chrono::seconds(10));
     if(value(launch,"RuntimeDirectory")!=J::array({"sshd"})||value(launch,"RuntimeDirectoryMode")!=0755||value(launch,"User")!=""||value(launch,"Group")!="")
@@ -158,7 +158,7 @@ void UbuntuSshSocketFlow::prepareRuntimeDirectory() {
     if(created&&(::fchown(fd.get(),0,0)||::fchmod(fd.get(),0755)))fail("cannot initialize created SSH runtime directory");
     const auto id=d::identity(fd.get());if(id.uid!=0||id.gid!=0||(id.mode&07777)!=0755)fail("unsafe existing SSH runtime directory; not repaired");
 }
-std::vector<std::string> UbuntuSshSocketFlow::effectiveEndpoints(SshRuntime& runtime) {return listener::effectiveEndpoints(runtime);}
+std::vector<std::string> UbuntuSshSocketFlow::effectiveEndpoints(SshRuntime& runtime,bool releasedPortSet) {return listener::effectiveEndpoints(runtime,releasedPortSet);}
 std::map<std::string,std::string> UbuntuSshSocketFlow::combined(const d::ServiceState& state) const {
     const auto current=observe(deadline_);if(state.at("ActiveState")=="active")inherited(state,current.listeners);
     auto proof=state.properties;
@@ -174,7 +174,7 @@ void UbuntuSshSocketFlow::command(const std::vector<std::string>& args) const {
 }
 void UbuntuSshSocketFlow::activate(SshRuntime& runtime,d::SystemdActivation& service,const d::ServiceState& originalService) {
     if(service.current().properties!=originalService.properties||!(observe(deadline_)==original_))fail("Ubuntu service/socket changed before activation",ActivationStatus::InterferenceDetected);
-    const auto desired=effectiveEndpoints(runtime);std::vector<std::string> loaded;for(const auto& [key,_]:original_.listeners)loaded.push_back(key);
+    const auto desired=effectiveEndpoints(runtime,releasedPortSet_);std::vector<std::string> loaded;for(const auto& [key,_]:original_.listeners)loaded.push_back(key);
     const bool changed=desired!=loaded;
     if(changed) {
         command({"--no-ask-password","--job-mode=fail","stop","ssh.service"});

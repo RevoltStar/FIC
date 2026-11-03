@@ -10,5 +10,5 @@ std::string encode(const Endpoint&);
 std::map<std::string,std::vector<std::uint64_t>> kernelListeners();
 std::set<std::uint64_t> descriptors(unsigned pid);
 std::map<std::string,std::uint64_t> ownedListeners(unsigned pid);
-std::vector<std::string> effectiveEndpoints(SshRuntime&);
+std::vector<std::string> effectiveEndpoints(SshRuntime&,bool releasedPortSet=false);
 }

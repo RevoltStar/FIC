@@ -63,6 +63,7 @@ enum class SshRuntimeReconciliation { NotAttempted, LegacyAccepted, Verified, Fa
 #ifdef FIC_SSH_TRANSACTION_TESTING
 // Test-only observation fault: never compiled into production fic.
 void setSshSaveOutcomeHookForTests(std::function<void(FileHandler::FileSaveOutcome&)> hook);
+void observeSshSaveOutcomeForTests(FileHandler::FileSaveOutcome&);
 #endif
 
 struct SshConfigTransactionResult {

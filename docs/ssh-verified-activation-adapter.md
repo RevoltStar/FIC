@@ -451,10 +451,12 @@ root-login может законно открыть стороннее `PermitRo
 validation-only entrypoint **того же** generic engine публикует RO snapshot текущих
 Include/HostKey/environment inputs, а проверенный sshd читает planned main через
 `-t/-T -f /dev/stdin`. Main заменяется в bounded closure analysis только в памяти.
-Произвольные -f/launch options, внешние Include и multi-file Port wrappers не
-добавлены. Snapshot validation не является readiness/activation proof.
+Произвольные -f/launch options и внешние Include не добавлены. Это single-file
+preflight для прежнего пути; multi-file Port использует отдельный bounded plan
+и native proof всего опубликованного графа, описанные ниже. Snapshot validation
+не является readiness/activation proof.
 
-Под process-local SSH mutex сохраняется schema3 release transition version2:
+Для single-file release под process-local SSH mutex сохраняется schema3 release transition version2:
 `previous` permission, null `target`, исходный/целевой digest, факт необходимости
 replacement, predecessor status/error. Затем одна conditional replacement,
 durability и exact installed-state receipt, verified platform activation, cleanup,
@@ -523,12 +525,12 @@ IDs и сохранёнными body fingerprints. Existing wrappers не пер
 блок и разворачивает доказанные wrappers. Orphan markers, исчезнувший блок при
 активном owner и неподтверждённый provenance запрещают apply; это не recovery.
 
-Include-файлы не меняются. До Prepared prospective main проверяется существующим
-sshd -t/-T через plannedMain: совпадающий активный Port в Include, который после
-добавления собственного Port нарушает строгий postcondition/listener contract,
-даёт отказ без записи файла или journal. Дубли Port/ListenAddress не нормализуются.
-Это временное ограничение single-file backend; multi-file FIC_DISABLED_BLOCK
-не реализован. Scalar-политики этим ограничением не затронуты.
+`ssh_port` подавляет также все активные глобальные Port в реально подключённом
+разрешённом Include-графе, включая совпадающие значения. Неиспользуемые файлы
+не редактируются. Те же платформенные пути, bounded literal/`*.conf` grammar,
+рекурсия/лимиты, negative sets, trust/mount/alias checks остаются обязательными.
+Сторонние ListenAddress не подавляются. Дубли endpoints не нормализуются.
+Scalar-политики не используют многофайловый writer.
 Ubuntu использует прежний socket/listener/FD proof; при совпадающем endpoint
 публикация owned-блока не требует лишней регенерации socket. ALT сохраняет
 Type=simple и существующий readiness proof. Enable не создаёт SSH ownership.
@@ -545,7 +547,85 @@ EOF framing является foreign state: SSH serializer сохраняет н
 последующее внешнее изменение EOF сохраняется из текущего snapshot. Остальные
 FileHandler subclasses используют прежний default serializer.
 
-Текущий initially-compliant native gate: [ownership evidence](../tests/integration/verified_config_service/openssh_native/evidence/ownership-lifecycle.json).
+Исторический initially-compliant gate коммита e7acd8b: [ownership evidence](../tests/integration/verified_config_service/openssh_native/evidence/ownership-lifecycle.json).
 Все пять платформ: 9 сценариев / 43 операции; installed CLI/IPC gate — Debian12.
 Полный Debian12 build успешен; полный CTest содержит отдельный отказ устаревшего
 SSSD source-bound evidence и четыре opt-in SKIP, перечисленные в отчёте.
+
+### Многофайловое Port ownership
+
+Источник позиций — существующий bounded classifier `SshVerifiedInputClosure`.
+Он сохраняет логические Include visits и физические глобальные позиции Port;
+повторно подключённый файл планируется один раз. Контекст Match наследуется
+при входе и восстанавливается при выходе из Include, как в
+[OpenSSH servconf.c](https://github.com/openssh/openssh-portable/blob/V_9_2_P1/servconf.c).
+Port в условном контексте отвергается. Для подавляемых Port поддержан bounded
+числовой синтаксис 1–65535 (включая leading `+`/нули в пределах исходного line bound);
+service-name aliases не интерпретируются FIC, поскольку требуют незащищённого
+NSS/services input. Их не пытаются разрешать собственным вторым parser.
+
+SSH payload сохраняет прежние main `disabled_mutation_ids`/`wrapper_fingerprints`.
+Добавлено `included_wrappers: {version: 1, files: {canonical_path: {id: sha256}}}`.
+Это creation-time право удалить конкретный wrapper в конкретном файле, а не
+backup всего файла. Старые schema2/3 payload и transitions v1/v2 читаются с прежним
+смыслом: старые fingerprinted wrappers относятся к main, ID-only wrappers не
+получают выдуманных fingerprints. Наличие новых данных не мигрирует старые записи.
+Global MutationJournal schema остаётся 3.
+
+Общий SSH transition v3 содержит previous/target ownership, sequence, полный
+per-file before identity/metadata/digest, target digest, replacement/attempted и
+publication receipt с отдельным durable. У initial операции previous ownership
+явно отсутствует. Record ID + sequence задают одну логическую операцию.
+До первого CAS весь план durable. Перед каждым CAS проверяются конфигурационный
+intent, полный source generation/negative sets и уже опубликованные exact states;
+attempt checkpoint precedes writer. Используются прежние AtomicFileWriter CAS,
+metadata preservation и остаточная гонка against non-cooperating writers.
+
+Изменяемые файлы публикуются независимо, без физической multi-file atomicity.
+FIC не активирует промежуточный граф. После любого возможного эффекта или ошибки
+checkpoint/cleanup/runtime/journal commit Prepared сохраняется и блокирует все
+SSH apply/rollback. Blind compensation и автоматического semantic recovery нет.
+Только в текущей попытке допускается no-effect abort: все предпринятые replacements
+должны иметь прямой NotInstalled outcome writer, либо ещё не быть вызванными;
+неизменяемые inputs лишь fsync-ятся. Fresh intent тогда удаляется через typed API,
+REFRESH сохраняет предыдущий Applied owner. Unknown outcome, первая состоявшаяся
+публикация, runtime effect и journal uncertainty запрещают такой abort. Эти факты
+не реконструируются после restart; Prepared gate остаётся обязательным.
+Внешний privileged запуск sshd между CAS не исключается блокировкой FIC.
+
+Preflight проверяет полную bounded модель planned bytes, provenance, scope,
+сохранность foreign projection и EOF, Port cardinality и конфликтующие явные
+ListenAddress. Он **не** выдаёт plannedMain с прежними Include за полную native
+проверку: pre-CAS native execution всего нового графа не реализован. После полной
+публикации обязательны native `sshd -t/-T`, protected RO snapshot всех точных
+inputs, единственная verified activation и persistent proof после cleanup.
+Adapter разрешает только перечисленные installed states; остальные file identities,
+metadata и exact manifests не могут измениться. Directory timestamps могут меняться
+от собственной rename; identity/authority и точный состав дерева проверяются отдельно.
+
+REFRESH сохраняет creation IDs/hashes и не заменяет неизменные Include-файлы.
+Новый активный Port в разрешённом графе требует нового wrapper/transition даже
+при прежнем configured value. Исчезнувшие wrappers не реконструируются.
+ID-only legacy wrappers допускают прежний proven same-value no-op, но блокируют
+ownership REFRESH. Прежний legacy release допускает изменённое тело при сохранении
+ID; этот известный предел ID-only provenance не усилен молча.
+
+Release читает актуальные snapshots, удаляет собственный main block, разворачивает
+только сохранившиеся доказанные wrappers и сохраняет foreign edits/EOF. Известный
+ownership path проверяется и после отключения его Include. Отсутствующий либо
+недоступный ранее owned файл даёт явный отказ; из journal он не создаётся.
+При active Port release допускается явный bounded набор восстановленных разных
+портов (до16 endpoints), с прежними exact kernel/FD/generator proofs Ubuntu/ALT.
+Этот режим запрещён для SelectedPolicies и не включается scalar callers.
+Повторные Port/endpoints, несовместимые ListenAddress и неподдерживаемый результат
+release остаются отказом. Offline release не запускает SSH и не утверждает runtime
+readiness. DISABLE acknowledgement повторно проверяет receipts и отсутствие owned
+элементов во всех известных файлах. Uninstall проверяет retired paths и весь
+разрешённый Include-каталог, включая orphan wrappers вне активного графа.
+Uninstall resource graph освобождает Port последним среди SSH owners и сохраняет
+его при ошибке другого SSH release. Scalar activation contracts и конфигурационные
+ENABLE/DISABLE при этом не меняются; конфликт Required edges обнаруживается до release.
+
+Native-тесты выполняются только в disposable systemd-контейнерах; общей WSL kernel
+матрице не приписываются гарантии пяти независимых kernels. Текущие результаты
+зафиксированы в HANDOFF и отдельном source-bound multi-file evidence.

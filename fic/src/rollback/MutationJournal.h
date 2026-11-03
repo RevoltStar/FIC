@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <functional>
 #include <string>
+#include <set>
 #include <vector>
 
 namespace fic::rollback {
@@ -209,8 +210,13 @@ public:
     bool acknowledgeSssdDisable(const SssdDisableProof&, std::string&);
     bool beginSshRefresh(MutationId,const UndoRemoveSshManagedPolicy& target,
         const std::string& beforeSha256,const std::string& targetSha256,std::string&);
+    bool prepareSshPortInitial(const PolicyRef&,const std::string& mainPath,const UndoRemoveSshManagedPolicy&,
+        const std::map<std::string,SshPlannedFilePublication>&,MutationId&,std::string&);
     bool beginSshPortChange(MutationId,const UndoRemoveSshManagedPolicy& target,
         const std::map<std::string,SshPlannedFilePublication>& files,bool release,std::string&);
+    // Inline writer observations only; production never calls this to infer
+    // semantic recovery from filesystem state after restart.
+    bool abortSshPortNoEffect(MutationId,const std::set<std::string>& notInstalled,std::string&);
     bool noteSshFileAttempt(MutationId,const std::string& path,std::string&);
     bool noteSshFilePublication(MutationId,const std::string& path,const AtomicTargetState&,bool durable,std::string&);
     bool noteSshPublication(MutationId,const AtomicTargetState&,bool durable,std::string&);
@@ -305,6 +311,8 @@ private:
     };
 
     bool persistSssdChange(const std::vector<MutationRecord>& previous, MutationId previousNext, std::string&);
+    bool discardImpl(MutationId,std::string&,bool initialSshNoEffect);
+    bool prepareMutationImpl(MutationRecord,MutationId&,std::string&,bool sshInitial);
     bool persistSshChange(const MutationRecord& previous, std::string& error);
     PersistOutcome persist(std::string& error);
     // Centralized failed-load handling: revoke operational trust (health =

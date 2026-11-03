@@ -30,6 +30,9 @@ struct SshVerifiedActivationRequest {
     std::map<std::string,std::string> additionalPolicies;
     std::map<std::string,std::string> observedMetadata;
     SshActivationIntent intent=SshActivationIntent::SelectedPolicies;
+    // Only multi-file Port release may restore a bounded, duplicate-free set.
+    // SelectedPolicies and other policy callers keep the single-port contract.
+    bool allowReleasedPortSet=false;
 };
 struct SshVerifiedActivationResult {
     SshActivationStatus status = SshActivationStatus::Refused;
@@ -63,6 +66,10 @@ public:
     // Uses the same closed input graph and trust checks as release capture.
     static SshPortSourceMap capturePortSources(const std::string& expectedMainSha,
         const std::set<std::string>& previouslyOwnedFiles={});
+    static void validatePortPlan(const SshPortSourceMap&,const std::map<std::string,std::string>& targets,
+        const std::map<std::string,std::string>& policies,SshActivationIntent);
+    static bool sameAuthorizedPortGeneration(const SshVerifiedActivationRequest& before,
+        const SshVerifiedActivationRequest& after,const std::map<std::string,AtomicTargetState>& installed);
     static void prepareRuntimeProbe(const SshVerifiedActivationRequest&);
     static SshVerifiedActivationResult activate(const SshVerifiedActivationRequest&);
     static SshConfigurationValidationResult validateReleasePlan(

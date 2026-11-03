@@ -157,6 +157,28 @@ int main(int argc, char** argv) {
                     bytes.replace(marker,std::string("#@FIC_DISABLED_LINE@Port 22").size(),"#@FIC_DISABLED_LINE@"+replacement);
                     write(mainPath,bytes);
                 }
+                if(beforeAction=="wrong-main-resource") {
+                    const auto path=work+"/module-state/journal.json";auto doc=J::parse(text(path));
+                    for(auto& record:doc["records"])if(record["policy"]["policy"]=="ssh_port") {
+                        record["resource"]="ssh:"+mainPath+".other:Port";
+                        record["undo"].erase("transition");record["undo"]["operation_sequence"]=0u;
+                    }
+                    write(path,doc.dump());journalOwner.setOverridePath(path);
+                }
+                const auto adminFragment=includeDirectory+"/10-admin.conf";
+                if(beforeAction=="new-port-fragment")write(includeDirectory+"/30-new.conf","# new administrator input\nPort 2022\n");
+                if(beforeAction=="fragment-comment")write(adminFragment,text(adminFragment)+"\n# foreign annotation");
+                if(beforeAction=="fragment-drift") {
+                    auto bytes=text(adminFragment);const auto pos=bytes.find("Port 2222");check(pos!=std::string::npos,"fixture expected wrapper body");
+                    bytes.replace(pos,9,"Port 9999");write(adminFragment,bytes);
+                }
+                if(beforeAction=="fragment-disconnect") {
+                    auto bytes=text(mainPath);const auto line="Include "+adminFragment+"\n";
+                    const auto pos=bytes.find(line);check(pos!=std::string::npos,"fixture literal Include");
+                    bytes.replace(pos,line.size(),"# administrator removed Include\n");write(mainPath,bytes);
+                }
+                if(beforeAction=="fragment-wrapper-gone")write(adminFragment,"# externally removed wrapper\n");
+                if(beforeAction=="fragment-file-gone")fs::remove(adminFragment);
                 if(beforeAction=="restart") ctl({"restart",serviceUnit});
                 if(beforeAction=="main-comment") write(mainPath,text(mainPath)+"# administrative annotation\n");
                 if(beforeAction=="owned-drift"||beforeAction=="malformed-marker") {
@@ -212,6 +234,12 @@ int main(int argc, char** argv) {
                     if(fault=="disable") ctl({"disable",ubuntu?"ssh.socket":serviceUnit});
                     else if(fault=="foreign-input") write((includeDirectory+"/99-raced.conf"),"LogLevel VERBOSE\n");
                     else if(fault=="main-cas") write(mainPath,text(mainPath)+"# foreign CAS edit\n");
+                    else if(fault=="first-cas"||fault=="second-cas")AtomicFileWriter::setPreInstallHookForTests([&](const std::string& target){
+                        if(target==(fault=="first-cas"?mainPath:adminFragment))write(target,text(target)+"\n# exact CAS race");
+                    });
+                    else if(fault=="fragment-remove")fs::remove(adminFragment);
+                    else if(fault=="fragment-durability")AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& target){return target!=adminFragment;});
+                    else if(fault=="journal-prepare")AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& target){return target!=work+"/module-state/journal.json";});
                 };
                 std::unique_ptr<Policy> policy;
 #define MODULE_CASE(name, type) if(id==name) policy=std::make_unique<ModulePolicy<type>>(profile.ssh,resolver,hook)
@@ -234,6 +262,7 @@ int main(int argc, char** argv) {
                     fault=="cleanup"||fault=="release-cleanup"||fault=="runtime-crash"?&policyHooks:nullptr);
                 setSshSaveOutcomeHookForTests([&](FileHandler::FileSaveOutcome& saved) {
                     if(fault=="after-save-crash")::kill(::getpid(),SIGKILL);
+                    if(fault=="after-save-fragment")write(adminFragment,text(adminFragment)+"\n# foreign CAS race");
                     if(fault=="after-save-stop") ctl({"stop",ubuntu?"ssh.socket":serviceUnit});
                     else if(fault=="after-save-disable") ctl({"disable",ubuntu?"ssh.socket":serviceUnit});
                     else if(fault=="after-save-input") write((includeDirectory+"/99-raced.conf"),"LogLevel VERBOSE\n");
@@ -245,6 +274,16 @@ int main(int argc, char** argv) {
                         AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& target){return target!=work+"/module-state/journal.json";});
                     }
                 });
+                const auto fragments=[&] {
+                    J files=J::object();
+                    if(fs::exists(includeDirectory))for(const auto& file:fs::recursive_directory_iterator(includeDirectory))if(file.is_regular_file()) {
+                        struct stat st{};check(::stat(file.path().c_str(),&st)==0,"fixture fragment stat");
+                        files[file.path().string()]={{"content",text(file.path())},{"inode",st.st_ino},{"device",st.st_dev}};
+                    }
+                    return files;
+                };
+                const auto fragmentsBefore=fragments();
+                if(fault=="journal-prepare") {journalFault=true;AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& target){return target!=work+"/module-state/journal.json";});}
                 const auto mainBefore=text(mainPath);
                 const auto journalBefore=text(work+"/module-state/journal.json");
                 auto* const operationJournal=journalOwner.tryGet(error);
@@ -274,7 +313,8 @@ int main(int argc, char** argv) {
                     }
                 } else applied=policy->apply();
                 const bool journalUnusableAtReturn=!operationJournal||!operationJournal->usable();
-                if(operation.value("rollback",false))AtomicFileWriter::setDirectoryFsyncHookForTests({});
+                AtomicFileWriter::setDirectoryFsyncHookForTests({});
+                AtomicFileWriter::setPreInstallHookForTests({});
                 fic::service::ssh::detail::setPolicyAdapterHooksForTests(nullptr);
                 setSshSaveOutcomeHookForTests({});
                 const auto after=observe();
@@ -284,7 +324,7 @@ int main(int argc, char** argv) {
                 output["module"].push_back({{"policy",id},{"applied",applied},{"release_message",releaseMessage},
                     {"policy_config",text(paths.configDir.string()+"/NET.conf")},{"stale_applied",staleApplied},{"stale_unchanged",staleUnchanged},
                     {"duration_ms",std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-operationStarted).count()},
-                    {"main_before",mainBefore},{"main_after",text(mainPath)},
+                    {"main_before",mainBefore},{"main_after",text(mainPath)},{"fragments_before",fragmentsBefore},{"fragments_after",fragments()},
                     {"journal_before",J::parse(journalBefore)},{"journal_after",J::parse(text(work+"/module-state/journal.json"))},
                     {"listeners_before",listenersBefore},{"listeners_after",listenerEvidence(after)},
                     {"socket_before",socketBefore},{"socket_after",socketProof()},{"before_pid",before.at("MainPID")},{"after_pid",after.at("MainPID")},

@@ -574,7 +574,8 @@ bool validSshRecord(const MutationRecord& record,std::string& error) {
     const bool release=t.intent==SshTransitionIntent::Release;
     if((!release&&t.intent!=SshTransitionIntent::Refresh)||!identity||
        std::string(sshPhaseName(t.phase))=="unknown"||(t.version!=3&&t.version!=(release?2u:1u))||
-       !t.sequence||t.sequence!=p->operationSequence||!validSshProjection(t.previous,error)||
+       !t.sequence||t.sequence!=p->operationSequence||
+       (!(t.version==3&&t.initial)&&!validSshProjection(t.previous,error))||
        !fic::core::ContentDigest::isCanonicalSha256Hex(t.beforeSha256)||
        !fic::core::ContentDigest::isCanonicalSha256Hex(t.targetSha256)||t.runtimeFacts.size()>32) {
         error="invalid SSH ownership transition/provenance";return false;
@@ -605,7 +606,8 @@ bool validSshRecord(const MutationRecord& record,std::string& error) {
     }
     if(t.version==3) {
         if(p->policyName!="ssh_port"||p->directive!="Port"||t.files.empty()||t.files.size()>257||
-           (t.initial&&(release||t.sequence!=1))) {error="invalid SSH multi-file operation identity";return false;}
+           (t.initial&&(release||t.sequence!=1||!t.previous.value.empty()||!t.previous.disabledIds.empty()||
+               t.previous.ownershipVersion||!t.previous.wrapperFingerprints.empty()||!t.previous.includedWrappers.empty()))) {error="invalid SSH multi-file operation identity";return false;}
         const auto split=record.resource.rfind(':');const auto main=record.resource.substr(4,split-4);
         const auto root=t.files.find(main);
         if(root==t.files.end()||root->second.before.sha256!=t.beforeSha256||root->second.targetSha256!=t.targetSha256) {
@@ -665,7 +667,7 @@ bool validSshRecord(const MutationRecord& record,std::string& error) {
             error="SSH release proof kind/identity inconsistent";return false;
         }
     }
-    const auto& expected=!release&&t.phase==SshTransitionPhase::Completed?t.target:t.previous;
+    const auto& expected=!release&&(t.phase==SshTransitionPhase::Completed||t.initial)?t.target:t.previous;
     const bool status=t.phase==SshTransitionPhase::Completed?
         (release?record.status==MutationStatus::RolledBack:record.status!=MutationStatus::Prepared):record.status==MutationStatus::Prepared;
     if(serializeSshProjection(sshOwnedProjection(*p))!=serializeSshProjection(expected)||!status) {
@@ -3253,14 +3255,15 @@ MutationJournal::PersistOutcome MutationJournal::persist(std::string& error) {
     return PersistOutcome::Persisted;
 }
 
-bool MutationJournal::prepareMutation(MutationRecord record,
-                                      MutationId& id,
-                                      std::string& error) {
+bool MutationJournal::prepareMutation(MutationRecord record,MutationId& id,std::string& error) {
+    return prepareMutationImpl(std::move(record),id,error,false);
+}
+bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,std::string& error,bool sshInitial) {
     if (std::holds_alternative<SssdJournalOwnership>(record.undo.payload)) {
         error="SSSD I4 ownership requires typed transaction API";return false;
     }
     if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)) return false;
-    if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&ssh->transition) {
+    if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&(ssh->transition||!ssh->includedWrappers.empty())&&!sshInitial) {
         error="SSH transitions require the typed journal API";return false;
     }
     if (!loaded_) {
@@ -4247,6 +4250,24 @@ bool MutationJournal::beginSshRefresh(MutationId id,const UndoRemoveSshManagedPo
     record->status=MutationStatus::Prepared;record->error.clear();
     return persistSshChange(previous,error);
 }
+bool MutationJournal::prepareSshPortInitial(const PolicyRef& policy,const std::string& main,
+    const UndoRemoveSshManagedPolicy& target,const std::map<std::string,SshPlannedFilePublication>& files,
+    MutationId& id,std::string& error) {
+    if(!usable()||!lifecycleInitialized_||policy!=PolicyRef{"NET","SshEdit","ssh_port"}||
+       target.policyName!="ssh_port"||target.directive!="Port"||target.transition||target.operationSequence||
+       !activeRecords(policy).empty()||!files.count(main)) {error="invalid initial typed Port operation";return false;}
+    for(const auto& [_,f]:files)if(f.attempted||f.publication){error="initial Port plan already published";return false;}
+    for(const auto& other:records_)if(other.resource.rfind("ssh:"+main+":",0)==0) {
+        auto* p=std::get_if<UndoRemoveSshManagedPolicy>(&other.undo.payload);
+        if(p&&(other.status==MutationStatus::Prepared||sshTransitionPending(*p))){error="SSH shared resource pending";return false;}
+    }
+    auto payload=target;SshOwnershipTransition t;t.version=3;t.initial=true;t.sequence=1;
+    t.target=sshOwnedProjection(target);t.files=files;
+    t.beforeSha256=files.at(main).before.sha256;t.targetSha256=files.at(main).targetSha256;
+    payload.transition=t;payload.operationSequence=1;
+    MutationRecord record;record.policy=policy;record.resource="ssh:"+main+":Port";record.undo={MutationBackend::Ssh,payload};
+    return prepareMutationImpl(std::move(record),id,error,true);
+}
 bool MutationJournal::beginSshPortChange(MutationId id,const UndoRemoveSshManagedPolicy& target,
     const std::map<std::string,SshPlannedFilePublication>& files,bool release,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSH operation requires healthy journal";return false;}
@@ -4255,6 +4276,7 @@ bool MutationJournal::beginSshPortChange(MutationId id,const UndoRemoveSshManage
        (record->status!=MutationStatus::Applied&&!(release&&record->status==MutationStatus::RollbackFailed))||
        (!release&&(target.policyName!=old->policyName||target.directive!=old->directive||target.transition))||
        old->operationSequence==UINT64_MAX) {error="SSH Port operation requires proven predecessor";return false;}
+    for(const auto& [_,f]:files)if(f.attempted||f.publication){error="new Port operation cannot adopt publication receipts";return false;}
     const auto split=record->resource.rfind(':');const auto main=record->resource.substr(4,split-4);
     auto first=files.find(main);if(first==files.end()){error="SSH Port file plan lacks main";return false;}
     const auto prefix=record->resource.substr(0,split+1);
@@ -4270,6 +4292,28 @@ bool MutationJournal::beginSshPortChange(MutationId id,const UndoRemoveSshManage
     t.predecessorStatus=record->status;t.predecessorError=record->error;
     old->operationSequence=t.sequence;old->transition=std::move(t);record->status=MutationStatus::Prepared;record->error.clear();
     return persistSshChange(previous,error);
+}
+bool MutationJournal::abortSshPortNoEffect(MutationId id,const std::set<std::string>& notInstalled,std::string& error) {
+    if(!usable()||!lifecycleInitialized_){error="SSH no-effect abort requires healthy journal";return false;}
+    auto* record=find(id);auto* p=record?std::get_if<UndoRemoveSshManagedPolicy>(&record->undo.payload):nullptr;
+    if(!p||!p->transition||p->transition->version!=3||record->status!=MutationStatus::Prepared||
+       p->transition->phase!=SshTransitionPhase::Prepared||p->transition->publication||!p->transition->runtimeFacts.empty()||!record->error.empty()) {
+        error="SSH no-effect proof requires pre-runtime file publication phase";return false;
+    }
+    for(const auto& path:notInstalled) {
+        auto f=p->transition->files.find(path);
+        if(f==p->transition->files.end()||!f->second.attempted||!f->second.replacement||f->second.publication) {
+            error="invalid SSH inline NotInstalled observation";return false;
+        }
+    }
+    for(const auto& [path,f]:p->transition->files)if(f.replacement&&(f.publication||(f.attempted&&!notInstalled.count(path)))) {
+        error="possible SSH replacement cannot be discarded";return false;
+    }
+    if(p->transition->initial)return discardImpl(id,error,true);
+    const MutationRecord previous=*record;
+    record->status=p->transition->intent==SshTransitionIntent::Release?p->transition->predecessorStatus:MutationStatus::Applied;
+    record->error=p->transition->intent==SshTransitionIntent::Release?p->transition->predecessorError:std::string();
+    p->transition.reset();return persistSshChange(previous,error);
 }
 bool MutationJournal::noteSshFileAttempt(MutationId id,const std::string& path,std::string& error) {
     if(!usable()){error="SSH journal unavailable";return false;}
@@ -4493,7 +4537,8 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
     return false;
 }
 
-bool MutationJournal::discard(MutationId id, std::string& error) {
+bool MutationJournal::discard(MutationId id, std::string& error) {return discardImpl(id,error,false);}
+bool MutationJournal::discardImpl(MutationId id,std::string& error,bool initialSshNoEffect) {
     if (!loaded_) {
         error = "Mutation journal не загружен";
         return false;
@@ -4506,7 +4551,7 @@ bool MutationJournal::discard(MutationId id, std::string& error) {
     }
     for (std::size_t index = 0; index < records_.size(); ++index) {
         if (records_[index].id == id) {
-            if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&records_[index].undo.payload);ssh&&sshTransitionPending(*ssh)) {
+            if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&records_[index].undo.payload);ssh&&sshTransitionPending(*ssh)&&!initialSshNoEffect) {
                 error="cannot discard unresolved SSH ownership transition";return false;
             }
             if(std::holds_alternative<SssdJournalOwnership>(records_[index].undo.payload)) {

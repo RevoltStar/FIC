@@ -10,6 +10,7 @@ set(FIC_SSH_APPLY_ROLLBACK_SOURCES
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshPortTransaction.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/policies/NET_ssh_max_auth_tries.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/policies/NET_ssh_port.cpp

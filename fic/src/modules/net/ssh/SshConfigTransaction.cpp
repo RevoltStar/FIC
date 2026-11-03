@@ -120,6 +120,9 @@ void compensate(SshConfigFileHandler& handler, const SshRuntime& runtime,
 void setSshSaveOutcomeHookForTests(std::function<void(FileHandler::FileSaveOutcome&)> hook) {
     saveOutcomeHook = std::move(hook);
 }
+void observeSshSaveOutcomeForTests(FileHandler::FileSaveOutcome& outcome) {
+    if(saveOutcomeHook)saveOutcomeHook(outcome);
+}
 #endif
 
 SshConfigTransactionResult runSshConfigTransaction(

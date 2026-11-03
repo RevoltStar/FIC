@@ -2,6 +2,7 @@
 #include "service/ssh/SshVerifiedInputClosure.h"
 #include "modules/net/ssh/SshPolicySemantics.h"
 #include "service/ssh/SshPersistentMetadata.h"
+#include "service/ssh/SshListenerProof.h"
 #include "service/ssh/SshServiceAdmission.h"
 #include "service/ssh/UbuntuSshSocketFlow.h"
 #include "service/VerifiedConfigMountSupport.h"
@@ -66,6 +67,19 @@ int main() {
             "Port source map lost repeated visits/positions or leaked child Match context");++checks;
         graph.bytes[mainFile]+="Match User root\nInclude "+dir+"/nested.inc\n";graph.sync();
         deny([&]{graph.closure();});
+    }
+    {
+        fic::platform::PlatformExecutables executables;
+        executables.entries={{fic::platform::ExecutableId::Sshd,{std::filesystem::canonical("/usr/bin/true")}}};
+        fic::platform::PlatformExecutableResolverOptions trust;trust.enforceTrustedOwnership=false;
+        fic::platform::PlatformExecutableResolver resolver(std::move(executables),trust);
+        std::string output="port 22\nport 2222\nlistenaddress 127.0.0.1:22\nlistenaddress 127.0.0.1:2222\n";
+        SshRuntime runtime({},resolver,[&](const auto&,const auto&,const auto&){ProcessResult result;result.started=true;result.exitCode=0;result.standardOutput=output;return result;});
+        deny([&]{d::listener::effectiveEndpoints(runtime);});
+        require(d::listener::effectiveEndpoints(runtime,true).size()==2,"release omitted restored listening endpoints");++checks;
+        output+="port 22\n";deny([&]{d::listener::effectiveEndpoints(runtime,true);});
+        output="port 22\nlistenaddress 127.0.0.1:22\nlistenaddress 127.0.0.1:22\n";deny([&]{d::listener::effectiveEndpoints(runtime,true);});
+        output="port 22\nlistenaddress 127.0.0.1:2222\n";deny([&]{d::listener::effectiveEndpoints(runtime,true);});
     }
     using J = nlohmann::json;
     std::map<std::string,std::string> launch;

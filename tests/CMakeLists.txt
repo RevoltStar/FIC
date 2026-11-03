@@ -1252,6 +1252,7 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshPortTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
@@ -1371,6 +1372,7 @@ add_executable(sudo_scoped_defaults_lifecycle_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshPortTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
@@ -1839,6 +1841,7 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshPortTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
@@ -2441,6 +2444,7 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshPortTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
@@ -2559,6 +2563,7 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshConfigSyntax.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshPortTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRuntime.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp

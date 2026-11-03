@@ -2,6 +2,7 @@
 
 #include "modules/net/ssh/SshConfigFile.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
+#include "modules/net/ssh/SshPortTransaction.h"
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
 #include "service/ssh/SshVerifiedActivationAdapter.h"
@@ -296,6 +297,8 @@ SshRollbackResult undoSshManagedPolicyMutation(
         if(blockPresent&&!blockOwned) {
             result.conflict=true;result.message="SSH owned block differs from recorded permission; no release";return result;
         }
+        if(!undo.includedWrappers.empty()||(undo.transition&&undo.transition->version==3))
+            return releaseSshPortGraph(options,undo,*handler.loadSnapshot());
         return runVerifiedRelease(options,undo,handler,blockPresent||wrappersPresent);
     }
     if(options.offlineRelease==SshOfflineReleaseProfile::UbuntuSocket)fic::service::ssh::detail::UbuntuSshSocketFlow::prepareRuntimeDirectory();
@@ -434,6 +437,9 @@ bool acknowledgeSshPolicyDisable(const PolicyRef& policy,const PolicyRegistry& r
            !AtomicFileWriter::targetStateMatches(configPath,configState,&error)) {
             std::string checkpoint;journal->failSshTransition(record.id,"physical/configuration drift before DISABLE acknowledgement",checkpoint);
             error="released SSH physical/configuration state changed; intent retained: "+error;return false;
+        }
+        if(p->transition->version==3&&!verifySshPortReleasedFiles(*p->transition,error)) {
+            std::string checkpoint;journal->failSshTransition(record.id,"multi-file physical drift before DISABLE acknowledgement",checkpoint);return false;
         }
         if(!journal->commitSshRelease(record.id,error))return false;
     }

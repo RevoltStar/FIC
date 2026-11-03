@@ -57,8 +57,8 @@ bool banner(const std::string& text,std::chrono::steady_clock::time_point deadli
     return false;
 }
 }
-AltSshServiceFlow::AltSshServiceFlow(const d::ServiceState& state,std::chrono::steady_clock::time_point deadline)
-    :deadline_(deadline),original_(owned(state)),keygen_(keygenToken()) {
+AltSshServiceFlow::AltSshServiceFlow(const d::ServiceState& state,std::chrono::steady_clock::time_point deadline,bool releasedPortSet)
+    :deadline_(deadline),releasedPortSet_(releasedPortSet),original_(owned(state)),keygen_(keygenToken()) {
     if(original_.empty()||original_.size()>16||!executable(state))fail("ALT initial runtime/listener not ready",ActivationStatus::ReadinessUnconfirmed);
 }
 bool AltSshServiceFlow::initiallyReady(const d::ServiceState& state) {
@@ -72,7 +72,7 @@ std::map<std::string,std::string> AltSshServiceFlow::combined(const d::ServiceSt
 }
 void AltSshServiceFlow::published(SshRuntime& runtime) {
     if(keygenToken()!=keygen_)fail("ALT keygen changed before restart");
-    expected_=listener::effectiveEndpoints(runtime);
+    expected_=listener::effectiveEndpoints(runtime,releasedPortSet_);
 }
 bool AltSshServiceFlow::readyCandidate(const d::ServiceState& state,std::chrono::steady_clock::time_point deadline) {
     if(!executable(state))return false;

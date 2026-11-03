@@ -16,13 +16,14 @@ class UbuntuSshSocketFlow {
     Snapshot original_, activated_, promoted_;
     fic::service::detail::Fd connection_;
     bool promotedKnown_=false;
+    bool releasedPortSet_=false;
     static Snapshot observe(std::chrono::steady_clock::time_point);
     void command(const std::vector<std::string>&) const;
 public:
-    explicit UbuntuSshSocketFlow(std::chrono::steady_clock::time_point);
+    explicit UbuntuSshSocketFlow(std::chrono::steady_clock::time_point,bool releasedPortSet=false);
     static void prepareRuntimeDirectory();
     static void requireOffline(std::chrono::steady_clock::time_point);
-    static std::vector<std::string> effectiveEndpoints(SshRuntime&);
+    static std::vector<std::string> effectiveEndpoints(SshRuntime&,bool releasedPortSet=false);
     static std::string parseEndpoint(const std::string&);
     std::map<std::string,std::string> combined(const fic::service::detail::ServiceState&) const;
     const fic::service::detail::LaunchContract& socketContract() const {return original_.unit;}

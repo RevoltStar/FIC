@@ -5,6 +5,7 @@
 #include "modules/net/ssh/Ssh.h"
 #include "modules/net/ssh/SshConfigFile.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
+#include "modules/net/ssh/SshPortTransaction.h"
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/net/ssh/SshRuntime.h"
@@ -360,6 +361,45 @@ MutationId recordPreparedSsh(const PolicyRef& policy,
                 UndoAction{MutationBackend::Ssh, undo}, id, error),
             error);
     return id;
+}
+
+void testMultiFilePortPlanner() {
+    SshApplyTree tree;const auto main=tree.configPath();const auto fragment=main.parent_path()/"10-admin.conf";
+    const std::string originalMain="Port 22\n",originalFragment="# admin\nPort +000000002222";
+    tree.writeConfig(originalMain);writeFile(fragment,originalFragment);
+    const auto source=[&](bool owned) {
+        fic::service::ssh::SshPortSourceMap map;map.reference.reference.paths.push_back({main});
+        for(const auto& path:{main,fragment}) {
+            AtomicTargetState state;std::string error;require(AtomicFileWriter::captureTargetState(path.string(),state,&error),error);
+            map.files.emplace(path.string(),state);map.graph.order.push_back(path.string());
+        }
+        map.graph.order.push_back(fragment.string()); // two visits, one physical mutation
+        if(!owned){map.graph.globalPorts[main.string()].insert(0);map.graph.globalPorts[fragment.string()].insert(1);}
+        else {
+            SshConfigFileHandler handler(main.string());require(handler.loadConfig(),"load planned main");
+            SshManagedModel model;std::string error;require(parseSshManagedModel(handler.lines(),model,error)==SshManagedParseStatus::Ok,error);
+            map.graph.globalPorts[main.string()].insert(model.policies.front().beginLine+1);
+        }
+        return map;
+    };
+    auto plan=planSshPortMutation(source(false),nullptr,"2022");
+    require(plan.changed&&plan.publication.size()==2&&plan.targetOwnership.includedWrappers.at(fragment.string()).size()==1,"incomplete/double physical plan");
+    require(readFile(main)==originalMain&&readFile(fragment)==originalFragment,"planner wrote source files");
+    const auto permission=plan.targetOwnership;
+    for(const auto& [path,content]:plan.targets)writeFile(path,content);
+    auto noop=planSshPortMutation(source(true),&permission,"2022");require(!noop.changed,"owned graph was not idempotent");
+    auto refresh=planSshPortMutation(source(true),&permission,"2323");
+    require(refresh.changed&&refresh.targets.at(fragment.string())==plan.targets.at(fragment.string())&&
+        refresh.targetOwnership.includedWrappers==permission.includedWrappers,"REFRESH changed Included creation provenance");
+    writeFile(fragment,readFile(fragment)+"\n# later foreign annotation");
+    auto released=planSshPortMutation(source(true),&permission,"2022",true);
+    require(released.targets.at(main.string())==originalMain&&released.targets.at(fragment.string())==originalFragment+"\n# later foreign annotation", "release lost foreign bytes/EOF");
+    auto drift=readFile(fragment);const auto body=std::string("Port +000000002222");const auto offset=drift.find(body);drift.replace(offset,body.size(),"Port 9999");writeFile(fragment,drift);
+    bool refused=false;try{planSshPortMutation(source(true),&permission,"2022",true);}catch(const std::exception&){refused=true;}
+    require(refused,"modified wrapper with unchanged ID was adopted");
+    writeFile(fragment,"# wrapper externally disappeared");
+    auto absent=planSshPortMutation(source(true),&permission,"2022",true);
+    require(absent.targets.at(fragment.string())=="# wrapper externally disappeared","release reconstructed missing wrapper");
 }
 
 template<class PolicyT>
@@ -2081,6 +2121,7 @@ int main() {
         {"creation fingerprints and legacy boundary",testCreationFingerprintsAndLegacyBoundary},
         {"R1b refresh preinstall failure retains Applied", testAppliedRefreshPreinstallFailure},
         {"R1b refresh postinstall failure retains Applied", testAppliedRefreshPostinstallFailure},
+        {"multi-file Port planner",testMultiFilePortPlanner},
         {"typed SSH transaction fault matrix", testTypedTransactionFaultMatrix},
         {"verified SSH transaction preserves facts without compensation",testVerifiedTransactionRetainsFacts},
         {"unknown installed receipt keeps Prepared", testPolicyInstalledReceiptUnknownRetainsPrepared},
