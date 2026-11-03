@@ -167,6 +167,12 @@ int main(int argc, char** argv) {
                     } else bytes+="#@FIC_POLICY_BEGIN name=ssh_max_auth_tries@\n";
                     write(mainPath,bytes);
                 }
+                if(beforeAction=="missing-block") {
+                    auto bytes=text(mainPath);const auto begin=bytes.find("#@FIC_POLICY_BEGIN name=ssh_max_auth_tries@\n");
+                    const std::string endMarker="#@FIC_POLICY_END name=ssh_max_auth_tries@\n";
+                    const auto end=bytes.find(endMarker,begin);check(begin!=std::string::npos&&end!=std::string::npos,"owned block missing in fixture");
+                    bytes.erase(begin,end+endMarker.size()-begin);write(mainPath,bytes);
+                }
                 if(beforeAction=="missing-owner") {
                     const auto path=work+"/module-state/journal.json";auto doc=J::parse(text(path));
                     auto& records=doc["records"];

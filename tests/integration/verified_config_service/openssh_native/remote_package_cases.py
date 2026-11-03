@@ -49,6 +49,7 @@ try:
         run(['mount','--bind',str(parent),str(parent)]);run(['mount','--make-private',str(parent)])
     run(['ssh-keygen','-A']);Path('/run/sshd').mkdir(exist_ok=True)
     main.write_text(f'Port 22\nListenAddress 127.0.0.1\nHostKey {key}\nPermitRootLogin yes\nPubkeyAuthentication yes\nUsePAM no\nMaxAuthTries 6\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n')
+    main.write_text(main.read_text().rstrip('\n')) # fixture EOF must survive real apply/release
     main.chmod(0o600 if alt else 0o644);env.write_text('EXTRAOPTIONS=\n' if alt else 'SSHD_OPTS=\n');env.chmod(0o644)
     (main.parent/('sshd_config.local.d' if alt else 'sshd_config.d')).mkdir(exist_ok=True)
     if alt and Path('/etc/sudoers.d/99-sudopw').exists():Path('/etc/sudoers.d/99-sudopw').chmod(0o400) # native fixture before FIC
@@ -68,6 +69,17 @@ try:
     report['tcp_before']={p:Path(p).read_text() for p in ('/proc/net/tcp','/proc/net/tcp6')}
     remote([cli,'status'])
     policy('apply','NET','ssh_use_pam') # default ENABLE; initial stopped-SSH apply intentionally could not activate
+    policy('set','NET','ssh_pubkey_auth','yes');policy('enable','NET','ssh_pubkey_auth')
+    foreign_pubkey='PubkeyAuthentication yes\n';assert foreign_pubkey in main.read_text() and not main.read_bytes().endswith(b'\n')
+    policy('apply','NET','ssh_pubkey_auth')
+    assert '#@FIC_POLICY_BEGIN name=ssh_pubkey_auth@' in main.read_text()
+    pubkey_records=[r for r in journal()['records'] if r['policy']['policy']=='ssh_pubkey_auth']
+    assert len(pubkey_records)==1 and pubkey_records[0]['status']=='applied'
+    owned=main.read_bytes();provenance=journal()
+    policy('apply','NET','ssh_pubkey_auth');assert main.read_bytes()==owned and journal()==provenance
+    policy('disable','NET','ssh_pubkey_auth')
+    assert foreign_pubkey in main.read_text() and '#@FIC_POLICY_BEGIN name=ssh_pubkey_auth@' not in main.read_text() and not main.read_bytes().endswith(b'\n')
+    assert all(r['status']=='rolled_back' for r in journal()['records'] if r['policy']['policy']=='ssh_pubkey_auth')
     policy('set','NET','ssh_root_login','no');policy('enable','NET','ssh_root_login');policy('apply','NET','ssh_root_login')
     disabled=policy('disable','NET','ssh_root_login')
     assert 'RuntimeVerified' in disabled.stdout and 'awaiting durable DISABLE' not in disabled.stdout
@@ -79,7 +91,7 @@ try:
     report['tcp_after_refresh']={p:Path(p).read_text() for p in ('/proc/net/tcp','/proc/net/tcp6')}
     saved=config();report['config_before_uninstall']=saved
     remote([cli,'prepare-uninstall']);remote([cli,'policy','rollback','all'],timeout=600)
-    assert config()==saved and '#@FIC_' not in main.read_text()
+    assert config()==saved and '#@FIC_' not in main.read_text() and not main.read_bytes().endswith(b'\n')
     records=journal()['records'];assert all(r['status']=='rolled_back' for r in records if r['backend']=='ssh'),records
     report['ssh_release_records']=[r for r in records if r['backend']=='ssh']
     assert sha(fragment)==vendor

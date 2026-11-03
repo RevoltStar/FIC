@@ -114,7 +114,7 @@ negatives are required by the collector. See docs/ssh-verified-activation-adapte
 
 `module_cases` in exported results call the five actual policy classes and
 `Ssh::apply()` with a real isolated MutationJournal and trusted fixture policy
-config. They verify fresh writes/ownership, foreign compliant no-enrollment,
+config. They verify fresh writes/ownership, foreign compliant owned enrollment,
 new PID/invocation/listener, repeated receipt no-op, stale receipt invalidation,
 pre-CAS refusals and post-save uncertainty/provenance. A deterministic test-only
 save observation hook injects writer/durability/runtime/journal faults; the
@@ -201,3 +201,22 @@ promise for arbitrary external networks or custom unit topologies.
 Current contract: [adapter](../../../../docs/ssh-verified-activation-adapter.md#verified-configuration-release).
 Sanitized results, case composition, actual packages and limitations:
 [evidence](evidence/release-lifecycle.json). Raw logs remain in ignored build dirs.
+
+Initially compliant ownership gate (all five native platforms):
+
+```sh
+FIC_SSH_NATIVE_SCENARIO=refresh FIC_SSH_NATIVE_REFRESH_GROUP=ownership \
+  bash tests/integration/verified_config_service/openssh_native/run-native.sh IMAGE PLATFORM
+```
+
+Existing lifecycle runner tests matching foreign
+values, native defaults, owned no-op, REFRESH preserving Port fingerprints/IDs,
+active release and byte-exact restoration. Ubuntu additionally checks unchanged
+socket state for same-endpoint Port publication and kernel/PID1/MainPID FD proof.
+
+Matching active Port in a trusted Include is refused before Prepared/file write
+when inserting the owned Port would duplicate the strict effective/listener
+profile. The fixture starts from one included Port and checks repeat refusals,
+unchanged journal/config/runtime and untouched included bytes on all platforms.
+Native defaults are tested only within the existing policy domain; MaxAuthTries6
+and UsePAMno remain rejected values.

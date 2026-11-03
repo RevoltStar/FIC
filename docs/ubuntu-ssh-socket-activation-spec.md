@@ -183,7 +183,7 @@ native и package research gates без соответствующего окр�
 
 51 Ubuntu group включает пять real policies/receipt, native effective values,
 IPv4/IPv6/wildcard/default22, actual kernel/PID1→sshd inheritance и исчезновение старых
-inode; foreign compliant/no enrollment; recursive literal Include/unrelated Match;
+inode; foreign compliant → owned enrollment; recursive literal Include/unrelated Match;
 ослабляющие selected conditional inputs, внешние Include, symlink, foreign Port;
 CAS/admission races, saved/unknown/durability/journal faults/Prepared; unsupported
 units/generator mask; active/offline rollback; actual cleanup EBUSY/persistent drift,

@@ -23,6 +23,10 @@ public:
     // unparsable or marker-malformed files.
     bool loadConfig() override;
 
+    // EOF framing is foreign state: preserve the current snapshot rather than
+    // adding/removing a final LF while applying or releasing owned lines.
+    std::string pendingContent() const override;
+
     // True when the last loadConfig() failed because the FIC marker
     // structure is malformed (a fail-closed FIC ownership state; consumers
     // must classify this as a conflict, not as a transient error).

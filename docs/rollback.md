@@ -174,6 +174,19 @@ Crash-consistency: запись создаётся в состоянии `Prepar
 verified SSH после возможного эффекта сохраняет provenance без blind compensation;
 persistent-запись коммитится только после успешного apply.
 
+SSH serializer сохраняет EOF framing текущего snapshot, включая отсутствие
+конечного LF; apply/release не нормализуют чужой EOF и не записывают его историю
+в journal.
+
+SSH apply включённой политики создаёт собственный policy sub-block и Applied
+journal ownership даже при уже соответствующем foreign/default значении.
+Повторный owned-compliant apply не пишет файл/journal и использует существующий
+receipt/revalidation contract. Scalar foreign строки не меняются; main Port
+(включая совпадающий) временно оборачивается fingerprinted FIC_DISABLED и при
+release восстанавливается byte-exact. Trusted Include-файлы остаются неизменными;
+при дублирующем Port из Include неподдерживаемый prospective main отклоняется
+до Prepared и записи без нормализации endpoints. Multi-file wrappers не реализованы. Исчезнувший owned block не создаётся повторно apply.
+
 ### Verified SSH release
 
 На Debian12/13, Ubuntu24/26 и ALT p11 active SSH release проходит существующий

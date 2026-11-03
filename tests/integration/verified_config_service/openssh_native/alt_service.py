@@ -41,7 +41,7 @@ def main():
    raw=request();before=h.sha(h.MAIN);default=h.drive('activate',raw);report['cases'].append({'name':'public-generic-rejects-stock-simple','result':default});save()
    assert default['status']=='UnsupportedConfiguration' and not default['readinessConfirmed'] and default['residual_count_before_admin_cleanup']==0 and h.sha(h.MAIN)==before,default
    rows=case('stock-config-five-policies-and-receipt',selected*3)
-   assert len(rows[-1]['records'])==3 and all(r['main_unchanged'] and r['before_invocation']==r['after_invocation'] for r in rows[-5:]),rows
+   assert len(rows[-1]['records'])==5 and all(r['main_unchanged'] and r['before_invocation']==r['after_invocation'] for r in rows[-5:]),rows
    assert not h.DROP.exists()
    h.handshake(2244)
    print('ALT stock real five-policy gate PASS',flush=True)
@@ -75,8 +75,11 @@ def main():
    return result
   if phase=='rollback':
    reset();case('rollback-owned-apply',[{'policy':'ssh_port','value':'2244'}])
-   row=case('active-rollback-refusal',[{'policy':'ssh_port','value':'2244','rollback':True}],False)[0];assert row['main_unchanged'] and row['records']
-   row=case('offline-ownership-only-release',[{'policy':'ssh_port','value':'2244','rollback':True,'offline':True}])[0];assert not row['main_unchanged'] and 'runtime NOT activated' in row['release_message']
+   row=case('active-rollback-verified',[{'policy':'ssh_port','value':'2244','rollback':True}])[0];assert not row['main_unchanged'] and 'RuntimeVerified' in row['release_message']
+   assert all(r['status']=='rolled_back' for r in row['journal_after']['records']) and h.handshake(2222).startswith('SSH-2.0-')
+   reset();case('offline-owned-setup',[{'policy':'ssh_port','value':'2244'}])
+   row=case('offline-ownership-only-release',[{'policy':'ssh_port','value':'2244','rollback':True,'offline':True}])[0];assert not row['main_unchanged'] and 'ReleasedOffline' in row['release_message'] and row['before_pid']==row['after_pid']=='0'
+   assert all(r['status']=='rolled_back' for r in row['journal_after']['records'])
    report['result']='PASS';print(json.dumps({'result':'PASS','phase':phase,'groups':len(report['cases'])}));return
   if phase=='all':
    reset();old=listeners()
@@ -90,8 +93,8 @@ def main():
    for family in ('inet','inet6'):
     reset(family=family);old=listeners();case('Port-'+family,[{'policy':'ssh_port','value':'2244'}]);assert {p for a,p in listeners()}=={2244} and not set(old.values())&set(listeners().values())
    reset();h.MAIN.write_text(h.MAIN.read_text().replace('PermitRootLogin yes','PermitRootLogin no'))
-   rows=case('foreign-compliant-no-enrollment',[{'policy':'ssh_root_login','value':'no'}]*2)
-   assert all(r['main_unchanged'] and not r['records'] for r in rows) and rows[-1]['before_invocation']==rows[-1]['after_invocation']
+   rows=case('foreign-compliant-owned',[{'policy':'ssh_root_login','value':'no'}]*2)
+   assert not rows[0]['main_unchanged'] and len(rows[0]['records'])==1 and rows[1]['main_unchanged'] and rows[1]['journal_unchanged'] and rows[-1]['before_invocation']==rows[-1]['after_invocation']
    for change in ('restart','main-comment'):
     reset();rows=case('receipt-invalidated-'+change,[{'policy':'ssh_root_login','value':'no'},{'policy':'ssh_root_login','value':'no','before':change},{'policy':'ssh_root_login','value':'no'}])
     assert rows[1]['before_invocation']!=rows[1]['after_invocation'] and rows[2]['before_invocation']==rows[2]['after_invocation']
@@ -128,8 +131,11 @@ def main():
     row=case('module-fault-'+fault,[{'policy':'ssh_use_pam','value':'yes','fault':fault}],False)[0]
     if fault.startswith('after-') or fault in ('durability','unknown-writer','journal-commit'):assert not row['main_unchanged'] and (row['records'] or row['journal_unusable'])
    reset();rows=case('unresolved-Prepared',[{'policy':'ssh_use_pam','value':'yes','fault':'durability'},{'policy':'ssh_root_login','value':'no'}],False);assert rows[1]['main_unchanged'] and rows[1]['journal_unchanged']
-   reset();case('rollback-owned-apply',[{'policy':'ssh_port','value':'2244'}]);row=case('active-rollback-refusal',[{'policy':'ssh_port','value':'2244','rollback':True}],False)[0];assert row['main_unchanged'] and row['records']
-   row=case('offline-ownership-only-release',[{'policy':'ssh_port','value':'2244','rollback':True,'offline':True}])[0];assert not row['main_unchanged'] and 'runtime NOT activated' in row['release_message']
+   reset();case('rollback-owned-apply',[{'policy':'ssh_port','value':'2244'}]);row=case('active-rollback-verified',[{'policy':'ssh_port','value':'2244','rollback':True}])[0];assert not row['main_unchanged'] and 'RuntimeVerified' in row['release_message']
+   assert all(r['status']=='rolled_back' for r in row['journal_after']['records']) and h.handshake(2222).startswith('SSH-2.0-')
+   reset();case('offline-owned-setup',[{'policy':'ssh_port','value':'2244'}])
+   row=case('offline-ownership-only-release',[{'policy':'ssh_port','value':'2244','rollback':True,'offline':True}])[0];assert not row['main_unchanged'] and 'ReleasedOffline' in row['release_message'] and row['before_pid']==row['after_pid']=='0'
+   assert all(r['status']=='rolled_back' for r in row['journal_after']['records'])
   for fault in ('ro-write','busy','original-write','new-glob','contract-before','contract-after','ready-stop','ready-disable','ready-foreign-restart','final-disable','final-restart','alt-no-ready','pending-ready','pending-timeout','pending-failed'):
    reset();h.DROP.mkdir();h.MAIN.write_text(h.MAIN.read_text().replace('PermitRootLogin yes','PermitRootLogin no'));(h.WORK/'mutation.conf').write_text(h.MAIN.read_text()+'# foreign persistent edit\n')
    req=request();req['policies']={'ssh_root_login':'no'}

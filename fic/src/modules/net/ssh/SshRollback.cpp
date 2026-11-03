@@ -126,7 +126,7 @@ SshRollbackResult runVerifiedRelease(const SshRollbackOptions& options,
            !restoreSshDisabledLines(planned,permission.policyName,permission.disabledMutationIds,restored,error)) {
             result.conflict=true;fail(error);return result;
         }
-        SshConfigFileHandler image(options.configPath.string());image.lines()=planned;
+        SshConfigFileHandler image(handler);image.lines()=planned;
         const auto target=hasArtifacts?image.pendingContent():before.content;
         const bool replacing=target!=before.content;
         auto baseline=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(before.content),Intent::ConfigurationRelease);

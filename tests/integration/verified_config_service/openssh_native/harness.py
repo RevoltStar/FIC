@@ -559,14 +559,14 @@ def main():
         module_reset()
         rows=module_case('real-policy-apply-and-receipt',selected*3)
         assert all(row['applied'] for row in rows), rows
-        assert rows[0]['main_unchanged'] and not rows[0]['records'], rows[0]
+        assert not rows[0]['main_unchanged'] and len(rows[0]['records'])==1, rows[0]
         assert rows[0]['before_invocation']!=rows[0]['after_invocation'], rows[0]
         assert all(row['before_invocation']==row['after_invocation'] for row in rows[-5:]), rows
         assert all(row['main_unchanged'] for row in rows[-5:]), rows
         assert 'FIC_VERIFIED' in handshake(2244)
         listeners=run(['ss','-lntp']).stdout
         assert any('127.0.0.1:2244' in line and f'pid={rows[-1]["after_pid"]},' in line for line in listeners.splitlines()), listeners
-        assert len(rows[-1]['records'])==4, rows[-1]
+        assert len(rows[-1]['records'])==5, rows[-1]
         for change in ('restart','main-comment'):
             module_reset()
             rows=module_case('receipt-invalidated-'+change,[

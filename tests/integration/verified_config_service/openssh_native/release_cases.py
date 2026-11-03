@@ -86,8 +86,18 @@ try:
         done(row,'ssh_max_auth_tries');assert owner(row,'ssh_max_auth_tries')['undo']['applied_value']=='2'
     if group in ('all','negative'):
         for before in ('legacy-wrapper-syntax','legacy-wrapper-include','legacy-wrapper-policy','fingerprinted-wrapper-edit'):
-            reset(root='no');row=case('prepublication-refusal-'+before,selected()+[release('ssh_port','2222',before=before)],[True]*5+[False])[-1]
-            assert row['main_unchanged'] and row['before_invocation']==row['after_invocation'] and 'ssh_port.status=ENABLE' in row['policy_config']
+            # Root now always has its own No block, including reset(root=No).
+            # ID-only legacy release still cannot attest historical body bytes:
+            # restored foreign Yes is shadowed by the independent owned No.
+            legacy_shadowed=before=='legacy-wrapper-policy'
+            reset(root='no');row=case(('legacy-ID-only-body-shadowed-by-owned-root' if legacy_shadowed else 'prepublication-refusal-'+before),selected()+[release('ssh_port','2222',before=before)],[True]*5+[legacy_shadowed])[-1]
+            if legacy_shadowed:
+                done(row,'ssh_port')
+                assert 'PermitRootLogin yes' in row['main_after'] and '#@FIC_POLICY_BEGIN name=ssh_root_login@' in row['main_after']
+                assert owner(row,'ssh_root_login')['status']=='applied'
+                assert owner(row,'ssh_port')['undo']['ownership_version']==0 and not owner(row,'ssh_port')['undo']['wrapper_fingerprints']
+            else:
+                assert row['main_unchanged'] and row['before_invocation']==row['after_invocation'] and 'ssh_port.status=ENABLE' in row['policy_config']
         for fault in ('main-cas','after-save-input','after-save-stop','durability','unknown-writer','journal-commit','release-cleanup'):
             reset();rows=case('release-fault-'+fault,[dict(policy='ssh_root_login',value='no'),release(fault=fault),release(keep_policy_config=True)],[True,False,fault=='main-cas'])
             row=rows[1];assert 'ssh_root_login.status=ENABLE' in row['policy_config']

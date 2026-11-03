@@ -141,6 +141,7 @@ std::string fakeEffectiveOutput(const std::string& configContent) {
     bool rootLoginSeen = false;
     std::string usePam = "no";
     bool usePamSeen = false;
+    std::string maxTries="6",pubkey="yes";bool maxSeen=false,pubSeen=false;
     while (std::getline(lines, line)) {
         const std::size_t comment = line.find('#');
         const std::string trimmed =
@@ -167,15 +168,17 @@ std::string fakeEffectiveOutput(const std::string& configContent) {
         } else if (keyword == "usepam" && !value.empty() && !usePamSeen) {
             usePam = value;
             usePamSeen = true;
-        }
+        } else if(keyword=="maxauthtries"&&!maxSeen){maxTries=value;maxSeen=true;}
+        else if(keyword=="pubkeyauthentication"&&!pubSeen){pubkey=value;pubSeen=true;}
     }
     std::string output;
+    if(ports.empty())ports.push_back("22");
     for (const std::string& port : ports) {
         output += "port " + port + "\n";
     }
     output += "permitrootlogin " + rootLogin + "\n";
-    output += "maxauthtries 3\n";
-    output += "pubkeyauthentication yes\n";
+    output += "maxauthtries "+maxTries+"\n";
+    output += "pubkeyauthentication "+pubkey+"\n";
     output += "usepam " + usePam + "\n";
     return output;
 }
@@ -359,25 +362,50 @@ MutationId recordPreparedSsh(const PolicyRef& policy,
     return id;
 }
 
-void testCompliantEffectiveStateCausesNoMutation() {
-    SshApplyTree tree;
-    const std::string original = "Port 22\n";
-    tree.writeConfig(original);
-    tree.writePolicyValue("ssh_port", "22");
-    JournalOverride overrideGuard(tree.journalPath());
+template<class PolicyT>
+void checkInitiallyCompliantOwnership(const std::string& name,const std::string& directive,
+                                     const std::string& value,const std::string& original) {
+    SshApplyTree tree;tree.writeConfig(original);tree.writePolicyValue(name,value);
+    JournalOverride overrideGuard(tree.journalPath());auto policy=tree.makePolicy<PolicyT>();
+    require(policy->apply(),"initially compliant policy must establish ownership");
+    const auto applied=readFile(tree.configPath());SshManagedModel model;std::string error;
+    require(parseSshManagedModel(splitLines(applied),model,error)==SshManagedParseStatus::Ok,error);
+    require(model.policies.size()==1 && model.policies[0].name==name &&
+            model.policies[0].directiveLine==sshManagedDirectiveLine(directive,value),"exact single owned policy block");
+    MutationJournal journal(tree.journalPath());require(journal.load(error),error);
+    require(journal.records().size()==1 && journal.records()[0].status==MutationStatus::Applied,"one Applied owner");
+    const auto& undo=std::get<UndoRemoveSshManagedPolicy>(journal.records()[0].undo.payload);
+    require(journal.records()[0].policy==policy->policyRef() && undo.policyName==name &&
+            undo.directive==directive && undo.appliedValue==value && undo.ownershipVersion==1,"current owned payload");
+    if(directive=="Port" && original.find("Port ")!=std::string::npos) {
+        require(model.disabled.size()==1 && undo.disabledMutationIds.size()==1 && undo.wrapperFingerprints.size()==1,"Port wrapper fingerprint");
+        require(undo.wrapperFingerprints.at(model.disabled[0].mutationId)==fic::core::ContentDigest::sha256Hex(model.disabled[0].originalLine),"exact original body fingerprint");
+    } else require(applied.find(original)!=std::string::npos && model.disabled.empty(),"foreign scalar bytes preserved");
+    const auto provenance=readFile(tree.journalPath());
+    struct stat mainBefore{},journalBefore{},mainAfter{},journalAfter{};
+    require(::stat(tree.configPath().c_str(),&mainBefore)==0 && ::stat(tree.journalPath().c_str(),&journalBefore)==0,"snapshot identities");
+    unsigned writes=0;policy->setBeforeWriteHook([&]{++writes;});
+    require(policy->apply(),"owned-compliant reapply");
+    require(::stat(tree.configPath().c_str(),&mainAfter)==0 && ::stat(tree.journalPath().c_str(),&journalAfter)==0 && writes==0 &&
+            mainBefore.st_dev==mainAfter.st_dev && mainBefore.st_ino==mainAfter.st_ino &&
+            journalBefore.st_dev==journalAfter.st_dev && journalBefore.st_ino==journalAfter.st_ino,"reapply must not replace file/journal or enter writer");
+    require(readFile(tree.configPath())==applied && readFile(tree.journalPath())==provenance,"idempotent file/journal");
+    const auto report=rollbackPolicyBeforeDisable(policy->policyRef(),directive,tree.rollbackDeps());
+    require(report.status==RollbackStatus::Success,report.message);
+    require(readFile(tree.configPath())==original,"byte-exact foreign configuration restored");
+}
 
-    auto policy = tree.makePolicy<NET_ssh_port>();
-    require(policy->apply(), "an already compliant effective state must pass");
-
-    require(readFile(tree.configPath()) == original,
-            "a compliant effective state must not be written or owned");
-    MutationJournal journal(tree.journalPath());
-    std::string error;
-    require(journal.load(error), error);
-    require(journal.records().empty(),
-            "no mutation record must exist for a compliant state");
-    require(tree.runtime()->reloadCalls == 0,
-            "no reload must happen for a compliant state");
+void testCompliantEffectiveStateEstablishesOwnership() {
+    checkInitiallyCompliantOwnership<NET_ssh_port>("ssh_port","Port","22","Port 22\n");
+    checkInitiallyCompliantOwnership<NET_ssh_port>("ssh_port","Port","22","Port 22");
+    checkInitiallyCompliantOwnership<NET_ssh_port>("ssh_port","Port","22","");
+    checkInitiallyCompliantOwnership<NET_ssh_root_login>("ssh_root_login","PermitRootLogin","no","# administrator\nPermitRootLogin no\n");
+    checkInitiallyCompliantOwnership<NET_ssh_root_login>("ssh_root_login","PermitRootLogin","no","PermitRootLogin no");
+    checkInitiallyCompliantOwnership<NET_ssh_max_auth_tries>("ssh_max_auth_tries","MaxAuthTries","3","MaxAuthTries 3\n");
+    checkInitiallyCompliantOwnership<NET_ssh_pubkey_auth>("ssh_pubkey_auth","PubkeyAuthentication","yes","PubkeyAuthentication yes\n");
+    checkInitiallyCompliantOwnership<NET_ssh_port>("ssh_port","Port","22","# OpenSSH default\n");
+    checkInitiallyCompliantOwnership<NET_ssh_root_login>("ssh_root_login","PermitRootLogin","prohibit-password","# OpenSSH default\n");
+    checkInitiallyCompliantOwnership<NET_ssh_pubkey_auth>("ssh_pubkey_auth","PubkeyAuthentication","yes","# OpenSSH default\n");
 }
 
 void testUsePamApplyAndRollback() {
@@ -407,20 +435,14 @@ void testUsePamApplyAndRollback() {
             "UsePAM rollback must restore only FIC-owned changes");
 }
 
-void testUsePamAlreadyCompliantIsUnowned() {
-    SshApplyTree tree;
-    JournalOverride overrideGuard(tree.journalPath());
-    tree.writePolicyValue("ssh_use_pam", "yes");
-    const std::string original = "# vendor\nUsePAM yes\n";
-    tree.writeConfig(original);
-    auto policy = tree.makePolicy<NET_ssh_use_pam>();
-    require(policy->apply(), "foreign UsePAM yes must be compliant");
-    require(readFile(tree.configPath()) == original,
-            "compliant foreign UsePAM must stay untouched");
-    MutationJournal journal(tree.journalPath());
-    std::string error;
-    require(journal.load(error) && journal.records().empty(),
-            "compliant foreign UsePAM must not be journaled");
+void testUsePamAlreadyCompliantEstablishesOwnership() {
+    checkInitiallyCompliantOwnership<NET_ssh_use_pam>("ssh_use_pam","UsePAM","yes","# vendor\nUsePAM yes\n");
+    SshApplyTree tree;JournalOverride guard(tree.journalPath());
+    tree.writePolicyValue("ssh_use_pam","yes");
+    const std::string orphan="#@FIC_SSH_BLOCK_BEGIN version=1@\n#@FIC_SSH_BLOCK_END@\nUsePAM yes\n";
+    tree.writeConfig(orphan);
+    require(!tree.makePolicy<NET_ssh_use_pam>()->apply(),"empty orphan container cannot be adopted");
+    require(readFile(tree.configPath())==orphan && ([&]{MutationJournal j(tree.journalPath());std::string error;return j.load(error)&&j.records().empty();})(),"empty orphan refusal preserves foreign bytes/provenance");
 }
 
 void testUsePamShadowsEarlierIncludeWithoutEditingIt() {
@@ -683,43 +705,22 @@ void testValueChangeReleasesOnlyRemainingOwnedWrappers() {
             "the new payload must own only the fresh wrapper");
 }
 
-// Full external cleanup plus a value change: the previous mutation is
-// NothingToDo (already released), the old record is resolved, and the new
-// value is applied to the actual current configuration.
-void testValueChangeAfterExternalCleanupAppliesFromCurrentState() {
-    SshApplyTree tree;
-    tree.writeConfig("Port 22\nPort 2022\n");
-    tree.writePolicyValue("ssh_port", "2222");
-    JournalOverride overrideGuard(tree.journalPath());
-
-    auto policy = tree.makePolicy<NET_ssh_port>();
-    require(policy->apply(), "the initial apply must succeed");
-
-    // Externally strip every FIC marker: FIC no longer owns anything.
-    tree.writeConfig("Port 22\nPort 2022\n");
-
-    tree.writePolicyValue("ssh_port", "2323");
-    auto changedPolicy = tree.makePolicy<NET_ssh_port>();
-    require(changedPolicy->apply(),
-            "the value change must succeed from the current actual state");
-
-    const std::string content = readFile(tree.configPath());
-    require(content.find("Port 2323") != std::string::npos,
-            "the managed block must carry the new value");
-    require(content.find("#@FIC_DISABLED_LINE@Port 22") != std::string::npos &&
-                content.find("#@FIC_DISABLED_LINE@Port 2022") !=
-                    std::string::npos,
-            "the current conflicting lines must be wrapped again");
-
-    MutationJournal journal(tree.journalPath());
-    std::string error;
-    require(journal.load(error), error);
-    require(journal.records().size() == 2,
-            "the rolled-back and the new record must be kept");
-    require(journal.records().front().status == MutationStatus::RolledBack,
-            "the externally released mutation must be marked rolled back");
-    require(journal.records().back().status == MutationStatus::Applied,
-            "the new state must be committed");
+// Missing physical ownership is not a fresh apply, even when foreign values
+// match. Explicit release retains its existing already-released contract.
+void testValueChangeAfterExternalCleanupFailsClosed() {
+    SshApplyTree tree;tree.writeConfig("Port 22\nPort 2022\n");
+    tree.writePolicyValue("ssh_port","2222");JournalOverride guard(tree.journalPath());
+    require(tree.makePolicy<NET_ssh_port>()->apply(),"initial ownership");
+    tree.writeConfig("Port 22\n");
+    const auto journal=readFile(tree.journalPath()),config=readFile(tree.configPath());
+    for(const auto& desired:{"22","2323"}) {
+        tree.writePolicyValue("ssh_port",desired);
+        require(!tree.makePolicy<NET_ssh_port>()->apply(),"missing block cannot be adopted/reconstructed");
+        require(readFile(tree.configPath())==config && readFile(tree.journalPath())==journal,"missing ownership refusal preserves state");
+    }
+    const auto release=rollbackPolicyBeforeDisable(kSshPortPolicy,"Port",tree.rollbackDeps());
+    require(release.status==RollbackStatus::NothingToDo,release.message);
+    require(readFile(tree.configPath())==config,"explicit release does not recreate artifacts");
 }
 
 // Helper-level proof of the subset semantics with no wrappers in the file:
@@ -1432,9 +1433,10 @@ void testPolicyInstalledReceiptUnknownRetainsPrepared() {
     }
 }
 void testJournalPersistFaultsPreserveEffects() {
+    for(const std::string desired:{"22","2222"})
     for (const std::string phase : {"prepare","discard","commit"}) {
         Stage1FaultReset reset; SshApplyTree tree;
-        tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port","2222");JournalOverride guard(tree.journalPath());
+        tree.writeConfig("Port 22\n");tree.writePolicyValue("ssh_port",desired);JournalOverride guard(tree.journalPath());
         std::string error;require(DaemonMutationJournal::instance().tryGet(error)!=nullptr,error);
         auto failJournal=[&] {AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path){return path!=tree.journalPath().string();});};
         auto policy=tree.makePolicy<NET_ssh_port>();
@@ -1463,7 +1465,7 @@ void testJournalPersistFaultsPreserveEffects() {
             require(records.size()==1 && records[0].status==(phase=="prepare" ? MutationStatus::Prepared : MutationStatus::Applied),
                     "post-rename journal document lost actual provenance/status");
             const auto& payload=std::get<UndoRemoveSshManagedPolicy>(records[0].undo.payload);
-            require(payload.policyName=="ssh_port" && payload.directive=="Port" && payload.appliedValue=="2222" &&
+            require(payload.policyName=="ssh_port" && payload.directive=="Port" && payload.appliedValue==desired &&
                     payload.disabledMutationIds.size()==1,"journal persist lost complete undo payload");
             require((bytes.find(kSshBlockBeginPrefix)!=std::string::npos)==(phase=="commit"),"prepare failure wrote config / commit lost config");
         }
@@ -2018,10 +2020,10 @@ int main() {
         {"R5 missing effective parameter", testR5MissingEffectiveParameter},
         {"R5 invalid effective port", testR5InvalidEffectivePort},
         {"R5 unavailable audit", testR5UnavailableAudit},
-        {"compliant effective state causes no mutation",
-         testCompliantEffectiveStateCausesNoMutation},
+        {"compliant effective state establishes ownership",
+         testCompliantEffectiveStateEstablishesOwnership},
         {"UsePAM apply and rollback", testUsePamApplyAndRollback},
-        {"UsePAM compliant no-op", testUsePamAlreadyCompliantIsUnowned},
+        {"UsePAM compliant ownership", testUsePamAlreadyCompliantEstablishesOwnership},
         {"UsePAM shadows earlier Include", testUsePamShadowsEarlierIncludeWithoutEditingIt},
         {"apply fails when effective state is unknown",
          testApplyFailsWhenEffectiveStateUnknown},
@@ -2035,7 +2037,7 @@ int main() {
         {"value change releases only remaining owned wrappers",
          testValueChangeReleasesOnlyRemainingOwnedWrappers},
         {"value change after external cleanup applies from current state",
-         testValueChangeAfterExternalCleanupAppliesFromCurrentState},
+         testValueChangeAfterExternalCleanupFailsClosed},
         {"provenance subset semantics without wrappers",
          testProvenanceSubsetSemanticsWithoutWrappers},
         {"apply fails closed on corrupted active payload with compliant state",

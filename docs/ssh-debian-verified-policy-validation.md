@@ -42,7 +42,8 @@ Immutable image IDs:
 
 * Все пять реальных классов политик, доверенный fixture NET.conf, настоящий
   MutationJournal и настоящий системный sshd; без fake command runner на module path.
-* Foreign compliant состояние не получает ownership. Fresh managed изменения
+* Foreign compliant состояние получает собственный policy sub-block и Applied
+  journal через обычную verified transaction. Fresh managed изменения
   подтверждаются новым PID/InvocationID и listening socket нового sshd на 2244.
   Последующие полные проходы сохраняют invocation, main bytes и journal ownership.
 * Receipt инвалидируется после административного restart или изменения main input.

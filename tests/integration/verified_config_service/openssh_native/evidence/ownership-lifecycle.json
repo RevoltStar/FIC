@@ -1,0 +1,176 @@
+{
+  "task": "Initially compliant SSH apply establishes ownership",
+  "base": "96b88d2b40abff5cec9cd4352891401350e26719",
+  "environment": "Disposable Docker systemd containers; common WSL kernel; no host SSH mutations",
+  "source_manifest_sha256": "6acde6ae3f816645aea04e9aac605fe5ccab4de1c1b4247dda52c3600c08e818",
+  "source_manifest_generator": "tests/integration/sssd-i6/source-manifest.py (read-only source inventory reuse)",
+  "production_sha256": {
+    "fic-common/fic-core/include/fic/core/fs/FileHandler.h": "743a3b6dd01400c6572782ad862525ec9730e44f8596937fe8d73cb9fdb1700a",
+    "fic/src/modules/net/ssh/Ssh.cpp": "dca9a3d29618d1c42ccc0be59891915aa3baa762fc57633292f7ffbcfa38ee71",
+    "fic/src/modules/net/ssh/SshConfigFile.h": "d6b9b2565138c20f93548bc46bdc037fa1605dbae22483a261d4dc48a4c93732",
+    "fic/src/modules/net/ssh/SshConfigFile.cpp": "cb847b2ccb99f74fa7f9c2314a1b0e538f5ab64e256cf47aa0e789106887ca31",
+    "fic/src/modules/net/ssh/SshRollback.cpp": "d641437e6dadb88e24dc385a43568d210428d1108445a66ca173bd1091012f37"
+  },
+  "harness_sha256": {
+    "tests/integration/verified_config_service/openssh_native/CMakeLists.txt": "0b354889cea9841539062d08462686a6c4682f236a3c0a8d54204566e15fc572",
+    "tests/integration/verified_config_service/openssh_native/Driver.cpp": "8acaf78231883ad8bbedcaa14557972264634cb9d4e7e8434f0b610c70b7b072",
+    "tests/integration/verified_config_service/openssh_native/alt_service.py": "d0b534c7bef66b223a7c25d8475d69d5635bc0108f9a96d3aa022dff697427f2",
+    "tests/integration/verified_config_service/openssh_native/boundary_syntax.py": "12e0481bd180f84df71739057a9fe7871be8f991d5c5dca97f04702deaa3d18f",
+    "tests/integration/verified_config_service/openssh_native/collect-evidence.py": "25f7796f9c5a000ac269bedf6beb26707cd92b60343a874bb5f2891b067e87ec",
+    "tests/integration/verified_config_service/openssh_native/collect-sources.py": "252579a9b6d2093b75953c883d8d0598ddbe6c111dc1448ec4d28490cedba427",
+    "tests/integration/verified_config_service/openssh_native/harness.py": "eecfb72e576c9712cca11e336c6a5a2a2fb0cda38b6e7012ffc56252e1534588",
+    "tests/integration/verified_config_service/openssh_native/lifecycle_cases.py": "742be4abb048f51e2125337eb44619db6b5b5fad139dfa176b5df3ca0b35322b",
+    "tests/integration/verified_config_service/openssh_native/match_cases.py": "20cf9171d11c8234bfa883203c3deb1a7a8cd6c4fe134aa2b747141cc609b2cc",
+    "tests/integration/verified_config_service/openssh_native/release_cases.py": "247a2e907cb829b93d2ba1171cbac0d5629504b70d99582864022e29b8e14f16",
+    "tests/integration/verified_config_service/openssh_native/release_plan_cases.py": "0d7e82b2c78097f742063b730d132a8e5362063236322b115948e817d7376a51",
+    "tests/integration/verified_config_service/openssh_native/remote_package_cases.py": "4398ac002b09cb1a6f25a83b40f1207b043f0c8d1de48a2b1c7477e12fe7acac",
+    "tests/integration/verified_config_service/openssh_native/run-native.sh": "de192c351e27c303e4b7aae2049b8b54049ee23fedf1acb0395d742494c72f8b",
+    "tests/integration/verified_config_service/openssh_native/run-remote-package.sh": "3d4e638503a48125afab882c30eee5dd04e6a0d3c42d0d4668226dc97d827350",
+    "tests/integration/verified_config_service/openssh_native/ubuntu_socket.py": "04f8d0f8db46b50c9259de20e8b686d3a146cdf475c3a0bcdaaf4804df3f0f8d"
+  },
+  "native": {
+    "debian-12": {
+      "status": "PASS",
+      "cases": {
+        "foreign-compliant-owned-idempotent-refresh-release": 19,
+        "native-defaults-owned-idempotent-release": 9,
+        "native-default-outside-policy-range-ssh_max_auth_tries": 1,
+        "native-default-outside-policy-range-ssh_use_pam": 1,
+        "matching-Include-refused-before-Prepared": 2,
+        "no-final-LF-scalar-active": 3,
+        "no-final-LF-port-active": 3,
+        "no-final-LF-port-offline": 3,
+        "empty-orphan-container-refusal": 2
+      },
+      "operations": 43,
+      "raw_report": "build-openssh-native/debian-12/evidence/ownership-results.json",
+      "raw_report_sha256": "6b8054950623f815ebdeb808384863e63e527eb19a5635fc02091cb7937845aa",
+      "driver_sha256": "6c25d68ee783c6b53749dd6a2bf20ffcfb7634635b5366fac0d79ee173ec25ca",
+      "container_inspect_sha256": "e2473b8d1edee39c4f546d6acb935fa370fdfc53b2866820496bcd266eb5e96f"
+    },
+    "debian-13": {
+      "status": "PASS",
+      "cases": {
+        "foreign-compliant-owned-idempotent-refresh-release": 19,
+        "native-defaults-owned-idempotent-release": 9,
+        "native-default-outside-policy-range-ssh_max_auth_tries": 1,
+        "native-default-outside-policy-range-ssh_use_pam": 1,
+        "matching-Include-refused-before-Prepared": 2,
+        "no-final-LF-scalar-active": 3,
+        "no-final-LF-port-active": 3,
+        "no-final-LF-port-offline": 3,
+        "empty-orphan-container-refusal": 2
+      },
+      "operations": 43,
+      "raw_report": "build-openssh-native/debian-13/evidence/ownership-results.json",
+      "raw_report_sha256": "0cfff1da62cae39e1af56cfd5a22f5939f54abbf1f62a0764c933458cc30c025",
+      "driver_sha256": "cfb3588519cc0d08f983ac9b4076c13a3e374667fa38f2f505f05f0b8ef0183c",
+      "container_inspect_sha256": "2c8650eca5bb978cc5842c0b08389ad7935921df105cae0e1f055a17b042ff9a"
+    },
+    "ubuntu-24.04": {
+      "status": "PASS",
+      "cases": {
+        "foreign-compliant-owned-idempotent-refresh-release": 19,
+        "native-defaults-owned-idempotent-release": 9,
+        "native-default-outside-policy-range-ssh_max_auth_tries": 1,
+        "native-default-outside-policy-range-ssh_use_pam": 1,
+        "matching-Include-refused-before-Prepared": 2,
+        "no-final-LF-scalar-active": 3,
+        "no-final-LF-port-active": 3,
+        "no-final-LF-port-offline": 3,
+        "empty-orphan-container-refusal": 2
+      },
+      "operations": 43,
+      "raw_report": "build-openssh-native/ubuntu-24.04/evidence/ownership-results.json",
+      "raw_report_sha256": "749c379ade665cdc7fed5c71f1aa7167bfa67b65fdc5bc0b14f5d8bf1f691aef",
+      "driver_sha256": "de0414e419ba33373b3d49e0e70c0e37187902dda89e43b0ffca2cf41868240d",
+      "container_inspect_sha256": "2af3d436ad9b498e17cec2136a9ec0cf9bb8c1d688cbab5f780898e7a2bef097"
+    },
+    "ubuntu-26.04": {
+      "status": "PASS",
+      "cases": {
+        "foreign-compliant-owned-idempotent-refresh-release": 19,
+        "native-defaults-owned-idempotent-release": 9,
+        "native-default-outside-policy-range-ssh_max_auth_tries": 1,
+        "native-default-outside-policy-range-ssh_use_pam": 1,
+        "matching-Include-refused-before-Prepared": 2,
+        "no-final-LF-scalar-active": 3,
+        "no-final-LF-port-active": 3,
+        "no-final-LF-port-offline": 3,
+        "empty-orphan-container-refusal": 2
+      },
+      "operations": 43,
+      "raw_report": "build-openssh-native/ubuntu-26.04/evidence/ownership-results.json",
+      "raw_report_sha256": "4841114ad9375f3e76dc4e882f650f87a957818b630e32e70a8958ace05c6567",
+      "driver_sha256": "10d2b927bce8989984977f2cfe36c6c719ad2258b3504ec7baee06ac32e4524c",
+      "container_inspect_sha256": "2528779d97a2f74ed84650d71ffb7dbc0c8584ab3faf1f73bbc1514f0fd0c63a"
+    },
+    "alt-p11": {
+      "status": "PASS",
+      "cases": {
+        "foreign-compliant-owned-idempotent-refresh-release": 19,
+        "native-defaults-owned-idempotent-release": 9,
+        "native-default-outside-policy-range-ssh_max_auth_tries": 1,
+        "native-default-outside-policy-range-ssh_use_pam": 1,
+        "matching-Include-refused-before-Prepared": 2,
+        "no-final-LF-scalar-active": 3,
+        "no-final-LF-port-active": 3,
+        "no-final-LF-port-offline": 3,
+        "empty-orphan-container-refusal": 2
+      },
+      "operations": 43,
+      "raw_report": "build-openssh-native/alt-p11/evidence/ownership-results.json",
+      "raw_report_sha256": "26364bad9e12f1ade97d7f64858d8ea7ec35cc806a77d88616cd29b295c711e9",
+      "driver_sha256": "aa2d71680ca8c8836a82403a2d2cfd89a4f7484d7afa303cd5aa5d203bbfdffc",
+      "container_inspect_sha256": "7afd95307b52d2b7f6fa2d3ddf7fc24ab9a37fd88e23c86cfff1a4b6912a59cb"
+    }
+  },
+  "installed_package_debian12": {
+    "status": "PASS",
+    "report": "build-ssh-lifecycle/remote-debian-12-20261102T191632Z-56281/ssh-remote-results.json",
+    "report_sha256": "6c6b43254e75f57ce3923db35469b155fdfe524b1ff2fc61360339ea9d0b8138",
+    "coverage": [
+      "foreign PubkeyAuthentication yes owned apply/reapply/disable through installed daemon CLI/IPC",
+      "preserved missing final LF",
+      "REFRESH and verified active uninstall rollback/remove/purge",
+      "existing authenticated TCP survives"
+    ],
+    "packages_sha256": {
+      "fic-dick_0.0.0~alpha_debian12_amd64.deb": "38783b63d8fef1fc7706f9a9b1594ee32c817437ad5d8d14bd2bf6612ebf8778",
+      "fic_0.0.0~alpha_debian12_amd64.deb": "71c2146a81437ee5d790aa71adfcee91c344b91d3d0a07c7d0b43e85d0de14dc",
+      "fic-cli_0.0.0~alpha_debian12_amd64.deb": "25ec9fc40f628c284da683eddc7fb72622b998d06f1c63260b2174ee1bb3778e"
+    }
+  },
+  "full_debian12": {
+    "build": "PASS",
+    "ctest": {
+      "total": 221,
+      "pass": 216,
+      "fail": 1,
+      "skip": 4,
+      "seconds": 180.61,
+      "failure": "sssd_i6_evidence_checks: historical source-bound report requires fresh SSSD package matrix; not rerun or relabeled",
+      "skipped": [
+        "verified_config_service_native_tests",
+        "daemon_singleton_startup_native",
+        "maintenance_preflight_native",
+        "package_pam_hooks_native"
+      ]
+    },
+    "build_log_sha256": "00bb8b910652944de8abaf80db05ddbb65b55b612f432a47c6f12099902ca8c8",
+    "ctest_log_sha256": "6948fd92d5e25050f0516979f9ccdfb8af86fa000013c1ccab266e8f5a1aa02d"
+  },
+  "supplemental_pre_final_EOF_change": {
+    "scope": "Earlier binaries; supplementary regression coverage only, not final-source native receipts",
+    "refresh": "21 cases PASS all five platforms",
+    "match": "12 cases PASS all five platforms",
+    "release": "30 cases PASS Debian12/13 and Ubuntu24/26; ALT positive release5 PASS",
+    "ALT_full_negative_release": "Not completed; intentionally stopped"
+  },
+  "limits": [
+    "Strict matching Included Port refusal before Prepared; no multi-file wrappers or endpoint normalization",
+    "No journal/schema/recovery/lifecycle changes; legacy ID-only release limitations unchanged",
+    "Common container kernel does not establish five independent kernel validations",
+    "Full CTest is not green; unrelated SSSD native matrix not rerun"
+  ]
+}

@@ -34,6 +34,15 @@ SshConfigFileHandler::SshConfigFileHandler(const std::string& filepath)
     : FileHandler(filepath, " ") {
 }
 
+std::string SshConfigFileHandler::pendingContent() const {
+    auto content = FileHandler::pendingContent();
+    if (loadSnapshot_ && !content.empty() &&
+        (loadSnapshot_->content.empty() || loadSnapshot_->content.back() != '\n')) {
+        content.pop_back();
+    }
+    return content;
+}
+
 bool SshConfigFileHandler::findFirstMatchLine(std::size_t& line) const {
     for (std::size_t index = 0; index < original_lines_.size(); ++index) {
         const SshLineParseResult parsed = parseSshConfigLine(original_lines_[index]);

@@ -133,8 +133,9 @@ private mount parents сохраняются. Текущий owned REFRESH оп�
 
 Каждая реальная policy использует общий Ssh transaction: shared mutex → unresolved
 Prepared gate → service/input/publication preflight → durable Prepared → CAS save →
-тот же RO activation engine → cleanup/P → journal finalize. Foreign compliant
-не присваивается ownership. Fresh owned apply получает runtime proof; повторный
+тот же RO activation engine → cleanup/P → journal finalize. Initially compliant
+foreign configuration также требует собственного блока и Applied journal,
+при этом foreign scalar строки сохраняются. Fresh owned apply получает runtime proof; повторный
 compliant apply с действительным receipt не вызывает restart. Receipt ограничен
 памятью процесса и привязан к boot/unit/process/invocation/executables/launch,
 closure/metadata/selected values и listener identities. При изменении — новое proof.

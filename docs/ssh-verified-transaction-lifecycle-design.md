@@ -7,7 +7,14 @@ Stage 1/2 и bounded Debian integration описаны в §22/23 и после�
 Текущий typed REFRESH/schema 3 и verified active/offline release с disable acknowledgement
 описаны в [контракте adapter](ssh-verified-activation-adapter.md#crash-consistent-ownership-refresh);
 раздел release — [здесь](ssh-verified-activation-adapter.md#verified-configuration-release);
-автоматического recovery Prepared по-прежнему нет.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
+автоматического recovery Prepared по-прежнему нет. Текущий apply дополнительно
+требует собственный FIC policy sub-block и Applied journal даже при initially
+compliant foreign/default value; no-write reuse возможен только для доказанного
+owned-compliant состояния. Single-file Port с matching активным Port в Include
+отклоняется до Prepared/записи, если prospective image нарушает строгий
+Port/listener contract; endpoints не нормализуются, Include не меняется.
+Исторические no-enrollment варианты ниже заменены
+этим контрактом; они не описывают текущий apply.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
 Production, API, journal schema и поведение политик этим документом не изменяются.
 
 Рекомендация: отдельный **SSH transaction coordinator** (вариант B), переиспользующий
@@ -219,7 +226,7 @@ no-artifacts и drifted block, но не durable service intents или restart 
 | Outcome | Что доказано | Полный Success / public projection |
 |---|---|---|
 | VerifiedApplied | Planned persistent durable, ownership, A/B/C/P, cleanup, journal finalization | Да; bool true / Applied |
-| VerifiedUnchanged | Всё выше из валидного receipt + свежих проверок той же InvocationID/closure/launch, без новой write | Да; bool true / Applied; foreign compliance не получает ownership |
+| VerifiedUnchanged | Всё выше из валидного receipt + свежих проверок той же InvocationID/closure/launch, без новой write | Да только с доказанным policy block и Applied ownership |
 | ConfiguredInactive | Durable desired persistent и ownership/journal; отсутствие active service достоверно, runtime not applicable | Отдельный результат, **не VerifiedApplied** |
 | DeferredRuntime | Runtime требовался, но не доказан / разрешение restart отсутствует | Не Success; unresolved service operation |
 | PersistentDrift | B runtime success, P mismatch | Не Success; сохранить B, service gate RecoveryRequired |
@@ -391,7 +398,7 @@ proof. Это сохраняет evidence, но не даёт полного н�
 `sshOperations` (service + canonical config identity), максимум одна unresolved op
 на service. В ней operation intent/facts/runtime receipt, **не ownership**.
 Owner permissions по-прежнему только в mutation records + exact file artifacts.
-Это необходимо и для verified foreign-compliant no-write operation, которой нельзя
+Это необходимо и для verified owned-compliant no-write operation, которой нельзя
 создать фиктивную owned undo mutation ради runtime receipt.
 
 SSH payload дополнительно хранит previous/target **FIC-owned projections** при
@@ -593,8 +600,9 @@ existing policy classifier и `SshInputAuthority` (последний — necess
 * Смена значения целевым coordinator должна стать in-place owned transition
   previous→target, а не legacy release→apply с двумя runtime windows. Это требует
   previous/target payload; до его появления оставить legacy path явно legacy.
-* No-write compliant foreign: не создавать ownership. Verified activation receipt
-  хранится как service evidence в journal; release не получает прав на foreign line.
+* Initially compliant foreign/default: первый apply создаёт собственный sub-block
+  через Prepared/CAS/verified activation и Applied. Чужие scalar bytes не присваиваются;
+  main Port получает обычные fingerprinted wrappers. No-write reuse требует ownership.
 * Periodic no-write reuse: full closure/metadata/launch/executable grants + boot ID,
   InvocationID, PID/starttime и current service state совпадают с предыдущим complete
   receipt, no pending ops/residuals; проверяется selected expectation generation.
@@ -725,7 +733,7 @@ Late READY фиксируется как observed fact, не retrospective timel
 | Service ситуация | Решение strict coordinator |
 |---|---|
 | Active, desired compliant, valid current receipt | VerifiedUnchanged; no write/restart |
-| Active, compliant без owned block и receipt | Не enroll ownership; explicit authorized verified activation для receipt либо Deferred |
+| Active, compliant без owned block/journal | Обычная owned-транзакция Prepared → CAS → verified activation → Applied |
 | Active, persistent desired, old runtime | Нельзя inferred Success из `-T`; new activation |
 | Installed, known stopped, configure-only intent | CAS desired persistent + ownership/journal; ConfiguredInactive/Deferred; не start |
 | Boot до запуска SSH | Тот же pending runtime; позже explicit readiness/reconciliation, без failed-login guesses |
@@ -882,7 +890,7 @@ V = authorized verified reconciliation. T/B0/X/R0/R1 из §11. Каждая с�
 |---|---|---|---|---|---|---|
 | Fresh apply | T durable, exact owned | R1 proven | Ja | VerifiedApplied | Нет | Нет |
 | Reapply unchanged + valid receipt | T stable | Та же proven invocation | Ja | VerifiedUnchanged | Нет | Нет |
-| Foreign compliant/no owned | Foreign approved stable | Новая proven invocation/валидный receipt | Service receipt, no owner enrollment | VerifiedUnchanged | Нет | Нет |
+| Foreign compliant/no owned | Новый собственный sub-block; foreign scalar bytes сохранены | Verified platform proof | Prepared → Applied | VerifiedApplied | Existing transaction guards | Нет |
 | Owned REFRESH same value + new external Port | T, old+new wrapper proofs | R1 | Ja со всеми surviving IDs | VerifiedApplied | По guards только no-restart | Нет; R2 regression |
 | REFRESH fail before install | Pre-refresh owned state | R0 | Previous payload/status restored, не discard | RejectedNoEffect | Не нужна | Ошибка apply; next retry safe |
 | Value change | Target owned line, previous/target provenance | R1 | Ja target | VerifiedApplied | No-restart exact pre-B only | No intermediate release/reload; тест сохранения A |

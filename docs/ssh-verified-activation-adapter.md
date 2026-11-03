@@ -343,8 +343,11 @@ real Debian gate проверяет фактический adapter/sshd, а не
    SSH-политики. Нет автоматического восстановления Prepared. REFRESH использует
    типизированный переход предыдущего и целевого ownership, описанный ниже;
    промежуточного освобождения прежнего ограничения нет.
-6. У уже compliant foreign configuration не появляется ownership. При отсутствии
-   актуального receipt всё равно нужен verified restart. Durable save проходит
+6. Успешный apply включённой SSH-политики требует собственного policy sub-block
+   и доказанного Applied journal ownership даже при compliant foreign configuration
+   или совпадающем OpenSSH default. Первый apply проходит обычные Prepared, CAS и
+   verified activation. Только owned-compliant reapply может переиспользовать
+   действительный receipt без записи/journal mutation/restart. Durable save проходит
    через существующий CAS; затем adapter доказывает A/B/C, cleanup и P, а caller
    повторно сверяет installed main identity перед journal commit.
 7. Ошибка после installed/unknown write не восстанавливает historical bytes:
@@ -509,3 +512,40 @@ Native evidence этого этапа отделяет backend fixture, реал
 fixture не означают их автоматической подготовки на обычном shared-root хосте.
 Сохранение существующего loopback SSH connection на stock units измерено отдельно
 от listener proof и не гарантируется для произвольной сети/custom KillMode.
+
+### Ownership при initially compliant apply
+
+Scalar sub-block помещается в начало main; чужие строки остаются неизменными,
+глобальное значение всегда точно равно FIC. Для `ssh_port` все глобальные Port
+в main, включая совпадающие, оборачиваются существующими FIC_DISABLED с новыми
+IDs и сохранёнными body fingerprints. Existing wrappers не переворачиваются и
+не получают новые IDs при reapply/REFRESH. Rollback удаляет только собственный
+блок и разворачивает доказанные wrappers. Orphan markers, исчезнувший блок при
+активном owner и неподтверждённый provenance запрещают apply; это не recovery.
+
+Include-файлы не меняются. До Prepared prospective main проверяется существующим
+sshd -t/-T через plannedMain: совпадающий активный Port в Include, который после
+добавления собственного Port нарушает строгий postcondition/listener contract,
+даёт отказ без записи файла или journal. Дубли Port/ListenAddress не нормализуются.
+Это временное ограничение single-file backend; multi-file FIC_DISABLED_BLOCK
+не реализован. Scalar-политики этим ограничением не затронуты.
+Ubuntu использует прежний socket/listener/FD proof; при совпадающем endpoint
+публикация owned-блока не требует лишней регенерации socket. ALT сохраняет
+Type=simple и существующий readiness proof. Enable не создаёт SSH ownership.
+
+OpenSSH defaults учитываются только в допустимых значениях FIC: native
+MaxAuthTries=6 вне диапазона политики1–5, UsePAM=no не допускается fixed=yes
+политикой. Такие запросы отвергаются; validators не расширяются.
+
+EOF framing является foreign state: SSH serializer сохраняет наличие/отсутствие
+конечного LF из текущего CAS snapshot. Поэтому initially compliant файл без LF
+также получает ownership и возвращается byte-exact после release. Snapshot-copy
+используется для planned hashes и native validation, та же сериализация — для
+условного writer. Ни EOF, ни исторические foreign bytes не добавляются в journal;
+последующее внешнее изменение EOF сохраняется из текущего snapshot. Остальные
+FileHandler subclasses используют прежний default serializer.
+
+Текущий initially-compliant native gate: [ownership evidence](../tests/integration/verified_config_service/openssh_native/evidence/ownership-lifecycle.json).
+Все пять платформ: 9 сценариев / 43 операции; installed CLI/IPC gate — Debian12.
+Полный Debian12 build успешен; полный CTest содержит отдельный отказ устаревшего
+SSSD source-bound evidence и четыре opt-in SKIP, перечисленные в отчёте.

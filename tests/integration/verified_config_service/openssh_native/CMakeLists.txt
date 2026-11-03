@@ -36,6 +36,21 @@ list(REMOVE_ITEM FIC_SSH_APPLY_ROLLBACK_SOURCES
 get_target_property(ssh_driver_sources openssh_native_driver SOURCES)
 list(APPEND ssh_driver_sources ${FIC_SSH_APPLY_ROLLBACK_SOURCES}
     ${FIC_ROOT}/fic/src/modules/dac/sudo/SudoersAuthenticationTransaction.cpp)
+# The shared rollback dispatcher now links the production SSSD route too.
+# These dependencies are not exercised or provisioned by the SSH fixture.
+list(APPEND ssh_driver_sources
+    ${FIC_ROOT}/fic/src/service/sssd/SssdTransactionCoordinator.cpp
+    ${FIC_ROOT}/fic/src/service/sssd/SssdVerifiedActivationAdapter.cpp
+    ${FIC_ROOT}/fic/src/service/sssd/SssdRuntimeProof.cpp
+    ${FIC_ROOT}/fic/src/service/sssd/SssdDomainScope.cpp
+    ${FIC_ROOT}/fic/src/service/sssd/SssdEffectiveConfiguration.cpp
+    ${FIC_ROOT}/fic/src/service/sssd/SssdRelationValidator.cpp
+    ${FIC_ROOT}/fic/src/service/sssd/SssdServiceAdmission.cpp
+    ${FIC_ROOT}/fic/src/service/sssd/SssdVerifiedInputClosure.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
+)
 list(REMOVE_DUPLICATES ssh_driver_sources)
 set_property(TARGET openssh_native_driver PROPERTY SOURCES ${ssh_driver_sources})
 target_link_libraries(openssh_native_driver PRIVATE fic-policy fic-ipc Threads::Threads)

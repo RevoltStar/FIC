@@ -291,7 +291,7 @@ bool Ssh::apply() {
             return false;
         }
         if (newest.status != fic::rollback::MutationStatus::Prepared &&
-            ((ownership.blockPresent && !ownership.blockOwned) ||
+            (!ownership.blockPresent || !ownership.blockOwned ||
              !ownership.wrappersValid)) {
             // A drift of the FIC-owned state (for example a manually edited
             // block or an unproven wrapper id) must never be silently
@@ -299,7 +299,7 @@ bool Ssh::apply() {
             // not a drift: ownership-release semantics treats them as
             // already released.
             this->log("FIC-владение политикой '" + this->policyName +
-                          "' не может быть доказано (изменённый FIC-блок или "
+                          "' не может быть доказано (отсутствующий/изменённый FIC-блок или "
                           "несовпадающий провенанс DISABLED маркеров): " +
                           ownership.error + "; применение отклонено",
                   logLevel::ERROR);
@@ -384,6 +384,10 @@ bool Ssh::apply() {
                   logLevel::ERROR);
             return false;
         }
+        if (model.blockPresent && model.policies.empty()) {
+            this->log("Empty FIC managed container has no policy ownership; apply refused", logLevel::ERROR);
+            return false;
+        }
         if (!hasExistingRecord &&
             (sshManagedModelHasPolicy(model, this->policyName) ||
              sshManagedModelHasDisabledForPolicy(model, this->policyName))) {
@@ -416,15 +420,20 @@ bool Ssh::apply() {
     // main file may change, and only when separately bound to our CAS receipt.
 
 
-    // Compliance fast-path: a configuration that already satisfies the
-    // policy must not be rewritten (idempotent re-apply).
+    // Only proven owned compliance is an idempotent re-apply. Foreign
+    // compliance still needs the normal Prepared/CAS/verified ownership write.
     const SshComplianceResult compliance =
         runtime.policyValueCompliance(this->sshParameter, expectedValue);
     if (verified && compliance.compliance == SshCompliance::Unknown) {
         this->log("SSH compliance unknown: " + compliance.error, logLevel::ERROR);
         return false;
     }
-    if (compliance.compliance == SshCompliance::Compliant) {
+    const auto* currentOwner = hasExistingRecord ? std::get_if<
+        fic::rollback::UndoRemoveSshManagedPolicy>(&activeRecords.back().undo.payload) : nullptr;
+    if (compliance.compliance == SshCompliance::Compliant &&
+        activeRecords.size() == 1 && activeRecords.back().status == fic::rollback::MutationStatus::Applied &&
+        activeRecords.back().resource == resource && ownership.blockPresent && ownership.blockOwned &&
+        currentOwner && currentOwner->appliedValue == expectedValue) {
         if (verified) {
             std::string intentError;if(!currentConfiguredIntent(intentError)){this->log(intentError,logLevel::ERROR);return false;}
             const auto result = Adapter::activate(baseline);
@@ -534,7 +543,20 @@ bool Ssh::apply() {
         if(wrapper.policy==this->policyName && std::find(newWrapperIds.begin(),newWrapperIds.end(),wrapper.mutationId)!=newWrapperIds.end())
             payload.wrapperFingerprints.emplace(wrapper.mutationId,fic::core::ContentDigest::sha256Hex(wrapper.originalLine));
     // Get the exact writer serialization from the shared writer itself.
-    SshConfigFileHandler target(sshPath);target.lines()=planned;
+    SshConfigFileHandler target(*this->sshConfig_);target.lines()=planned;
+    // Single-file Port ownership cannot suppress Included Port directives.
+    // Check the exact prospective image before Prepared/CAS; keep the existing
+    // strict Port postcondition rather than normalizing duplicate listeners.
+    if (verified && semantics == SshDirectiveSemantics::MultiValue) {
+        auto projectedOptions = *runtimeOptions_;
+        projectedOptions.plannedMain = target.pendingContent();
+        SshRuntime projected(projectedOptions, executables_, commandRunner_);
+        if (!projected.validateSyntax(planError) ||
+            !verifyEffectiveValue(projected, semantics, this->sshParameter, expectedValue, planError)) {
+            this->log("SSH planned Port configuration unsupported before prepare: " + planError, logLevel::ERROR);
+            return false;
+        }
+    }
     std::string recordError;
     const bool prepared=refresh?
         journal->beginSshRefresh(mutationId,payload,

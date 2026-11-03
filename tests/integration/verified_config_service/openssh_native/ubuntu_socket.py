@@ -89,8 +89,8 @@ def main():
         assert {p for a,p in listeners()}=={22}
         reset()
         h.MAIN.write_text(h.MAIN.read_text().replace('PermitRootLogin yes' ,'PermitRootLogin no'))
-        rows=case('foreign-compliant-no-enrollment',[{'policy':'ssh_root_login','value':'no'}]*2)
-        assert all(r['main_unchanged'] and not r['records'] for r in rows),rows
+        rows=case('foreign-compliant-owned',[{'policy':'ssh_root_login','value':'no'}]*2)
+        assert not rows[0]['main_unchanged'] and len(rows[0]['records'])==1 and rows[1]['main_unchanged'] and rows[1]['journal_unchanged'],rows
         assert rows[1]['before_invocation']==rows[1]['after_invocation']
         reset(extra='Match User nobody\n    X11Forwarding no\n')
         (h.DROP/'10.conf').write_text('Include /etc/ssh/sshd_config.d/nested/leaf.inc\n')
@@ -127,13 +127,14 @@ def main():
             reset();drop=Path('/etc/systemd/system/'+unit+'.d');drop.mkdir();(drop/'foreign.conf').write_text(body);ctl('daemon-reload')
             row=case('unsupported-'+unit,[{'policy':'ssh_root_login','value':'no'}],False)[0];assert row['main_unchanged'] and not row['records']
         reset()
-        case('rollback-active-refusal',[
-            {'policy':'ssh_port','value':'2244'},
-        ])
-        row=case('rollback-active-ownership-retained',[{'policy':'ssh_port','value':'2244','rollback':True}],False)[0]
-        assert row['main_unchanged'] and row['records'],row
+        case('rollback-active-owned-setup',[{'policy':'ssh_port','value':'2244'}])
+        row=case('rollback-active-verified',[{'policy':'ssh_port','value':'2244','rollback':True}])[0]
+        assert not row['main_unchanged'] and 'RuntimeVerified' in row['release_message'],row
+        assert all(r['status']=='rolled_back' for r in row['journal_after']['records']) and h.handshake(2222).startswith('SSH-2.0-')
+        reset();case('rollback-offline-owned-setup',[{'policy':'ssh_port','value':'2244'}])
         row=case('rollback-offline-ownership-only',[{'policy':'ssh_port','value':'2244','rollback':True,'offline':True}])[0]
-        assert not row['main_unchanged'] and 'runtime' in row['release_message'],row
+        assert not row['main_unchanged'] and 'ReleasedOffline' in row['release_message'] and row['before_pid']==row['after_pid']=='0',row
+        assert all(r['status']=='rolled_back' for r in row['journal_after']['records'])
         for fault in ('ro-write','busy','original-write','new-glob','contract-before','contract-after','foreign-socket-restart','socket-disable','generated-drift','final-disable','final-restart'):
             reset();h.MAIN.write_text(h.MAIN.read_text().replace('PermitRootLogin yes','PermitRootLogin no'))
             (h.WORK/'mutation.conf').write_text(h.MAIN.read_text()+'# foreign persistent mutation\n')
