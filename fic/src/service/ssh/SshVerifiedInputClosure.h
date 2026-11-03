@@ -17,6 +17,9 @@ struct Closure {
     std::vector<std::string> order;
     std::set<std::string> negativeSetDirectories;
     std::set<std::string> hostKeys;
+    // Zero-based physical source positions; repeated logical visits retained
+    // in order, while each physical Port is planned once by the caller.
+    std::map<std::string,std::set<std::size_t>> globalPorts;
 };
 Closure validateClosure(const ActivationRequest&, const InputBytes&, const std::map<std::string, std::string>& policies, const InputProfile& profile=inputProfile(), SshActivationIntent intent=SshActivationIntent::SelectedPolicies);
 void validateCompatibleDropIn(const std::string& bytes);

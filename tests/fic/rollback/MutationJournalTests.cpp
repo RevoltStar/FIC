@@ -2991,6 +2991,47 @@ void testSudoGlobalJournalContract() {
     }
 }
 
+void testSshMultiFilePublicationContract() {
+    TempFile file;MutationJournal journal(file.path);std::string error;
+    require(journal.initializeOrLoad(error),error);
+    auto record=preparedSshRecord();auto& old=std::get<UndoRemoveSshManagedPolicy>(record.undo.payload);
+    old.disabledMutationIds.clear();MutationId id=0;
+    require(journal.prepareMutation(record,id,error)&&journal.setStatus(id,MutationStatus::Applied,error),error);
+    auto target=old;target.ownershipVersion=1;target.appliedValue="2323";
+    target.includedWrappers["/etc/ssh/sshd_config.d/10.conf"]["created-id"]=std::string(64,'c');
+    const auto main=record.resource.substr(4,record.resource.rfind(':')-4);
+    AtomicTargetState mainState,fragment;mainState.identity={1,2};mainState.mode=0644;mainState.content="main target";
+    fragment=mainState;fragment.identity.inode=3;fragment.content="fragment target";
+    SshPlannedFilePublication m,f;m.before={1,1,0644,0,0,std::string(64,'a'),true};m.targetSha256=fic::core::ContentDigest::sha256Hex(mainState.content);m.replacement=true;
+    f=m;f.before.inode=4;f.targetSha256=fic::core::ContentDigest::sha256Hex(fragment.content);
+    require(journal.beginSshPortChange(id,target,{{main,m},{"/etc/ssh/sshd_config.d/10.conf",f}},false,error),error);
+    require(journal.noteSshFileAttempt(id,main,error),error);
+    require(!journal.abortSshTransitionNoEffect(id,error),"attempted multi-file operation was discarded");
+    MutationJournal restarted(file.path);require(restarted.initializeOrLoad(error),error);
+    auto p=std::get<UndoRemoveSshManagedPolicy>(restarted.records()[0].undo.payload);
+    require(p.transition&&p.transition->version==3&&p.transition->files.size()==2&&p.transition->files.at(main).attempted,
+        "restart lost complete plan/unknown publication");
+    require(journal.noteSshFilePublication(id,main,mainState,true,error),error);
+    require(!journal.noteSshPublication(id,mainState,true,error),"partial publication advanced common phase");
+    require(journal.noteSshFileAttempt(id,"/etc/ssh/sshd_config.d/10.conf",error)&&
+        journal.noteSshFilePublication(id,"/etc/ssh/sshd_config.d/10.conf",fragment,true,error)&&
+        journal.noteSshPublication(id,mainState,true,error),error);
+    const std::map<std::string,std::string> facts{{"inputs","Proven"},{"semantics","Proven"},{"persistent","Proven"},
+        {"readiness","true"},{"unit","ssh.service"},{"InvocationID","fixture-invocation"},{"MainPID","42"}};
+    require(journal.noteSshRuntime(id,true,facts,error)&&journal.commitSshRefresh(id,error),error);
+    MutationJournal final(file.path);require(final.initializeOrLoad(error),error);
+    const auto& complete=std::get<UndoRemoveSshManagedPolicy>(final.records()[0].undo.payload);
+    require(complete.includedWrappers==target.includedWrappers&&complete.transition->files.size()==2,"per-file creation authority lost");
+    const auto good=nlohmann::json::parse(file.read());
+    for(const auto& change:{std::string("version"),std::string("fingerprint"),std::string("duplicate-id")}) {
+        auto broken=good;auto& undo=broken["records"][0]["undo"];
+        if(change=="version")undo["included_wrappers"]["version"]=2u;
+        if(change=="fingerprint")undo["included_wrappers"]["files"]["/etc/ssh/sshd_config.d/10.conf"]["created-id"]="bad";
+        if(change=="duplicate-id")undo["included_wrappers"]["files"]["/etc/ssh/sshd_config.d/20.conf"]["created-id"]=std::string(64,'c');
+        file.write(broken.dump());MutationJournal rejected(file.path);require(!rejected.load(error),"malformed multi-file authority accepted: "+change);
+    }
+}
+
 void testSshTypedRefreshPreviousTargetAndAbort() {
     TempFile file;MutationJournal journal(file.path);std::string error;
     require(journal.initializeOrLoad(error),error);
@@ -3190,6 +3231,7 @@ int main() {
         const char* name;
         void (*test)();
     } tests[] = {
+        {"SSH multi-file journal publication",testSshMultiFilePublicationContract},
         {"failed SSH transition cannot promote",testFailedSshTransitionCannotBePromoted},
         {"SSH release waits for DISABLE",testSshReleaseRequiresDisableAcknowledgement},
         {"SSH offline release/no-effect abort",testSshReleaseOfflineAndNoEffectAbort},

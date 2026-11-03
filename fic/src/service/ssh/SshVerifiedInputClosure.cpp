@@ -112,8 +112,9 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
         if (found == bytes.end()) unsupported("uncovered SSH configuration input");
         result.order.push_back(name);
         if (found->second.find('\0') != std::string::npos) unsupported("NUL in SSH configuration unsupported");
-        std::istringstream stream(found->second); std::string line;
+        std::istringstream stream(found->second); std::string line; std::size_t sourceLine=0;
         while (std::getline(stream, line)) {
+            const auto position=sourceLine++;
             if (++lines > 65536 || line.size() > 8192) unsupported("SSH classifier line bound exceeded");
             auto first = line.find_first_not_of(" \t");
             if (first == std::string::npos || line[first] == '#') continue;
@@ -130,6 +131,10 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
                 std::string error;
                 if (!sshSupportedMatch(args,error)) unsupported(error);
                 conditional = true; continue;
+            }
+            if (key=="port") {
+                if(conditional || args.size()!=1) unsupported("Port in conditional/ambiguous Include context");
+                result.globalPorts[name].insert(position);
             }
             if (conditional && selected.count(key) &&
                 (args.size()!=1 || !sshConditionalValueIsSafe(key,args.front(),selected.at(key))))

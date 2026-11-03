@@ -521,6 +521,35 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     out.observedMetadata=metadataIdentities(observed);
     return out;
 }
+SshPortSourceMap SshVerifiedActivationAdapter::capturePortSources(const std::string& mainSha,
+    const std::set<std::string>& previouslyOwnedFiles) {
+    SshPortSourceMap out;
+    out.reference=captureReference({},mainSha,SshActivationIntent::ConfigurationRelease);
+    const auto observed=capture(out.reference.reference);validateCaptured(out.reference,observed);
+    out.graph=detail::validateClosure(out.reference.reference,observed.bytes,{},detail::inputProfile(),SshActivationIntent::ConfigurationRelease);
+    std::set<std::string> paths(out.graph.order.begin(),out.graph.order.end());
+    const auto profile=detail::inputProfile();
+    for(const auto& path:previouslyOwnedFiles) {
+        const std::filesystem::path file(path),root(profile.fragments);
+        const auto relative=file.lexically_relative(root);
+        if(path!=file.lexically_normal().string()||relative.empty()||relative.is_absolute()||*relative.begin()==".."||
+           path.rfind(profile.fragments+"/",0)!=0||!observed.bytes.count(path))
+            unsupported("recorded SSH wrapper file is outside current trusted coverage or absent");
+        paths.insert(path);
+    }
+    std::set<std::pair<dev_t,ino_t>> identities;
+    for(const auto& path:paths) {
+        AtomicTargetState state;std::string error;
+        if(!AtomicFileWriter::captureTargetState(path,state,&error)||state.content!=observed.bytes.at(path)||
+           !identities.emplace(state.identity.device,state.identity.inode).second)
+            throw d::Failure(ActivationStatus::InterferenceDetected,"SSH Port physical source identity changed/aliased");
+        out.files.emplace(path,std::move(state));
+    }
+    const auto final=captureReference({},mainSha,SshActivationIntent::ConfigurationRelease);
+    if(!sameInputGeneration(out.reference,final,false))
+        throw d::Failure(ActivationStatus::InterferenceDetected,"SSH Port graph changed during source mapping");
+    return out;
+}
 #ifdef FIC_ACTIVATOR_TESTING
 namespace { thread_local const detail::AdapterTestHooks* policyTestHooks=nullptr; }
 #endif

@@ -87,17 +87,26 @@ struct UndoRemoveGrubManagedSetting {
 // file content is recorded; old SSH payloads are not migrated.
 enum class SshTransitionPhase { Prepared, Published, DurablePublished, RuntimeVerified, Completed, OfflineVerified, ReleasedAwaitingDisable };
 enum class SshTransitionIntent { Refresh, Release };
+using SshIncludedWrappers = std::map<std::string, std::map<std::string,std::string>>;
 struct SshOwnedProjection {
     std::string value;
     std::vector<std::string> disabledIds;
     std::uint32_t ownershipVersion = 0; // 0: legacy ID-only, 1: creation-bound bodies
     std::map<std::string,std::string> wrapperFingerprints;
+    SshIncludedWrappers includedWrappers; // versioned, creation-time per-path authority
 };
 struct SshPublicationProof {
     std::uint64_t device=0, inode=0;
     std::uint32_t mode=0, owner=0, group=0;
     std::string sha256;
     bool durable=false;
+};
+struct SshPlannedFilePublication {
+    SshPublicationProof before;
+    std::string targetSha256;
+    bool replacement=false;
+    bool attempted=false; // checkpoint before CAS; unknown effect stays Prepared
+    std::optional<SshPublicationProof> publication;
 };
 struct SshOwnershipTransition {
     std::uint32_t version=1;
@@ -111,6 +120,9 @@ struct SshOwnershipTransition {
     bool fileReplacement=true;
     MutationStatus predecessorStatus=MutationStatus::Applied;
     std::string predecessorError;
+    // v3 only. Complete bounded file plan before the first CAS. No backup bytes.
+    std::map<std::string,SshPlannedFilePublication> files;
+    bool initial=false;
 };
 struct UndoRemoveSshManagedPolicy {
     std::string policyName;   // FIC policy name (e.g. ssh_root_login)
@@ -126,9 +138,10 @@ struct UndoRemoveSshManagedPolicy {
     std::map<std::string,std::string> wrapperFingerprints;
     std::uint64_t operationSequence=0;
     std::optional<SshOwnershipTransition> transition;
+    SshIncludedWrappers includedWrappers;
 };
 inline SshOwnedProjection sshOwnedProjection(const UndoRemoveSshManagedPolicy& p) {
-    return {p.appliedValue,p.disabledMutationIds,p.ownershipVersion,p.wrapperFingerprints};
+    return {p.appliedValue,p.disabledMutationIds,p.ownershipVersion,p.wrapperFingerprints,p.includedWrappers};
 }
 inline bool sshTransitionPending(const UndoRemoveSshManagedPolicy& p) {
     return p.transition && p.transition->phase!=SshTransitionPhase::Completed;

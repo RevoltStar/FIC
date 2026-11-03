@@ -209,6 +209,10 @@ public:
     bool acknowledgeSssdDisable(const SssdDisableProof&, std::string&);
     bool beginSshRefresh(MutationId,const UndoRemoveSshManagedPolicy& target,
         const std::string& beforeSha256,const std::string& targetSha256,std::string&);
+    bool beginSshPortChange(MutationId,const UndoRemoveSshManagedPolicy& target,
+        const std::map<std::string,SshPlannedFilePublication>& files,bool release,std::string&);
+    bool noteSshFileAttempt(MutationId,const std::string& path,std::string&);
+    bool noteSshFilePublication(MutationId,const std::string& path,const AtomicTargetState&,bool durable,std::string&);
     bool noteSshPublication(MutationId,const AtomicTargetState&,bool durable,std::string&);
     bool noteSshRuntime(MutationId,bool verified,const std::map<std::string,std::string>& facts,std::string&);
     bool commitSshRefresh(MutationId,std::string&);

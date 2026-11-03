@@ -55,6 +55,18 @@ int main() {
         validation.snapshot.readinessConfirmed=true;
         require(!validation.success(),"configuration validation conflated with runtime readiness");++checks;
     }
+    {
+        Fixture graph;
+        graph.bytes[dir+"/10.conf"]="Port 2222\nInclude "+dir+"/nested.inc\nMatch User root\nPermitRootLogin no\n";
+        graph.bytes[dir+"/nested.inc"]="Port 2200\n";
+        graph.bytes[mainFile]+="Include "+dir+"/nested.inc\nPort 22\n";graph.sync();
+        const auto mapped=graph.closure();
+        require(mapped.order.size()==4&&mapped.globalPorts.at(dir+"/nested.inc").size()==1&&
+            mapped.globalPorts.at(mainFile).count(4)&&mapped.globalPorts.at(dir+"/10.conf").count(0),
+            "Port source map lost repeated visits/positions or leaked child Match context");++checks;
+        graph.bytes[mainFile]+="Match User root\nInclude "+dir+"/nested.inc\n";graph.sync();
+        deny([&]{graph.closure();});
+    }
     using J = nlohmann::json;
     std::map<std::string,std::string> launch;
     auto put = [&](const char* name, const J& v) { launch[std::string("launch.")+name] = J{{"value",v}}.dump(); };

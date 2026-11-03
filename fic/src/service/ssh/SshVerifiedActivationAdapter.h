@@ -2,6 +2,7 @@
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/ssh/SshVerifiedInputClosure.h"
 #include <memory>
+#include <fic/core/fs/AtomicFileWriter.h>
 namespace fic::service::detail {struct SshUnitReferences;}
 namespace fic::service::ssh {
 enum class ProofState { Proven, NonCompliant, NotProven, Unsupported };
@@ -43,6 +44,11 @@ struct SshVerifiedActivationResult {
     bool success() const { return status == SshActivationStatus::Success||status==SshActivationStatus::ReleasedOffline; }
     std::map<std::string,std::string> observedFacts() const;
 };
+struct SshPortSourceMap {
+    SshVerifiedActivationRequest reference;
+    detail::Closure graph;
+    std::map<std::string,AtomicTargetState> files;
+};
 class SshVerifiedActivationAdapter {
 public:
     static std::map<std::string,std::string> serviceAdmission();
@@ -53,6 +59,10 @@ public:
     static SshVerifiedActivationRequest captureReference(
         const std::map<std::string,std::string>& policies,const std::string& expectedMainSha,
         SshActivationIntent intent=SshActivationIntent::SelectedPolicies);
+    // Planning only: no selected-policy semantics/runtime proof or mutation.
+    // Uses the same closed input graph and trust checks as release capture.
+    static SshPortSourceMap capturePortSources(const std::string& expectedMainSha,
+        const std::set<std::string>& previouslyOwnedFiles={});
     static void prepareRuntimeProbe(const SshVerifiedActivationRequest&);
     static SshVerifiedActivationResult activate(const SshVerifiedActivationRequest&);
     static SshConfigurationValidationResult validateReleasePlan(
