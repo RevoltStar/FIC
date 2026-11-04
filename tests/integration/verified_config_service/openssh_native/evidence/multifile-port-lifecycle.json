@@ -1,0 +1,516 @@
+{
+  "task": "Multi-file SSH Port ownership across trusted Include graph",
+  "task_base": "e7acd8b847c95a5e31446df7ad49314fe817105e",
+  "generated_utc": "2026-11-04T05:42:55.887475+00:00",
+  "environment": "Disposable Docker systemd PID1, private cgroup/mount/PID/network namespaces, no host security changes; common WSL kernel",
+  "source_manifest": {
+    "path": "build-ssh-multifile-validation/source-manifest.json",
+    "sha256": "6cffa99a2c6bc7c3330a0a495b971fc173e2847983fec721cf502e1a38e729d1"
+  },
+  "source_manifest_generator": "tests/integration/sssd-i6/source-manifest.py (read-only production/build source inventory reuse)",
+  "harness_sha256": {
+    "tests/fic/modules/net/ssh/SshApplyRollbackSources.cmake": "5076ba2faead5c3e22df242ed361e128641ae678df7eec813b6771b4600d871f",
+    "tests/integration/verified_config_service/openssh_native/CMakeLists.txt": "0b354889cea9841539062d08462686a6c4682f236a3c0a8d54204566e15fc572",
+    "tests/integration/verified_config_service/openssh_native/Driver.cpp": "10ded03a318512fc3a4c5fc3328b754e036c76dd5e951b79f97c15a9bca78832",
+    "tests/integration/verified_config_service/openssh_native/alt_service.py": "d0b534c7bef66b223a7c25d8475d69d5635bc0108f9a96d3aa022dff697427f2",
+    "tests/integration/verified_config_service/openssh_native/boundary_syntax.py": "12e0481bd180f84df71739057a9fe7871be8f991d5c5dca97f04702deaa3d18f",
+    "tests/integration/verified_config_service/openssh_native/collect-evidence.py": "25f7796f9c5a000ac269bedf6beb26707cd92b60343a874bb5f2891b067e87ec",
+    "tests/integration/verified_config_service/openssh_native/collect-sources.py": "252579a9b6d2093b75953c883d8d0598ddbe6c111dc1448ec4d28490cedba427",
+    "tests/integration/verified_config_service/openssh_native/harness.py": "eecfb72e576c9712cca11e336c6a5a2a2fb0cda38b6e7012ffc56252e1534588",
+    "tests/integration/verified_config_service/openssh_native/lifecycle_cases.py": "b5dbdb0fb9f0088c14e5115e4884f2ac3994cd3a4f5ad4259c8f86863b24cf31",
+    "tests/integration/verified_config_service/openssh_native/match_cases.py": "20cf9171d11c8234bfa883203c3deb1a7a8cd6c4fe134aa2b747141cc609b2cc",
+    "tests/integration/verified_config_service/openssh_native/release_cases.py": "247a2e907cb829b93d2ba1171cbac0d5629504b70d99582864022e29b8e14f16",
+    "tests/integration/verified_config_service/openssh_native/release_plan_cases.py": "0d7e82b2c78097f742063b730d132a8e5362063236322b115948e817d7376a51",
+    "tests/integration/verified_config_service/openssh_native/remote_package_cases.py": "fddce922cdfb0feaab5a651b6f98e3de2b73b1dac21874dfcec668c4da7ba65a",
+    "tests/integration/verified_config_service/openssh_native/run-native.sh": "de192c351e27c303e4b7aae2049b8b54049ee23fedf1acb0395d742494c72f8b",
+    "tests/integration/verified_config_service/openssh_native/run-remote-package.sh": "3d4e638503a48125afab882c30eee5dd04e6a0d3c42d0d4668226dc97d827350",
+    "tests/integration/verified_config_service/openssh_native/ubuntu_socket.py": "04f8d0f8db46b50c9259de20e8b686d3a146cdf475c3a0bcdaaf4804df3f0f8d"
+  },
+  "production_sha256": {
+    "fic/src/daemon/UninstallReleaseOrder.h": "db8242fe8e452a1fca9e8d6294dcedf62288c7dc9a13bd5e1655d4b3dfc705ce",
+    "fic/src/daemon/UninstallRollback.cpp": "d5dc0e0eea21d947e11ae2af3566bec662b44af62e9902d6c8f7036ab5b27a6a",
+    "fic/src/modules/net/ssh/Ssh.cpp": "c08eff06090f2377b1bee2756a21732d0f6016a2dc8ef1f06d0b731852334deb",
+    "fic/src/modules/net/ssh/SshConfigTransaction.cpp": "4542f2e26460c09702d0c7a81a47d26005588a2f6f3397b908b6d966ebe0203a",
+    "fic/src/modules/net/ssh/SshConfigTransaction.h": "831b9efff35493fa743014eae3b2c48497ef3de420b72136186948226e56c04d",
+    "fic/src/modules/net/ssh/SshPortTransaction.cpp": "6ec896bd588159329beb34ffc99171a9c61b7bd2945b62338fd48f85f593ab56",
+    "fic/src/modules/net/ssh/SshPortTransaction.h": "2dc83671687a0f9e89c30e6b4d63f28e47dea75d95ead6430727352d57d8bfa2",
+    "fic/src/modules/net/ssh/SshRollback.cpp": "173f08c2c60e09ca03bb15450e9e44cecabec0b3094b7083d458f84a29a93d38",
+    "fic/src/modules/net/ssh/SshRollback.h": "801fe2c70e9fad56faec6f014e49eea62ae3c0d33320340365cceb7690f60390",
+    "fic/src/rollback/MutationJournal.cpp": "dda2e56ae3984610745d669206f45e4b806e331214676c6c73e5babe451fad1d",
+    "fic/src/rollback/MutationJournal.h": "84c2fa95d7205966cc8cb33ca349ade77864eba94bab4d94d81d898705a427e2",
+    "fic/src/rollback/MutationRecord.h": "f0c1b1fc5771c3eeed8997a52d2029d7e84fe3bb934a2cc3009077db6a0dd9ad",
+    "fic/src/rollback/RollbackExecutor.cpp": "02bc81ecdae4de8054946047c0fb6eb028904df9b368aa90f3e6f681a983c861",
+    "fic/src/rollback/UnrecordedResourceInspection.cpp": "da17de0bc4fabcb61a0fdb16d756956c5ba1ec1a6f8aa60424dd0675d4bb9922",
+    "fic/src/service/ssh/AltSshServiceFlow.cpp": "dc2777245ea95ca3a412be6773f1ac0ab209244a52990718db5a7998c5b31e82",
+    "fic/src/service/ssh/AltSshServiceFlow.h": "f7609d952737a1a48c28799c8246c4786d84b076c291f4c32a64084d2ca897d2",
+    "fic/src/service/ssh/SshListenerProof.cpp": "82352e847a1bb6ecd9020c96cf82aa82c21f79eace2c5607ca0b66e8b67024e0",
+    "fic/src/service/ssh/SshListenerProof.h": "69c48f0e2dfe5a3de001ad081e23332dbca8ea4eae02df800b5aab27a1951f8d",
+    "fic/src/service/ssh/SshVerifiedActivationAdapter.cpp": "0adab5f290269b5d1ec16b8f64fb7fcb5c80a87480a589a137e470adeaea078d",
+    "fic/src/service/ssh/SshVerifiedActivationAdapter.h": "3e337d8f4aee5d5f6418cca3c2e99a0a7627de798ec9c638394ba25d56086639",
+    "fic/src/service/ssh/SshVerifiedInputClosure.cpp": "d28d5543ab9108b1ab599713ffd26f3d502b22ba37732979bccd1d518ff2a884",
+    "fic/src/service/ssh/SshVerifiedInputClosure.h": "f943d75760c4e2f5bbd9c29cb12110ebd35c16d6f0a4dafc2ae998b73d7275f2",
+    "fic/src/service/ssh/UbuntuSshSocketFlow.cpp": "2a80e6091321fb8609b1a5a27ed04e9ac90f2578339b28726ea2dc7ea595077c",
+    "fic/src/service/ssh/UbuntuSshSocketFlow.h": "d5e117be36552841956f05ea5f6a439acfc0dc2779afeff6e02e0d2b18adeb3a"
+  },
+  "platforms": {
+    "debian-12": {
+      "native": {
+        "status": "PASS",
+        "cases": 42,
+        "module_operations": 90,
+        "raw": {
+          "path": "build-openssh-native/debian-12/evidence/multifile-results.json",
+          "sha256": "01be2829e6c75596822cd6bd48cb9a6461b7094297f5b399e58f6e25af97050d"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/native-debian12.log",
+          "sha256": "e4301206e569b67795b8584a0007c21cb824a625af534b5466506bafc03189ff"
+        }
+      },
+      "initially_compliant": {
+        "status": "PASS",
+        "cases": 9,
+        "module_operations": 44,
+        "raw": {
+          "path": "build-openssh-native/debian-12/evidence/ownership-results.json",
+          "sha256": "44eab0450bba1229ef453c18f37d5c7e10f1623e6cf1be1c7cd65740def35ee2"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/ownership-debian12.log",
+          "sha256": "e1e7f2bf30d6e7f84b20d762bcab79285e555656d205d96f2d0eb980f3617bf9"
+        }
+      },
+      "package": {
+        "status": "PASS",
+        "commands": 82,
+        "raw": {
+          "path": "build-ssh-lifecycle/remote-debian-12-20261103T172609Z-35374/ssh-remote-results.json",
+          "sha256": "2f891b6bfa2ebfc36199e12972d9b7e2b73645aa8fb6ed2c89af620b36a37e04"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/package-native-debian12.log",
+          "sha256": "62b4bfc098d440763340641f37a2c2dcb59f2befa1d81cd26d7f2e8fb55615ae"
+        },
+        "packages": {
+          "fic-cli_0.0.0~alpha_debian12_amd64.deb": "b0047c1ea25d63f9b88a87348c8ac4074f8d29edb19b53eb62adb2896928525d",
+          "fic-dick_0.0.0~alpha_debian12_amd64.deb": "df6428393894d702f80d3d32621fac06ba69dc29fd89a688d1f8398177be0867",
+          "fic_0.0.0~alpha_debian12_amd64.deb": "c0b9a04178e53ce923fd0e3db31352a244e2856a447772b7caba4027ad470dde"
+        },
+        "vendor_unit": {
+          "path": "/lib/systemd/system/ssh.service",
+          "sha256": "35b2858970feb78e985900b33ba8cb84249dfadbf296155e5639cafcf1dd40a3",
+          "kill_mode": "process"
+        },
+        "live_original_ssh_connection": true,
+        "expected_fixture_diagnostics": []
+      },
+      "native_driver": {
+        "path": "build-openssh-native/debian-12/openssh_native_driver",
+        "sha256": "424590f986c17a9e96c4dcfa20dfdc880cde404fd118e5f20019f6401168f3ae"
+      },
+      "daemon": {
+        "path": "build-ssh-owned-package/debian-12/fic/fic",
+        "sha256": "c43abd709d7e0b320df032320c8e312d515509a54adc71e0c1bc1ac868bddb30"
+      },
+      "runtime_image": {
+        "tag": "fic-ssh-lifecycle-native:debian12",
+        "id": "sha256:43f83d7aea7c325f84ab4f532ad87f4bdd931b4617880352ed3f43539928b034"
+      },
+      "builder_image": {
+        "tag": "fic-package-native:debian12",
+        "id": "sha256:2c8a7e2c4897b43b4556c2ca27581c3563a6c7b1ee71008a7fa0a3884d32e47e"
+      }
+    },
+    "debian-13": {
+      "native": {
+        "status": "PASS",
+        "cases": 42,
+        "module_operations": 90,
+        "raw": {
+          "path": "build-openssh-native/debian-13/evidence/multifile-results.json",
+          "sha256": "c8cca57164b4af3eb36cc715b1108e3f1a85241be6e5bed38184ed0e84e1fdad"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/native-debian13.log",
+          "sha256": "70635c263022c0382f2e98642d524e7ef9ff4b92646bd328a1bf3f6043667f3d"
+        }
+      },
+      "initially_compliant": {
+        "status": "PASS",
+        "cases": 9,
+        "module_operations": 44,
+        "raw": {
+          "path": "build-openssh-native/debian-13/evidence/ownership-results.json",
+          "sha256": "de1d6b803d5943320fa5b70e0dad0008442f3e27843762774f84c2f25321424c"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/ownership-debian13.log",
+          "sha256": "88002dac83d66ad5f22727c3d3cb9b86705f6da832c38302f7c0f6de17bffbba"
+        }
+      },
+      "package": {
+        "status": "PASS",
+        "commands": 82,
+        "raw": {
+          "path": "build-ssh-lifecycle/remote-debian-13-20261104T051138Z-2753/ssh-remote-results.json",
+          "sha256": "b484fad32c1eb8b26654ed4c97382bfee3f9809d89ff4f0e2004c0efee07c34a"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/package-native-debian13.log",
+          "sha256": "4b0902cc3578129dd4b75641d3e15d636ee7e834f973d35bf7aca5a48afefeff"
+        },
+        "packages": {
+          "fic-cli_0.0.0~alpha_debian13_amd64.deb": "0b7cd514aebdb59d8fb8c2defe7f39d511107ac12ec887302cd6cc6465d9a7fa",
+          "fic-dick_0.0.0~alpha_debian13_amd64.deb": "a0bd96d30261524f49eb68358a12a11cc5df3f77df671185e030dc5ce051b3f1",
+          "fic_0.0.0~alpha_debian13_amd64.deb": "3ae2560b75b3034c9ff47e72b4b80e3f625b70291f48184f16023e4d736bf3be"
+        },
+        "vendor_unit": {
+          "path": "/usr/lib/systemd/system/ssh.service",
+          "sha256": "1e3c11483cc51a6c7aa3ab92affa43a313cab65e9721a64ce7720404cf6de1c8",
+          "kill_mode": "process"
+        },
+        "live_original_ssh_connection": true,
+        "expected_fixture_diagnostics": []
+      },
+      "native_driver": {
+        "path": "build-openssh-native/debian-13/openssh_native_driver",
+        "sha256": "c58c3bf35225bdcea350e2ac1bccd8205af0f44bd2a8b5cdac9edc87a47dea32"
+      },
+      "daemon": {
+        "path": "build-package-release/debian13/fic/fic",
+        "sha256": "3cfef0595ddb54463ab3f46b5e1c020a573bfd5b6871ff96f155a54a536fae44"
+      },
+      "runtime_image": {
+        "tag": "fic-ssh-lifecycle-native:debian13",
+        "id": "sha256:6c9faa03ca1494db54ed6d51e293051f589ce03b7b326078dbfe755440dbd616"
+      },
+      "builder_image": {
+        "tag": "fic-package-native:debian13",
+        "id": "sha256:99197dc0617a8aaf7c26006d0404f7d355438e38a0505690f093993119c55684"
+      }
+    },
+    "ubuntu-24.04": {
+      "native": {
+        "status": "PASS",
+        "cases": 42,
+        "module_operations": 90,
+        "raw": {
+          "path": "build-openssh-native/ubuntu-24.04/evidence/multifile-results.json",
+          "sha256": "9c184120d2a00e07cf429ff76e523aeaf1d0847e99a1e7081db4546e86d7fe2a"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/native-ubuntu2404.log",
+          "sha256": "d5b833db29b367fae8a61c87e00b1b2ab1f076c691da1c6b200e35bcfbbc35d7"
+        }
+      },
+      "initially_compliant": {
+        "status": "PASS",
+        "cases": 9,
+        "module_operations": 44,
+        "raw": {
+          "path": "build-openssh-native/ubuntu-24.04/evidence/ownership-results.json",
+          "sha256": "9ed3a16ea3788622f81d828954515fca59c3694f7c495a6157f314c9b3ebd1dd"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/ownership-ubuntu2404.log",
+          "sha256": "504589b9368c179573bc25ab373d7086131cff208bc1e2dd514be174466aef35"
+        }
+      },
+      "package": {
+        "status": "PASS",
+        "commands": 82,
+        "raw": {
+          "path": "build-ssh-lifecycle/remote-ubuntu-24.04-20261104T051142Z-2853/ssh-remote-results.json",
+          "sha256": "573583de8e107ff2d95ded3167e865ecb8cf19f2426f1be6f2e3773f0f3924cc"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/package-native-ubuntu2404.log",
+          "sha256": "95a3aae52d80bc7ceb86d868aad1b0c24389084fde9ad7d3e9c257a889551f16"
+        },
+        "packages": {
+          "fic-cli_0.0.0~alpha_ubuntu2404_amd64.deb": "64735c9c5304407546ebbd7c52734525f4732177a4bce277631b1946667992cb",
+          "fic-dick_0.0.0~alpha_ubuntu2404_amd64.deb": "2894524f9e78b740e93a76d13fdcbfad6a093c841380e25f8a604276529c1162",
+          "fic_0.0.0~alpha_ubuntu2404_amd64.deb": "699fdd8c46e8d3e681e701a1b9895859c4be77789ec7ab6716678951f4301bf8"
+        },
+        "vendor_unit": {
+          "path": "/usr/lib/systemd/system/ssh.service",
+          "sha256": "35b2858970feb78e985900b33ba8cb84249dfadbf296155e5639cafcf1dd40a3",
+          "kill_mode": "process"
+        },
+        "live_original_ssh_connection": true,
+        "expected_fixture_diagnostics": []
+      },
+      "native_driver": {
+        "path": "build-openssh-native/ubuntu-24.04/openssh_native_driver",
+        "sha256": "8769b489233000505e6c83cfdfff0f2008671609436790619ae06f2c08f9e938"
+      },
+      "daemon": {
+        "path": "build-package-release/ubuntu2404/fic/fic",
+        "sha256": "2dd2005ac923349a8554e3580fcf421c87640a2e23cd5dc3f4bf6e8c13c69d18"
+      },
+      "runtime_image": {
+        "tag": "fic-ssh-lifecycle-native:ubuntu2404",
+        "id": "sha256:37c306d36922741a6c9bc8861977410eab8f39e521a0da1e146a26ddf2a77039"
+      },
+      "builder_image": {
+        "tag": "fic-package-native:ubuntu2404",
+        "id": "sha256:79b54052d205b995f4db1840cd852e8a1b40b92211133e5971860af6a13e64af"
+      }
+    },
+    "ubuntu-26.04": {
+      "native": {
+        "status": "PASS",
+        "cases": 42,
+        "module_operations": 90,
+        "raw": {
+          "path": "build-openssh-native/ubuntu-26.04/evidence/multifile-results.json",
+          "sha256": "30e853e50a3acde57850ca042d24f0e9aa6fb790d700caf5703842152cfd0b1c"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/native-ubuntu2604.log",
+          "sha256": "ed3fcb4d5babb1cc632dc59a8778681ce6a9e388b9cf2882477e07027840f5cd"
+        }
+      },
+      "initially_compliant": {
+        "status": "PASS",
+        "cases": 9,
+        "module_operations": 44,
+        "raw": {
+          "path": "build-openssh-native/ubuntu-26.04/evidence/ownership-results.json",
+          "sha256": "9f903d181d310dfaf684aa8b113ad556d910e868ac5b9219be3d868ae5283565"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/ownership-ubuntu2604.log",
+          "sha256": "80b2f1d6bf632c3de85fd20c592cd4aaa31faea23c3d3fd3a0417dc6ef96db0f"
+        }
+      },
+      "package": {
+        "status": "PASS",
+        "commands": 82,
+        "raw": {
+          "path": "build-ssh-lifecycle/remote-ubuntu-26.04-20261104T051147Z-2940/ssh-remote-results.json",
+          "sha256": "95bfbe1a302bed1effed16de0446dfcbf65287978c08462309c8a1a9a931b5fd"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/package-native-ubuntu2604.log",
+          "sha256": "8f6b54384348c6859e2f3d128cf7f36120226a559a1e4b40a8793b5f70f47dee"
+        },
+        "packages": {
+          "fic-cli_0.0.0~alpha_ubuntu2604_amd64.deb": "ef5e92217e40b80c6bf53f870bec1270000e54bd5c4dc955ccb8d1923f60ced4",
+          "fic-dick_0.0.0~alpha_ubuntu2604_amd64.deb": "b8b65f2c27b63558f8b150d3dd02d91f0aee63c133a37f03a48d32ec274d8410",
+          "fic_0.0.0~alpha_ubuntu2604_amd64.deb": "767fadf44b4c894ed0d918e91a76a803433c798a74efa0c1172d3606d6f72ec5"
+        },
+        "vendor_unit": {
+          "path": "/usr/lib/systemd/system/ssh.service",
+          "sha256": "1e3c11483cc51a6c7aa3ab92affa43a313cab65e9721a64ce7720404cf6de1c8",
+          "kill_mode": "process"
+        },
+        "live_original_ssh_connection": true,
+        "expected_fixture_diagnostics": []
+      },
+      "native_driver": {
+        "path": "build-openssh-native/ubuntu-26.04/openssh_native_driver",
+        "sha256": "f5f0f58690d6b5c82c55ecef07e8079a63d28b8acfc71f604854e419edf2948a"
+      },
+      "daemon": {
+        "path": "build-package-release/ubuntu2604/fic/fic",
+        "sha256": "dca59e83c0eb3997ca6e62b4b35168cc6f20a80ed15ec3965ff4c818cc2a517d"
+      },
+      "runtime_image": {
+        "tag": "fic-ssh-lifecycle-native:ubuntu2604",
+        "id": "sha256:076e4373e4618ad7ebb6cb5a9ff3402b99c61a09fb407510eb9b39d55fe5d54c"
+      },
+      "builder_image": {
+        "tag": "fic-package-native:ubuntu2604",
+        "id": "sha256:aecac4eb2268fd84e3405c6ae8d04b49687c3c61dd700a0e2b24be8b8631f7ff"
+      }
+    },
+    "alt-p11": {
+      "native": {
+        "status": "PASS",
+        "cases": 42,
+        "module_operations": 90,
+        "raw": {
+          "path": "build-openssh-native/alt-p11/evidence/multifile-results.json",
+          "sha256": "179a99969ef40bce9dab96004be1a0b63ade596145595c026889e05486adc390"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/native-alt-p11.log",
+          "sha256": "b26949d74410898d456812ba595f4a7923306fa6250edac084a629812a6c9d90"
+        }
+      },
+      "initially_compliant": {
+        "status": "PASS",
+        "cases": 9,
+        "module_operations": 44,
+        "raw": {
+          "path": "build-openssh-native/alt-p11/evidence/ownership-results.json",
+          "sha256": "8fa16dbd0415d80e04667beb4639d56b4cace24119ac95f328063052914eeac5"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/ownership-alt-p11.log",
+          "sha256": "10e6f29d8a3f04ac03c8c4ddbd21010b365bc0d42e80c80ac9008d3f7ddb6a97"
+        }
+      },
+      "package": {
+        "status": "PASS",
+        "commands": 80,
+        "raw": {
+          "path": "build-ssh-lifecycle/remote-alt-p11-20261104T051246Z-3702/ssh-remote-results.json",
+          "sha256": "ec1aaf9352d18631e116aa5a063db0af9e4b811a3eed823b6892829aa8a6ad57"
+        },
+        "log": {
+          "path": "build-ssh-multifile-validation/package-native-alt-p11.log",
+          "sha256": "49b80db034eea97847d72d5e141ac599e37611f1e8853c3fddc6844b2009fdf2"
+        },
+        "packages": {
+          "fic-0.0.0~alpha-1.altp11.x86_64.rpm": "35a1c36f1f02a15653af097786a6e4ed25d84c51b66bd9ebd650fc6b8d242ea0",
+          "fic-cli-0.0.0~alpha-1.altp11.x86_64.rpm": "c444bb2f88ee41ba1f03ae1a76ecd27b2fd560a48118fc999b263b863f29c022",
+          "fic-dick-0.0.0~alpha-1.altp11.x86_64.rpm": "8ec4d7a3a815107a85e14394fc20c0f0a72e3ad078ac5c03339bd6432b6f1fe7"
+        },
+        "vendor_unit": {
+          "path": "/usr/lib/systemd/system/sshd.service",
+          "sha256": "e106210c64d05bf7c866f0feea631394f408323dfec3ccf2c9be1bedc4e9aca8",
+          "kill_mode": "process"
+        },
+        "live_original_ssh_connection": true,
+        "expected_fixture_diagnostics": [
+          {
+            "command": [
+              "systemctl",
+              "stop",
+              "sshd.service",
+              "ssh.socket"
+            ],
+            "exit_code": 5,
+            "output": "Failed to stop ssh.socket: Unit ssh.socket not loaded.\n"
+          }
+        ]
+      },
+      "native_driver": {
+        "path": "build-openssh-native/alt-p11/openssh_native_driver",
+        "sha256": "6cdecb56524df144879bfdb102c78efb0e66840da85ee6d8c62eb579aa976300"
+      },
+      "daemon": {
+        "path": "build-package-release/alt-p11/fic/fic",
+        "sha256": "22591699c8d30e4999c5e4536cd629785c0214c774a38d29b04e892cb24c00ff"
+      },
+      "runtime_image": {
+        "tag": "fic-ssh-lifecycle-native:alt-p11",
+        "id": "sha256:89021d76e068fe1a05833d115f394ffc1c5f0037fbf3fd3fdd5dc1bc64d05db8"
+      },
+      "builder_image": {
+        "tag": "fic-package-native:alt-p11",
+        "id": "sha256:2241c970ecfc922512a8f9d8fba7263d0836b859da9fbabb040c2884bae3e69d"
+      }
+    }
+  },
+  "regression": {
+    "debian-12": {
+      "status": "PASS",
+      "cases": 21,
+      "module_operations": 134,
+      "raw": {
+        "path": "build-openssh-native/debian-12/evidence/lifecycle-results.json",
+        "sha256": "05399a04d728f1c67d788ba5f5c3bd2b6e3231ae84d9898514144ab06cd18c6b"
+      },
+      "log": {
+        "path": "build-ssh-multifile-validation/regression-debian12.log",
+        "sha256": "ac125a047a44caa73f153c0afeed911aeae97f8df648fea09bdeb5443c62048e"
+      }
+    },
+    "ubuntu-24.04": {
+      "status": "PASS",
+      "cases": 21,
+      "module_operations": 134,
+      "raw": {
+        "path": "build-openssh-native/ubuntu-24.04/evidence/lifecycle-results.json",
+        "sha256": "c2d33666581b9632d7234a24efda0c6fb9ee112f6780aef72882e7ee831b2f19"
+      },
+      "log": {
+        "path": "build-ssh-multifile-validation/regression-ubuntu2404.log",
+        "sha256": "00fa78b7f74a0985b69cadf7284d01e3a269136226d3efb19d4a741782dde651"
+      }
+    },
+    "alt-p11": {
+      "status": "PASS",
+      "cases": 21,
+      "module_operations": 134,
+      "raw": {
+        "path": "build-openssh-native/alt-p11/evidence/lifecycle-results.json",
+        "sha256": "ba6814c2f6d0cb521a011fa31b0ccd16e57d498bf01f513d41ddd9acdd41d14b"
+      },
+      "log": {
+        "path": "build-ssh-multifile-validation/regression-alt-p11.log",
+        "sha256": "9138934cf42e95583285e58dfa37fdc2f2809f052f54bc68a2f24beb1d74e108"
+      }
+    },
+    "debian12_release": {
+      "status": "PASS",
+      "cases": 30,
+      "module_operations": 93,
+      "raw": {
+        "path": "build-openssh-native/debian-12/evidence/release-results.json",
+        "sha256": "6c00d1d186614df385f82f9c38a03d23bb274c1cd02e273bb17015a19a246368"
+      },
+      "log": {
+        "path": "build-ssh-multifile-validation/release-debian12.log",
+        "sha256": "320c21e1eb2e6f8bdac4d2d44917a6df8fe0ca41d110cee6f440d5042d7789f1"
+      }
+    },
+    "debian12_match": {
+      "status": "PASS",
+      "cases": 12,
+      "module_operations": 0,
+      "raw": {
+        "path": "build-openssh-native/debian-12/evidence/match-results.json",
+        "sha256": "79785163cb10f4cc6bde9bec99d1506dd44a3b7ce519b0c77c4232fb2abaebca"
+      },
+      "log": {
+        "path": "build-ssh-multifile-validation/match-debian12.log",
+        "sha256": "d0f99e74b07166529a0c1606280af748ee9f7fca16d1cfa6ab440e92db2b4606"
+      }
+    }
+  },
+  "full_debian12": {
+    "build": "PASS",
+    "ctest": {
+      "passed": 216,
+      "failed": 1,
+      "skipped": 4,
+      "total": 221,
+      "known_failure": "sssd_i6_evidence_checks: historical source generation mismatch; guard/evidence unchanged",
+      "skips": [
+        "verified_config_service_native_tests",
+        "daemon_singleton_startup_native",
+        "maintenance_preflight_native",
+        "package_pam_hooks_native"
+      ]
+    },
+    "build_log": {
+      "path": "build-ssh-multifile-validation/full-build.log",
+      "sha256": "f6bc78f33c1853e0bc04cbbbaa3fc0807e9cd8a3a33c3395cc85065516d0d9d1"
+    },
+    "ctest_log": {
+      "path": "build-ssh-multifile-validation/full-ctest.log",
+      "sha256": "e516a9e3fa54bc3dc19e0fdb200ecea428726f20687689bdff14d02d5ad2386a"
+    }
+  },
+  "unit_test_sha256": {
+    "tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp": "8bc420576535167b090db1568bea72647395bb5aed327d0b43af0e86f0d36229",
+    "tests/fic/rollback/MutationJournalTests.cpp": "784c9903241fcad1e72c929a4f23956325e8fd83078ccca835b98c964ceb186f",
+    "tests/fic/rollback/RollbackExecutorTests.cpp": "589f0ceb9b7cf1017976923ab78388f51d7bd282bfc6409b112d0cbab6822045",
+    "tests/fic/service/SshVerifiedActivationTests.cpp": "360c5dd11909ce1f8d2428567472eaa848af73dcfc90d54faeacfa1fa29a284c",
+    "tests/fic/daemon/UninstallReleaseOrderTests.cpp": "3f2b5e9998ff02ae31156d945ef59163ea395b65126a90ccee4c39b5565b2ea7",
+    "tests/CMakeLists.txt": "a7595568381a537a1cc8b7485f7f433e8e8a0092b740e057cb133ca45412208e"
+  },
+  "limits": [
+    "No physical multi-file atomicity; AtomicFileWriter residual CAS race against noncooperating privileged writers remains.",
+    "Unknown or partially published operations retain durable Prepared and block all SSH writers; no automatic semantic recovery.",
+    "Pre-CAS validation is bounded structural validation; native syntax/effectiveness and protected snapshot proof occur after all files publish.",
+    "Trusted profile paths, closure grammar and mount/launch prerequisites unchanged; named Port service aliases unsupported.",
+    "Legacy ID-only no-op/release contract retained; legacy wrapper REFRESH refused without historical fingerprints.",
+    "Missing recorded files are not recreated. Restored duplicate/unsupported endpoints may refuse active release.",
+    "Source-bound native and real package tests share a WSL kernel; no real-host boot or GUI click test claimed."
+  ]
+}

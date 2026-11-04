@@ -214,3 +214,15 @@ Native evidence выше — основа version-specific выводов. Се�
 [systemd.generator255](https://www.freedesktop.org/software/systemd/man/255/systemd.generator.html).
 Generators запускаются при reload и пишут output разного priority; сам факт
 успешного daemon-reload не подтверждает inputs/эффективный listener.
+
+## Многофайловый Port
+
+Текущий [SSH Port contract](ssh-verified-activation-adapter.md#многофайловое-port-ownership)
+заменяет прежнее ограничение single-file writer. Разрешённые подключённые inputs
+получают creation-bound wrappers; пути/grammar/trust boundaries не расширяются.
+REFRESH сохраняет provenance и не пишет неизменные Include; active/offline release
+освобождает сохранившееся ownership по каждому известному пути. Остаточные гонки,
+partial publication и отсутствие semantic recovery Prepared описаны в контракте.
+Предыдущие native-отчёты выше исторические и не являются проверкой нового backend.
+
+[Результаты multi-file native и реальных package/CLI/SSH проверок](../tests/integration/verified_config_service/openssh_native/evidence/multifile-port-lifecycle.json).

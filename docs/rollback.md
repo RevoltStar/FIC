@@ -146,9 +146,10 @@ executor отклоняется (fail-closed).
   существует только для тестов).
 * `fic/src/rollback/RollbackExecutor.{h,cpp}` — `rollbackPolicyBeforeDisable`,
   enrollment матрица, production deps wiring.
-* `fic/src/modules/net/ssh/SshRollback.{h,cpp}` — SSH undo: применение reverse
-  delta главного `sshd_config`, planned syntax/effective proof и verified
-  active/offline release; legacy transaction остаётся только для legacy profile.
+* `fic/src/modules/net/ssh/SshRollback.{h,cpp}` и `SshPortTransaction` — SSH
+  ownership release блоков/wrappers в main и известных Include, per-file CAS и
+  verified active/offline release. Исторические чужие файлы не восстанавливаются;
+  legacy transaction остаётся только для legacy profile.
 * `tests/fic/rollback/` — тесты journal и executor.
 
 ## Жизненный цикл мутации
@@ -183,9 +184,12 @@ journal ownership даже при уже соответствующем foreign/
 Повторный owned-compliant apply не пишет файл/journal и использует существующий
 receipt/revalidation contract. Scalar foreign строки не меняются; main Port
 (включая совпадающий) временно оборачивается fingerprinted FIC_DISABLED и при
-release восстанавливается byte-exact. Trusted Include-файлы остаются неизменными;
-при дублирующем Port из Include неподдерживаемый prospective main отклоняется
-до Prepared и записи без нормализации endpoints. Multi-file wrappers не реализованы. Исчезнувший owned block не создаётся повторно apply.
+release восстанавливается byte-exact. Port wrappers также освобождаются в доказанных Include-файлах;
+неиспользуемый текущим графом recorded path не забывается. Foreign edits сохраняются,
+исчезнувшие wrappers не реконструируются. Partial publication оставляет общий
+Prepared, без blind compensation или автоматического recovery. Подробности:
+[многофайловый контракт](ssh-verified-activation-adapter.md#многофайловое-port-ownership).
+Исчезнувший owned block не создаётся повторно apply.
 
 ### Verified SSH release
 

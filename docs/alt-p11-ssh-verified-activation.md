@@ -218,3 +218,15 @@ Portable pure adapter contract CTest прошёл на всех пяти build p
 Shell/Python syntax, safe audit guard и `git diff --check` также прошли.
 Sanitized evidence хранит immutable image IDs, report SHA-256, фактические
 listener/FD identities и результаты всех64 ALT групп. Ключи/backup не экспортируются.
+
+## Многофайловый Port
+
+Текущий [SSH Port contract](ssh-verified-activation-adapter.md#многофайловое-port-ownership)
+заменяет прежнее ограничение single-file writer. Разрешённые подключённые inputs
+получают creation-bound wrappers; пути/grammar/trust boundaries не расширяются.
+REFRESH сохраняет provenance и не пишет неизменные Include; active/offline release
+освобождает сохранившееся ownership по каждому известному пути. Остаточные гонки,
+partial publication и отсутствие semantic recovery Prepared описаны в контракте.
+Предыдущие native-отчёты выше исторические и не являются проверкой нового backend.
+
+[Результаты multi-file native и реальных package/CLI/SSH проверок](../tests/integration/verified_config_service/openssh_native/evidence/multifile-port-lifecycle.json).

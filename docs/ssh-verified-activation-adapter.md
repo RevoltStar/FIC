@@ -628,4 +628,6 @@ ENABLE/DISABLE при этом не меняются; конфликт Required 
 
 Native-тесты выполняются только в disposable systemd-контейнерах; общей WSL kernel
 матрице не приписываются гарантии пяти независимых kernels. Текущие результаты
-зафиксированы в HANDOFF и отдельном source-bound multi-file evidence.
+зафиксированы в [source-bound multi-file evidence](../tests/integration/verified_config_service/openssh_native/evidence/multifile-port-lifecycle.json).
+Он содержит хеши исходников, harness, ELF, реальных пакетов и сырых отчётов;
+объёмные raw reports остаются локальными build artifacts.

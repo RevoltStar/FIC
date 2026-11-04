@@ -28,6 +28,7 @@ struct SshRollbackOptions {
     SshOfflineReleaseProfile offlineRelease = SshOfflineReleaseProfile::None;
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
+    std::filesystem::path includeDirectory; // closed profile boundary, physical final proof
     std::vector<std::string> serviceUnits;
     const fic::platform::PlatformExecutableResolver* executables = nullptr;
     SshCommandRunner runner;

@@ -131,3 +131,15 @@ Schema2 strict REFRESH и автоматический semantic recovery Prepare
 ТЗ, а не замаскированный rollback. ALT activation/compensation остаётся legacy;
 Ubuntu production strict policy path Unsupported до отдельной
 [socket activation задачи](ubuntu-ssh-socket-activation-spec.md).
+
+## Многофайловый Port
+
+Текущий [SSH Port contract](ssh-verified-activation-adapter.md#многофайловое-port-ownership)
+заменяет прежнее ограничение single-file writer. Разрешённые подключённые inputs
+получают creation-bound wrappers; пути/grammar/trust boundaries не расширяются.
+REFRESH сохраняет provenance и не пишет неизменные Include; active/offline release
+освобождает сохранившееся ownership по каждому известному пути. Остаточные гонки,
+partial publication и отсутствие semantic recovery Prepared описаны в контракте.
+Предыдущие native-отчёты выше исторические и не являются проверкой нового backend.
+
+[Результаты multi-file native и реальных package/CLI/SSH проверок](../tests/integration/verified_config_service/openssh_native/evidence/multifile-port-lifecycle.json).

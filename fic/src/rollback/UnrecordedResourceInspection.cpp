@@ -52,7 +52,7 @@ bool staging(const Path& file,std::string& error) {
     }
     if(ec){error="resource staging inventory incomplete";return false;}return true;
 }
-bool read(const Path& file,bool enforce,std::optional<AtomicTargetState>& state,std::string& error) {
+bool read(const Path& file,bool enforce,std::optional<AtomicTargetState>& state,std::string& error,std::uint64_t maximumBytes=1024*1024) {
     state.reset();bool exists=false;
     if(!parent(file.parent_path(),enforce,exists,error))return false;
     if(!exists)return true;
@@ -60,7 +60,7 @@ bool read(const Path& file,bool enforce,std::optional<AtomicTargetState>& state,
     fic::core::SecureStateFileExpectation expected;
     expected.requireSingleLink=true;
     if(enforce){expected.owner=0;expected.parentOwner=0;expected.forbiddenMode=0022;}
-    const auto result=fic::core::readSecureFileBounded(file,expected,1024*1024);
+    const auto result=fic::core::readSecureFileBounded(file,expected,maximumBytes);
     if(result.status==fic::core::SecureStateReadStatus::Unprovable){error=file.string()+": "+result.detail;return false;}
     if(result.status==fic::core::SecureStateReadStatus::Proven)state=result.targetState;
     return true;
@@ -101,6 +101,36 @@ bool sudoDirectory(const Path& directory,bool enforce,std::string& error) {
     }
     if(ec){error="sudoers inventory incomplete";return false;}return true;
 }
+bool sshInventory(const Path& directory,bool enforce,std::set<Path>& paths,
+    std::map<Path,std::string>& generations,std::string& error) {
+    bool exists=false;if(!parent(directory,enforce,exists,error))return false;if(!exists)return true;
+    std::error_code ec;std::filesystem::recursive_directory_iterator it(directory,ec),end;
+    if(ec){error="cannot inspect SSH Include directory";return false;}
+    const auto generation=[](const struct stat& st) {
+        return std::to_string(st.st_dev)+":"+std::to_string(st.st_ino)+":"+std::to_string(st.st_mode)+":"+
+            std::to_string(st.st_uid)+":"+std::to_string(st.st_gid)+":"+std::to_string(st.st_nlink)+":"+std::to_string(st.st_size)+":"+std::to_string(st.st_mtim.tv_sec)+":"+
+            std::to_string(st.st_mtim.tv_nsec)+":"+std::to_string(st.st_ctim.tv_sec)+":"+std::to_string(st.st_ctim.tv_nsec);
+    };
+    struct stat root{};if(::lstat(directory.c_str(),&root)){error="SSH inventory root unavailable";return false;}
+    generations[directory]=generation(root);unsigned count=0,files=0;std::uintmax_t budget=0;
+    for(;it!=end;it.increment(ec)) {
+        if(ec||++count+1>8192||it.depth()+1>64){error="SSH inventory bound/error";return false;}
+        struct stat st{};if(::lstat(it->path().c_str(),&st)){error="SSH inventory object unavailable";return false;}
+        const auto name=it->path().filename().string();
+        if(!name.empty()&&name.front()=='.'&&name.find(".tmp.")!=std::string::npos){error="unresolved SSH staging artifact: "+it->path().string();return false;}
+        if(S_ISDIR(st.st_mode)) {
+            bool present=false;if(!parent(it->path(),enforce,present,error)||!present)return false;
+            generations[it->path()]=generation(st);
+        } else {
+            if(!S_ISREG(st.st_mode)||st.st_nlink!=1||st.st_size<0||++files>4096||(budget+=st.st_size)>8*1024*1024) {
+                error="SSH inventory alias/type/size unproven";return false;
+            }
+            paths.insert(it->path());generations[it->path()]=generation(st);
+        }
+    }
+    if(ec){error="SSH inventory incomplete";return false;}return true;
+}
+
 }
 UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
     const RollbackExecutorDeps& deps,MutationJournal& journal,std::string& error,
@@ -145,12 +175,24 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
             const auto last=resource.rfind(':');
             if(resource.rfind("ssh:",0)!=0||last<=4){error="unknown retired SSH resource";return State::Error;}
             paths.insert(resource.substr(4,last-4));
+            if(const auto* p=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload)) {
+                for(const auto& [path,_]:p->includedWrappers)paths.insert(path);
+                if(p->transition)for(const auto& [path,_]:p->transition->files)paths.insert(path);
+            }
         }
+        std::map<Path,std::string> generations;
+        if(!options.includeDirectory.empty()&&!sshInventory(options.includeDirectory,options.enforceOwnership,paths,generations,error))return State::Error;
         for(const auto& file:paths) {
             std::optional<AtomicTargetState> state;
-            if(!read(file,options.enforceOwnership,state,error))return State::Error;
+            if(!read(file,options.enforceOwnership,state,error,8*1024*1024))return State::Error;
             if(state&&state->content.find("#@FIC")!=std::string::npos) {
                 error="SSH physical FIC artifact has no active provenance: "+file.string();return State::UnprovenOwnership;
+            }
+        }
+        if(!options.includeDirectory.empty()) {
+            std::set<Path> currentPaths;std::map<Path,std::string> current;
+            if(!sshInventory(options.includeDirectory,options.enforceOwnership,currentPaths,current,error)||current!=generations) {
+                error="SSH Include inventory changed during physical absence proof: "+error;return State::Error;
             }
         }
         return State::ProvenEmpty;

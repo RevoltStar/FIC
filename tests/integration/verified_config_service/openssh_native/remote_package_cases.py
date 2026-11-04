@@ -51,7 +51,10 @@ try:
     main.write_text(f'Port 22\nListenAddress 127.0.0.1\nHostKey {key}\nPermitRootLogin yes\nPubkeyAuthentication yes\nUsePAM no\nMaxAuthTries 6\nPasswordAuthentication no\nKbdInteractiveAuthentication no\n')
     main.write_text(main.read_text().rstrip('\n')) # fixture EOF must survive real apply/release
     main.chmod(0o600 if alt else 0o644);env.write_text('EXTRAOPTIONS=\n' if alt else 'SSHD_OPTS=\n');env.chmod(0o644)
-    (main.parent/('sshd_config.local.d' if alt else 'sshd_config.d')).mkdir(exist_ok=True)
+    include=main.parent/('sshd_config.local.d' if alt else 'sshd_config.d');include.mkdir(exist_ok=True)
+    original_fragments={include/'10-admin.conf':'# administrator\nPort 2200\n',include/'20-local.conf':'Port 2201'}
+    for path,content in original_fragments.items():path.write_text(content);path.chmod(0o600 if alt else 0o644)
+    main.write_text('Include '+str(include)+'/*.conf\n'+main.read_text())
     if alt and Path('/etc/sudoers.d/99-sudopw').exists():Path('/etc/sudoers.d/99-sudopw').chmod(0o400) # native fixture before FIC
     packages=sorted(Path('/var/tmp/fic-packages').glob('*.rpm' if alt else '*.deb'));assert len(packages)==3,packages
     report['packages']={p.name:sha(p) for p in packages}
@@ -68,6 +71,9 @@ try:
     run(ssh[:-1]+['-i','/run/fic-admin-key','-M','-N','-f','-o','ControlPersist=900',ssh[-1]])
     report['tcp_before']={p:Path(p).read_text() for p in ('/proc/net/tcp','/proc/net/tcp6')}
     remote([cli,'status'])
+    # Establish one controlled port before scalar proofs; their profile remains
+    # unchanged even though this fixture's foreign baseline has several ports.
+    policy('set','NET','ssh_port','2222');policy('enable','NET','ssh_port');policy('apply','NET','ssh_port')
     policy('apply','NET','ssh_use_pam') # default ENABLE; initial stopped-SSH apply intentionally could not activate
     policy('set','NET','ssh_pubkey_auth','yes');policy('enable','NET','ssh_pubkey_auth')
     foreign_pubkey='PubkeyAuthentication yes\n';assert foreign_pubkey in main.read_text() and not main.read_bytes().endswith(b'\n')
@@ -88,10 +94,22 @@ try:
     policy('enable','NET','ssh_max_auth_tries');policy('apply','NET','ssh_max_auth_tries')
     policy('set','NET','ssh_max_auth_tries','2');policy('apply','NET','ssh_max_auth_tries')
     policy('set','NET','ssh_port','2222');policy('enable','NET','ssh_port');policy('apply','NET','ssh_port')
+    owner=next(r['undo'] for r in journal()['records'] if r['policy']['policy']=='ssh_port' and r['status']=='applied')
+    assert len(owner['included_wrappers']['files'])==2
+    installed={str(p):p.read_bytes() for p in original_fragments};unchanged=journal()
+    policy('apply','NET','ssh_port');assert journal()==unchanged and all(p.read_bytes()==installed[str(p)] for p in original_fragments)
+    policy('set','NET','ssh_port','2323');policy('apply','NET','ssh_port')
+    refreshed=next(r['undo'] for r in journal()['records'] if r['policy']['policy']=='ssh_port' and r['status']=='applied')
+    assert refreshed['included_wrappers']==owner['included_wrappers'] and all(p.read_bytes()==installed[str(p)] for p in original_fragments)
+    policy('disable','NET','ssh_port')
+    assert all(p.read_text()==content for p,content in original_fragments.items())
+    assert all(r['status']=='rolled_back' for r in journal()['records'] if r['policy']['policy']=='ssh_port')
+    policy('enable','NET','ssh_port');policy('apply','NET','ssh_port')
     report['tcp_after_refresh']={p:Path(p).read_text() for p in ('/proc/net/tcp','/proc/net/tcp6')}
     saved=config();report['config_before_uninstall']=saved
     remote([cli,'prepare-uninstall']);remote([cli,'policy','rollback','all'],timeout=600)
     assert config()==saved and '#@FIC_' not in main.read_text() and not main.read_bytes().endswith(b'\n')
+    assert all(p.read_text()==content and '#@FIC_' not in p.read_text() for p,content in original_fragments.items())
     records=journal()['records'];assert all(r['status']=='rolled_back' for r in records if r['backend']=='ssh'),records
     report['ssh_release_records']=[r for r in records if r['backend']=='ssh']
     assert sha(fragment)==vendor

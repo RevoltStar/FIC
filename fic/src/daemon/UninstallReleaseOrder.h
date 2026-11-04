@@ -4,6 +4,15 @@
 #include <string>
 #include <vector>
 namespace fic::daemon {
+// Keep the Port override until every other SSH owner is released. Its final
+// release can restore several foreign ports, outside scalar callers' existing
+// single-port activation profile. This is an uninstall resource edge only;
+// policy ENABLE values and PolicyRegistry dependencies are not changed.
+inline void addSshPortReleaseOrdering(std::map<std::string,std::set<std::string>>& dependents) {
+    const std::string port="NET:SshEdit:ssh_port",prefix="NET:SshEdit:";
+    if(!dependents.count(port))return;
+    for(const auto& [name,_]:dependents)if(name!=port&&name.rfind(prefix,0)==0)dependents.at(port).insert(name);
+}
 // Edges point from a resource to its dependents. Group before calling: a
 // shared resource must be released once, after all its external dependents.
 // Validate the complete graph before allowing the first physical release.

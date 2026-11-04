@@ -84,6 +84,8 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
     }
     std::map<std::string,std::set<std::string>> edges;
     for(const auto& [name,node]:nodes)edges[name]=node.dependents;
+    addSshPortReleaseOrdering(edges);
+    for(const auto& [name,dependents]:edges)nodes.at(name).dependents=dependents;
     std::vector<std::string> releaseOrder;
     if(!uninstallReleaseOrder(edges,releaseOrder,error))return failure(error+"; no rollback attempted");
     auto deps=productionRollbackDeps(platform,executables,&registry);

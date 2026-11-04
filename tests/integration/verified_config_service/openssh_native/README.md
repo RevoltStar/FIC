@@ -214,9 +214,38 @@ values, native defaults, owned no-op, REFRESH preserving Port fingerprints/IDs,
 active release and byte-exact restoration. Ubuntu additionally checks unchanged
 socket state for same-endpoint Port publication and kernel/PID1/MainPID FD proof.
 
-Matching active Port in a trusted Include is refused before Prepared/file write
-when inserting the owned Port would duplicate the strict effective/listener
-profile. The fixture starts from one included Port and checks repeat refusals,
-unchanged journal/config/runtime and untouched included bytes on all platforms.
+Matching active Ports in the permitted Include graph now receive creation-bound
+per-file wrappers. The existing `ownership` group checks owned publication,
+repeat no-write and exact release for this case. Paths/grammar and scalar policy
+semantics are unchanged.
 Native defaults are tested only within the existing policy domain; MaxAuthTries6
 and UsePAMno remain rejected values.
+
+Multi-file Port gate (same native runner, no host SSH changes):
+
+```sh
+FIC_SSH_NATIVE_SCENARIO=refresh FIC_SSH_NATIVE_REFRESH_GROUP=multifile \
+  bash tests/integration/verified_config_service/openssh_native/run-native.sh IMAGE PLATFORM
+```
+
+`multifile-smoke` selects the first apply/reapply/REFRESH/active-release case.
+The full group checks multiple/matching/nested/repeated Includes, Match context,
+new Port ownership on same-value refresh, disconnected paths, missing/modified
+wrappers, active/offline release with foreign edits and missing final LF, exact
+first/second CAS refusal, partial publication/durability/checkpoint failures,
+native validation failure after publication, cleanup, crash/restart shared gate,
+and trusted-path/glob/mount/alias/orphan refusals. Initial Prepared has explicitly
+absent previous ownership. Runtime observations check actual controlled ports;
+Ubuntu additionally verifies PID1/MainPID FD ownership. Restored duplicate endpoints
+remain unsupported. Test-only cleanup never resolves semantic Prepared state.
+
+The remote package fixture uses two real Include inputs, production CLI/IPC,
+refresh, disable, re-enrollment, uninstall rollback and remove/purge over the
+same pre-existing authenticated control connection; it checks all wrappers gone.
+Historical evidence above is not proof of this new source generation.
+
+Source-bound results: [multi-file lifecycle evidence](evidence/multifile-port-lifecycle.json).
+The `ownership` group additionally checks initially matching Include Port and
+no-final-LF restoration; run it on each platform alongside `multifile`.
+Raw reports stay in ignored build directories; only compact hashes and results
+are committed, without compressed report blobs.

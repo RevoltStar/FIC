@@ -3034,6 +3034,29 @@ void testFinalMixedSysctlOwnership() {
     std::filesystem::remove(path); // explicit administrator repair, never adoption
     require(finalDomain("SYSCTL",tree.deps(),tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"repaired SYSCTL retry failed");
 }
+void testSshIncludePhysicalAbsence() {
+    TempJournal j;JournalOverride override(j.tree.root/"journal.json");SshTree tree;
+    writeFile(tree.configPath(),"# foreign main\n");
+    const auto directory=tree.configPath().parent_path()/"sshd_config.d";
+    std::filesystem::create_directories(directory);
+    const auto file=directory/"unused.conf";writeFile(file,"# administrator\nPort 2222\n");
+    auto deps=tree.deps();const auto previous=deps.sshOptions;
+    deps.sshOptions=[previous,directory]{auto options=previous();options.includeDirectory=directory;return options;};
+    require(finalDomain("SSH",deps,tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"foreign unused Include rejected");
+    const std::string orphan="#@FIC_DISABLED_BEGIN policy=ssh_port mutation=orphan@\n#@FIC_DISABLED_LINE@Port 2222\n#@FIC_DISABLED_END policy=ssh_port mutation=orphan@\n";
+    writeFile(file,orphan);
+    require(finalDomain("SSH",deps,tree.tree.root)==UnrecordedResourceState::UnprovenOwnership&&readFile(file)==orphan,
+        "unused Include orphan was ignored/adopted by uninstall");
+    writeFile(file,"# foreign\n");const auto alias=directory/"alias.conf";std::filesystem::create_symlink(file,alias);
+    require(finalDomain("SSH",deps,tree.tree.root)!=UnrecordedResourceState::ProvenEmpty,"symlink inventory was declared empty");
+    std::filesystem::remove(alias);
+    require(finalDomain("SSH",deps,tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"safe Include inventory retry failed");
+    std::string large(2*1024*1024,'#');for(std::size_t i=4095;i<large.size();i+=4096)large[i]='\n';
+    writeFile(file,large);
+    require(finalDomain("SSH",deps,tree.tree.root)==UnrecordedResourceState::ProvenEmpty,"SSH absence proof imposed smaller file bound than adapter");
+    const auto stage=directory/".unused.conf.tmp.orphan";writeFile(stage,"");
+    require(finalDomain("SSH",deps,tree.tree.root)!=UnrecordedResourceState::ProvenEmpty,"unresolved SSH staging artifact declared released");
+}
 void testFinalMixedSshOwnership() {
     TempJournal j;JournalOverride override(j.tree.root/"journal.json");SshTree tree;
     writeFile(tree.configPath(),"# foreign bytes\n");
@@ -3260,6 +3283,7 @@ int main(int argc, char** argv) {
         {"ssh rollback nothing-to-do reload failure refuses disable",
          testSshRollbackNothingToDoReloadFailureRefusesDisable},
         {"ssh prepared shared resource blocks disable", testSshPreparedRecordBlocksDisable},
+        {"ssh Include physical absence",testSshIncludePhysicalAbsence},
         {"ssh repeated disable is idempotent", testSshRepeatedDisableIsIdempotent},
         {"ssh provenance refused when markers present without records",
          testSshProvenanceRefusedWhenMarkersPresentWithoutRecords},

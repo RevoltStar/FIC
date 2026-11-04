@@ -10,9 +10,10 @@ Stage 1/2 и bounded Debian integration описаны в §22/23 и после�
 автоматического recovery Prepared по-прежнему нет. Текущий apply дополнительно
 требует собственный FIC policy sub-block и Applied journal даже при initially
 compliant foreign/default value; no-write reuse возможен только для доказанного
-owned-compliant состояния. Single-file Port с matching активным Port в Include
-отклоняется до Prepared/записи, если prospective image нарушает строгий
-Port/listener contract; endpoints не нормализуются, Include не меняется.
+owned-compliant состояния. Многофайловый Port теперь подавляет активные foreign Port во всём разрешённом
+Include-графе одной journal-backed операцией с per-file CAS. Полный контракт —
+[здесь](ssh-verified-activation-adapter.md#многофайловое-port-ownership); endpoints
+не нормализуются, физическая multi-file atomicity и Prepared recovery не заявляются.
 Исторические no-enrollment варианты ниже заменены
 этим контрактом; они не описывают текущий apply.** Аудит базы `36cbfd8c17c4c7f6eb8fe77d341243cabb14d616`.
 Production, API, journal schema и поведение политик этим документом не изменяются.

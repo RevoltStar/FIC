@@ -1579,6 +1579,7 @@ RollbackExecutorDeps productionRollbackDeps(
             sshConfig.applyContract==fic::platform::SshApplyContract::UbuntuSocketVerified?SshOfflineReleaseProfile::UbuntuSocket:SshOfflineReleaseProfile::None;
         options.configPath = sshConfig.configPath;
         options.includeBasePath = sshConfig.includeBasePath;
+        options.includeDirectory = sshConfig.verifiedIncludeDirectory;
         options.serviceUnits = sshConfig.serviceUnits;
         options.executables = &executables;
         return options;
