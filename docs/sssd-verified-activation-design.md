@@ -669,7 +669,8 @@ preprepared private mount boundaries and native trusted input metadata. I6
 provisions neither on a real host; native fixtures prepare them only inside
 isolated containers. See [generic activator contract](verified-config-service-activator.md).
 
-I6 native validation including the ownership/scope-coverage follow-ups passed25 scenarios
+Historical I6 native validation accepted at commit
+`96b88d2b40abff5cec9cd4352891401350e26719`, including the ownership/scope-coverage follow-ups, passed25 scenarios
 on each of Debian12/13, Ubuntu24.04/26.04 and ALT p11:125/125 PASS with actual installed FIC daemon,
 CLI/IPC, current and historical packages. [I6 evidence](../tests/integration/sssd-i6/evidence.json)
 and the [runner contract](../tests/integration/sssd-i6/README.md) retain the source,
@@ -680,6 +681,10 @@ implicit-to-explicit LDAP auth provider drift with unchanged assignments;
 early refusal leaves journal/file/config/runtime unchanged, while ReleaseOnly
 still permits an unowned ENABLE sibling. This is isolated container evidence within
 the admitted native profiles, not production authentication or cache-cleanup proof.
-I1–I5 retained reports authenticate their historical accepted sources and do not
-certify these production changes. Current follow-up source-bound validation and workspace
-state are recorded in `docs/HANDOFF.md`.
+The CTest `sssd_i6_evidence_checks` now authenticates that pinned historical
+matrix only (label `historical-evidence`); PASS does not certify SSSD compatibility
+with current HEAD. Its platform/scenario/assertion expectations are frozen,
+independent of current native contracts. New native runs and collection retain
+their strict current-source/harness checks. I1–I5 retained reports likewise
+authenticate their historical accepted sources. Current workspace state is
+recorded in `docs/HANDOFF.md`.

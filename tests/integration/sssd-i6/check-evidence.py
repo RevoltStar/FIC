@@ -1,20 +1,33 @@
 #!/usr/bin/env python3
-"""Retained I6 evidence contract; ordinary CTest never starts containers."""
-import gzip,hashlib,importlib.util,json
+"""Verify the accepted historical I6 matrix, not current-HEAD compatibility."""
+import gzip,hashlib,json
 from pathlib import Path
-from contracts import PLATFORMS,SCENARIOS,POSITIVE,BASE,BASE_TREE
+ACCEPTED_COMMIT='96b88d2b40abff5cec9cd4352891401350e26719'
+# SHA-256 of git show ACCEPTED_COMMIT:tests/integration/sssd-i6/evidence.json.
+ACCEPTED_EVIDENCE_SHA256='6dd6fac33b0846d97202dda46f13428bed17622a489ad006b21dddc8ff305306'
+# Frozen contracts.py from that commit; current native contracts are independent.
+PLATFORMS=('debian-12','debian-13','ubuntu-24.04','ubuntu-26.04','alt-p11')
+SCENARIOS=('positive','stopped-apply','journal-invalid','relation-conflict','domain-key-drift',
+           'remaining-enabled-scope-drift','remaining-enabled-unowned','remaining-enabled-unowned-matching-foreign','acknowledgement-unowned-matching-foreign','late-foreign','foreign-relation','package-release-refusal',
+           'cas-drift','cleanup-failure','wrong-registry-generation','journal-finalization-failure',
+           'crash-before-save','crash-before-ack','runtime-generation-change','receipt-substitution',
+           'legacy-v2-awaiting','wrong-physical-witness','legacy-upgrade-applied','legacy-upgrade-prepared','legacy-upgrade-rollback-failed')
+POSITIVE=('registration-no-default','same-value','refresh-10-to-30','three-policies-multidomain',
+          'active-release-survivors','no-owner-with-owned-siblings','offline-release-survivor',
+          'active-last-release','re-enable-new-owner','uninstall-release-only','package-uninstall')
+BASE='4717cfd4af6df9297b1a6234759258a415dcea34'
+BASE_TREE='deec5ba63986ff9cd0ba875e92dda4df4e4caceb'
 HERE=Path(__file__).resolve().parent;ROOT=HERE.parents[2]
-spec=importlib.util.spec_from_file_location('i6_manifest',HERE/'source-manifest.py');m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 def sha(data):return hashlib.sha256(data).hexdigest()
 def report(item):
     compressed=(ROOT/item['path']).read_bytes();raw=gzip.decompress(compressed)
     assert sha(compressed)==item['sha256'] and sha(raw)==item['raw_sha256']
     return json.loads(raw)
-e=json.loads((HERE/'evidence.json').read_text())
+accepted=(HERE/'evidence.json').read_bytes()
+assert sha(accepted)==ACCEPTED_EVIDENCE_SHA256,'accepted historical I6 evidence.json SHA-256 mismatch'
+e=json.loads(accepted)
 assert e['schema']=='sssd-i6-production-native-v1' and e['base']==BASE
 assert e['production_daemon'] and e['real_packages']
-assert e['source_sha256']==m.manifest(),'I6 production/build sources changed; fresh packages and matrix required'
-assert e['harness_sha256']==m.harness_manifest(),'I6 fixture sources changed; rerun current matrix'
 assert set(e['profiles'])==set(PLATFORMS)
 for platform,row in e['profiles'].items():
     b=report(row['build']);assert b['clean_build'] and b['exit_code']==0 and b['platform']==platform and b['source_sha256']==e['source_sha256']
@@ -57,4 +70,4 @@ for platform,row in e['profiles'].items():
                 assert any('scope mismatch' in c.get('stdout','') and 'sssd_cache_credentials' in c.get('stdout','') for c in r['commands'])
             if scenario in ('acknowledgement-unowned-matching-foreign','cas-drift','cleanup-failure','wrong-registry-generation','journal-finalization-failure','crash-before-save','crash-before-ack','runtime-generation-change','receipt-substitution','legacy-v2-awaiting','wrong-physical-witness'):
                 assert o['debugger-seam']['hit'] and o['debugger-seam']['cli']['exit_code']!=0
-print('I6 source-bound five-platform actual daemon/CLI/package matrix PASS; retained evidence only')
+print(f'Historical I6 five-platform matrix PASS ({ACCEPTED_COMMIT}); does not certify current HEAD')

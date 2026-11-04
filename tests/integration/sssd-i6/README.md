@@ -10,9 +10,31 @@ builds the exact accepted I5 commit at a lower package version for genuine legac
 upgrade cases. `run-native.sh IMAGE PLATFORM SCENARIO` checks those receipts,
 installs real packages and exercises the installed daemon through normal CLI/IPC.
 Platforms and required scenarios are enumerated in `contracts.py`.
-After every required run, `collect-evidence.py` retains compressed reports and
-`check-evidence.py` checks the complete current-source matrix. A missing result,
-source drift, harness drift or failed scenario refuses collection.
+After every required run, `collect-evidence.py` retains compressed reports.
+A missing result, source drift, harness drift or failed scenario refuses collection.
+`source-manifest.py`, the native runner and collector continue to bind **new** runs
+to the actual current production/build and harness inputs.
+
+`sssd_i6_evidence_checks` is a `historical-evidence;integration` CTest. It pins the
+exact `evidence.json` from accepted commit
+`96b88d2b40abff5cec9cd4352891401350e26719` (SHA-256
+`6dd6fac33b0846d97202dda46f13428bed17622a489ad006b21dddc8ff305306`).
+The checker freezes that commit's five platforms, 25 scenarios, 11 positive
+assertions and legacy build identities independently of live `contracts.py`.
+It still verifies compressed/raw report hashes, complete matrix, historical
+source/build bindings, package receipts, scenario outcomes and all retained
+container/ownership/release/debugger assertions. No Git history access or native
+rerun is needed to check the retained artifacts.
+
+**PASS authenticates only that accepted historical matrix. It does not certify
+SSSD compatibility, apply/rollback or package behavior at current HEAD.**
+Unrelated SSH changes and changes to current native contracts cannot invalidate
+that historical result. New native evidence still requires fresh current-source
+builds and the current complete matrix; adopting it as a historical baseline
+requires explicit review and an updated pin/frozen contract. Do not replace the
+historical pin with hashes of unvalidated working-tree results.
+`test-historical-evidence.py` checks source/contract independence and refusal of
+changed evidence bytes, missing/corrupt reports and changed gzip encodings.
 
 Fixtures have private PID/cgroup/mount namespaces, no network or host mounts,
 read-only sysfs/proc-sys, coldplug disabled and preprepared private configuration

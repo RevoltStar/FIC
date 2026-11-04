@@ -3416,7 +3416,10 @@ set_tests_properties(policy_no_default_editor_tests PROPERTIES ENVIRONMENT "QT_Q
 if(Python3_Interpreter_FOUND)
     add_test(NAME sssd_i6_evidence_checks COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i6/check-evidence.py)
-    set_tests_properties(sssd_i6_evidence_checks PROPERTIES LABELS "unit;integration")
+    set_tests_properties(sssd_i6_evidence_checks PROPERTIES LABELS "historical-evidence;integration")
+    add_test(NAME sssd_i6_historical_evidence_regression COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i6/test-historical-evidence.py)
+    set_tests_properties(sssd_i6_historical_evidence_regression PROPERTIES LABELS "unit;integration")
 endif()
 
 target_link_libraries(identity_policy_hierarchy_tests PRIVATE fic-sssd-integration-test-support)
