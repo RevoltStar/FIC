@@ -1,29 +1,37 @@
 # Current workspace
 
 ## Current base
-* Branch `main`; task base `58700459e8477968c76efd6384cd4e0073177054`.
+* Branch `main`; SYSCTL task base `9c6800c5e1ca2bff2bb0723f51b984ffa5bee559`.
+* Completion changes belong to the commit containing this snapshot; no push.
 
 ## Current task
-* Completed conversion of `sssd_i6_evidence_checks` to historical evidence verification (variant B). One commit; no push.
+* Attachment 5c51f357: SYSCTL owned apply/REFRESH and release via native exact prefix. Implementation and required validation complete.
 
 ## Accepted architecture / invariants
-* Accepted matrix commit: `96b88d2b40abff5cec9cd4352891401350e26719`; exact evidence.json SHA-256 `6dd6fac33b0846d97202dda46f13428bed17622a489ad006b21dddc8ff305306`, obtained with git show from that commit.
-* Checker freezes its historical five platforms, 25 scenarios, 11 positive assertions and legacy build identities. It does not import current contracts or compare retained manifests with current sources.
-* All existing compressed/raw report hash, matrix completeness, build/source binding, package, scenario, container, ownership/release and debugger assertions remain.
-* PASS confirms only that historical matrix; it does not establish SSSD compatibility with current HEAD. New native runs/collection retain current-source/harness checks; source-manifest.py, collect-evidence.py, run-native.sh and contracts.py are unchanged. Historical evidence/reports are unchanged.
+* Every successful ENABLE apply owns its parameter in `/etc/sysctl.d/zzzz-fic.conf` and journal, even matching foreign/runtime state. No blocks, foreign effective parser, adoption, runtime-history restoration or compensation.
+* Metadata-only directory/name priority, symlinks/null masks; any selected regular late `.conf` blocks apply before policy mutation. Native loader/executable preflight uses existing platform resolver/trust and typed systemd properties.
+* One SYSCTL mutex. Fresh/REFRESH typed intent preserves ID/predecessor; durable attempted checkpoint before CAS. Direct inline NotInstalled permits no-effect abort; uncertainty stays Prepared and blocks writers. No postrestart inference of no effect.
+* Global journal schema remains3; optional SYSCTL undo extension version1. New container creation/current device+inode witness is recorded honestly. Shared witnesses update atomically with transaction completion. Replaced containers cannot be adopted/deleted with stale creation authority.
+* Existing old key/value records retain legacy empty-container release exception, NOT creation proof. Mixed new owners can reference the specific existing legacy origin without claiming creation; referenced origin cannot be discarded. No migration subsystem.
+* Release preserves other keys, conditionally writes/deletes, requires durability and completes journal before verified `systemd-sysctl --prefix=/canonical/leaf`. No runtime value read on release; absent foreign source may keep runtime. Native helper failure/exception is warning, without re-enrollment/retry store.
+* Existing optimistic CAS/root-writer race boundary remains. Unknown/orphan physical state is never automatic success.
 
 ## Completed / changed areas
-* `tests/integration/sssd-i6/check-evidence.py`: pinned accepted evidence bytes and historical expectations.
-* `tests/integration/sssd-i6/test-historical-evidence.py`: seven isolated-copy regressions, including SSH/live-contract independence and evidence/report tampering/refusal.
-* `tests/CMakeLists.txt`: existing CTest name retained, label historical-evidence replaces unit; separate regression test registered as unit/integration.
-* SSSD runner README and `docs/sssd-verified-activation-design.md`: historical PASS boundary and separate current-source native contract documented.
+* SYSCTL configuration/transaction/native helper, production apply and RollbackExecutor integration; optional SystemdSysctl executable in five profiles, resolver and profile validator.
+* Narrow journal prepare/attempt/finish/abort; atomic shared-witness updates; no changes to other backend behavior, package scripts/lifecycle, SysctlKey or SysctlRuntime.
+* Unit/static checks updated, dedicated ownership regression suite and five-platform native fixture added. Obsolete foreign-effective RemoteSysctlIntegration.sh replaced by isolated native gates.
+* Authoritative contract/table/production-file list: `docs/sysctl-lifecycle.md`; related rollback/architecture docs updated.
+* Compact source/image/ELF-bound receipt: `tests/integration/sysctl-ownership/evidence.json`. No bulk gzip reports.
 
 ## Validation
-* Local checker PASS; unittest regression 7/7 PASS (1.202s).
-* Existing Debian12 Docker builder: CMake configure PASS; CTest `^sssd_i6_(evidence_checks|historical_evidence_regression)$` 2/2 PASS (1.19s). JSON test discovery confirms historical-evidence/integration and absence of unit on the historical checker.
-* Existing report-verification body preserved. Diff confirms no changes to production, native source/collection tools, current contracts, evidence.json or reports.
-* `git diff --check` PASS.
+* Final full project build and actual DEBs in prepared Debian12 Docker builder PASS; `build-sysctl-validation/full-build-package.log`.
+* Full Debian12 CTest with DAC override capabilities dropped and Git safe.directory supplied: 219 passed,0 failed,4 opt-in native skipped,223 registered (165.76s). Includes journal/rollback/SSH/SSSD unit/static checks and historical I6 evidence (historical only).
+* Native SYSCTL + two unit suites each: Debian12(systemd252.39), Debian13(257.13), Ubuntu24.04(255.4), Ubuntu26.04(259.9), ALT p11(258.9) PASS. Actual helper paths, source priorities/masks, exact leaf/dotted interface, unrelated leaf unchanged, owned no-op/REFRESH/release, warning failures and loader refusals tested.
+* Real Debian12 FIC daemon/CLI/package scripts: apply/no-op/runtime repair → prepare-uninstall/rollback all → remove/purge PASS; foreign source and administrative policy config preserved. Installed ELF matched explicitly rebuilt daemon SHA.
+* Source-manifest recheck, Python/shell syntax and `git diff --check` PASS. Reproduction: `tests/integration/sysctl-ownership/README.md`; local logs under `build-sysctl-validation/`.
 
 ## Remaining / limits
-* No unfinished work for this task. No SSSD native matrix rerun and no production rebuild/full CTest: this change only affects Python evidence checking, test registration and documentation.
-* Historical PASS must never be presented as current-HEAD native coverage. A newly accepted matrix requires explicit review and a new historical pin/frozen contract.
+* No unfinished required SYSCTL implementation items. No host security mutation; native runtime containers have private namespaces/no host binds/network/ports, global kernel sysctls/sysfs read-only, private net leaves writable only.
+* Supplemental ALT `platform_profile_tests` fails `SDDM configuration path is incorrect`; reproduced unchanged from clean task-base archive in separate native build. Unrelated baseline defect, intentionally not fixed; full compiled-profile validation in SYSCTL driver passes all five.
+* Actual package E2E is Debian12 only; other four have real backend/loader gates, not package E2E. No real host reboot/power loss or arbitrary kernel-knob coverage. Durability/CAS uncertainty uses deterministic fault injection and remains fail-closed; no new automatic recovery engine.
+* Four opt-in CTest skips: verified_config_service_native_tests, daemon_singleton_startup_native, maintenance_preflight_native, package_pam_hooks_native. Separate required SYSCTL/package native gates above were actually run.

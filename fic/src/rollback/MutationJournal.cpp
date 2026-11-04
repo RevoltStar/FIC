@@ -561,6 +561,26 @@ bool deserializeSshTransition(const json& j,SshOwnershipTransition& t,std::strin
     }
     return true;
 }
+bool validSysctlRecord(const MutationRecord& record,std::string& error) {
+    const auto* p=std::get_if<UndoRemoveManagedSetting>(&record.undo.payload);
+    if(record.undo.backend==MutationBackend::Sysctl&&!p){error="SYSCTL undo payload unavailable";return false;}
+    if(!p||!p->sysctl)return true;
+    const auto& x=*p->sysctl;
+    if(record.undo.backend!=MutationBackend::Sysctl||record.policy.moduleName!="SYSCTL"||record.resource!=p->key||x.version!=1||
+       (x.containerCreated&&x.legacyContainerOrigin)||
+       (!x.containerCreated&&x.containerIdentity)||
+       (x.containerCreated&&(!x.pending||x.hadApplied)&&!x.containerIdentity)||
+       (x.containerIdentity&&!x.containerIdentity->inode)||
+       (x.pending&&(record.status!=MutationStatus::Prepared||x.targetValue.empty()||(x.hadApplied&&!record.id)))||
+       (!x.pending&&(record.status==MutationStatus::Prepared||x.hadApplied||x.previousLegacy||x.attempted||!x.targetValue.empty()))||
+       (x.previousLegacy&&(!x.hadApplied||x.legacyContainerOrigin!=record.id))||
+       p->appliedValue.find_first_of("\r\n")!=std::string::npos||p->appliedValue.find('\0')!=std::string::npos||
+       x.targetValue.find_first_of("\r\n")!=std::string::npos||x.targetValue.find('\0')!=std::string::npos) {
+        error="invalid SYSCTL typed ownership/status";return false;
+    }
+    return true;
+}
+
 bool validSshRecord(const MutationRecord& record,std::string& error) {
     if(record.undo.backend!=MutationBackend::Ssh)return true;
     const auto* p=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);
@@ -722,6 +742,13 @@ json serializeUndoAction(const UndoAction& action) {
             std::get_if<UndoRemoveManagedSetting>(&action.payload)) {
         value["key"] = setting->key;
         value["applied_value"] = setting->appliedValue;
+        if(setting->sysctl) {
+            const auto& x=*setting->sysctl;
+            value["sysctl"]={{"version",x.version},{"container_created",x.containerCreated},
+                {"legacy_container_origin",x.legacyContainerOrigin},{"pending",x.pending},
+                {"had_applied",x.hadApplied},{"previous_legacy",x.previousLegacy},{"attempted",x.attempted},{"target_value",x.targetValue}};
+            value["sysctl"]["container_identity"]=x.containerIdentity?json{{"device",x.containerIdentity->device},{"inode",x.containerIdentity->inode}}:json(nullptr);
+        }
     } else if (const auto* auth = std::get_if<UndoReleaseSudoAuthentication>(&action.payload)) {
         auto proofs = [](const auto& source) {
             json result = json::array();
@@ -1606,6 +1633,24 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         UndoRemoveManagedSetting payload;
         payload.key = value.value("key", "");
         payload.appliedValue = value.value("applied_value", "");
+        if(value.contains("sysctl")) {
+            if(backend!=MutationBackend::Sysctl){error="SYSCTL extension on another backend";return false;}
+            const auto& x=value.at("sysctl");SysctlSettingState state;
+            state.version=x.at("version");state.containerCreated=x.at("container_created");
+            state.legacyContainerOrigin=x.at("legacy_container_origin");state.pending=x.at("pending");
+            state.hadApplied=x.at("had_applied");state.previousLegacy=x.at("previous_legacy");state.attempted=x.at("attempted");state.targetValue=x.at("target_value");
+            const auto& identity=x.at("container_identity");
+            if(!identity.is_null()) {
+                if(!identity.at("device").is_number_unsigned()||!identity.at("inode").is_number_unsigned()) {error="invalid SYSCTL container identity";return false;}
+                state.containerIdentity=SysctlContainerIdentity{identity.at("device").get<std::uint64_t>(),identity.at("inode").get<std::uint64_t>()};
+            }
+            if(state.version!=1||(state.containerCreated&&state.legacyContainerOrigin)||
+               (state.pending&&(state.targetValue.empty()||(state.previousLegacy&&!state.hadApplied)))||
+               (!state.pending&&(state.hadApplied||state.previousLegacy||state.attempted||!state.targetValue.empty()))) {
+                error="invalid SYSCTL ownership transition";return false;
+            }
+            payload.sysctl=state;
+        }
         if (payload.key.empty() ||
             (backend == MutationBackend::Sudo && payload.appliedValue.empty())) {
             error = "remove_managed_setting undo requires a key";
@@ -2289,7 +2334,7 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
         return false;
     }
     record.status = status;
-    if(!validSshRecord(record,error)||!sssd_payload::validRecord(record,error))return false;
+    if(!validSshRecord(record,error)||!validSysctlRecord(record,error)||!sssd_payload::validRecord(record,error))return false;
     if ((record.undo.backend == MutationBackend::Desktop ||
          (std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload) ||
           std::holds_alternative<UndoOwnDesktopArtifact>(record.undo.payload))) &&
@@ -3262,7 +3307,7 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
     if (std::holds_alternative<SssdJournalOwnership>(record.undo.payload)) {
         error="SSSD I4 ownership requires typed transaction API";return false;
     }
-    if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)) return false;
+    if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)||!validSysctlRecord(record,error)) return false;
     if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&(ssh->transition||!ssh->includedWrappers.empty())&&!sshInitial) {
         error="SSH transitions require the typed journal API";return false;
     }
@@ -3472,7 +3517,7 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
         }
     }
     if (record.undo.backend == MutationBackend::Sudo) {
-        if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)) return false;
+        if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)||!validSysctlRecord(record,error)) return false;
         if (const auto* auth = std::get_if<UndoReleaseSudoAuthentication>(&record.undo.payload)) {
             const bool existing = std::any_of(records_.begin(), records_.end(), [&](const auto& current) {
                 return current.isActive() && current.policy == record.policy && current.resource == record.resource;
@@ -3669,6 +3714,10 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
             existing.policy == record.policy &&
             existing.undo.backend == record.undo.backend &&
             existing.resource == record.resource) {
+            if(record.undo.backend==MutationBackend::Sysctl&&
+               (std::get<UndoRemoveManagedSetting>(existing.undo.payload).sysctl||std::get<UndoRemoveManagedSetting>(record.undo.payload).sysctl)) {
+                error="typed SYSCTL ownership requires typed refresh; generic reprepare refused";return false;
+            }
             if(record.undo.backend==MutationBackend::Ssh) {
                 if(existing.status==MutationStatus::Prepared && serializeUndoAction(existing.undo)==serializeUndoAction(record.undo)) {
                     id=existing.id;return true;
@@ -4210,9 +4259,93 @@ bool MutationJournal::normalizeSudoAuthenticationPreparedToPrevious(
     return false;
 }
 
-bool MutationJournal::persistSshChange(const MutationRecord& previous,std::string& error) {
+bool MutationJournal::prepareSysctl(const PolicyRef& policy,const std::string& key,const std::string& target,
+    bool created,MutationId legacyOrigin,const std::optional<AtomicTargetState>& container,MutationId& id,std::string& error) {
+    if(!usable()||!lifecycleInitialized_||policy.moduleName!="SYSCTL"||key.empty()||target.empty()) {error="SYSCTL journal admission failed";return false;}
+    MutationRecord* old=nullptr;
+    for(auto& r:records_)if(r.isActive()&&r.undo.backend==MutationBackend::Sysctl) {
+        auto* p=std::get_if<UndoRemoveManagedSetting>(&r.undo.payload);
+        if(!p||r.status==MutationStatus::Prepared||(p->sysctl&&p->sysctl->pending)){error="unresolved shared SYSCTL transaction";return false;}
+        if(r.policy==policy){if(old||r.resource!=key||p->key!=key||r.status!=MutationStatus::Applied){error="SYSCTL predecessor mismatch";return false;}old=&r;}
+    }
+    if(legacyOrigin) {
+        const auto* origin=find(legacyOrigin);const auto* p=origin?std::get_if<UndoRemoveManagedSetting>(&origin->undo.payload):nullptr;
+        if(!p||p->sysctl||origin->undo.backend!=MutationBackend::Sysctl){error="invalid legacy SYSCTL release origin";return false;}
+    }
+    SysctlSettingState state;state.containerCreated=created;state.legacyContainerOrigin=legacyOrigin;state.pending=true;state.targetValue=target;
+    if(created&&container)state.containerIdentity=SysctlContainerIdentity{container->identity.device,container->identity.inode};
+    if(old) {
+        const auto previous=*old;auto& p=std::get<UndoRemoveManagedSetting>(old->undo.payload);
+        state.hadApplied=true;state.previousLegacy=!p.sysctl;
+        if(p.sysctl)state.containerIdentity=p.sysctl->containerIdentity;
+        if(state.previousLegacy){state.containerIdentity.reset();state.containerCreated=false;state.legacyContainerOrigin=old->id;}
+        if(p.sysctl&&(p.sysctl->containerCreated!=created||p.sysctl->legacyContainerOrigin!=legacyOrigin)){error="SYSCTL refresh changed container authority";return false;}
+        p.sysctl=state;old->status=MutationStatus::Prepared;old->error.clear();id=old->id;
+        return persistRecordChange(previous,error);
+    }
+    MutationRecord record;record.policy=policy;record.resource=key;
+    UndoRemoveManagedSetting p{key,target};p.sysctl=state;record.undo={MutationBackend::Sysctl,p};
+    return prepareMutation(std::move(record),id,error);
+}
+bool MutationJournal::persistSysctlChange(const std::vector<MutationRecord>& previous,std::string& error) {
+    for(const auto& r:records_)if(!validSysctlRecord(r,error)){records_=previous;return false;}
+    const auto outcome=persist(error);
+    if(outcome==PersistOutcome::Persisted)return true;
+    if(outcome==PersistOutcome::NotInstalled)records_=previous;
+    else health_=JournalHealth::Indeterminate;
+    return false;
+}
+bool MutationJournal::finishSysctl(MutationId id,const AtomicTargetState& published,std::string& error) {
+    auto* r=find(id);auto* p=r?std::get_if<UndoRemoveManagedSetting>(&r->undo.payload):nullptr;
+    if(!usable()||!p||r->undo.backend!=MutationBackend::Sysctl||r->status!=MutationStatus::Prepared||!p->sysctl||!p->sysctl->pending||!published.identity.inode){error="SYSCTL completion has no prepared intent/publication";return false;}
+    const auto previous=records_;const auto state=*p->sysctl;p->appliedValue=state.targetValue;
+    if(state.previousLegacy)p->sysctl.reset(); // retain historical format/permission, not a creation claim
+    else {p->sysctl->pending=false;p->sysctl->hadApplied=false;p->sysctl->attempted=false;p->sysctl->targetValue.clear();}
+    r->status=MutationStatus::Applied;r->error.clear();r->updatedAtEpoch=currentEpochSeconds();
+    for(auto& owner:records_)if(owner.isActive()&&owner.undo.backend==MutationBackend::Sysctl) {
+        auto* setting=std::get_if<UndoRemoveManagedSetting>(&owner.undo.payload);
+        if(setting&&setting->sysctl&&setting->sysctl->containerCreated) {
+            setting->sysctl->containerIdentity=SysctlContainerIdentity{published.identity.device,published.identity.inode};
+            owner.updatedAtEpoch=currentEpochSeconds();
+        }
+    }
+    return persistSysctlChange(previous,error);
+}
+bool MutationJournal::finishSysctlRelease(MutationId id,const std::optional<AtomicTargetState>& published,std::string& error) {
+    auto* r=find(id);
+    if(!usable()||!lifecycleInitialized_||!r||r->undo.backend!=MutationBackend::Sysctl||!r->isActive()) {error="SYSCTL release journal admission failed";return false;}
+    const auto* p=std::get_if<UndoRemoveManagedSetting>(&r->undo.payload);
+    if(!p||(p->sysctl&&p->sysctl->pending)){error="unresolved SYSCTL release intent";return false;}
+    const auto previous=records_;r->status=MutationStatus::RolledBack;r->error.clear();r->updatedAtEpoch=currentEpochSeconds();
+    for(auto& owner:records_)if(owner.isActive()&&owner.undo.backend==MutationBackend::Sysctl) {
+        auto* setting=std::get_if<UndoRemoveManagedSetting>(&owner.undo.payload);
+        if(setting&&setting->sysctl&&setting->sysctl->containerCreated) {
+            if(!published){records_=previous;error="surviving SYSCTL ownership lost container";return false;}
+            setting->sysctl->containerIdentity=SysctlContainerIdentity{published->identity.device,published->identity.inode};
+            owner.updatedAtEpoch=currentEpochSeconds();
+        }
+    }
+    return persistSysctlChange(previous,error);
+}
+bool MutationJournal::noteSysctlAttempt(MutationId id,std::string& error) {
+    auto* r=find(id);auto* p=r?std::get_if<UndoRemoveManagedSetting>(&r->undo.payload):nullptr;
+    if(!usable()||!p||r->undo.backend!=MutationBackend::Sysctl||r->status!=MutationStatus::Prepared||!p->sysctl||!p->sysctl->pending||p->sysctl->attempted){error="SYSCTL attempt lacks fresh prepared intent";return false;}
+    const auto previous=*r;p->sysctl->attempted=true;return persistRecordChange(previous,error);
+}
+bool MutationJournal::abortSysctlNoEffect(MutationId id,std::string& error,bool inlineNotInstalled) {
+    auto* r=find(id);auto* p=r?std::get_if<UndoRemoveManagedSetting>(&r->undo.payload):nullptr;
+    if(!usable()||!p||r->undo.backend!=MutationBackend::Sysctl||r->status!=MutationStatus::Prepared||!p->sysctl||!p->sysctl->pending){error="SYSCTL abort has no inline prepared intent";return false;}
+    if(p->sysctl->attempted&&!inlineNotInstalled){error="SYSCTL attempted publication has no inline NotInstalled observation";return false;}
+    if(!p->sysctl->hadApplied)return discardImpl(id,error,true);
+    const auto previous=*r;const auto state=*p->sysctl;
+    if(state.previousLegacy)p->sysctl.reset();
+    else {p->sysctl->pending=false;p->sysctl->hadApplied=false;p->sysctl->attempted=false;p->sysctl->targetValue.clear();}
+    r->status=MutationStatus::Applied;r->error.clear();return persistRecordChange(previous,error);
+}
+
+bool MutationJournal::persistRecordChange(const MutationRecord& previous,std::string& error) {
     auto* record=find(previous.id);
-    if(!record||!validSshRecord(*record,error)) {
+    if(!record||!validSshRecord(*record,error)||!validSysctlRecord(*record,error)) {
         if(record)*record=previous;
         return false;
     }
@@ -4248,7 +4381,7 @@ bool MutationJournal::beginSshRefresh(MutationId id,const UndoRemoveSshManagedPo
     t.beforeSha256=before;t.targetSha256=after;
     old->operationSequence=t.sequence;old->transition=std::move(t);
     record->status=MutationStatus::Prepared;record->error.clear();
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::prepareSshPortInitial(const PolicyRef& policy,const std::string& main,
     const UndoRemoveSshManagedPolicy& target,const std::map<std::string,SshPlannedFilePublication>& files,
@@ -4291,7 +4424,7 @@ bool MutationJournal::beginSshPortChange(MutationId id,const UndoRemoveSshManage
     t.fileReplacement=release?first->second.replacement:true;
     t.predecessorStatus=record->status;t.predecessorError=record->error;
     old->operationSequence=t.sequence;old->transition=std::move(t);record->status=MutationStatus::Prepared;record->error.clear();
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::abortSshPortNoEffect(MutationId id,const std::set<std::string>& notInstalled,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSH no-effect abort requires healthy journal";return false;}
@@ -4313,7 +4446,7 @@ bool MutationJournal::abortSshPortNoEffect(MutationId id,const std::set<std::str
     const MutationRecord previous=*record;
     record->status=p->transition->intent==SshTransitionIntent::Release?p->transition->predecessorStatus:MutationStatus::Applied;
     record->error=p->transition->intent==SshTransitionIntent::Release?p->transition->predecessorError:std::string();
-    p->transition.reset();return persistSshChange(previous,error);
+    p->transition.reset();return persistRecordChange(previous,error);
 }
 bool MutationJournal::noteSshFileAttempt(MutationId id,const std::string& path,std::string& error) {
     if(!usable()){error="SSH journal unavailable";return false;}
@@ -4323,7 +4456,7 @@ bool MutationJournal::noteSshFileAttempt(MutationId id,const std::string& path,s
         error="invalid SSH file attempt checkpoint";return false;
     }
     const MutationRecord previous=*record;p->transition->files.at(path).attempted=true;
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::noteSshFilePublication(MutationId id,const std::string& path,const AtomicTargetState& state,bool durable,std::string& error) {
     if(!usable()){error="SSH journal unavailable";return false;}
@@ -4341,7 +4474,7 @@ bool MutationJournal::noteSshFilePublication(MutationId id,const std::string& pa
             error="SSH file receipt already checkpointed with different identity";return false;
         }
     }
-    f.publication=receipt;return persistSshChange(previous,error);
+    f.publication=receipt;return persistRecordChange(previous,error);
 }
 bool MutationJournal::beginSshRelease(MutationId id,const std::string& before,const std::string& target,
     bool fileReplacement,std::string& error) {
@@ -4361,7 +4494,7 @@ bool MutationJournal::beginSshRelease(MutationId id,const std::string& before,co
     t.previous=sshOwnedProjection(*old);t.beforeSha256=before;t.targetSha256=target;t.fileReplacement=fileReplacement;
     t.predecessorStatus=record->status;t.predecessorError=record->error;
     old->operationSequence=t.sequence;old->transition=std::move(t);record->status=MutationStatus::Prepared;record->error.clear();
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::finishSshReleaseVerification(MutationId id,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSH release requires healthy journal";return false;}
@@ -4371,7 +4504,7 @@ bool MutationJournal::finishSshReleaseVerification(MutationId id,std::string& er
         error="SSH release verification incomplete; intent retained";return false;
     }
     const MutationRecord previous=*record;p->transition->phase=SshTransitionPhase::ReleasedAwaitingDisable;
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::commitSshRelease(MutationId id,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSH release acknowledgement requires healthy journal";return false;}
@@ -4380,7 +4513,7 @@ bool MutationJournal::commitSshRelease(MutationId id,std::string& error) {
         error="SSH release cannot finalize before verification and durable policy/lifecycle acknowledgement";return false;
     }
     const MutationRecord previous=*record;p->transition->phase=SshTransitionPhase::Completed;record->status=MutationStatus::RolledBack;
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::noteSshPublication(MutationId id,const AtomicTargetState& installed,bool durable,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSH publication facts require healthy journal";return false;}
@@ -4402,7 +4535,7 @@ bool MutationJournal::noteSshPublication(MutationId id,const AtomicTargetState& 
     }
     p->transition->publication=std::move(proof);
     p->transition->phase=durable?SshTransitionPhase::DurablePublished:SshTransitionPhase::Published;
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::noteSshRuntime(MutationId id,bool verified,
     const std::map<std::string,std::string>& facts,std::string& error) {
@@ -4419,7 +4552,7 @@ bool MutationJournal::noteSshRuntime(MutationId id,bool verified,
         if(!awaiting)p->transition->phase=p->transition->intent==SshTransitionIntent::Release&&facts.count("offline")&&facts.at("offline")=="true"?
             SshTransitionPhase::OfflineVerified:SshTransitionPhase::RuntimeVerified;
     } else if(awaiting)p->transition->phase=SshTransitionPhase::DurablePublished;
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::commitSshRefresh(MutationId id,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSH finalization requires healthy journal";return false;}
@@ -4432,7 +4565,7 @@ bool MutationJournal::commitSshRefresh(MutationId id,std::string& error) {
     p->appliedValue=target.value;p->disabledMutationIds=target.disabledIds;
     p->ownershipVersion=target.ownershipVersion;p->wrapperFingerprints=target.wrapperFingerprints;p->includedWrappers=target.includedWrappers;
     p->transition->phase=SshTransitionPhase::Completed;record->status=MutationStatus::Applied;record->error.clear();
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::failSshTransition(MutationId id,const std::string& diagnostic,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSH failure checkpoint requires healthy journal";return false;}
@@ -4443,7 +4576,7 @@ bool MutationJournal::failSshTransition(MutationId id,const std::string& diagnos
     const MutationRecord previous=*record;
     if(sshReleaseAwaitingDisable(*p))p->transition->phase=SshTransitionPhase::DurablePublished;
     record->error=diagnostic;
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 bool MutationJournal::abortSshTransitionNoEffect(MutationId id,std::string& error) {
     if(!usable()||!lifecycleInitialized_){error="SSH no-effect abort requires healthy journal";return false;}
@@ -4463,7 +4596,7 @@ bool MutationJournal::abortSshTransitionNoEffect(MutationId id,std::string& erro
         record->status=p->transition->predecessorStatus;record->error=p->transition->predecessorError;
     } else {record->status=MutationStatus::Applied;record->error.clear();}
     p->transition.reset();
-    return persistSshChange(previous,error);
+    return persistRecordChange(previous,error);
 }
 
 bool MutationJournal::setStatus(MutationId id, MutationStatus status,
@@ -4515,7 +4648,11 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
     }
     if ((record->undo.backend == MutationBackend::DisplayManager || std::holds_alternative<UndoRemoveDisplayManagerBlock>(record->undo.payload)) &&
         !validDmRecord(*record, error)) { *record = previous; return false; }
-    if(!validSshRecord(*record,error)){*record=previous;return false;}
+    if(!validSshRecord(*record,error)||!validSysctlRecord(*record,error)){*record=previous;return false;}
+    if(const auto* p=std::get_if<UndoRemoveManagedSetting>(&record->undo.payload);
+       record->undo.backend==MutationBackend::Sysctl&&p&&p->sysctl&&p->sysctl->pending&&status!=MutationStatus::Prepared) {
+        *record=previous;error="unresolved SYSCTL transition requires typed completion";return false;
+    }
     record->error = message;
     record->updatedAtEpoch = currentEpochSeconds();
     const PersistOutcome outcome = persist(error);
@@ -4538,7 +4675,12 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
 }
 
 bool MutationJournal::discard(MutationId id, std::string& error) {return discardImpl(id,error,false);}
-bool MutationJournal::discardImpl(MutationId id,std::string& error,bool initialSshNoEffect) {
+bool MutationJournal::discardImpl(MutationId id,std::string& error,bool provenInitialNoEffect) {
+    for(const auto& record:records_)if(record.isActive()&&record.id!=id&&record.undo.backend==MutationBackend::Sysctl) {
+        const auto* p=std::get_if<UndoRemoveManagedSetting>(&record.undo.payload);
+        if(p&&p->sysctl&&p->sysctl->legacyContainerOrigin==id){error="legacy SYSCTL container authority is still delegated";return false;}
+    }
+
     if (!loaded_) {
         error = "Mutation journal не загружен";
         return false;
@@ -4551,8 +4693,12 @@ bool MutationJournal::discardImpl(MutationId id,std::string& error,bool initialS
     }
     for (std::size_t index = 0; index < records_.size(); ++index) {
         if (records_[index].id == id) {
-            if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&records_[index].undo.payload);ssh&&sshTransitionPending(*ssh)&&!initialSshNoEffect) {
+            if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&records_[index].undo.payload);ssh&&sshTransitionPending(*ssh)&&!provenInitialNoEffect) {
                 error="cannot discard unresolved SSH ownership transition";return false;
+            }
+            if(const auto* p=std::get_if<UndoRemoveManagedSetting>(&records_[index].undo.payload);
+               records_[index].undo.backend==MutationBackend::Sysctl&&p&&p->sysctl&&p->sysctl->pending&&!provenInitialNoEffect) {
+                error="cannot discard unresolved SYSCTL ownership";return false;
             }
             if(std::holds_alternative<SssdJournalOwnership>(records_[index].undo.payload)) {
                 error="SSSD I4 disposition requires typed lifecycle API";return false;

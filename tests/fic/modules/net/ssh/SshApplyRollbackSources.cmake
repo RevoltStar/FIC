@@ -53,6 +53,8 @@ set(FIC_SSH_APPLY_ROLLBACK_SOURCES
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/oss/grub/GrubManagedConfig.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/oss/grub/GrubRollback.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/modules/sysctl/SysctlTransaction.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/modules/sysctl/SysctlSystemd.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp

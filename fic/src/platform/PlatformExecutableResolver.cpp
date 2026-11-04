@@ -18,6 +18,7 @@ const char* executableIdName(ExecutableId id) {
         return "ssh-keygen";
     case ExecutableId::Sshd:
         return "sshd";
+    case ExecutableId::SystemdSysctl: return "systemd-sysctl";
     case ExecutableId::Systemctl:
         return "systemctl";
     case ExecutableId::Loginctl:
@@ -64,6 +65,7 @@ std::vector<ExecutableId> allExecutableIds() {
         ExecutableId::SshKeygen,
         ExecutableId::Sshd,
         ExecutableId::Systemctl,
+        ExecutableId::SystemdSysctl,
         ExecutableId::Loginctl,
         ExecutableId::Visudo,
         ExecutableId::Sudo,

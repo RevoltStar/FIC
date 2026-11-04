@@ -91,10 +91,8 @@ void testGlobalLexicalOrder() {
     writeFile(tree.root / "usr/lib/sysctl.d/90-vendor.conf", "kernel.test = 90\n");
 
     const auto observation = loaded(tree.options()).inspect("kernel.test");
-    require(observation.found && observation.value == "90",
-            "filenames must be sorted globally, not grouped by directory priority");
-    require(observation.source.path.filename() == "90-vendor.conf",
-            "wrong source for globally latest value");
+    require(!observation.found,
+            "topology proof must not calculate foreign effective values");
 }
 
 void testSameNameUsesHigherPriorityDirectory() {
@@ -104,10 +102,8 @@ void testSameNameUsesHigherPriorityDirectory() {
     writeFile(tree.root / "usr/lib/sysctl.d/50-default.conf", "kernel.test = usr\n");
 
     const auto observation = loaded(tree.options()).inspect("kernel.test");
-    require(observation.found && observation.value == "etc",
-            "same basename from /etc must suppress lower-priority files");
-    require(observation.source.path.parent_path() == tree.root / "etc/sysctl.d",
-            "same-name source must come from the highest-priority directory");
+    require(!observation.found,
+            "same-name foreign files are topology inputs, not owned assignments");
 }
 
 void testSuppressedInvalidFileIsNotParsed() {
@@ -116,8 +112,8 @@ void testSuppressedInvalidFileIsNotParsed() {
     writeFile(tree.root / "usr/lib/sysctl.d/50-default.conf", "invalid vendor line\n");
 
     const auto observation = loaded(tree.options()).inspect("kernel.test");
-    require(observation.found && observation.value == "etc",
-            "a suppressed same-name file must not be parsed");
+    require(!observation.found,
+            "foreign same-name contents must not be parsed");
 }
 
 void testProcpsMainFileIsLastOnlyForProcpsLoader() {
@@ -128,12 +124,9 @@ void testProcpsMainFileIsLastOnlyForProcpsLoader() {
     writeFile(tree.root / "etc/sysctl.conf",
               "kernel.test = first\n; comment\nkernel.test = main\n");
 
-    const auto observation = loaded(options).inspect("kernel.test");
-    require(observation.found && observation.value == "main",
-            "/etc/sysctl.conf must override sysctl.d only for procps-system semantics");
-    require(observation.source.path == tree.root / "etc/sysctl.conf" &&
-                observation.source.line == 3,
-            "wrong location for last assignment in main file");
+    SysctlConfiguration configuration(options);
+    std::string error;
+    require(!configuration.load(error), "unsupported procps loader must refuse before mutation");
 }
 
 void testSystemdIgnoresSysctlConfForBootEffectiveValue() {
@@ -163,8 +156,8 @@ void testSlashNotationAndIgnoredFailurePrefix() {
               "-net/ipv4/ip_forward = 0\n");
 
     const auto observation = loaded(tree.options()).inspect("net.ipv4.ip_forward");
-    require(observation.found && observation.value == "0",
-            "slash notation and leading ignore-failure marker must normalize");
+    require(!observation.found,
+            "foreign ignore-failure assignment must not be interpreted by apply");
 }
 
 void testGlobAssignmentAndExclusion() {
@@ -174,15 +167,15 @@ void testGlobAssignmentAndExclusion() {
               "-net.ipv4.conf.all.rp_filter\n");
 
     SysctlConfiguration configuration = loaded(tree.options());
-    require(configuration.inspect("net.ipv4.conf.ens18.rp_filter").value == "2",
-            "glob assignment must apply to a matching exact key");
+    require(!configuration.inspect("net.ipv4.conf.ens18.rp_filter").found,
+            "foreign globs must be left to native systemd");
     require(!configuration.inspect("net.ipv4.conf.all.rp_filter").found,
             "an exclusion without '=' must suppress matching glob assignments");
 }
 
 void testNormalDottedKeyUsesCanonicalPath() {
     TemporaryTree tree;
-    writeFile(tree.root / "usr/lib/sysctl.d/20-kernel.conf", "kernel.pid_max = 65536\n");
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf", "kernel.pid_max = 65536\n");
 
     SysctlConfiguration configuration = loaded(tree.options());
     require(configuration.inspect("kernel.pid_max").value == "65536",
@@ -199,8 +192,8 @@ void testExplicitAssignmentIsNotOverriddenByGlob() {
               "net.ipv4.conf.*.rp_filter = 2\n");
 
     const auto observation = loaded(tree.options()).inspect("net.ipv4.conf.all.rp_filter");
-    require(observation.found && observation.value == "1",
-            "an explicit assignment must exclude the key from glob matching");
+    require(!observation.found,
+            "foreign explicit/glob precedence must not be calculated by FIC");
 }
 
 void testDevNullMaskSuppressesVendorFile() {
@@ -219,10 +212,8 @@ void testRegularForeignSymlinkIsParsed() {
                                     tree.root / "etc/sysctl.d/70-linked.conf");
 
     const auto observation = loaded(tree.options()).inspect("kernel.test");
-    require(observation.found && observation.value == "symlink",
-            "regular foreign sysctl.d symlink target must be parsed");
-    require(observation.source.displayPath.find(" -> ") != std::string::npos,
-            "symlink diagnostics must show resolved target");
+    require(!observation.found,
+            "trusted foreign symlink topology may be checked without reading its body");
 }
 
 void testSystemdSysctlConfSymlinkIsOverriddenByFic() {
@@ -319,15 +310,15 @@ void testManagedSymlinkIsRejectedAndTargetUnchanged() {
             "managed symlink target must not be altered");
 }
 
-void testCorrectEffectiveValueDoesNotCreateManagedFile() {
+void testCorrectForeignValueStillCreatesManagedFile() {
     TemporaryTree tree;
     writeFile(tree.root / "usr/lib/sysctl.d/10-vendor.conf", "kernel.test = expected\n");
     SysctlConfiguration configuration = loaded(tree.options());
 
     const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
-    require(result.ok && !result.changed, "already effective value must be idempotent");
-    require(!std::filesystem::exists(tree.root / "etc/sysctl.d/zzzz-fic.conf"),
-            "correct foreign effective value must not create FIC managed file");
+    require(result.ok && result.changed, "foreign compliant value still needs a FIC entry");
+    require(std::filesystem::exists(tree.root / "etc/sysctl.d/zzzz-fic.conf"),
+            "correct foreign value must not bypass the dedicated artifact");
 }
 
 void testManagedFileOverridesAndPreservesValues() {
@@ -370,15 +361,14 @@ void testStaleManagedAssignmentIsRemoved() {
               "kernel.test = stale\nkernel.keep = value\n");
     writeFile(tree.root / "etc/sysctl.d/zzzzz-local.conf", "kernel.test = expected\n");
 
-    SysctlConfiguration configuration = loaded(tree.options());
-    const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
-    require(result.ok && result.changed,
-            "stale managed assignment must be removed when effective value is already correct");
+    SysctlConfiguration configuration(tree.options());
+    std::string error;
+    require(!configuration.load(error), "late matching source must refuse regardless of content");
 
     const std::string managed = readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf");
-    require(managed.find("kernel.test") == std::string::npos &&
+    require(managed.find("kernel.test = stale") != std::string::npos &&
                 managed.find("kernel.keep = value") != std::string::npos,
-            "stale key must be removed without deleting unrelated managed values");
+            "topology refusal must preserve all owned values");
 }
 
 void testStaleManagedAssignmentRemovalRollback() {
@@ -391,10 +381,10 @@ void testStaleManagedAssignmentRemovalRollback() {
     writeFile(tree.root / "etc/sysctl.d/99-local.conf", "kernel.test = expected\n");
     const std::string before = readFile(options.platform.managedConfigPath);
 
-    SysctlConfiguration configuration = loaded(options);
-    const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
-    require(!result.ok,
-            "stale cleanup must fail if removing managed file activates invalid lower-priority source");
+    SysctlConfiguration configuration(options);
+    std::string error;
+    require(!configuration.load(error),
+            "late source must fail before any stale cleanup");
     require(readFile(options.platform.managedConfigPath) == before,
             "failed stale cleanup must restore managed file");
 }
@@ -406,11 +396,11 @@ void testConflictingLaterSourceRollsBackManagedFile() {
     const std::string beforeManaged = readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf");
     const std::string beforeForeign = readFile(tree.root / "etc/sysctl.d/zzzzz-local.conf");
 
-    SysctlConfiguration configuration = loaded(tree.options());
-    const SysctlOperationResult result = configuration.ensureManagedValue("kernel.test", "expected");
-    require(!result.ok, "later source must be reported as conflict");
-    require(result.message.find("zzzzz-local.conf:1") != std::string::npos,
-            "conflict diagnostics must include overriding source location");
+    SysctlConfiguration configuration(tree.options());
+    std::string error;
+    require(!configuration.load(error), "later source must refuse before write");
+    require(error.find("zzzzz-local.conf") != std::string::npos,
+            "topology diagnostics must name the late file without parsing its lines");
     require(readFile(tree.root / "etc/sysctl.d/zzzz-fic.conf") == beforeManaged,
             "managed file must be rolled back after conflict");
     require(readFile(tree.root / "etc/sysctl.d/zzzzz-local.conf") == beforeForeign,
@@ -435,14 +425,13 @@ void testInvalidActiveConfigurationFailsLoad() {
 
     SysctlConfiguration configuration(tree.options());
     std::string error;
-    require(!configuration.load(error), "invalid active sysctl line must fail loading");
-    require(error.find("50-invalid.conf:1") != std::string::npos,
-            "parse failure must include source location");
+    require(configuration.load(error), "apply must not parse foreign sysctl contents");
+    require(!configuration.inspect("kernel.test").found, "foreign data became ownership");
 }
 
 void testSlashFirstDottedInterfacePersistentKey() {
     TemporaryTree tree;
-    writeFile(tree.root / "usr/lib/sysctl.d/20-interface.conf",
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf",
               "net/ipv4/conf/enp3s0.200/forwarding = 1\n");
 
     SysctlConfiguration configuration = loaded(tree.options());
@@ -452,7 +441,7 @@ void testSlashFirstDottedInterfacePersistentKey() {
 
 void testSystemdMixedDottedInterfacePersistentKey() {
     TemporaryTree tree;
-    writeFile(tree.root / "usr/lib/sysctl.d/20-interface.conf",
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf",
               "net.ipv4.conf.enp3s0/200.forwarding = 1\n");
 
     SysctlConfiguration configuration = loaded(tree.options());
@@ -462,7 +451,7 @@ void testSystemdMixedDottedInterfacePersistentKey() {
 
 void testFullyDottedInterfaceConfigUsesSystemdSemantics() {
     TemporaryTree tree;
-    writeFile(tree.root / "usr/lib/sysctl.d/20-interface.conf",
+    writeFile(tree.root / "etc/sysctl.d/zzzz-fic.conf",
               "net.ipv4.conf.enp3s0.200.forwarding = 1\n");
 
     SysctlConfiguration configuration = loaded(tree.options());
@@ -647,7 +636,7 @@ int main(int argc, char* argv[]) {
         {"unsafe foreign symlink target file", testUnsafeForeignSymlinkTargetFileIsRejectedWhenRoot},
         {"unsafe foreign symlink target directory", testUnsafeForeignSymlinkTargetDirectoryIsRejectedWhenRoot},
         {"managed symlink", testManagedSymlinkIsRejectedAndTargetUnchanged},
-        {"correct value no managed write", testCorrectEffectiveValueDoesNotCreateManagedFile},
+        {"correct foreign value still creates owned entry", testCorrectForeignValueStillCreatesManagedFile},
         {"managed file override", testManagedFileOverridesAndPreservesValues},
         {"stale managed removal", testStaleManagedAssignmentIsRemoved},
         {"stale cleanup rollback", testStaleManagedAssignmentRemovalRollback},

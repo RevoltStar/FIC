@@ -46,9 +46,27 @@ enum class MutationBackend {
 
 // Typed undo actions. Each payload carries everything the rollback executor
 // needs to undo the mutation without calling Policy::rollback().
+// SYSCTL-specific optional extension. Old key/value payloads retain legacy release semantics.
+// appliedValue remains the predecessor while a target is Prepared.
+struct SysctlContainerIdentity {
+    std::uint64_t device=0, inode=0;
+};
+struct SysctlSettingState {
+    std::uint32_t version=1;
+    bool containerCreated=false;
+    std::optional<SysctlContainerIdentity> containerIdentity;
+    std::uint64_t legacyContainerOrigin=0; // delegated existing legacy release authority, NOT creation proof
+    bool pending=false;
+    bool hadApplied=false;
+    bool previousLegacy=false;
+    bool attempted=false;
+    std::string targetValue;
+};
+
 struct UndoRemoveManagedSetting {
     std::string key;          // managed key (canonical sysctl key, sudoers Defaults key)
     std::string appliedValue; // value/line FIC last applied; drift fingerprint
+    std::optional<SysctlSettingState> sysctl;
 };
 
 // One global sudoers setting in a shared, exclusively created FIC container.

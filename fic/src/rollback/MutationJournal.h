@@ -236,6 +236,14 @@ public:
     bool discard(MutationId id, std::string& error);
 
     std::vector<MutationRecord> activeRecords(const PolicyRef& policy) const;
+    bool prepareSysctl(const PolicyRef&,const std::string& key,const std::string& target,
+                       bool containerCreated,MutationId legacyOrigin,const std::optional<AtomicTargetState>&,MutationId&,std::string&);
+    bool finishSysctl(MutationId,const AtomicTargetState&,std::string&);
+    bool finishSysctlRelease(MutationId,const std::optional<AtomicTargetState>&,std::string&);
+    // Only an inline direct NotInstalled observation/no writer invocation permits abort.
+    bool noteSysctlAttempt(MutationId,std::string&);
+    bool abortSysctlNoEffect(MutationId,std::string&,bool inlineNotInstalled=false);
+
 
     // Test-only deterministic seam between the capture of the journal
     // document and its parse/re-proof/durability confirmation inside load().
@@ -310,10 +318,11 @@ private:
         Indeterminate
     };
 
+    bool persistSysctlChange(const std::vector<MutationRecord>&,std::string&);
     bool persistSssdChange(const std::vector<MutationRecord>& previous, MutationId previousNext, std::string&);
-    bool discardImpl(MutationId,std::string&,bool initialSshNoEffect);
+    bool discardImpl(MutationId,std::string&,bool provenInitialNoEffect);
     bool prepareMutationImpl(MutationRecord,MutationId&,std::string&,bool sshInitial);
-    bool persistSshChange(const MutationRecord& previous, std::string& error);
+    bool persistRecordChange(const MutationRecord& previous, std::string& error);
     PersistOutcome persist(std::string& error);
     // Centralized failed-load handling: revoke operational trust (health =
     // Indeterminate, usable() == false) WITHOUT touching records_/nextId_/

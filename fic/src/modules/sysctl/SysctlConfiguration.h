@@ -1,115 +1,53 @@
 #ifndef SYSCTLCONFIGURATION_H
 #define SYSCTLCONFIGURATION_H
-
+#include "platform/PlatformProfile.h"
+#include <fic/core/fs/AtomicFileWriter.h>
 #include <filesystem>
+#include <map>
+#include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
-
-#include "platform/PlatformProfile.h"
-
-struct SysctlSourceLocation {
-    std::filesystem::path path;
-    std::string displayPath;
-    size_t line = 0;
-};
-
-struct SysctlValueObservation {
-    bool found = false;
-    std::string value;
-    SysctlSourceLocation source;
-};
-
+struct SysctlSourceLocation {std::filesystem::path path;std::string displayPath;size_t line=0;};
+struct SysctlValueObservation {bool found=false;std::string value;SysctlSourceLocation source;};
 struct SysctlOperationResult {
-    bool ok = false;
-    bool changed = false;
-    // Rollback diagnostics: the FIC-owned value drifted from the recorded one.
-    bool conflict = false;
-    // Rollback diagnostics: the managed file does not own the requested key.
-    bool targetMissing = false;
+    bool ok=false,changed=false,conflict=false,targetMissing=false;
+    // True only when the operation demonstrably did not publish persistent state.
+    bool noEffect=true;
     std::string message;
     std::vector<std::string> diagnostics;
 };
-
 struct SysctlConfigurationOptions {
     fic::platform::SysctlPlatformConfig platform;
-    std::vector<std::filesystem::path> directories = {
-        "/etc/sysctl.d",
-        "/run/sysctl.d",
-        "/usr/local/lib/sysctl.d",
-        "/usr/lib/sysctl.d",
-        "/lib/sysctl.d"
-    };
-    std::filesystem::path procpsMainPath = "/etc/sysctl.conf";
-    bool enforceOwnership = true;
+    std::vector<std::filesystem::path> directories={"/etc/sysctl.d","/run/sysctl.d","/usr/local/lib/sysctl.d","/usr/lib/sysctl.d","/lib/sysctl.d"};
+    std::filesystem::path procpsMainPath="/etc/sysctl.conf"; // retained source compatibility; never parsed
+    bool enforceOwnership=true;
 };
-
-// Models the boot-effective sysctl loader selected by the platform profile.
+// A dedicated FIC artifact and a metadata-only native loader topology proof.
+// No foreign effective-value parser. Caller supplies journal ownership authority.
 class SysctlConfiguration {
 public:
-    explicit SysctlConfiguration(SysctlConfigurationOptions options = {});
-
-    bool load(std::string& error);
-    SysctlValueObservation inspect(const std::string& key) const;
-    SysctlOperationResult ensureManagedValue(const std::string& key,
-                                             const std::string& value);
-
-    // Rollback support: inspect the value recorded in the FIC managed sysctl
-    // file only. Ownership semantics: the result does not depend on which
-    // source currently wins precedence (an external file may shadow the FIC
-    // entry while the entry still exists and is FIC-owned).
+    explicit SysctlConfiguration(SysctlConfigurationOptions options={});
+    static std::mutex& mutationMutex();
+    bool load(std::string& error); // supported loader + topology + own artifact
+    bool loadManaged(std::string& error); // release does not depend on foreign config
+    bool verifyPriority(std::string& error) const;
+    bool verifyCurrent(std::string& error) const;
+    SysctlValueObservation inspect(const std::string& key) const {return inspectManagedValue(key);}
     SysctlValueObservation inspectManagedValue(const std::string& key) const;
-    // Parse a securely captured dedicated artifact, without requiring the
-    // foreign boot loader's configuration or procps to be installed.
-    static bool inspectManagedSettings(const std::string& content, bool& present, std::string& error);
-
-    // Rollback support: remove the FIC-managed entry for the given key from
-    // the managed sysctl configuration. Ownership is determined by the
-    // managed file content, not by the current effective source: a missing
-    // managed entry reports targetMissing, a drifted managed value fails
-    // closed (conflict).
-    SysctlOperationResult removeManagedKey(
-        const std::string& key,
-        const std::string& expectedValue);
-
+    const std::map<std::string,std::string>& managedValues() const {return values_;}
+    const std::optional<AtomicTargetState>& snapshot() const {return snapshot_;}
+    bool existed() const {return snapshot_.has_value();}
+    static bool inspectManagedSettings(const std::string&,bool&,std::string&);
+    SysctlOperationResult ensureManagedValue(const std::string&,const std::string&);
+    SysctlOperationResult removeManagedKey(const std::string&,const std::string&,bool deleteEmpty=true);
 private:
-    struct Document {
-        std::filesystem::path path;
-        std::string displayPath;
-        std::string content;
-        bool allowDevNullMask = true;
-    };
-
-    struct Assignment {
-        std::string key;
-        std::string value;
-        SysctlSourceLocation source;
-        bool pattern = false;
-        bool exclusion = false;
-    };
-
     SysctlConfigurationOptions options_;
-    std::vector<Document> documents_;
-    std::vector<Assignment> assignments_;
-    bool managedExisted_ = false;
-    std::string managedContent_;
-
-    bool loadDirectoryDocuments(std::string& error);
-    bool loadProcpsMainDocument(std::string& error);
-    bool loadManagedDocument(std::string& error);
-    bool addDocument(const std::filesystem::path& path,
-                     bool allowDevNullMask,
-                     std::string& error);
-    bool parseDocument(const Document& document, std::string& error);
-    bool checkDirectorySafety(const std::filesystem::path& path,
-                              std::string& error) const;
-    bool checkFileSafety(const std::filesystem::path& path,
-                         bool allowDevNull,
-                         std::string& error) const;
-    bool snapshotUnchanged(std::string& error) const;
-    bool writeManaged(const std::string& content, std::string& error) const;
-    bool deleteManaged(std::string& error) const;
-    bool restoreManaged(std::string& error) const;
-    void clear();
+    std::optional<AtomicTargetState> snapshot_;
+    std::map<std::string,std::string> values_;
+    std::map<std::string,std::string> topology_;
+    bool directorySafe(const std::filesystem::path&,std::string&) const;
+    bool topology(std::map<std::string,std::string>&,std::string&) const;
+    SysctlOperationResult publish(const std::map<std::string,std::string>&,bool);
 };
-
-#endif // SYSCTLCONFIGURATION_H
+#endif

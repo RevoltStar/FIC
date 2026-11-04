@@ -51,7 +51,10 @@ def main():
         root / "fic/src/modules/sysctl/SysctlConfiguration.cpp"
     ).read_text(encoding="utf-8")
     require(
-        "writeManaged(" in sysctl_configuration
+        "SysctlConfiguration::publish(" in sysctl_configuration
+        and "AtomicFileWriter::writeWithResult(" in sysctl_configuration
+        and "options.expectedTargetState=snapshot_" in sysctl_configuration
+        and "AtomicFileWriter::removeIfCurrentState(" in sysctl_configuration
         and "writeMain(" not in sysctl_configuration
         and "restoreMain(" not in sysctl_configuration
         and "options_.platform.managedConfigPath" in sysctl_configuration,

@@ -19,6 +19,7 @@
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "modules/sysctl/SysctlRuntime.h"
+#include "modules/sysctl/SysctlTransaction.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 
@@ -1187,16 +1188,17 @@ void testSysctlRollbackRemovesManagedKeyAndMovesRuntime() {
     std::string error;
     require(verification.load(error), error);
     const SysctlValueObservation after = verification.inspect("vm.swappiness");
-    require(after.found && after.value == "30", report.message);
-    require(after.source.path.filename() == "10-base.conf",
-            "rollback must leave the non-FIC source in place");
+    require(!after.found, "FIC must not calculate the foreign effective value");
+    require(readFile(tree.tree.root / "etc/sysctl.d/10-base.conf") == "vm.swappiness = 30\n",
+            "rollback must preserve the foreign source");
 
-    // Runtime must be moved to the recomputed effective value, never guessed.
+    // No native callback is supplied by this fixture: release succeeds with a
+    // warning, without reading or writing its fake runtime tree.
     SysctlRuntime runtime({tree.tree.root / "proc/sys"});
     std::string runtimeValue;
     require(runtime.readValue("vm.swappiness", runtimeValue, error), error);
-    require(runtimeValue == "30",
-            "runtime sysctl must follow the remaining configuration value");
+    require(runtimeValue == "10",
+            "FIC rollback must not calculate/write foreign runtime values");
 
     // Journal must record the rollback.
     MutationJournal stored(journal.tree.root / "journal.json");
@@ -1227,7 +1229,7 @@ void testSysctlRollbackConflictOnDrift() {
     // The drifted value must be left untouched.
     SysctlConfiguration verification(tree.options());
     std::string error;
-    require(verification.load(error), error);
+    require(verification.loadManaged(error), error);
     const SysctlValueObservation after = verification.inspect("vm.swappiness");
     require(after.found && after.value == "20",
             "conflicting managed value must not be modified");
@@ -1256,7 +1258,7 @@ void testSysctlRollbackRemovesShadowedManagedEntry() {
     // The FIC entry is gone from the managed artifact.
     SysctlConfiguration verification(tree.options());
     std::string error;
-    require(verification.load(error), error);
+    require(verification.loadManaged(error), error);
     const SysctlValueObservation managedAfter =
         verification.inspectManagedValue("vm.swappiness");
     require(!managedAfter.found,
@@ -1264,9 +1266,8 @@ void testSysctlRollbackRemovesShadowedManagedEntry() {
 
     // The external source keeps ownership of the effective value.
     const SysctlValueObservation after = verification.inspect("vm.swappiness");
-    require(after.found && after.value == "1" &&
-                after.source.path.filename() == "zzzzz-external.conf",
-            "external override must remain the effective source");
+    require(!after.found,
+            "rollback must not parse the late foreign source");
 
     // Runtime follows the recomputed external value.
     SysctlRuntime runtime({tree.tree.root / "proc/sys"});
@@ -1323,7 +1324,7 @@ void testSysctlLegacyProvenanceRefusedWhenShadowed() {
     // The shadowed FIC entry must be left untouched.
     SysctlConfiguration verification(tree.options());
     std::string error;
-    require(verification.load(error), error);
+    require(verification.loadManaged(error), error);
     const SysctlValueObservation managed =
         verification.inspectManagedValue("vm.swappiness");
     require(managed.found && managed.value == "10",
@@ -1557,27 +1558,13 @@ void testSysctlRepeatedApplyRepairsDriftThenRollback() {
     writeFile(tree.tree.root / "etc/sysctl.d/zzzz-fic.conf",
               "vm.swappiness = 20\n");
 
-    // Repeated apply at the configuration/journal level: the managed content
-    // drifted, so the single active record is refreshed (Applied -> Prepared
-    // -> Applied) and the managed value is repaired without duplicating
-    // provenance.
-    MutationId refreshedId = 0;
-    std::string error;
-    require(recordPreparedMutation(kSysctlPolicy, "vm.swappiness",
-                                   sysctlUndo("10"), refreshedId, error),
-            error);
-    require(refreshedId == originalId,
-            "repeated apply must refresh the existing active record");
-    {
-        SysctlConfiguration configuration(tree.options());
-        require(configuration.load(error), error);
-        const SysctlOperationResult operation =
-            configuration.ensureManagedValue("vm.swappiness", "10");
-        require(operation.ok, operation.message);
-        require(operation.changed,
-                "repeated apply must repair the drifted managed value");
-    }
-    require(commitMutation(refreshedId, error), error);
+    // External persistent drift is a provenance conflict, never repair/adoption.
+    std::string error;auto* live=DaemonMutationJournal::instance().tryGet(error);require(live,error);
+    const auto unchanged=readFile(journal.tree.root/"journal.json");
+    const auto rejected=applySysctlOwned(*live,kSysctlPolicy,"vm.swappiness","10",tree.options(),{tree.tree.root/"proc/sys"});
+    require(!rejected.ok&&unchanged==readFile(journal.tree.root/"journal.json"),"persistent drift changed provenance");
+    // Explicit administrator restoration for the following independent release check.
+    writeFile(tree.options().platform.managedConfigPath,"vm.swappiness = 10\n");
 
     MutationJournal stored(journal.tree.root / "journal.json");
     require(stored.load(error), error);

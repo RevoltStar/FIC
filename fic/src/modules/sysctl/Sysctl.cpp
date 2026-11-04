@@ -1,17 +1,14 @@
 #include "modules/sysctl/Sysctl.h"
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "modules/sysctl/SysctlRuntime.h"
+#include "modules/sysctl/SysctlTransaction.h"
+#include "modules/sysctl/SysctlSystemd.h"
 #include "rollback/DaemonMutationJournal.h"
 
 #include <mutex>
 #include <optional>
 #include <utility>
 
-namespace {
-
-std::mutex sysctlMutex;
-
-} // namespace
 
 Sysctl::Sysctl()
     :Policy(){
@@ -52,146 +49,14 @@ bool Sysctl::apply (){
         return false;
     }
 
-    const std::lock_guard<std::mutex> lock(sysctlMutex);
-    if (!platformConfig_.has_value()) {
-        this->log("Не задана platform SYSCTL configuration", logLevel::ERROR);
-        return false;
-    }
-    SysctlRuntime runtime;
-    std::string runtimeBefore;
-    std::string runtimeError;
-    if (!runtime.readValue(param, runtimeBefore, runtimeError)) {
-        this->log("Невозможно применить обязательное runtime-значение sysctl: " +
-                      runtimeError,
-                  logLevel::ERROR);
-        return false;
-    }
-
-    SysctlConfigurationOptions configurationOptions;
-    configurationOptions.platform = platformConfig_.value();
-    SysctlConfiguration configuration(configurationOptions);
-    std::string loadError;
-    if (!configuration.load(loadError)) {
-        this->log("Не удалось проанализировать конфигурацию sysctl: " + loadError,
-                  logLevel::ERROR);
-        return false;
-    }
-
-    const SysctlValueObservation observation = configuration.inspect(param);
-    if (!observation.found || observation.value != value) {
-        const std::string actual = observation.found ? observation.value : "[NOT SET]";
-        const std::string source = observation.found
-            ? " Источник: " +
-                  (observation.source.displayPath.empty()
-                       ? observation.source.path.string()
-                       : observation.source.displayPath) + ":" +
-                  std::to_string(observation.source.line)
-            : "";
-        this->log("Обнаружено отклонение '" + param + "'. Фактическое значение: '" +
-                  actual + "'. Ожидаемое значение: '" + value + "'." + source,
-                  logLevel::WARN);
-    }
-
-    // Crash-consistent journaling: prepare the rollback record before the
-    // system mutation. A mutation is recorded only when FIC will actually
-    // change the system; a compliant state stays unrecorded (no provenance).
-    fic::rollback::MutationId mutationId = 0;
-    bool mutationPrepared = false;
-    const bool sysctlNeedsChange =
-        !observation.found || observation.value != value || runtimeBefore != value;
-    if (sysctlNeedsChange) {
-        std::string journalError;
-        fic::rollback::UndoAction undo{
-            fic::rollback::MutationBackend::Sysctl,
-            fic::rollback::UndoRemoveManagedSetting{param, value}};
-        if (!fic::rollback::recordPreparedMutation(
-                this->policyRef(), param, undo, mutationId, journalError)) {
-            this->log("Не удалось подготовить запись mutation journal: " +
-                          journalError,
-                      logLevel::ERROR);
-            return false;
-        }
-        mutationPrepared = true;
-    }
-
-    const SysctlOperationResult operation = configuration.ensureManagedValue(param, value);
-    for (const std::string& diagnostic : operation.diagnostics) {
-        this->log(diagnostic, operation.ok ? logLevel::INFO : logLevel::WARN);
-    }
-    if (!operation.ok) {
-        std::string discardError;
-        if (mutationPrepared &&
-            !fic::rollback::discardMutation(mutationId, discardError)) {
-            this->log("Ошибка удаления подготовленной записи mutation journal: " +
-                          discardError,
-                      logLevel::WARN);
-        }
-        this->log(operation.message, logLevel::ERROR);
-        return false;
-    }
-    if (operation.changed) {
-        this->log("Persistent-конфигурация sysctl исправлена; выполняется runtime-применение",
-                  logLevel::INFO);
-    }
-    this->log(operation.message, logLevel::INFO);
-
-    if (runtimeBefore != value) {
-        this->log("Обнаружено runtime-отклонение '" + param + "'. Фактическое значение: '" +
-                      runtimeBefore + "'. Ожидаемое значение: '" + value + "'.",
-                  logLevel::WARN);
-    }
-    const SysctlRuntimeResult runtimeOperation = runtime.ensureValue(param, value);
-    if (!runtimeOperation.ok) {
-        std::string journalError;
-        if (operation.changed) {
-            // The persistent FIC-owned change did happen; keep provenance so
-            // disable can still roll the managed value back.
-            if (mutationPrepared &&
-                !fic::rollback::commitMutation(mutationId, journalError)) {
-                // The persistent FIC-owned change did happen; keep provenance
-                // (the Prepared record stays active) and fail the apply.
-                this->log("Ошибка фиксации записи mutation journal: " +
-                              journalError,
-                          logLevel::ERROR);
-            }
-        } else if (mutationPrepared &&
-                   !fic::rollback::discardMutation(mutationId, journalError)) {
-            this->log("Ошибка удаления подготовленной записи mutation journal: " +
-                          journalError,
-                      logLevel::WARN);
-        }
-        this->log(
-            "Persistent-конфигурация sysctl подготовлена, но обязательное runtime-применение "
-            "не завершено: " + runtimeOperation.message,
-            logLevel::ERROR
-        );
-        return false;
-    }
-    this->log(runtimeOperation.message, logLevel::INFO);
-
-    if (operation.changed || runtimeOperation.changed) {
-        if (mutationPrepared) {
-            std::string journalError;
-            if (!fic::rollback::commitMutation(mutationId, journalError)) {
-                // The system mutation already happened: apply must not report
-                // success without reliable provenance. The Prepared record
-                // stays active on disk and remains safely resolvable by the
-                // rollback executor.
-                this->log("Ошибка фиксации записи mutation journal: " +
-                              journalError,
-                          logLevel::ERROR);
-                return false;
-            }
-        }
-        this->notify("Исправлена конфигурация sysctl для политики: " + this->policyName,
-                     notifyLevel::INFO);
-    } else if (mutationPrepared) {
-        std::string journalError;
-        if (!fic::rollback::discardMutation(mutationId, journalError)) {
-            this->log("Ошибка удаления подготовленной записи mutation journal: " +
-                          journalError,
-                      logLevel::WARN);
-        }
-    }
-    return true;
+    if(!platformConfig_) {this->log("SYSCTL platform unavailable",logLevel::ERROR);return false;}
+    std::string error;auto* journal=fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if(!journal){this->log(error,logLevel::ERROR);return false;}
+    const auto profile=fic::platform::makeBuildPlatformProfile();
+    fic::platform::PlatformExecutableResolver resolver(profile.executables);
+    SysctlConfigurationOptions options;options.platform=*platformConfig_;
+    const auto result=applySysctlOwned(*journal,policyRef(),param,value,options,{},
+        [&](std::string& reason){return sysctlLoaderAdmission(resolver,reason);});
+    this->log(result.message,result.ok?logLevel::INFO:logLevel::ERROR);
+    return result.ok;
 }

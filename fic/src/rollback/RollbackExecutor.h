@@ -84,7 +84,8 @@ struct RollbackExecutorDeps {
     // SYSCTL backend configuration (managed file layout etc.).
     std::function<SysctlConfigurationOptions()> sysctlOptions;
     // Runtime /proc/sys root override for tests; production default is used when empty.
-    std::filesystem::path sysctlRuntimeRoot;
+    std::filesystem::path sysctlRuntimeRoot; // compatibility test plumbing; release never reads runtime
+    std::function<bool(const std::string&,std::string&)> reapplySysctl;
     // SUDO backend configuration (managed sudoers etc.).
     std::function<SudoersConfigurationOptions()> sudoersOptions;
     std::function<bool(bool& authentication, bool& scoped, std::string& error)> sudoRequestedState;

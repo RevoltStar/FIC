@@ -217,6 +217,9 @@ void testSelectedProfile() {
         fic::platform::makeBuildPlatformProfile();
     std::string error;
     require(fic::platform::validatePlatformProfile(profile, error), error);
+    const auto* sysctl=fic::platform::findExecutableSpec(profile.executables,fic::platform::ExecutableId::SystemdSysctl);
+    require(sysctl&&!sysctl->required&&!sysctl->candidates.empty(),"native SYSCTL helper must be explicit and optional");
+    require(std::count(supported.begin(),supported.end(),fic::platform::ExecutableId::SystemdSysctl)==1,"SYSCTL helper enumerated exactly once");
     for(const auto id:{fic::platform::ExecutableId::Sssd,fic::platform::ExecutableId::Sssctl,
                        fic::platform::ExecutableId::Ldbsearch,fic::platform::ExecutableId::DbusSend}) {
         const auto* spec=fic::platform::findExecutableSpec(profile.executables,id);

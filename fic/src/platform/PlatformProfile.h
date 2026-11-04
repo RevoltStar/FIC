@@ -20,6 +20,7 @@ enum class ExecutableId {
     SshKeygen,
     SshSocketGenerator,
     Systemctl,
+    SystemdSysctl,
     Loginctl,
     Visudo,
     Sudo,

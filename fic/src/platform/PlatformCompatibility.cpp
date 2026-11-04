@@ -154,7 +154,8 @@ bool validateExecutables(const PlatformExecutables& executables,
         }
     }
     for (const ExecutableId id : supportedIds) {
-        if (id == ExecutableId::PamAuthUpdate ||
+        if (id == ExecutableId::SystemdSysctl ||
+            id == ExecutableId::PamAuthUpdate ||
             id == ExecutableId::SshKeygen ||
             id == ExecutableId::SshSocketGenerator ||
             id == ExecutableId::Dconf ||

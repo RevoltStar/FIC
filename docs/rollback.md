@@ -18,14 +18,13 @@ Policy → backend → MutationRecord → persistent MutationJournal
 * `Policy` не реализует rollback и не содержит стратегии отката.
 * Journal — единственный источник provenance: FIC автоматически отменяет
   только то, что записал в journal как свою мутацию.
-* Ownership для SYSCTL определяется **содержимым FIC managed-артефакта**
-  (`/etc/sysctl.d/zzzz-fic.conf`), а не текущим effective source. Если
-  внешний файл перекрывает FIC-запись, disable всё равно обязан удалить
-  FIC-запись из managed-файла, иначе она может снова стать effective после
-  исчезновения перекрытия. Effective resolution используется только после
-  удаления, чтобы определить оставшееся persistent значение для runtime.
-* Системное состояние, которое уже соответствовало политике до `apply`
-  (`current == desired`), мутацией не считается и при disable не изменяется.
+* Ownership SYSCTL подтверждается journal и соответствующей собственной записью
+  `/etc/sysctl.d/zzzz-fic.conf`; новые записи также связывают создание контейнера
+  с его текущей идентичностью. Внешнее перекрытие не отменяет обязанность release.
+  После durable release штатный `systemd-sysctl --prefix` выполняется как
+  вспомогательная операция, без собственного вычисления effective value.
+* Для SYSCTL даже соответствующее внешнее persistent/runtime-состояние требует
+  собственного параметра и provenance. Остальные backend-контракты не меняются.
 * Drift FIC-owned значения внутри managed-артефакта — fail closed
   (`Conflict`), молчаливая потеря данных и three-way merge не выполняются.
 * Rollback выполняется до смены статуса политики. Частичный откат оставляет
@@ -725,10 +724,15 @@ I/O), это ошибка загрузки — fail closed. Существующ
   определяется содержимым FIC managed-артефакта, а не текущим effective
   source: внешняя запись (главный sudoers или другой include), перекрывающая
   FIC-запись, не мешает её удалению. Drift внутри managed-артефакта —
-  `Conflict`. Для SYSCTL после удаления пересчитывается эффективное значение
-  из оставшихся источников precedence и runtime sysctl приводится к нему
-  (default не угадывается). Для SUDO результат обязательно валидируется
-  `visudo`; FIC-owned файл, ставший пустым, удаляется.
+  `Conflict`. Для SYSCTL optional typed payload хранит fresh/REFRESH intent,
+  predecessor и authority общего контейнера. После физического удаления journal
+  долговечно завершает release и обновляет witnesses остальных владельцев одной
+  операцией. Затем вызывается проверенный платформенный `systemd-sysctl` с точным
+  `--prefix`; ошибка этой операции — предупреждение, без отмены release и без
+  runtime read-back. Пустой созданный FIC контейнер удаляется условно; старые
+  key/value records сохраняют явное legacy-исключение, не creation proof.
+  Подробности: [SYSCTL lifecycle](sysctl-lifecycle.md). Для SUDO результат
+  обязательно валидируется `visudo`; существующий контракт удаления не меняется.
 * `UndoReleaseSudoScopedDefaults{policyName, previousProofs, targetProofs}` — SUDO
   `sudo_disable_scoped_defaults`: снятие обёрток `FIC_SUDO_DISABLED`,
   которые FIC создал для контекстных `Defaults`. Исходные байты записи

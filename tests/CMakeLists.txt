@@ -758,13 +758,29 @@ add_test(NAME trusted_file_reader_tests COMMAND trusted_file_reader_tests)
 add_executable(sysctl_configuration_tests
     fic/modules/sysctl/SysctlConfigurationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
-)
-target_include_directories(sysctl_configuration_tests PRIVATE
-    ${CMAKE_SOURCE_DIR}/fic/src
-)
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp)
+target_include_directories(sysctl_configuration_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
 target_link_libraries(sysctl_configuration_tests PRIVATE fic-core)
 add_test(NAME sysctl_configuration_tests COMMAND sysctl_configuration_tests)
+
+add_executable(sysctl_ownership_tests
+    fic/modules/sysctl/SysctlOwnershipTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlSystemd.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp)
+target_include_directories(sysctl_ownership_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sysctl_ownership_tests PRIVATE fic-core fic-policy fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+add_test(NAME sysctl_ownership_tests COMMAND sysctl_ownership_tests)
+set_tests_properties(sysctl_ownership_tests PROPERTIES LABELS unit)
+get_target_property(sysctl_native_sources sysctl_ownership_tests SOURCES)
+list(REMOVE_ITEM sysctl_native_sources fic/modules/sysctl/SysctlOwnershipTests.cpp)
+add_executable(sysctl_native_driver integration/sysctl-ownership/Driver.cpp ${sysctl_native_sources})
+target_include_directories(sysctl_native_driver PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(sysctl_native_driver PRIVATE fic-core fic-policy fic-platform PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+
 
 add_executable(pam_provider_managed_block_tests
     fic/modules/identity_access/pam/PamProviderManagedBlockTests.cpp
@@ -1234,6 +1250,8 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlSystemd.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
@@ -1354,6 +1372,8 @@ add_executable(sudo_scoped_defaults_lifecycle_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlSystemd.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationWrapper.cpp
@@ -1823,6 +1843,8 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlSystemd.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
@@ -2426,6 +2448,8 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlSystemd.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersScopedDefaults.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersAuthenticationGrammar.cpp
@@ -2572,6 +2596,8 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubRollback.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlRuntime.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/sysctl/SysctlSystemd.cpp
 
     ${CMAKE_SOURCE_DIR}/fic/src/modules/firewall/FirewallCoordinator.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentStateStore.cpp

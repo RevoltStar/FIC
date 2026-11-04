@@ -1,0 +1,291 @@
+{
+  "task_base": "9c6800c5e1ca2bff2bb0723f51b984ffa5bee559",
+  "captured_utc": "2026-11-04T10:58:32.049874+00:00",
+  "scope": "SYSCTL current-source native backend and real native loader; actual Debian12 daemon/CLI/package release. Not a current-source SSSD certification.",
+  "production_inventory": {
+    "generator": "tests/integration/sssd-i6/source-manifest.py",
+    "sha256": "41c8a00091a9b1f0e943b77a2c61dc4efa07ff78c6ddf09eb532a875363c1fee",
+    "file_count": 966
+  },
+  "changed_production_sha256": {
+    "fic/src/modules/sysctl/Sysctl.cpp": "688c1f3f92e43b43a8b3d3b6d7486b320cbae1456aa9562c29ff3b6c1cb54565",
+    "fic/src/modules/sysctl/SysctlConfiguration.cpp": "9cbdf83efd448033482b3e516af0ea7142344148cb36ec0a20822a949b58b2db",
+    "fic/src/modules/sysctl/SysctlConfiguration.h": "cc7b3f120a3dd8d0d8744393890dcfae970b20b171847d62bf514025118ca352",
+    "fic/src/modules/sysctl/SysctlSystemd.cpp": "6d12ae6999d4c9150ba6f648f7595ffdc4d7552ce73d7156067571b54f3a9b79",
+    "fic/src/modules/sysctl/SysctlSystemd.h": "ccb9582921197fd4046f97f7ddd6179133db9f455f12728679909a563c2656d4",
+    "fic/src/modules/sysctl/SysctlTransaction.cpp": "36c89dc28882317af18bfdd5137d6631465a6a9a7957f35295b6458aa506788b",
+    "fic/src/modules/sysctl/SysctlTransaction.h": "e81a49fb5caeff2372187b9a63cbd7794ca8c7a021ec53eb9e4cf87e93a7234f",
+    "fic/src/platform/PlatformCompatibility.cpp": "89f21cd1df5cd87d9de3a62b3e210306cabe5b0dd831f9871e493428e304a2eb",
+    "fic/src/platform/PlatformExecutableResolver.cpp": "ab2cf0ac9cf1309b96fa604169340872b23e67c7cf130d0569b76e0f3579e5ea",
+    "fic/src/platform/PlatformProfile.h": "c70b2762e4f00e9c4425d6a2c03eda0743f96b36a3322b4d2b7263c2e48cdce7",
+    "fic/src/platform/profiles/AltP11Profile.cpp": "8deea227aca1d41141e5aa6e54de3f4d07b8cd9ea5e5ac515834ce0d9d6ca5d4",
+    "fic/src/platform/profiles/Debian12Profile.cpp": "2379c1f8d96f32ce0a29a1da61d3e9b2394f031be408a75e1d8efcc329212fee",
+    "fic/src/platform/profiles/Debian13Profile.cpp": "e080bd6ce382eba505c85c569d60ed9c9f68ea1e6afcece047f2bf76b151bfad",
+    "fic/src/platform/profiles/Ubuntu2404Profile.cpp": "7457da0f8c0a2b5e582cb24940a4311c0ca078ddcfa49637d4ff1b360e3a1014",
+    "fic/src/platform/profiles/Ubuntu2604Profile.cpp": "ddea62a51c89643b076773f47b723318745c88780f1c10ea9205f8699b4e973e",
+    "fic/src/rollback/MutationJournal.cpp": "42a6e8233af5f45e1d2564b3be149fe9718a5de527fccffb5d00ca0023196a44",
+    "fic/src/rollback/MutationJournal.h": "a03df819440c1a1dc1080ccb92deaf6f10b754c7042aa9b9536bccf10a7f21ad",
+    "fic/src/rollback/MutationRecord.h": "f110cef8917fae12732852e54bf10631ed5b553a783d016fe99319b7aded1530",
+    "fic/src/rollback/RollbackExecutor.cpp": "efa49904b0e18b62692d69549cf8c4bb362ad810e0f2b4eb99101b48c7174684",
+    "fic/src/rollback/RollbackExecutor.h": "047d19e1c9800592fb7d5575d98b89ca320b25d085d167a343ab6d250e2f9e00"
+  },
+  "harness_sha256": {
+    "tests/CMakeLists.txt": "02378376442de84e281c9ad225f16d02afef4c441eebf59969f6028455e6b2d0",
+    "tests/fic/modules/net/ssh/SshApplyRollbackSources.cmake": "b21e1d385dc6bc4e17adc1e2e79685d1985bf092b7107d33e6ea1c5df180e1c9",
+    "tests/fic/modules/sysctl/SysctlConfigurationTests.cpp": "4beff54134eadf8cc6df8db85169c4a775e384cd1d5c735c3199fb16a6acaee5",
+    "tests/fic/modules/sysctl/SysctlOwnershipTests.cpp": "7f96c1f1d13063cd13512e9ee5c3a8bac048e21eaf77da29ec951f07724bcb6a",
+    "tests/fic/platform/PlatformProfileTests.cpp": "1e6dd7384fd1d5593a0dad76cb42febe646b55791be65c097781228cd74f067b",
+    "tests/fic/platform/static_checks.py": "b06cb906138f62d188843c1a7635d6a6a8e2637c0d30264a7c89d10f5790607b",
+    "tests/fic/rollback/RollbackExecutorTests.cpp": "68be329646d1fe07306d25d75a6ed0925a55cf55a45bf820049627d400e7afc6",
+    "tests/integration/sysctl-ownership/Driver.cpp": "5d0aae2db5f1fa5719e0f9bf8d808966dbd1c1431683276406376e067f99a882",
+    "tests/integration/sysctl-ownership/package_cases.py": "8d13f39b7ccaf0383ddec204fb10589c64c17ed6fceec1477fdc875e7fa42a2e",
+    "tests/integration/sysctl-ownership/prefix_probe.py": "9b34b11a8129837053f0bd438b1767c2da24fb1efaabae08bc6b0bfc9bbe2e30",
+    "tests/integration/sysctl-ownership/run-native.sh": "366d3e624454eeed8a8a7b6f9cdf4cea308d654fe426c1c401860d87aeb3e581",
+    "tests/integration/sysctl-ownership/run-package.sh": "2751b948649c11387c08fcf95d73190ce3a4e921babf705f631d47db218727f2"
+  },
+  "platforms": {
+    "debian-12": {
+      "builder_image": "sha256:2c8a7e2c4897b43b4556c2ca27581c3563a6c7b1ee71008a7fa0a3884d32e47e",
+      "runtime_image": "sha256:43f83d7aea7c325f84ab4f532ad87f4bdd931b4617880352ed3f43539928b034",
+      "driver_elf_sha256": "08e9dc47ac1911eb4bf4aa1ecec6c07c5113a71da9d20793c828f65034737ce3",
+      "unit_tests": {
+        "passed": 2,
+        "failed": 0,
+        "log_sha256": "cc4add9a934bc9ae4f2f14c3d40b389d4c780b1934cafbfd65290d3a8fbf6181"
+      },
+      "prefix": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "version": "systemd 252 (252.39-1~deb12u2)",
+        "exact_leaf": true,
+        "no_foreign_source_keeps_runtime": true,
+        "dotted_interface": true,
+        "no_unrelated_write": true,
+        "same_name_directory_priority": true,
+        "global_lexical_priority": true,
+        "dev_null_masks": true
+      },
+      "backend": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "dotted_interface_native_helper": true,
+        "late_file_refusal": true,
+        "masked_and_custom_loader_refused_before_mutation": true,
+        "native_failure_warning_after_release": true,
+        "no_op": true,
+        "no_source_runtime_kept": true,
+        "owned_compliant_apply": true,
+        "platform": "debian-12",
+        "prefix_runtime_no_unrelated_write": true,
+        "repeated_release": true,
+        "runtime_refresh": true,
+        "same_name_null_mask": true,
+        "sibling_and_last_owner_release": true,
+        "status": "PASS"
+      },
+      "build_log_sha256": "39d564f3897dfd49a6f7d4059eb852531b603c4774a2d25ec7ddef475538c991"
+    },
+    "debian-13": {
+      "builder_image": "sha256:99197dc0617a8aaf7c26006d0404f7d355438e38a0505690f093993119c55684",
+      "runtime_image": "sha256:6c9faa03ca1494db54ed6d51e293051f589ce03b7b326078dbfe755440dbd616",
+      "driver_elf_sha256": "7f99ad0db0fcc69f1bf6d34bbaa4520ff708496632e074fa81b8a169effbf46d",
+      "unit_tests": {
+        "passed": 2,
+        "failed": 0,
+        "log_sha256": "828a8a69738b81a4714464c2bc75aaaa0f2e45f408c1bb02a2414a2fa6101b8a"
+      },
+      "prefix": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "version": "systemd 257 (257.13-1~deb13u1)",
+        "exact_leaf": true,
+        "no_foreign_source_keeps_runtime": true,
+        "dotted_interface": true,
+        "no_unrelated_write": true,
+        "same_name_directory_priority": true,
+        "global_lexical_priority": true,
+        "dev_null_masks": true
+      },
+      "backend": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "dotted_interface_native_helper": true,
+        "late_file_refusal": true,
+        "masked_and_custom_loader_refused_before_mutation": true,
+        "native_failure_warning_after_release": true,
+        "no_op": true,
+        "no_source_runtime_kept": true,
+        "owned_compliant_apply": true,
+        "platform": "debian-13",
+        "prefix_runtime_no_unrelated_write": true,
+        "repeated_release": true,
+        "runtime_refresh": true,
+        "same_name_null_mask": true,
+        "sibling_and_last_owner_release": true,
+        "status": "PASS"
+      },
+      "build_log_sha256": "51213fe2abaf35bf9598a24962314d632eefc4415c52026f4671d813cebcfbac"
+    },
+    "ubuntu-24.04": {
+      "builder_image": "sha256:79b54052d205b995f4db1840cd852e8a1b40b92211133e5971860af6a13e64af",
+      "runtime_image": "sha256:37c306d36922741a6c9bc8861977410eab8f39e521a0da1e146a26ddf2a77039",
+      "driver_elf_sha256": "13e7abd8f3e7f917dc432f3a688cae4835946fbf8b8a6c18931f5766b21f1199",
+      "unit_tests": {
+        "passed": 2,
+        "failed": 0,
+        "log_sha256": "2ab2a832b5a885dbedb0b997457fff48d5b77cc74d439e57cc06bd7fbf6412d8"
+      },
+      "prefix": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "version": "systemd 255 (255.4-1ubuntu8.18)",
+        "exact_leaf": true,
+        "no_foreign_source_keeps_runtime": true,
+        "dotted_interface": true,
+        "no_unrelated_write": true,
+        "same_name_directory_priority": true,
+        "global_lexical_priority": true,
+        "dev_null_masks": true
+      },
+      "backend": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "dotted_interface_native_helper": true,
+        "late_file_refusal": true,
+        "masked_and_custom_loader_refused_before_mutation": true,
+        "native_failure_warning_after_release": true,
+        "no_op": true,
+        "no_source_runtime_kept": true,
+        "owned_compliant_apply": true,
+        "platform": "ubuntu-24.04",
+        "prefix_runtime_no_unrelated_write": true,
+        "repeated_release": true,
+        "runtime_refresh": true,
+        "same_name_null_mask": true,
+        "sibling_and_last_owner_release": true,
+        "status": "PASS"
+      },
+      "build_log_sha256": "2c729451ec812d33fbe31cc7e86aa6024674dcf0fc7e02bfd4b9146bff309525"
+    },
+    "ubuntu-26.04": {
+      "builder_image": "sha256:aecac4eb2268fd84e3405c6ae8d04b49687c3c61dd700a0e2b24be8b8631f7ff",
+      "runtime_image": "sha256:076e4373e4618ad7ebb6cb5a9ff3402b99c61a09fb407510eb9b39d55fe5d54c",
+      "driver_elf_sha256": "c85781a6af82239b46104515e8a791e333cb2043e919cb814fbf0209ef7654ac",
+      "unit_tests": {
+        "passed": 2,
+        "failed": 0,
+        "log_sha256": "b347514d788134b501b6b9421203cddfbfebc13bad6cb62e905682fa7ef2e411"
+      },
+      "prefix": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "version": "systemd 259 (259.9-0ubuntu0.1)",
+        "exact_leaf": true,
+        "no_foreign_source_keeps_runtime": true,
+        "dotted_interface": true,
+        "no_unrelated_write": true,
+        "same_name_directory_priority": true,
+        "global_lexical_priority": true,
+        "dev_null_masks": true
+      },
+      "backend": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "dotted_interface_native_helper": true,
+        "late_file_refusal": true,
+        "masked_and_custom_loader_refused_before_mutation": true,
+        "native_failure_warning_after_release": true,
+        "no_op": true,
+        "no_source_runtime_kept": true,
+        "owned_compliant_apply": true,
+        "platform": "ubuntu-26.04",
+        "prefix_runtime_no_unrelated_write": true,
+        "repeated_release": true,
+        "runtime_refresh": true,
+        "same_name_null_mask": true,
+        "sibling_and_last_owner_release": true,
+        "status": "PASS"
+      },
+      "build_log_sha256": "ca0374e3974245b62d6694e14c963646e8b6a40ed69e0f67de822dce790c9c51"
+    },
+    "alt-p11": {
+      "builder_image": "sha256:2241c970ecfc922512a8f9d8fba7263d0836b859da9fbabb040c2884bae3e69d",
+      "runtime_image": "sha256:89021d76e068fe1a05833d115f394ffc1c5f0037fbf3fd3fdd5dc1bc64d05db8",
+      "driver_elf_sha256": "393a04a41fe10e50beda80f944f77b1697733198f36956e263345a0e194dad86",
+      "unit_tests": {
+        "passed": 2,
+        "failed": 0,
+        "log_sha256": "d5a2f0b235cea2d116603588e666650068d47a519ff3dfbd51a2d5035617d1b3"
+      },
+      "prefix": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "version": "systemd 258 (258.9-alt1)",
+        "exact_leaf": true,
+        "no_foreign_source_keeps_runtime": true,
+        "dotted_interface": true,
+        "no_unrelated_write": true,
+        "same_name_directory_priority": true,
+        "global_lexical_priority": true,
+        "dev_null_masks": true
+      },
+      "backend": {
+        "binary": "/usr/lib/systemd/systemd-sysctl",
+        "dotted_interface_native_helper": true,
+        "late_file_refusal": true,
+        "masked_and_custom_loader_refused_before_mutation": true,
+        "native_failure_warning_after_release": true,
+        "no_op": true,
+        "no_source_runtime_kept": true,
+        "owned_compliant_apply": true,
+        "platform": "alt-p11",
+        "prefix_runtime_no_unrelated_write": true,
+        "repeated_release": true,
+        "runtime_refresh": true,
+        "same_name_null_mask": true,
+        "sibling_and_last_owner_release": true,
+        "status": "PASS"
+      },
+      "build_log_sha256": "98a60d13f8b269b044521db0014d1e8a688b158889f5b368d09df705e8f31584"
+    }
+  },
+  "debian12_packages": {
+    "platform": "debian-12",
+    "packages": {
+      "fic-cli_0.0.0~alpha_debian12_amd64.deb": "7689631e9d324af5ef756436a12f17e8b16a08845d1008f4bebc04d2e85ddef5",
+      "fic-dick_0.0.0~alpha_debian12_amd64.deb": "d3ba163348b625b26cd7c624d38e83bec1e4c504cbe552208d672d79ba800a56",
+      "fic_0.0.0~alpha_debian12_amd64.deb": "8261439d97f8bf1d254fedfaed3170ca86a3d04e0ab296ae3bcc405e8a5f7d4f"
+    },
+    "daemon_elf_sha256": "8c3872587662d429e495e92e8e4a149c31108612e531ac644bbb847991e83909",
+    "status": "PASS",
+    "actual_packages": true,
+    "cli_owned_apply": true,
+    "no_op": true,
+    "runtime_only": true,
+    "prepare_uninstall": true,
+    "rollback_all": true,
+    "native_foreign_value": true,
+    "no_unrelated_write": true,
+    "remove": true,
+    "purge": true,
+    "configuration_unchanged": true,
+    "transaction_events_sha256": "0508cb78c57ce458d19f9e6308a5e61692cf20de7e8ed523de838f587ba76b74"
+  },
+  "full_debian12": {
+    "build": "PASS",
+    "build_log_sha256": "793444f661c1611f7053a02efa7a3fa2afcbdf691c22c26a6b24ea29ea974c88",
+    "ctest": "PASS",
+    "registered": 223,
+    "passed": 219,
+    "skipped": 4,
+    "failed": 0,
+    "ctest_log_sha256": "47c04e1f9c2df5da5f034349e8e979660254ac3b4f547365e2bd5a733de06682"
+  },
+  "supplemental_alt_platform_profile": {
+    "result": "KNOWN_BASELINE_FAILURE",
+    "message": "SDDM configuration path is incorrect",
+    "reproduced_task_base": "9c6800c5e1ca2bff2bb0723f51b984ffa5bee559",
+    "baseline_log_sha256": "0f2312e944ceae6416945320af47d5c9e64114ce95a95918f704a2417dcdd18a",
+    "current_log_sha256": "ff418fdad40dad883c9802c8240ae3246adb7691866f75687d1d340efc868e24"
+  },
+  "limits": [
+    "Only private-network sysctl leaves; global kernel tunables read-only.",
+    "Real FIC package lifecycle E2E on Debian12 only; five-platform backend/native-loader matrix is separate.",
+    "No real host reboot/power-loss test; deterministic durability/CAS faults cover uncertainty.",
+    "Noncooperating privileged writers retain existing optimistic CAS race boundary.",
+    "Unknown new Prepared/publication outcomes retain provenance and block writers; no new automatic recovery engine.",
+    "Legacy empty-container release remains an explicit compatibility exception, not creation proof.",
+    "Supplemental ALT platform-profile SDDM assertion fails unchanged on task-base; not fixed in SYSCTL scope."
+  ]
+}

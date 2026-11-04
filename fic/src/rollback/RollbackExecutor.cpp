@@ -22,6 +22,9 @@
 #include "modules/sysctl/SysctlConfiguration.h"
 #include "modules/sysctl/SysctlKey.h"
 #include "modules/sysctl/SysctlRuntime.h"
+#include "modules/sysctl/SysctlTransaction.h"
+#include "modules/sysctl/SysctlSystemd.h"
+#include <fic/core/logging/Logger.h>
 #include "rollback/DaemonMutationJournal.h"
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "rollback/PamRollback.h"
@@ -199,85 +202,12 @@ MutationRollbackOutcome undoSysctlSetting(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record,
     const UndoRemoveManagedSetting& undo) {
-    const std::lock_guard<std::mutex> lock(rollbackBackendMutex());
-
-    SysctlConfigurationOptions options = deps.sysctlOptions
-        ? deps.sysctlOptions()
-        : SysctlConfigurationOptions{};
-
-    SysctlConfiguration configuration(options);
-    std::string error;
-    if (!configuration.load(error)) {
-        MutationRollbackOutcome outcome;
-        outcome.id = record.id;
-        outcome.resource = record.resource;
-        outcome.status = RollbackStatus::Failed;
-        outcome.message = "Не удалось проанализировать конфигурацию sysctl: " + error;
-        return outcome;
-    }
-
-    const std::string canonical = fic::sysctl::internalKeyToCanonicalPath(undo.key);
-
-    // Ownership is determined by the FIC managed artifact, not by the current
-    // effective source: an external file may shadow the FIC entry, but the
-    // entry must still be removed so it cannot become effective again later.
-    const SysctlValueObservation managed =
-        configuration.inspectManagedValue(undo.key);
-    if (!managed.found) {
-        // No FIC-owned persistent entry: an idempotent retry (or the entry
-        // was already removed). Never touch any foreign configuration.
-        MutationRollbackOutcome outcome;
-        outcome.id = record.id;
-        outcome.resource = record.resource;
-        outcome.status = RollbackStatus::NothingToDo;
-        outcome.message = "Managed sysctl-значение '" + undo.key +
-                          "' отсутствует в managed sysctl-файле FIC";
-        return outcome;
-    }
-
-    const SysctlOperationResult removal =
-        configuration.removeManagedKey(undo.key, undo.appliedValue);
-    MutationRollbackOutcome outcome =
-        outcomeFromOperation(record.id, record.resource, removal);
-    if (!removal.ok) {
-        return outcome;
-    }
-    if (!removal.changed) {
-        return outcome; // NothingToDo
-    }
-
-    // Recompute the effective persistent value after the FIC override removal
-    // and move runtime sysctl to it. Never guess a default value.
-    SysctlConfiguration verification(options);
-    if (!verification.load(error)) {
-        outcome.status = RollbackStatus::Failed;
-        outcome.message = "Не удалось перечитать sysctl после удаления managed значения: " +
-                          error;
-        return outcome;
-    }
-    const SysctlValueObservation after = verification.inspect(canonical);
-    if (!after.found) {
-        outcome.message += ". Управляющий источник удалён; runtime-значение оставлено";
-        return outcome;
-    }
-
-    SysctlRuntimeOptions runtimeOptions;
-    if (!deps.sysctlRuntimeRoot.empty()) {
-        runtimeOptions.root = deps.sysctlRuntimeRoot;
-    }
-    SysctlRuntime runtime(runtimeOptions);
-    const SysctlRuntimeResult runtimeResult =
-        runtime.ensureValue(canonical, after.value);
-    if (!runtimeResult.ok) {
-        outcome.status = RollbackStatus::Failed;
-        outcome.message = "Managed значение удалено, но runtime sysctl не приведён "
-                          "к значению оставшейся конфигурации: " +
-                          runtimeResult.message;
-        return outcome;
-    }
-    outcome.message += ". Runtime sysctl приведён к значению '" + after.value +
-                       "' из " + after.source.path.string();
-    return outcome;
+    SysctlConfigurationOptions options=deps.sysctlOptions?deps.sysctlOptions():SysctlConfigurationOptions{};
+    std::string error;auto* journal=DaemonMutationJournal::instance().tryGet(error);
+    if(!journal)return {record.id,record.resource,RollbackStatus::Failed,error};
+    const auto released=releaseSysctlOwned(*journal,record.id,options,deps.reapplySysctl);
+    for(const auto& diagnostic:released.diagnostics)Logger::log(diagnostic,logLevel::WARN,"rollback");
+    return outcomeFromOperation(record.id,record.resource,released);
 }
 
 MutationRollbackOutcome undoSudoSetting(
@@ -1144,7 +1074,7 @@ RollbackReport checkUnrecordedOwnership(
             : SysctlConfigurationOptions{};
         SysctlConfiguration configuration(options);
         std::string error;
-        if (!configuration.load(error)) {
+        if (!configuration.loadManaged(error)) {
             report.status = RollbackStatus::Failed;
             report.message = "Не удалось проанализировать конфигурацию sysctl: " + error;
             return report;
@@ -1331,6 +1261,9 @@ RollbackReport rollbackPolicyBeforeDisable(
     const PolicyRef& policy,
     const std::string& resourceHint,
     const RollbackExecutorDeps& deps) {
+    std::unique_lock<std::mutex> sysctlLock(SysctlConfiguration::mutationMutex(),std::defer_lock);
+    if(policy.moduleName=="SYSCTL")sysctlLock.lock();
+
     std::unique_lock<std::mutex> sshLock(sshResourceMutex(), std::defer_lock);
     const bool sshResource = policy.moduleName == "NET" && policy.submoduleName == "SshEdit";
     if (sshResource) sshLock.lock();
@@ -1453,6 +1386,11 @@ RollbackReport rollbackPolicyBeforeDisable(
 
         const MutationRecord* current=nullptr;
         for(const auto& candidate:journal->records())if(candidate.id==record.id){current=&candidate;break;}
+        if(record.undo.backend==MutationBackend::Sysctl&&current&&current->status==MutationStatus::RolledBack) {
+            if(outcome.status==RollbackStatus::Success||outcome.status==RollbackStatus::NothingToDo)++succeeded;
+            else ++failed;
+            continue;
+        }
         const auto* ssh=current?std::get_if<UndoRemoveSshManagedPolicy>(&current->undo.payload):nullptr;
         if(ssh&&ssh->transition&&ssh->transition->intent==SshTransitionIntent::Release) {
             const bool succeededOutcome=outcome.status==RollbackStatus::Success||outcome.status==RollbackStatus::NothingToDo;
@@ -1538,6 +1476,7 @@ RollbackExecutorDeps productionRollbackDeps(
     deps.passwordAgingPlatform = platform.passwordAging;
     deps.pamPlatform = platform.pam;
     const fic::platform::SysctlPlatformConfig sysctlConfig = platform.sysctl;
+    deps.reapplySysctl=[&executables](const std::string& key,std::string& error){return reapplySysctlPrefix(executables,key,error);};
     deps.sysctlOptions = [sysctlConfig]() {
         SysctlConfigurationOptions options;
         options.platform = sysctlConfig;

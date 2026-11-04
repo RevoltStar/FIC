@@ -13,6 +13,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.userCreation.useraddDefaultsLookup =
         UseraddDefaultsLookupSemantics::ExactKey;
     profile.executables.entries = {
+        {ExecutableId::SystemdSysctl, {"/usr/lib/systemd/systemd-sysctl", "/lib/systemd/systemd-sysctl"}, false},
         {ExecutableId::Sddm, {"/usr/bin/sddm"}, false},
         {ExecutableId::Gdm, {"/usr/sbin/gdm3", "/usr/sbin/gdm"}, false},
         {ExecutableId::LightDm, {"/usr/sbin/lightdm"}, false},
