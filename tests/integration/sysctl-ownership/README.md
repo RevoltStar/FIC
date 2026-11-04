@@ -36,7 +36,10 @@ bash tests/integration/sysctl-ownership/run-package.sh build-sssd-i1/full/lifecy
 ```
 
 Outputs live in `build-sysctl-validation/`: build/CTest logs, inspect receipts,
-backend/prefix reports and package transaction events. Tracked `evidence.json`
+backend/prefix reports and package transaction events. Crash-consistency follow-up
+uses `release-*` aggregate logs in that directory; per-platform reports are fresh
+outputs of the same runner. The Debian12 package fixture enrolls two SYSCTL owners
+before prepare-uninstall/rollback all/remove/purge. Tracked `evidence.json`
 records source/harness, image and ELF hashes with the results. It is a receipt
 for these runs, not a promise of compatibility with later HEADs. Development
 failure logs are not counted as passing validation. No raw `.json.gz` blobs.

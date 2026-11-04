@@ -208,6 +208,25 @@ void testAbsentDurabilityBarrier() {
     require(std::filesystem::exists(present), "present target untouched");
 }
 
+void testPreparedPublicationAdmission() {
+    TempDir tmp;auto path=tmp.directory/"config";writeFile(path,"before");
+    const auto before=capture(path);AtomicWriteOptions options;options.expectedTargetState=before;
+    AtomicWriteResult result;std::string error;AtomicTargetState receipt;
+    options.beforePublish=[&](const AtomicTargetState& prepared,std::string& why){
+        require(readFile(path)=="before","callback ran after publication");
+        require(prepared.content=="after"&&prepared.identity.inode!=before.identity.inode&&prepared.mode==before.mode,"callback did not receive final prepared inode");
+        receipt=prepared;why="receipt persistence refused";return false;
+    };
+    require(!AtomicFileWriter::writeWithResult(path,"after",options,&error,&result)&&!result.installed&&readFile(path)=="before","rejected receipt allowed rename");
+    options.beforePublish=[](const auto&,auto&)->bool{throw std::runtime_error("receipt exception");};
+    require(!AtomicFileWriter::writeWithResult(path,"after",options,&error,&result)&&!result.installed&&readFile(path)=="before","callback exception allowed rename");
+    options.beforePublish=[&](const auto&,auto&){writeFile(path,"foreign");return true;};
+    require(!AtomicFileWriter::writeWithResult(path,"after",options,&error,&result)&&result.preconditionFailed&&readFile(path)=="foreign","CAS was not rechecked after callback");
+    writeFile(path,"before");options.expectedTargetState=capture(path);
+    options.beforePublish=[&](const auto& prepared,auto&){receipt=prepared;return true;};
+    require(AtomicFileWriter::writeWithResult(path,"after",options,&error,&result)&&result.durabilityConfirmed&&AtomicFileWriter::targetStateMatches(path,receipt,&error),"installed result differs from admitted prepared receipt");
+}
+
 } // namespace
 
 int main() {
@@ -219,6 +238,7 @@ int main() {
         testSymlinkAndSpecialRefused();
         testUnlinkSuccessFsyncFailureNotDurable();
         testAbsentDurabilityBarrier();
+        testPreparedPublicationAdmission();
     } catch (const std::exception& error) {
         std::cerr << "AtomicFileWriterRemoveTests failed: " << error.what()
                   << '\n';

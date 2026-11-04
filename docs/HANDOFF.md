@@ -1,37 +1,36 @@
 # Current workspace
 
 ## Current base
-* Branch `main`; SYSCTL task base `9c6800c5e1ca2bff2bb0723f51b984ffa5bee559`.
-* Completion changes belong to the commit containing this snapshot; no push.
+* main; follow-up task base `3f61116f2ab12059702542428945fbfe9d5d344f`.
+* Completion belongs to the commit containing this snapshot; no push.
 
 ## Current task
-* Attachment 5c51f357: SYSCTL owned apply/REFRESH and release via native exact prefix. Implementation and required validation complete.
+* Attachment a16c595f: SYSCTL crash-consistent ownership release completed and validated.
 
 ## Accepted architecture / invariants
-* Every successful ENABLE apply owns its parameter in `/etc/sysctl.d/zzzz-fic.conf` and journal, even matching foreign/runtime state. No blocks, foreign effective parser, adoption, runtime-history restoration or compensation.
-* Metadata-only directory/name priority, symlinks/null masks; any selected regular late `.conf` blocks apply before policy mutation. Native loader/executable preflight uses existing platform resolver/trust and typed systemd properties.
-* One SYSCTL mutex. Fresh/REFRESH typed intent preserves ID/predecessor; durable attempted checkpoint before CAS. Direct inline NotInstalled permits no-effect abort; uncertainty stays Prepared and blocks writers. No postrestart inference of no effect.
-* Global journal schema remains3; optional SYSCTL undo extension version1. New container creation/current device+inode witness is recorded honestly. Shared witnesses update atomically with transaction completion. Replaced containers cannot be adopted/deleted with stale creation authority.
-* Existing old key/value records retain legacy empty-container release exception, NOT creation proof. Mixed new owners can reference the specific existing legacy origin without claiming creation; referenced origin cannot be discarded. No migration subsystem.
-* Release preserves other keys, conditionally writes/deletes, requires durability and completes journal before verified `systemd-sysctl --prefix=/canonical/leaf`. No runtime value read on release; absent foreign source may keep runtime. Native helper failure/exception is warning, without re-enrollment/retry store.
-* Existing optimistic CAS/root-writer race boundary remains. Unknown/orphan physical state is never automatic success.
+* User-approved optional AtomicWriteOptions::beforePublish: exact fsynced temp snapshot → durable SYSCTL prepared receipt → rechecked CAS → rename. Refusal/exception/indeterminate journal prevents rename. Ordinary callers retain default behavior.
+* Existing SysctlSettingState optional release intent: before snapshot, deterministic target bytes/metadata or absence, prepared inode receipt and temporary-legacy marker. Existing mutation ID binds operation; global schema3 unchanged, no migration/framework/background recovery.
+* Explicit same-operation retry: exact before state resumes conditional release; exact prepared identity/metadata/bytes or planned absence gets durability barrier and journal completion without rewriting. Receipt is not rename proof; unknown state refuses without adoption/helper.
+* Atomic terminal journal completion clears intent and updates surviving container identities. Generic RollbackFailed/discard and other SYSCTL apply cannot cross/erase unresolved release. Legacy origin/delegation and apply/REFRESH contracts preserved.
+* Native helper unchanged: after durable completion only, error WARNING. Crash after terminal journal but before helper can skip auxiliary execution; no outbox/retry store.
 
 ## Completed / changed areas
-* SYSCTL configuration/transaction/native helper, production apply and RollbackExecutor integration; optional SystemdSysctl executable in five profiles, resolver and profile validator.
-* Narrow journal prepare/attempt/finish/abort; atomic shared-witness updates; no changes to other backend behavior, package scripts/lifecycle, SysctlKey or SysctlRuntime.
-* Unit/static checks updated, dedicated ownership regression suite and five-platform native fixture added. Obsolete foreign-effective RemoteSysctlIntegration.sh replaced by isolated native gates.
-* Authoritative contract/table/production-file list: `docs/sysctl-lifecycle.md`; related rollback/architecture docs updated.
-* Compact source/image/ELF-bound receipt: `tests/integration/sysctl-ownership/evidence.json`. No bulk gzip reports.
+* RED on task base: post-publication journal rename failure, reopen, retry fails stale inode. Tracked evidence includes exact test-only patch, exit1 and diagnostic; local raw log/source under build-sysctl-validation/release-crash-red*.
+* Core AtomicFileWriter admission callback; SYSCTL deterministic plan/durability/retry; journal release serialization/validation/prepare/receipt/completion; RollbackExecutor retains pending typed state.
+* Fault regressions cover intent/receipt/completion failures, indeterminate persistence, pre-rename CAS refusal, actual journal reopening, A/B/last absence/legacy delegation, identical bytes/new foreign inode, metadata drift, competing apply, idempotence and helper ordering.
+* Debian12 package fixture enrolls two SYSCTL owners before prepare-uninstall/rollback all/remove/purge. Fresh source/harness/image/ELF-bound evidence replaces previous snapshot; no old PASS reused for changed code.
+* Contract: docs/sysctl-lifecycle.md; related rollback/diagram/fixture documentation updated.
 
 ## Validation
-* Final full project build and actual DEBs in prepared Debian12 Docker builder PASS; `build-sysctl-validation/full-build-package.log`.
-* Full Debian12 CTest with DAC override capabilities dropped and Git safe.directory supplied: 219 passed,0 failed,4 opt-in native skipped,223 registered (165.76s). Includes journal/rollback/SSH/SSSD unit/static checks and historical I6 evidence (historical only).
-* Native SYSCTL + two unit suites each: Debian12(systemd252.39), Debian13(257.13), Ubuntu24.04(255.4), Ubuntu26.04(259.9), ALT p11(258.9) PASS. Actual helper paths, source priorities/masks, exact leaf/dotted interface, unrelated leaf unchanged, owned no-op/REFRESH/release, warning failures and loader refusals tested.
-* Real Debian12 FIC daemon/CLI/package scripts: apply/no-op/runtime repair → prepare-uninstall/rollback all → remove/purge PASS; foreign source and administrative policy config preserved. Installed ELF matched explicitly rebuilt daemon SHA.
-* Source-manifest recheck, Python/shell syntax and `git diff --check` PASS. Reproduction: `tests/integration/sysctl-ownership/README.md`; local logs under `build-sysctl-validation/`.
+* Final targeted5/5 PASS: sysctl_configuration_tests, sysctl_ownership_tests, atomic_file_writer_remove_tests, mutation_journal_tests, rollback_executor_tests. Log release-targeted.log.
+* Full project build + actual Debian12 DEBs PASS. Full Debian12 CTest:219 passed,0 failed,4 opt-in skipped,223 registered;162.53s. Logs release-full-build-package.log and release-full-ctest.log.
+* Fresh native SYSCTL and two unit suites each: Debian12(systemd252.39), Debian13(257.13), Ubuntu24.04(255.4), Ubuntu26.04(259.9), ALT p11(258.9) PASS. Actual helper/default-loader/exact-prefix behavior rerun against current code.
+* Actual Debian12 daemon/CLI/two-owner package lifecycle PASS, including remove/purge, unchanged administrative configs, foreign sysctl source retained/applied by native helper. Installed daemon ELF matched rebuilt binary SHA.
+* Source inventory recheck, Python/shell syntax, relevant static checks, historical I6 checker and git diff --check PASS. Current evidence: tests/integration/sysctl-ownership/evidence.json; local logs build-sysctl-validation/release-*.
 
 ## Remaining / limits
-* No unfinished required SYSCTL implementation items. No host security mutation; native runtime containers have private namespaces/no host binds/network/ports, global kernel sysctls/sysfs read-only, private net leaves writable only.
-* Supplemental ALT `platform_profile_tests` fails `SDDM configuration path is incorrect`; reproduced unchanged from clean task-base archive in separate native build. Unrelated baseline defect, intentionally not fixed; full compiled-profile validation in SYSCTL driver passes all five.
-* Actual package E2E is Debian12 only; other four have real backend/loader gates, not package E2E. No real host reboot/power loss or arbitrary kernel-knob coverage. Durability/CAS uncertainty uses deterministic fault injection and remains fail-closed; no new automatic recovery engine.
-* Four opt-in CTest skips: verified_config_service_native_tests, daemon_singleton_startup_native, maintenance_preflight_native, package_pam_hooks_native. Separate required SYSCTL/package native gates above were actually run.
+* No unfinished required follow-up work. No real reboot/power-loss experiment: deterministic syscall/persistence faults plus journal reopening. Runtime fixtures isolated; global kernel/sysfs readonly, only private-network leaves writable; no host security mutation.
+* Existing stale inode from pre-intent code cannot be auto-resolved without historical proof. Unknown inode/bytes/metadata remains pending and fail-closed. Apply/REFRESH uncertainty is not expanded by this release-only recovery.
+* Existing optimistic CAS residual race against noncooperating privileged writers remains. Crash after terminal journal can skip auxiliary helper as above.
+* Package E2E is Debian12; other four have real backend/loader/unit gates. Supplemental ALT SDDM profile assertion was an unrelated known baseline from preceding task, outside this change.
+* Four opt-in CTest skips: verified_config_service_native_tests, daemon_singleton_startup_native, maintenance_preflight_native, package_pam_hooks_native. Required SYSCTL/package native gates were run separately.

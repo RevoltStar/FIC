@@ -121,17 +121,8 @@ SysctlValueObservation SysctlConfiguration::inspectManagedValue(const std::strin
     if(found==values_.end())return {};
     return {true,found->second,{options_.platform.managedConfigPath,options_.platform.managedConfigPath.string(),0}};
 }
-SysctlOperationResult SysctlConfiguration::publish(const std::map<std::string,std::string>& values,bool deleteEmpty) {
-    SysctlOperationResult result;std::string error;
-    if(!verifyCurrent(error)){result.message=error;return result;}
-    const auto path=options_.platform.managedConfigPath.string();
-    std::optional<AtomicTargetState> published;
-    if(values.empty()&&deleteEmpty&&snapshot_) {
-        AtomicRemoveResult removed;
-        result.ok=AtomicFileWriter::removeIfCurrentState(path,*snapshot_,&error,&removed)&&removed.removed&&removed.durabilityConfirmed&&!removed.preconditionFailed;
-        result.changed=removed.removed;result.noEffect=!removed.removed;
-    } else {
-        std::string text;
+std::string SysctlConfiguration::renderUpdate(const std::map<std::string,std::string>& values) const {
+    std::string text;
         if(!snapshot_)text=render(values);
         else {
             std::set<std::string> written;std::size_t begin=0;
@@ -155,9 +146,23 @@ SysctlOperationResult SysctlConfiguration::publish(const std::map<std::string,st
                 text+=fic::sysctl::configKeyFromCanonicalPath(key)+" = "+value+"\n";
             }
         }
+    return text;
+}
+SysctlOperationResult SysctlConfiguration::publish(const std::map<std::string,std::string>& values,bool deleteEmpty,
+    const std::function<bool(const AtomicTargetState&,std::string&)>& beforePublish) {
+    SysctlOperationResult result;std::string error;
+    if(!verifyCurrent(error)){result.message=error;return result;}
+    const auto path=options_.platform.managedConfigPath.string();
+    std::optional<AtomicTargetState> published;
+    if(values.empty()&&deleteEmpty&&snapshot_) {
+        AtomicRemoveResult removed;
+        result.ok=AtomicFileWriter::removeIfCurrentState(path,*snapshot_,&error,&removed)&&removed.removed&&removed.durabilityConfirmed&&!removed.preconditionFailed;
+        result.changed=removed.removed;result.noEffect=!removed.removed;
+    } else {
+        const auto text=renderUpdate(values);
         if(snapshot_&&text==snapshot_->content){result.ok=true;result.message="FIC sysctl artifact unchanged";return result;}
         AtomicWriteOptions options;options.createIfMissing=!snapshot_;options.exclusiveCreate=!snapshot_;options.rejectSymlink=true;
-        options.expectedTargetState=snapshot_;options.fileMode=0644;
+        options.expectedTargetState=snapshot_;options.fileMode=0644;options.beforePublish=beforePublish;
         if(options_.enforceOwnership){options.fileOwner=0;options.fileGroup=0;}
         AtomicWriteResult written;result.noEffect=false;
         result.ok=AtomicFileWriter::writeWithResult(path,text,options,&error,&written)&&written.installed&&written.durabilityConfirmed&&written.installedTargetState.has_value();
@@ -181,19 +186,36 @@ SysctlOperationResult SysctlConfiguration::ensureManagedValue(const std::string&
     std::map<std::string,std::string> checked;if(!parse(render(values),checked,error)||values!=checked){result.message="invalid SYSCTL target";return result;}
     return publish(values,false);
 }
-SysctlOperationResult SysctlConfiguration::removeManagedKey(const std::string& key,const std::string& expected,bool deleteEmpty) {
+SysctlOperationResult SysctlConfiguration::removeManagedKey(const std::string& key,const std::string& expected,bool deleteEmpty,
+    const std::function<bool(const AtomicTargetState&,std::string&)>& beforePublish) {
     SysctlOperationResult result;const auto canonical=fic::sysctl::internalKeyToCanonicalPath(key);auto values=values_;const auto found=values.find(canonical);
     if(found==values.end()) {
-        if(values.empty()&&deleteEmpty&&snapshot_)return publish(values,true);
-        std::string error;
+        if(values.empty()&&deleteEmpty&&snapshot_)return publish(values,true,beforePublish);
+        std::string error;result.ok=confirmDurable(error);
+        result.targetMissing=result.ok;result.message=result.ok?"FIC sysctl key durably absent":error;return result;
+    }
+    if(found->second!=expected){result.conflict=true;result.message="owned SYSCTL assignment drift";return result;}
+    values.erase(found);return publish(values,deleteEmpty,beforePublish);
+}
+
+bool SysctlConfiguration::confirmDurable(std::string& error) {
         if(snapshot_) {
             const int fd=::open(options_.platform.managedConfigPath.c_str(),O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
             struct stat st{};const bool durable=fd>=0&&::fstat(fd,&st)==0&&st.st_dev==snapshot_->identity.device&&st.st_ino==snapshot_->identity.inode&&::fsync(fd)==0;
             if(fd>=0)::close(fd);
-            result.ok=durable&&AtomicFileWriter::ensureTargetDurableIfCurrentState(options_.platform.managedConfigPath.string(),*snapshot_,&error);
-        } else result.ok=AtomicFileWriter::ensureTargetAbsentDurableIfCurrentState(options_.platform.managedConfigPath.string(),&error);
-        result.targetMissing=result.ok;result.message=result.ok?"FIC sysctl key durably absent":error;return result;
-    }
-    if(found->second!=expected){result.conflict=true;result.message="owned SYSCTL assignment drift";return result;}
-    values.erase(found);return publish(values,deleteEmpty);
+            return durable&&AtomicFileWriter::ensureTargetDurableIfCurrentState(options_.platform.managedConfigPath.string(),*snapshot_,&error);
+        } else return AtomicFileWriter::ensureTargetAbsentDurableIfCurrentState(options_.platform.managedConfigPath.string(),&error);
+}
+bool SysctlConfiguration::planRemoval(const std::optional<AtomicTargetState>& before,
+    const std::string& key,const std::string& expected,bool deleteEmpty,
+    std::optional<AtomicTargetState>& target,std::string& error) {
+    target.reset();if(!before)return true;
+    SysctlConfiguration config;config.snapshot_=before;
+    if(!parse(before->content,config.values_,error))return false;
+    const auto canonical=fic::sysctl::internalKeyToCanonicalPath(key);
+    const auto found=config.values_.find(canonical);
+    if(found!=config.values_.end()&&found->second!=expected){error="owned SYSCTL assignment drift";return false;}
+    auto values=config.values_;values.erase(canonical);
+    if(values.empty()&&deleteEmpty)return true;
+    target=*before;target->identity={};target->content=config.renderUpdate(values);return true;
 }

@@ -61,6 +61,11 @@ struct AtomicWriteOptions {
     // non-cooperating writers: they can still race between this check and
     // rename(2).
     std::optional<AtomicTargetState> expectedTargetState;
+    // Optional admission after temp data/metadata fsync, before publication.
+    // Failure/exception prevents rename; CAS is rechecked after this callback.
+    // The snapshot is a prepared inode receipt, NOT evidence of installation.
+    std::function<bool(const AtomicTargetState&,std::string&)> beforePublish;
+
 };
 
 struct AtomicWriteResult {

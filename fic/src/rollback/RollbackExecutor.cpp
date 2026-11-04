@@ -1391,6 +1391,11 @@ RollbackReport rollbackPolicyBeforeDisable(
             else ++failed;
             continue;
         }
+        const auto* sysctl=current?std::get_if<UndoRemoveManagedSetting>(&current->undo.payload):nullptr;
+        if(record.undo.backend==MutationBackend::Sysctl&&sysctl&&sysctl->sysctl&&sysctl->sysctl->release) {
+            ++failed; // Preserve typed release intent, never overwrite with RollbackFailed.
+            continue;
+        }
         const auto* ssh=current?std::get_if<UndoRemoveSshManagedPolicy>(&current->undo.payload):nullptr;
         if(ssh&&ssh->transition&&ssh->transition->intent==SshTransitionIntent::Release) {
             const bool succeededOutcome=outcome.status==RollbackStatus::Success||outcome.status==RollbackStatus::NothingToDo;

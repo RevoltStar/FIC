@@ -1163,6 +1163,22 @@ void testUnsupportedPolicyRefusesDisable() {
             "unsupported rollback must refuse the disable");
 }
 
+void testSysctlPendingReleaseSurvivesExecutorFailure() {
+    SysctlTree tree;tree.createManagedValue("vm.swappiness","10");
+    TempJournal storage;auto path=storage.tree.root/"journal.json";JournalOverride overrideGuard(path);
+    auto id=recordApplied(kSysctlPolicy,"vm.swappiness",sysctlUndo("10"));
+    std::string error;auto* journal=DaemonMutationJournal::instance().tryGet(error);require(journal!=nullptr,error);
+    SysctlConfiguration config(tree.options());require(config.loadManaged(error),error);
+    std::optional<AtomicTargetState> target;
+    require(SysctlConfiguration::planRemoval(config.snapshot(),"vm.swappiness","10",true,target,error)&&journal->beginSysctlRelease(id,config.snapshot(),target,error),error);
+    writeFile(tree.options().platform.managedConfigPath,"vm.swappiness = 99\n");
+    auto report=rollbackPolicyBeforeDisable(kSysctlPolicy,"vm.swappiness",tree.deps());
+    require(!report.rollbackCompleted(),"third-state release succeeded");
+    const auto active=journal->activeRecords(kSysctlPolicy);require(active.size()==1&&active.front().status==MutationStatus::Prepared&&std::get<UndoRemoveManagedSetting>(active.front().undo.payload).sysctl->release.has_value(),"executor overwrote pending intent with RollbackFailed");
+    MutationJournal reopened(path);require(reopened.initializeOrLoad(error),error);
+    require(reopened.activeRecords(kSysctlPolicy).front().status==MutationStatus::Prepared,"restart lost unresolved release");
+}
+
 void testSysctlRollbackRemovesManagedKeyAndMovesRuntime() {
     SysctlTree tree;
     tree.createManagedValue("vm.swappiness", "10");
@@ -3216,6 +3232,7 @@ int main(int argc, char** argv) {
         {"final mixed SSH ownership",testFinalMixedSshOwnership},
         {"final mixed SUDO ownership",testFinalMixedSudoOwnership},
         {"optional resources require physical absence proof", testOptionalResourcesRequirePhysicalAbsenceProof},
+        {"SYSCTL unresolved release survives executor failure",testSysctlPendingReleaseSurvivesExecutorFailure},
         {"sysctl rollback removes managed key and moves runtime",
          testSysctlRollbackRemovesManagedKeyAndMovesRuntime},
         {"sysctl rollback conflict on drift", testSysctlRollbackConflictOnDrift},

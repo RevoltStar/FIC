@@ -36,7 +36,7 @@ try:
   root=Path(directory)
   if root.exists():
    for p in root.glob('*.conf'):p.unlink()
- foreign=Path('/etc/sysctl.d/10-administrator.conf');foreign.write_text('net.ipv4.ip_forward = 1\nnet.ipv4.ip_forward_use_pmtu = 1\n')
+ foreign=Path('/etc/sysctl.d/10-administrator.conf');foreign.write_text('net.ipv4.ip_forward = 1\nnet.ipv4.ip_forward_use_pmtu = 1\nnet.ipv4.tcp_fin_timeout = 50\n')
  baseline=foreign.read_bytes();live=Path('/proc/sys/net/ipv4/ip_forward');other=Path('/proc/sys/net/ipv4/ip_forward_use_pmtu')
  live.write_text('1');other.write_text('0')
  packages=sorted(Path('/var/tmp/fic-packages').glob('*.deb'));assert len(packages)==3,packages
@@ -54,15 +54,19 @@ try:
  assert journal()==saved and managed.read_bytes()==content and managed.stat().st_ino==ino
  live.write_text('1');command('policy','apply','SYSCTL',policy)
  assert journal()==saved and live.read_text().strip()=='0'
+ command('policy','set','SYSCTL','tcp_fin_timeout','30')
+ command('policy','enable','SYSCTL','tcp_fin_timeout');command('policy','apply','SYSCTL','tcp_fin_timeout')
+ assert len(owned())==2 and 'net.ipv4.tcp_fin_timeout = 30' in managed.read_text()
  configuration=config();command('prepare-uninstall');command('policy','rollback','all')
  assert not managed.exists() and not owned() and live.read_text().strip()=='1' and other.read_text().strip()=='0'
+ assert Path('/proc/sys/net/ipv4/tcp_fin_timeout').read_text().strip()=='50'
  assert config()==configuration and foreign.read_bytes()==baseline
  run(['dpkg','--remove','fic-cli','fic','fic-dick'])
  assert Path('/var/lib/fic-lifecycle/status').read_text()=='REMOVED\n' and config()==configuration
  run(['dpkg','--purge','fic-cli','fic','fic-dick'])
  assert not Path('/opt/fic/db/mutation-journal.json').exists() and foreign.read_bytes()==baseline
  report.update(status='PASS',actual_packages=True,cli_owned_apply=True,no_op=True,runtime_only=True,
-  prepare_uninstall=True,rollback_all=True,native_foreign_value=True,no_unrelated_write=True,remove=True,purge=True,configuration_unchanged=True)
+  two_sysctl_owners=True,prepare_uninstall=True,rollback_all=True,native_foreign_value=True,no_unrelated_write=True,remove=True,purge=True,configuration_unchanged=True)
  save()
 finally:
  report['diagnostics']=run(['journalctl','-u','fic.service','-u','fic-device.service','-n','100','--no-pager'],False).stdout;save()

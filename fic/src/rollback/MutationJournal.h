@@ -239,6 +239,9 @@ public:
     bool prepareSysctl(const PolicyRef&,const std::string& key,const std::string& target,
                        bool containerCreated,MutationId legacyOrigin,const std::optional<AtomicTargetState>&,MutationId&,std::string&);
     bool finishSysctl(MutationId,const AtomicTargetState&,std::string&);
+    bool beginSysctlRelease(MutationId,const std::optional<AtomicTargetState>&,
+                            const std::optional<AtomicTargetState>&,std::string&);
+    bool noteSysctlReleasePrepared(MutationId,const AtomicTargetState&,std::string&);
     bool finishSysctlRelease(MutationId,const std::optional<AtomicTargetState>&,std::string&);
     // Only an inline direct NotInstalled observation/no writer invocation permits abort.
     bool noteSysctlAttempt(MutationId,std::string&);

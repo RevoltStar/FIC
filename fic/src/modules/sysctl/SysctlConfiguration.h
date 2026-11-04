@@ -40,7 +40,11 @@ public:
     bool existed() const {return snapshot_.has_value();}
     static bool inspectManagedSettings(const std::string&,bool&,std::string&);
     SysctlOperationResult ensureManagedValue(const std::string&,const std::string&);
-    SysctlOperationResult removeManagedKey(const std::string&,const std::string&,bool deleteEmpty=true);
+    SysctlOperationResult removeManagedKey(const std::string&,const std::string&,bool deleteEmpty=true,
+        const std::function<bool(const AtomicTargetState&,std::string&)>& beforePublish={});
+    static bool planRemoval(const std::optional<AtomicTargetState>&,const std::string&,const std::string&,
+        bool,std::optional<AtomicTargetState>&,std::string&);
+    bool confirmDurable(std::string&);
 private:
     SysctlConfigurationOptions options_;
     std::optional<AtomicTargetState> snapshot_;
@@ -48,6 +52,8 @@ private:
     std::map<std::string,std::string> topology_;
     bool directorySafe(const std::filesystem::path&,std::string&) const;
     bool topology(std::map<std::string,std::string>&,std::string&) const;
-    SysctlOperationResult publish(const std::map<std::string,std::string>&,bool);
+    std::string renderUpdate(const std::map<std::string,std::string>&) const;
+    SysctlOperationResult publish(const std::map<std::string,std::string>&,bool,
+        const std::function<bool(const AtomicTargetState&,std::string&)>& beforePublish={});
 };
 #endif

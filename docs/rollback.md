@@ -725,7 +725,9 @@ I/O), это ошибка загрузки — fail closed. Существующ
   source: внешняя запись (главный sudoers или другой include), перекрывающая
   FIC-запись, не мешает её удалению. Drift внутри managed-артефакта —
   `Conflict`. Для SYSCTL optional typed payload хранит fresh/REFRESH intent,
-  predecessor и authority общего контейнера. После физического удаления journal
+  predecessor, authority общего контейнера и durable release intent с исходным
+  snapshot/планом/prepared inode receipt. При retry разрешается только доказанное
+  исходное или подготовленное persistent-состояние. После физического удаления journal
   долговечно завершает release и обновляет witnesses остальных владельцев одной
   операцией. Затем вызывается проверенный платформенный `systemd-sysctl` с точным
   `--prefix`; ошибка этой операции — предупреждение, без отмены release и без

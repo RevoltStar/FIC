@@ -2,6 +2,7 @@
 #define FIC_ROLLBACK_MUTATION_RECORD_H
 
 #include <fic/policy/PolicyDependency.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 #include <modules/dac/sudo/SudoersDisabledWrapper.h>
 #include <modules/dac/sudo/SudoersAuthenticationWrapper.h>
 
@@ -51,6 +52,15 @@ enum class MutationBackend {
 struct SysctlContainerIdentity {
     std::uint64_t device=0, inode=0;
 };
+struct SysctlReleaseIntent {
+    std::uint32_t version=1;
+    bool previousLegacy=false;
+    std::optional<AtomicTargetState> before;
+    // Planned bytes/metadata; identity is deliberately zero until preparation.
+    std::optional<AtomicTargetState> target;
+    // Synchronized temp inode recorded durably BEFORE rename; not a rename proof.
+    std::optional<AtomicTargetState> prepared;
+};
 struct SysctlSettingState {
     std::uint32_t version=1;
     bool containerCreated=false;
@@ -61,6 +71,7 @@ struct SysctlSettingState {
     bool previousLegacy=false;
     bool attempted=false;
     std::string targetValue;
+    std::optional<SysctlReleaseIntent> release;
 };
 
 struct UndoRemoveManagedSetting {

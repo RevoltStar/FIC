@@ -328,6 +328,17 @@ bool AtomicFileWriter::writeWithResult(
         cleanup(tempFd, tempPath);
         return false;
     }
+    if (options.beforePublish) {
+        AtomicTargetState prepared;
+        prepared.identity={installedStat.st_dev,installedStat.st_ino};
+        prepared.mode=installedStat.st_mode&07777;prepared.owner=installedStat.st_uid;
+        prepared.group=installedStat.st_gid;prepared.content=content;
+        std::string admissionError;bool allowed=false;
+        try {allowed=options.beforePublish(prepared,admissionError);}
+        catch(const std::exception& exception){admissionError=exception.what();}
+        catch(...){admissionError="unknown publication admission exception";}
+        if(!allowed){setError(errorMessage,"prepared publication refused: "+admissionError);cleanup(tempFd,tempPath);return false;}
+    }
     if (!closeFd(tempFd)) {
         setError(errorMessage, "could not close " + tempPath.string() + ": " + errnoMessage());
         cleanup(tempFd, tempPath);

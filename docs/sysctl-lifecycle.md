@@ -61,17 +61,51 @@ rename/unlink; kernel-level запрет чужих writers здесь не вв
 
 ## Release
 
-1. Под общим SYSCTL mutex проверить journal, контейнер и own key/value.
-2. Условно удалить только свой ключ; остальные строки сохранить. Неизвестные
-   простые assignments не присваиваются FIC и не удаляются; оставшийся orphan
-   блокирует итоговый uninstall proof.
-3. При последнем ключе удалить пустой контейнер только с authority его создания.
-   Durability удаления/записи обязательна. Ошибка сохраняет provenance.
-4. Одной durable journal operation завершить RolledBack и обновить witnesses
-   оставшихся владельцев. При неопределённой записи journal helper не вызывается.
-5. Через VerifiedProcessExecutor вызвать платформенный helper с отдельным argv:
-   `--prefix=/net/ipv4/ip_forward`. Prefix должен указывать на regular leaf
-   `/proc/sys`, не каталог. Runtime values release не читает.
+1. Под общим SYSCTL mutex проверить journal, контейнер и own key/value всех
+   активных владельцев. Построить детерминированный план удаления одного ключа,
+   сохраняя остальные строки. Неизвестные assignments не присваиваются FIC;
+   оставшийся orphan блокирует итоговый uninstall proof.
+2. **До физической мутации** durably сохранить SYSCTL-specific release intent
+   в том же MutationJournal: исходный snapshot (device/inode, bytes, mode,
+   uid/gid), ожидаемые bytes/metadata либо absence, признак временного legacy
+   представления. Identity операции — существующий mutation ID; appliedValue,
+   creation authority и legacy origin сохраняются. Статус — Prepared.
+3. Для замены AtomicFileWriter готовит и fsync-ит temp inode. Необязательный
+   `beforePublish` callback передаёт его точный snapshot SYSCTL backend, который
+   durably сохраняет prepared receipt в intent. Отказ/exception/неопределённость
+   journal запрещают rename. После callback writer повторяет CAS-проверку.
+   Receipt доказывает подготовку inode, **не выполнение rename**. Обычные callers
+   без callback сохраняют прежний путь. Conditional delete использует исходный
+   snapshot; право удалить пустой контейнер не расширяется.
+4. Подтвердить фактическую публикацию/удаление и durability. Одной durable journal
+   operation завершить RolledBack, убрать intent и обновить container witnesses
+   оставшихся владельцев. Неопределённая запись запрещает работу до доверенного
+   повторного открытия journal. Generic RollbackFailed/discard не стирают intent.
+5. Только затем через VerifiedProcessExecutor вызвать платформенный helper с
+   отдельным argv `--prefix=/net/ipv4/ip_forward`. Prefix должен указывать на
+   regular leaf `/proc/sys`, не каталог. Runtime values release не читает.
+
+### Явный retry после restart
+
+Незавершённый release блокирует прочие SYSCTL apply/REFRESH/release. Следующий
+явный rollback/disable/uninstall той же мутации проверяет план и secure current
+snapshot:
+
+| Фактическое состояние | Действие |
+|---|---|
+| Точно совпадает с исходным snapshot, включая identity/metadata | Продолжить conditional release; перед новой заменой сохранить receipt нового temp inode |
+| Точно совпадает с сохранённым prepared receipt | Не переписывать файл; подтвердить durability и завершить journal/witnesses |
+| План требует absence и target доказанно отсутствует | Подтвердить durable absence, завершить journal |
+| Иные bytes, inode, metadata, symlink, неизвестный или неполный proof | Отказ без мутации/helper, сохранение intent |
+
+План повторно вычисляется из сохранённого исходного snapshot. Совпадение bytes
+или SHA-256 без identity/metadata receipt не разрешает adoption нового inode.
+Отказ CAS оставляет intent и predecessor; после подтверждения исходного состояния
+retry допустим. Если первая запись intent не установлена, файл не изменяется и
+прежнее ownership остаётся. При ошибке completion intent уже записан до мутации.
+Фонового recovery, новой schema migration или второго journal нет. Stale inode,
+оставшийся после сбоя старой реализации без release intent/receipt, автоматически
+не разрешается: историческое доказательство нельзя восстановить из нынешних байтов.
 
 Leading slash сохраняет literal точки в именах интерфейсов:
 `net/ipv4/conf/fic.test/forwarding` → `/net/ipv4/conf/fic.test/forwarding`.
@@ -80,7 +114,11 @@ Leading slash сохраняет literal точки в именах интерф
 может остаться прежним. Read-back, kernel-default/history restoration и полный
 reload запрещены. Отсутствие/ошибка/exception вспомогательного helper после
 release — диагностическое WARNING; release, disable и uninstall не отменяются.
-Повтор уже завершённого release не запускает helper снова; retry store отсутствует.
+Повтор уже завершённого release не запускает helper снова; retry store для
+вспомогательного helper отсутствует. Crash после durable RolledBack, но до helper
+может оставить helper невыполненным: receipt не является outbox для native reapply.
+После неопределённого completion reload может подтвердить уже terminal запись;
+повторная native операция из неё не выводится.
 
 ### Явное legacy-исключение
 
@@ -99,7 +137,10 @@ release — диагностическое WARNING; release, disable и uninstal
 `sysctl_configuration_tests`, `sysctl_ownership_tests`, `mutation_journal_tests`,
 `rollback_executor_tests` проверяют no-op, runtime-only, REFRESH и ошибки
 публикации/journal, orphan/drift, shared-key preservation, legacy authority,
-подмену контейнера, conditional delete и вспомогательные ошибки.
+подмену контейнера, conditional delete и вспомогательные ошибки. Follow-up
+воспроизводит RED на `3f61116`, затем проверяет повторное открытие journal после
+отказов intent/receipt/completion, CAS-before-rename, shared/last/legacy release,
+indeterminate persistence и запрет helper до completion.
 
 Native fixture: [tests/integration/sysctl-ownership](../tests/integration/sysctl-ownership/README.md).
 Он заменяет прежний `RemoteSysctlIntegration.sh`, который проверял удалённый
@@ -127,4 +168,10 @@ undo payload не меняет значения старых key/value запи�
 Основание native-loader семантики:
 [sysctl.d](https://www.freedesktop.org/software/systemd/man/latest/sysctl.d.html),
 [systemd-sysctl](https://www.freedesktop.org/software/systemd/man/latest/systemd-sysctl.service.html).
+Crash-consistency follow-up дополнительно изменяет
+`fic-common/fic-core/{include/fic/core/fs/AtomicFileWriter.h,src/fs/AtomicFileWriter.cpp}`
+(необязательный admission callback) и release-части SysctlConfiguration,
+SysctlTransaction, MutationRecord/MutationJournal и RollbackExecutor. Loader,
+profiles и обычные apply/REFRESH semantics остаются прежними.
+
 Фактические версии и область проверок приведены в native evidence.

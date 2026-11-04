@@ -9,7 +9,7 @@ bool proveSysctlOwnership(fic::rollback::MutationJournal& journal,const SysctlCo
     for(const auto& r:journal.records())if(r.isActive()&&r.undo.backend==MutationBackend::Sysctl) {
         const auto* p=std::get_if<UndoRemoveManagedSetting>(&r.undo.payload);
         if(!p||r.policy.moduleName!="SYSCTL"||p->key!=r.resource||
-           (r.status==MutationStatus::Prepared&&(p->sysctl||fic::sysctl::internalKeyToCanonicalPath(p->key)!=releasing))||(p->sysctl&&p->sysctl->pending)) {error="unresolved/invalid shared SYSCTL provenance";return false;}
+           (r.status==MutationStatus::Prepared&&(p->sysctl||fic::sysctl::internalKeyToCanonicalPath(p->key)!=releasing))||(p->sysctl&&(p->sysctl->pending||p->sysctl->release))) {error="unresolved/invalid shared SYSCTL provenance";return false;}
         const auto key=fic::sysctl::internalKeyToCanonicalPath(p->key);
         if(!owned.emplace(key,p->appliedValue).second){error="multiple SYSCTL owners for one parameter";return false;}
         any=true;
@@ -102,6 +102,8 @@ SysctlOperationResult releaseSysctlOwned(fic::rollback::MutationJournal& journal
     SysctlConfigurationOptions options,const std::function<bool(const std::string&,std::string&)>& reapply) {
     using namespace fic::rollback;
     SysctlOperationResult result;std::string error;
+    try {
+    if(!journal.usable()||!journal.lifecycleInitialized()){result.message="SYSCTL release requires a healthy reloaded journal";return result;}
     const MutationRecord* record=nullptr;for(const auto& r:journal.records())if(r.id==id)record=&r;
     const auto* setting=record?std::get_if<UndoRemoveManagedSetting>(&record->undo.payload):nullptr;
     if(!setting||record->undo.backend!=MutationBackend::Sysctl){result.message="SYSCTL release identity unavailable";return result;}
@@ -109,12 +111,40 @@ SysctlOperationResult releaseSysctlOwned(fic::rollback::MutationJournal& journal
     if(!record->isActive()){result.ok=true;result.targetMissing=true;return result;}
     SysctlConfiguration config(options);SysctlContainerAuthority authority;
     if(!config.loadManaged(error)){result.message=error;return result;}
-    const auto found=config.inspectManagedValue(undo.key);
-    if(found.found&&found.value!=undo.appliedValue){result.conflict=true;result.message="owned SYSCTL assignment drift";return result;}
-    if(!proveSysctlOwnership(journal,config,authority,error,fic::sysctl::internalKeyToCanonicalPath(undo.key))){result.message=error;return result;}
-    result=config.removeManagedKey(undo.key,undo.appliedValue,authority.created||authority.legacyOrigin);
-    if(!result.ok)return result;
-    if(!journal.finishSysctlRelease(id,config.snapshot(),error)){result.ok=false;result.message="SYSCTL physical release done; journal completion failed: "+error;return result;}
+    const auto equal=[](const std::optional<AtomicTargetState>& a,const std::optional<AtomicTargetState>& b) {
+        return bool(a)==bool(b)&&(!a||(a->identity.device==b->identity.device&&a->identity.inode==b->identity.inode&&
+            a->content==b->content&&a->mode==b->mode&&a->owner==b->owner&&a->group==b->group));
+    };
+    const bool continuing=undo.sysctl&&undo.sysctl->release;
+    if(!continuing) {
+        const auto found=config.inspectManagedValue(undo.key);
+        if(found.found&&found.value!=undo.appliedValue){result.conflict=true;result.message="owned SYSCTL assignment drift";return result;}
+        if(!proveSysctlOwnership(journal,config,authority,error,fic::sysctl::internalKeyToCanonicalPath(undo.key))){result.message=error;return result;}
+        std::optional<AtomicTargetState> planned;
+        if(!SysctlConfiguration::planRemoval(config.snapshot(),undo.key,undo.appliedValue,authority.created||authority.legacyOrigin,planned,error)||
+           !journal.beginSysctlRelease(id,config.snapshot(),planned,error)){result.message=error;return result;}
+    }
+    const MutationRecord* current=nullptr;for(const auto& r:journal.records())if(r.id==id)current=&r;
+    const auto state=*std::get<UndoRemoveManagedSetting>(current->undo.payload).sysctl;
+    const auto intent=*state.release;
+    std::optional<AtomicTargetState> planned;
+    if(!SysctlConfiguration::planRemoval(intent.before,undo.key,undo.appliedValue,state.containerCreated||state.legacyContainerOrigin,planned,error)||!equal(planned,intent.target)) {
+        result.message="unresolved SYSCTL release: invalid deterministic plan: "+error;return result;
+    }
+    if(equal(config.snapshot(),intent.before)) {
+        result=config.removeManagedKey(undo.key,undo.appliedValue,state.containerCreated||state.legacyContainerOrigin,
+            [&](const AtomicTargetState& prepared,std::string& why){return journal.noteSysctlReleasePrepared(id,prepared,why);});
+        if(!result.ok)return result;
+    } else if((!intent.target&&!config.snapshot())||(intent.prepared&&equal(config.snapshot(),intent.prepared))) {
+        result.ok=config.confirmDurable(error);result.targetMissing=true;
+        result.message=result.ok?"SYSCTL prepared release result recovered without rewriting":error;
+        if(!result.ok)return result;
+    } else {
+        result.message="unresolved SYSCTL release: neither original state nor exact prepared publication; no adoption";return result;
+    }
+    if(!config.verifyCurrent(error)||!journal.finishSysctlRelease(id,config.snapshot(),error)) {
+        result.ok=false;result.message="SYSCTL release intent retained; completion failed: "+error;return result;
+    }
     bool reapplied=false;
     try {
         if(reapply)reapplied=reapply(undo.key,error);
@@ -124,6 +154,9 @@ SysctlOperationResult releaseSysctlOwned(fic::rollback::MutationJournal& journal
     if(!reapplied) {
         result.message+="; WARNING: ownership released; native prefix reapply failed: "+error;
         result.diagnostics.push_back(result.message);
+    }
+    } catch(const std::exception& exception) {
+        result.ok=false;result.noEffect=false;result.message="unresolved SYSCTL release: "+std::string(exception.what());
     }
     return result;
 }
