@@ -24,9 +24,9 @@ PamOptionPolicy::PamOptionPolicy(
       feature_(feature) {
     const auto capability =
         fic::identity::pam::pamPolicyCapability(feature_);
-    if (fic::identity::pam::pamPolicySupport(platformConfig_, feature_) ==
-        fic::platform::PamPolicySupport::RequiresTopologyActivation) {
-        addRecommendedDependency(
+    if (fic::identity::pam::pamPolicySupport(platformConfig_, feature_) !=
+        fic::platform::PamPolicySupport::Unsupported) {
+        addRequiredDependency(
             {"IDENTITY_ACCESS", "PAM",
              pamCapabilityActivationPolicyName(capability)});
     }

@@ -211,3 +211,98 @@ facility меняет symlinks, а не содержимое этих файло
 * Исправление stale documentation/comments за пределами этого research report.
 * Полная функциональная auth/password-change матрица и произвольные сторонние
   PAM-графы. Existing tests/interfaces не заменяют такое доказательство.
+
+## 9. I3: обязательное участие capability
+
+R1-матрица выше и `r1-evidence.json` остаются историческим снимком до I3.
+После I3 каждый зарегистрированный `PamOptionPolicy` имеет ровно одну
+безусловную Required-зависимость на activation своей canonical capability:
+
+| Параметры | Required activation |
+|---|---|
+| 15 quality identities из §3 (зарегистрированные bindings выбранного provider) | enable_password_quality |
+| password_history_depth, password_history_enforce_for_root | enable_password_history |
+| failed_authentication_attempts, failed_authentication_counting_period, failed_authentication_enforce_for_root, failed_authentication_unlock_time | enable_authentication_lockout |
+
+Это относится к Supported, ReadOnly и RequiresTopologyActivation. Регистрация
+собирает capabilities **фактически зарегистрированных параметров**, а не
+проверяет representative feature. Тем самым ALT получает verify-only
+`enable_password_quality`, хотя PasswordMinLength для passwdqc Unsupported.
+Сам факт регистрации ничего не активирует и не изменяет PAM.
+
+Используются существующие `pamPolicyCapability`, activation name helper,
+`PamCapabilityActivationPolicy`, factory/verifier и planner. Disabled/Failed
+activation блокирует собственный apply параметра с
+`RequiredDependencyBlocked`/`ownApplyAttempted=false`. Успешный Structural proof
+сторонней поддержанной topology удовлетворяет Required без присвоения ownership.
+StaticVerifyOnly не получает writer и не создаёт topology journal records.
+Structural не доказывает enforcing password strength.
+
+Reverse Required guard запрещает disable activation при ENABLE-параметрах.
+Сначала освобождаются/отключаются параметры, затем activation. Provider rollback
+сохраняет самостоятельный physical ownership proof: отсутствие/повреждение
+activation не запрещает освобождение доказанных собственных entries.
+Ни C2 joint Q/H, ни ALT-managed blocks, ни package release order не изменены.
+Recommended disable_nopasswdlogin сохраняется **там, где профиль объявляет
+passwordlessLoginControl**; activation-политики не получают взаимных зависимостей.
+
+### Проверки I3
+
+`tests/integration/pam-dependencies/run-i3.sh TAG PLATFORM BUILD_DIR` запускает
+сборку `fic` и десяти test targets в выбранном native Docker builder, затем
+12 CTest (включая два static checks). Для ALT предварительно собирается
+`fic-pam-dependencies-native:alt-p11` из `Dockerfile.alt`: пакет `ctest` в ALT
+отделён от `cmake`. Standalone Dockerfile восстанавливает build prerequisites без локального base image.
+CTest добавляется только в disposable test image; зависимости
+пакетов FIC не меняются. Остальные профили используют `fic-package-native:TAG`.
+Runtime permission-negative fixtures
+запускаются без DAC_OVERRIDE/DAC_READ_SEARCH. Рабочие PAM/resources — только
+временные fixtures; host PAM не изменяется.
+
+Новый `pam_dependency_contract_tests` строит **реальный production registry**,
+проверяет все зарегистрированные параметры, будущие ReadOnly routes, missing
+activation, executor suppression, reverse production disable и реальный
+StaticVerifyOnly factory/verifier на изолированном passwdqc fixture.
+Для всех5 выбранных профилей регистрация проверяется непосредственно; static
+fixture отдельно моделирует supported foreign topology и не выдаётся за
+функциональную аутентификацию на пяти ОС. Собственные parameter executors в
+planner-сценариях подменены; Structural activation выполняется настоящая.
+
+`PamProviderRollbackTests` дополнительно проверяет release при отсутствии
+activation registry и отсутствующем/повреждённом effective stack. Existing
+C2 wiring tests покрывают D12 history module args; provider rollback suite —
+все6 passwdqc assignments, повторный apply/rollback и foreign bytes.
+Фактические результаты и хеши приведены в `i3-evidence.json` рядом с harness.
+Полная функциональная auth/password-change/package-manager E2E матрица этим
+прогоном не заявляется; ограничения §8 сохраняются.
+
+### Итог native validation I3
+
+| Платформа | Фактически выполнено |
+|---|---|
+| Debian 12 | fic +10 test targets; 12/12 CTest PASS до очистки; Driver дополнительно PASS uid65534 |
+| Debian 13 | fic +10 test targets; 12/12 CTest PASS до очистки |
+| Ubuntu 24.04 | fic +10 test targets; 12/12 CTest PASS и registry audit завершены до очистки; Docker wrapper затем exit125 из-за containerd meta.db I/O |
+| Ubuntu 26.04 | fic +10 test targets; 12/12 CTest PASS до очистки |
+| ALT p11 | fic ранее собран; после восстановления Docker заново собраны10 test targets, 9/10 CTest PASS; исправлен существующий wiring supportContract, повторён только упавший suite: 1/1 PASS; registry audit PASS |
+
+По просьбе пользователя после disk exhaustion/trim успешные проверки не
+повторялись. Их исходные логи, build receipts и Docker images удалены при очистке;
+результаты четырёх D/U сохранены по непосредственно наблюдавшимся tool outputs,
+без выдуманного восстановления хешей. `i3-evidence.json` явно отделяет эти
+результаты от новых ALT receipts/contracts/audit. Два generic static checks,
+успешные до очистки, повторно не запускались. `git diff --check` выполнен в конце.
+
+Первый ALT прогон выявил ошибку существующего testSupportContract: lift-флаг
+PamAuthUpdate ошибочно распространялся на StaticVerifyOnly/AltTcbManaged.
+Исправлены только тестовые ожидания: собственные topology-контракты ALT,
+неизменность их support при переключении lift-флага, универсально поддержанный
+PasswordQualityEnforceForRoot в static fixture вместо unsupported на passwdqc
+PasswordMinLength. Production support/backend не изменён. На D/U прежние
+lift-assertions сохранены; новая версия этого теста проверена только на ALT,
+успешные D/U suites по указанию пользователя не повторялись.
+
+Подтверждено16 зарегистрированных параметров на каждом D/U (Q10/H2/A4) и12
+на ALT (Q6/H2/A4). Свежий ALT contract содержит36 planner cases. Native
+libpasswdqc-devel parser probe не запускался; шесть passwdqc assignments
+покрыты provider lifecycle regression suite, а не functional password change.

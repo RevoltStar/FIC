@@ -39,17 +39,28 @@ const Option options[]={
 };
 const char* support(PamPolicySupport s){switch(s){case PamPolicySupport::Unsupported:return "Unsupported";case PamPolicySupport::Supported:return "Supported";case PamPolicySupport::ReadOnly:return "ReadOnly";case PamPolicySupport::RequiresTopologyActivation:return "RequiresTopologyActivation";}return "unknown";}
 const char* topology(PamTopologyStrategyKind s){switch(s){case PamTopologyStrategyKind::StaticVerifyOnly:return "StaticVerifyOnly";case PamTopologyStrategyKind::PamAuthUpdate:return "PamAuthUpdate";case PamTopologyStrategyKind::AltTcbManaged:return "AltTcbManaged";}return "unknown";}
+#include "Contracts.h"
 int main(int argc,char** argv){
  fs::path root=fs::temp_directory_path()/("fic-pam-dependencies-"+std::to_string(getpid()));
  try {
-  need(argc==3,"usage: driver --audit|--alt-control OUTPUT");fs::create_directories(root);
-  auto paths=fic::core::FicProductPaths::production();paths.configDir=root/"config";paths.dataDir=root/"data";paths.logDir=root/"log";paths.runtimeDir=root/"run";paths.commandHashFile=root/"data/hashes";
+  need(argc==3,"usage: driver --audit|--test|--alt-control OUTPUT");fs::create_directories(root);
+  fic::core::FicProductPaths paths;
+  paths.privateBinDir=root/"bin"; paths.configDir=root/"config"; paths.languageDir=root/"lang";
+  paths.dataDir=root/"data"; paths.logDir=root/"log"; paths.runtimeDir=root/"run";
+  paths.notifyDir=root/"notify"; paths.shareDir=root/"share"; paths.defaultConfigDir=root/"defaults"; paths.imageDir=root/"images";
+  paths.lockStatusFile=root/"data/lockstatus"; paths.commandHashFile=root/"data/hashes";
+  paths.deviceDatabaseFile=root/"data/devices.db"; paths.deviceDatabaseLockFile=root/"data/devices.lock";
+  paths.lockDebugLogFile=root/"log/lock.log"; paths.mutationJournalFile=root/"data/mutation-journal.json";
   for(const auto& dir:{paths.configDir,paths.dataDir,paths.logDir,paths.runtimeDir})fs::create_directories(dir);
+  if (fs::exists(FIC_PAM_DEPENDENCIES_STATIC_CONFIG_DIR))
+   fs::copy(FIC_PAM_DEPENDENCIES_STATIC_CONFIG_DIR, paths.configDir, fs::copy_options::recursive|fs::copy_options::overwrite_existing);
   fs::copy(FIC_PAM_DEPENDENCIES_CONFIG_DIR,paths.configDir,fs::copy_options::recursive|fs::copy_options::overwrite_existing);
   std::string error;need(fic::core::FicRuntimePaths::initialize(paths,error),error);
   auto profile=makeBuildPlatformProfile();PlatformExecutableResolver executables(profile.executables);
   json result={{"platform",profile.id},{"mode",argv[1]}};
-  if(std::string(argv[1])=="--audit") {
+  if(std::string(argv[1])=="--test") {
+   result["contracts"] = contracts(profile, root);
+  } else if(std::string(argv[1])=="--audit") {
    PolicyRegistry registry;need(initPolicyRegistry(profile,executables,registry,error),error);need(validatePolicyDependencyGraph(registry,error),error);
    result["graph_valid"]=true;result["policies"]=json::array();
    for(const auto& option:options){

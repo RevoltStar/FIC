@@ -25,6 +25,7 @@
 #include <fic/core/process/VerifiedProcessExecutor.h>
 #include <fic/ipc/FicIpcClient.h>
 #include <nlohmann/json.hpp>
+#include <set>
 
 #include <algorithm>
 
@@ -402,10 +403,12 @@ bool initPolicyRegistry(
         platform.sudo, executables));
 
     // Identity and access: PAM
+    std::set<fic::platform::PamCapability> registeredPamCapabilities;
     const auto registerPamPolicy = [&](fic::platform::PamPolicyFeature feature,
                                        std::unique_ptr<Policy> policy) {
         if (fic::identity::pam::pamPolicySupport(platform.pam, feature) !=
             fic::platform::PamPolicySupport::Unsupported) {
+            registeredPamCapabilities.insert(fic::identity::pam::pamPolicyCapability(feature));
             cafArr.push_back(std::move(policy));
         }
     };
@@ -427,38 +430,6 @@ bool initPolicyRegistry(
         return fic::identity::pam::PamPasswordTopologyCoordinator::
             makeProduction(executables, platform, coordinatorError);
     };
-    const auto registerPamActivationPolicy =
-        [&](fic::platform::PamCapability capability,
-            fic::platform::PamPolicyFeature representativeFeature) {
-            if (fic::identity::pam::pamPolicySupport(
-                    platform.pam, representativeFeature) ==
-                fic::platform::PamPolicySupport::RequiresTopologyActivation) {
-                cafArr.push_back(
-                    std::make_unique<PamCapabilityActivationPolicy>(
-                        platform.pam, capability, activationOptions));
-            }
-        };
-    registerPamActivationPolicy(
-        fic::platform::PamCapability::PasswordHistory,
-        fic::platform::PamPolicyFeature::PasswordHistoryDepth);
-    registerPamActivationPolicy(
-        fic::platform::PamCapability::PasswordQuality,
-        fic::platform::PamPolicyFeature::PasswordMinLength);
-    // The authentication lockout activation policy is only registered when
-    // the platform profile declares at least one supported pam_faillock
-    // strategy; otherwise the capability is unsupported on this platform.
-    if (std::any_of(
-            platform.pam.capabilities.begin(),
-            platform.pam.capabilities.end(),
-            [](const fic::platform::PamCapabilityConfig& capability) {
-                return capability.capability ==
-                    fic::platform::PamCapability::AuthenticationLockout &&
-                    !capability.supportedFaillockStrategies.empty();
-            })) {
-        cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
-            platform.pam, fic::platform::PamCapability::AuthenticationLockout,
-            activationOptions));
-    }
     registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinLength,
         std::make_unique<PamPasswordMinLengthPolicy>(platform.pam));
     registerPamPolicy(fic::platform::PamPolicyFeature::PasswordMinClasses,
@@ -549,6 +520,13 @@ bool initPolicyRegistry(
         fic::platform::PamPolicyFeature::FailedAuthenticationUnlockTime,
         std::make_unique<PamFailedAuthenticationUnlockTimePolicy>(
             platform.pam));
+    // Every registered option (including Supported/ReadOnly) needs an
+    // activation ref. Registry validation runs after the complete list is built;
+    // construction order does not impose runtime dependencies between Q/H/A.
+    for (const auto capability : registeredPamCapabilities) {
+        cafArr.push_back(std::make_unique<PamCapabilityActivationPolicy>(
+            platform.pam, capability, activationOptions));
+    }
     // Identity and access: SSSD, Kerberos and NSS
     cafArr.push_back(
         std::make_unique<SssdOfflineCredentialsExpirationPolicy>(executables));

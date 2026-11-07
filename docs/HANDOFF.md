@@ -1,35 +1,29 @@
 # Current workspace
 
 ## Current base
-* main; PAM R1/I3 task base `8a1c24bc0c356a908230a6e2e406b04f20651a22`. No push.
+* main; base `8a1c24bc0c356a908230a6e2e406b04f20651a22`.
+* R1: `e5c2798d961afa791b6568dfc10b25d1f5ae9816`. I3 is the second task commit; no push.
 
 ## Current task
-* Attachment a6a92742: exactly R1 research and I3 Required dependencies, two sequential commits with specified names. R1 complete; I3 production edits not started.
+* Attachment a6a92742: R1 research + I3 Required PAM dependencies completed. No additional PAM stages authorized.
 
-## Accepted architecture / findings
-* Keep Structural activation, C2 joint password topology, ALT managers/blocks, existing provider ownership/rollback and package lifecycle. No enforcement policies, writer for ALT passwdqc, new migrations/recovery or arbitrary foreign adoption.
-* R1 production source unchanged. Actual registry driver: 16 option policies per D12/D13/U24/U26,12 ALT; graphs valid. Current options only Recommend activation; ALT6 Supported passwdqc/root options have none and activation absent.
-* ALT bug is TWO gates: StaticVerifyOnly returns Supported for its bindings, but representative PasswordMinLength is Unsupported for passwdqc. Merely replacing equality RequiresTopologyActivation is insufficient.
-* Minimal I3: collect capabilities from actually registered supported options via existing pamPolicyCapability; append one existing activation per used capability. Parent PamOptionPolicy adds Required for every supported/read-only registered feature, preserves Recommended disable_nopasswdlogin. No Q↔H/A artificial edges.
-* StaticVerifyOnly apply/factory already exists, Structural only/no journal. Unrecorded static rollback AlreadyReleased; no backend/rollback redesign needed unless a concrete test proves otherwise.
-* Four D/U selected profiles currently C2 mutable=true; stale older docs/comments are not current contract. D12 history uses C2 module args; ALT history options use legacy config transaction/topology lifecycle, not managed-provider entries; ALT passwdqc6 use managed entries.
+## Accepted architecture / invariants
+* Every registered supported/read-only option has one canonical Required activation. Activation registration follows actual option capabilities, not a representative feature.
+* Structural only; ALT passwdqc StaticVerifyOnly gains registration, not a writer or ownership. Preserve Recommended disable_nopasswdlogin, C2 joint Q/H, ALT blocks, provider rollback and package lifecycle.
+* R1 evidence remains historical. No host PAM mutation; Docker authorized.
 
 ## Completed / changed areas
-* docs/pam-r1-architecture-research.md: full platform/parameter/dependency/ownership/rollback matrix, history, primary documentation and scope limits.
-* tests/integration/pam-dependencies/Driver.cpp links actual production source closure and invokes initPolicyRegistry; --audit emits native matrix without policy apply. --alt-control is isolated/narrowed native experiment only.
-* tests/CMakeLists adds EXCLUDE_FROM_ALL research target pam_dependency_contract_tests using fic source/link contract, daemon main excluded. Global existing libsystemd test import substitutes daemon-directory-local equivalent.
-* build-and-audit.sh, alt-control.sh reproduce disposable Docker probes. Docker used per prior authorization; no host PAM writes.
-* r1-evidence.json contains five actual audits, source-harness/image/ELF hashes and native ALT control results. R1 evidence is historical; do not rewrite it as I3 proof.
+* R1 report and registry/control research committed; authoritative bounded findings: docs/pam-r1-architecture-research.md.
+* I3 production changes only PamOptionPolicy.cpp and daemon/main_function.cpp.
+* Actual registry/planner/disable/ReadOnly/missing-ref/foreign Structural/no-mutation contracts in tests/integration/pam-dependencies. Provider rollback regression proves release independent of effective activation. Platform static check and CMake updated.
+* Existing wiring supportContract corrected for ALT StaticVerifyOnly/AltTcbManaged; no production support change.
 
 ## Validation
-* All5 research target builds and actual registry graph audits PASS. Logs build-pam-r1-i3/r1-{build,audit}-TAG.log; audit-PLATFORM.json.
-* ALT native manager + control multi→ldap→local: blocks preserved, Enabled/manageable under scope={system-auth}, RPM pam-config1.10.0-alt0.p11.2/control0.8.0-alt3. Initial invalid root-scope fixture was corrected, not claimed as a production defect.
-* Official Linux-PAM and Debian pam-auth-update docs compared. ALT wiki blocked by Anubis; used installed RPM facility/templates instead. No functional PAM auth/password-change claim.
-* git diff --check and shell syntax PASS. Production diff empty before R1 commit.
+* Before disk cleanup: fic +10 test targets built all5; D12/D13/U24/U26 each12/12 CTest PASS. D12 Driver also PASS uid65534. U24 Docker wrapper exit125 AFTER successful CTest/audit due storage I/O.
+* User deleted raw logs/build receipts/images. Successful D/U tests not repeated as requested. Do not claim recovered historical hashes or final revised wiring-test binaries on D/U.
+* Fresh ALT image and10 targets built; initial9/10 PASS, existing wiring test expectation fixed; only failed suite rebuilt/rerun1/1 PASS. Actual registry audit PASS;12 options/36 planner cases. Fresh hashes/contracts/audit in i3-evidence.json.
+* Generic packaging/platform static checks and harness syntax passed before cleanup; git diff --check passed at completion.
 
-## Remaining
-* Create/finish R1 commit then implement I3; do not add a third stage or extra commit.
-* Add real registered-policy tests for one unconditional Required/activation ref, disabled/failed/success executor suppression, Structural foreign success, static no-mutation/no-journal, reverse production disable guard, ReadOnly registration, no missing refs/cycles, preserved recommended/nonparam/C2 edges.
-* Run relevant native builds/tests all5, C2 history/ALT passwdqc/provider rollback regressions. Update CI CTest target registration; no broad test framework.
-* Replace current research target EXCLUDE_FROM_ALL with normal test target for I3 and add --test mode; preserve --audit/R1 data. Existing caches: D12 build-sssd-i1/full; others build-package-release/{debian13,ubuntu2404,ubuntu2604,alt-p11}.
-* Final I3 evidence/docs/HANDOFF, diff checks, second named commit; no push. Unrelated ALT SDDM baseline remains outside scope.
+## Remaining / limits
+* No unfinished I3 implementation. Full functional authentication/password-change/package-manager E2E and native ALT libpasswdqc-devel probe not run.
+* R1 follow-ups intentionally outside I3: ALT block MutationId/physical ownership ambiguity, broader control modes/foreign topology, enforcement redesign and unrelated stale comments. See report §8.

@@ -189,6 +189,28 @@ void testAppliedExactRelease() {
             "fixture must have had an entry");
 }
 
+// Ownership release must not depend on effective activation. These fixtures
+// have no activation policy/registry; the second has an invalid effective stack.
+void testReleaseWithoutEffectiveActivation() {
+    for (bool brokenStack : {false, true}) {
+        Harness harness;
+        harness.platform.configDirectories = {harness.temp.directory / "pam.d"};
+        harness.platform.moduleDirectories = {harness.temp.directory / "missing-modules"};
+        if (brokenStack) {
+            std::filesystem::create_directories(harness.temp.directory / "pam.d");
+            writeFile(harness.temp.directory / "pam.d/login", "auth required pam_missing.so\n");
+        }
+        harness.platform.scopes = {{fic::platform::PamScope::EffectiveAuthenticationStack, {"login"}}};
+        harness.platform.capabilities.front().scope = fic::platform::PamScope::EffectiveAuthenticationStack;
+        writeEntryState(harness.configPath, 7, appliedBody("8"));
+        const auto record = makeEntryRecord(harness, 7, appliedBody("8"), "", MutationStatus::Applied);
+        const auto result = undoPamProviderManagedEntry(harness.options(), harness.journal, record,
+            std::get<UndoRemovePamProviderManagedEntry>(record.undo.payload));
+        require(result.ok && result.changedSystemState && readFile(harness.configPath) == kForeign,
+                "proven provider release was gated by absent/broken activation: " + result.message);
+    }
+}
+
 void testAppliedMissingIsNothingToDo() {
     Harness harness;
     writeFile(harness.configPath, kForeign);
@@ -1287,6 +1309,7 @@ int main() {
     try {
         testPasswdqcSixPolicyLifecycle();
         testAppliedExactRelease();
+        testReleaseWithoutEffectiveActivation();
         testAppliedMissingIsNothingToDo();
         testBodyDriftConflict();
         testWrongMutationIdConflict();

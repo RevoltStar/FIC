@@ -3461,9 +3461,13 @@ get_target_property(pam_dependency_definitions fic COMPILE_DEFINITIONS)
 # The daemon-local libsystemd import is not visible in tests; use its existing equivalent.
 list(REMOVE_ITEM pam_dependency_libraries PkgConfig::FIC_LIBSYSTEMD)
 list(APPEND pam_dependency_libraries PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
-add_executable(pam_dependency_contract_tests EXCLUDE_FROM_ALL
+add_executable(pam_dependency_contract_tests
     integration/pam-dependencies/Driver.cpp ${pam_dependency_sources})
 target_include_directories(pam_dependency_contract_tests PRIVATE ${pam_dependency_includes})
 target_compile_definitions(pam_dependency_contract_tests PRIVATE ${pam_dependency_definitions}
+    FIC_PAM_DEPENDENCIES_STATIC_CONFIG_DIR="${CMAKE_SOURCE_DIR}/fic/src/resources/config"
     FIC_PAM_DEPENDENCIES_CONFIG_DIR="${CMAKE_BINARY_DIR}/fic/generated/scripts/config")
 target_link_libraries(pam_dependency_contract_tests PRIVATE ${pam_dependency_libraries})
+
+add_test(NAME pam_dependency_contract_tests COMMAND pam_dependency_contract_tests --test ${CMAKE_BINARY_DIR}/pam-i3-contracts.json)
+set_tests_properties(pam_dependency_contract_tests PROPERTIES LABELS "unit;integration")

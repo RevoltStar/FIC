@@ -1042,6 +1042,19 @@ void testSupportContract() {
             fic::platform::PamPolicySupport::Unsupported) {
             continue; // provider binding absent on this platform
         }
+        const auto capability = fic::identity::pam::pamPolicyCapability(feature);
+        const auto config = std::find_if(profile.pam.capabilities.begin(),
+            profile.pam.capabilities.end(), [capability](const auto& item) {
+                return item.capability == capability;
+            });
+        require(config != profile.pam.capabilities.end(), "missing capability");
+        if (config->topology != fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+            require(support == (config->topology == fic::platform::PamTopologyStrategyKind::AltTcbManaged
+                        ? fic::platform::PamPolicySupport::RequiresTopologyActivation
+                        : fic::platform::PamPolicySupport::Supported),
+                    "non-PamAuthUpdate support must follow its own topology contract");
+            continue;
+        }
         require(mutableDomain
                     ? support == fic::platform::PamPolicySupport::
                           RequiresTopologyActivation
@@ -1059,6 +1072,17 @@ void testSupportContract() {
             fic::identity::pam::pamPolicySupport(readOnlyPlatform, feature);
         if (support ==
             fic::platform::PamPolicySupport::Unsupported) {
+            continue;
+        }
+        const auto capability = fic::identity::pam::pamPolicyCapability(feature);
+        const auto config = std::find_if(readOnlyPlatform.capabilities.begin(),
+            readOnlyPlatform.capabilities.end(), [capability](const auto& item) {
+                return item.capability == capability;
+            });
+        require(config != readOnlyPlatform.capabilities.end(), "missing capability");
+        if (config->topology != fic::platform::PamTopologyStrategyKind::PamAuthUpdate) {
+            require(support == fic::identity::pam::pamPolicySupport(profile.pam, feature),
+                    "lift flag must not change non-PamAuthUpdate support");
             continue;
         }
         require(support == fic::platform::PamPolicySupport::ReadOnly,
@@ -1079,7 +1103,7 @@ void testSupportContract() {
     }
     require(fic::identity::pam::pamPolicySupport(
                 staticPlatform,
-                fic::platform::PamPolicyFeature::PasswordMinLength) ==
+                fic::platform::PamPolicyFeature::PasswordQualityEnforceForRoot) ==
             fic::platform::PamPolicySupport::Supported,
         "the flag must not lift non-PamAuthUpdate topologies");
 }
