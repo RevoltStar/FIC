@@ -225,12 +225,16 @@ bool PamPasswordTopologyCoordinator::applyJointRequestedState(
     if (!readDesiredState(requested, error)) {
         return false;
     }
-    if (preflight && !preflight(requested, error)) {
-        lastResult_ = {};
+    lastResult_ = {};
+    if (!executor_.apply(requested.qualityRequested, requested.historyRequested,
+            requested.historyOptions, lastResult_, error,
+            [&](std::string& proofError) {
+                return !preflight || preflight(requested, proofError);
+            })) {
         lastResult_.error = error;
+        error = classifyFailure(error);
         return false;
     }
-    if (!transition(requested, error)) return false;
     // Compliance (including a foreign no-op) must never hide unresolved
     // journal ownership. Existing recovery ran first; this check is read-only
     // and does not change explicit transition()/release/rollback semantics.

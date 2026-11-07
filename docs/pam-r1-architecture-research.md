@@ -466,3 +466,89 @@ source/build mounts и отдельным tmpfs. В native consumer probes на�
 словаре; сам probe использует явный pwhistory/unix stack и не доказывает
 pwquality enforcement. Полная I6 authentication/password-change matrix,
 native ALT consumers и FIC package/activation E2E не заявляются.
+
+## 11. I2 — ownership admission перед новой C2 mutation
+
+База: `04906dfd8683ddb3f2561a37282c329316aabb80`. Исторические R1/I1
+результаты выше сохранены; I2 evidence публикуется отдельно в
+`tests/integration/pam-dependencies/i2-evidence.json`.
+
+**Воспроизведено (RED, production-код базы):** dangling Applied Quality при
+foreign quality и запросе History сначала вызывал native mutator и создавал
+peer ownership, затем отказывал на postcondition. Симметричный dangling
+History при запросе Quality также допускал новую mutation до отказа.
+Ранний coordinator preflight оставлял exact selected Active Prepared history
+незавершённым при отказе по новому goal. Изменение topology внутри preflight
+могло попасть в новый план без проверки against entry snapshot.
+
+**Изменение:** один существующий executor обслуживает ordinary `apply()` и
+explicit `transition()`. Ordinary порядок: fresh typed inspection → только
+существующее exact Prepared history completion → usable-state proof →
+существующий read-only `confirmApplyOwnership()` обоих доменов → Structural
+preflight с тем же requested snapshot → существующий drift gate → прежний
+planner/slot writers/native calls → прежний ownership/Structural AFTER proof.
+Explicit transition/release не получает ordinary admission или activation
+preflight. Grammar ownership, planner, MutationJournal schema и recovery
+classifier не дублируются и не изменены.
+
+### Journal / physical matrix
+
+| Состояние | Ordinary apply | Explicit release |
+|---|---|---|
+| Нет active records, поддерживаемый foreign effective, нет собственных artifacts | No-op без adoption | NothingToDo, foreign сохранён |
+| Нет journal, собственный active marker/selection | Отказ | Отказ, не удалять без provenance |
+| Applied + exact selected owned slot/block | Прежний apply/idempotency | Прежний ownership-safe release |
+| Applied + все собственные artifacts доказанно отсутствуют | Отказ, foreign не скрывает dangling provenance | AlreadyReleased без реконструкции artifact, если отсутствие доказано |
+| Partial / wrong ID / malformed / неоднозначный ownership | Отказ перед новой ordinary mutation | Только предусмотренный exact release; иначе отказ |
+| C2 HistoryNormal/HistoryInitial selected Active Prepared + neutral sibling | Прежнее exact completion с historical receipt, затем новый intent | Прежний explicit lifecycle |
+| C2 Quality Prepared / неподдерживаемый Prepared / RollbackFailed | Отказ, нет расширения recovery | Только существующий доказанный release/package-release |
+| Faillock Prepared exact BEFORE/AFTER или bound crash-partial | Прежний recovery; reused provenance не discard при Disabled | Exact ID-bound release; wrong/malformed ID отказ |
+| ALT missing/corrupt/partial/unsupported block или foreign drift | Строгий supported-topology contract | Прежние строгие manager/lock/CAS proofs |
+
+Это backend-specific контракт, а не единый новый recovery algorithm.
+C2 absent-ownership rollback проверяется через настоящий RollbackExecutor/joint
+transition, учитывает intent survivor и не удаляет foreign quality. Provider
+entry rollback при отсутствующей/неэффективной activation уже покрыт
+`testReleaseWithoutEffectiveActivation`; новых activation gates туда нет.
+
+### Проверки и границы доказательства
+
+Новые wiring regressions: оба направления peer mutation при
+Prepared/Applied/RollbackFailed; byte-exact неизменность всех slots, generated
+stack, selection и journal; explicit release Applied с доказанным отсутствием;
+Normal/Initial exact completion перед отвергнутым изменённым intent (значения
+7 и 11 не смешиваются), rebuild coordinator, неизменность slots/native count;
+drift во время preflight. На базе четыре RED test groups, после исправления
+GREEN. Existing F1–F12 executor fault tests продолжают проверять drift,
+компенсацию, unproven compensation и сохранение provenance.
+
+Real faillock manager + Structural verifier: neutral slots с foreign effective
+не скрывают Prepared/Applied/RollbackFailed; журнал и graph неизменны при
+отказе. Existing tests сохраняют exact partial release, wrong ID refusal,
+orphan rejection и fresh/reused Prepared recovery. Real ALT history manager +
+journal (verifier seam, не native efficacy proof): Applied idempotency,
+missing block, corrupted/partial block, unsupported duplicate tcb и orphan
+block fail-closed; supported foreign account rule сохраняется без изменения
+provenance. Existing ALT managers покрывают tcb/pwtxn storage,
+transaction contention, malformed markers, foreign topology и CAS replacement.
+ALT faillock active provenance + foreign graph уже проверяется I1 regression.
+
+Никаких новых causal ownership guarantees для ALT marker без MutationId:
+известная неоднозначность исторического происхождения exact block остаётся
+отдельной задачей. Автоматической миграции/adoption нет. Quality Prepared
+recovery не расширен. ModuleArguments option policies, I3 Required edges,
+package lifecycle и другие модули не меняются.
+
+Native build/CTest и четыре disposable pwhistory consumer probes — bounded
+validation. Они не являются полной PAM authentication/FIC activation I6
+матрицей, native ALT passwdqc/history consumer proof или package E2E.
+
+Итог I2 (2026-11-07): `fic` +20 relevant targets собраны на D12/D13/U24/U26/
+ALT p11; на каждой платформе 22/22 relevant CTest и production registry audit
+PASS. Финальные before/after receipts всех пяти совпадают; наличие новых
+regression literals в итоговых executable дополнительно проверено против
+stale objects. Четыре disposable native-initial-probe.sh — PASS. Условия
+запуска: `FIC_PAM_GATE_STAGE=i2 bash tests/integration/pam-dependencies/run-i1.sh
+TAG PLATFORM BUILD_DIR`. Источник точных хешей/версий и ограничений — отдельный
+`i2-evidence.json`; промежуточные source-drift и ошибочное ожидание ALT fixture
+не выдаются за финальный PASS.

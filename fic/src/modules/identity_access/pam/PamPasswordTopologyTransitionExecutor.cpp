@@ -655,10 +655,31 @@ bool PamPasswordTopologyTransitionExecutor::confirmApplyOwnership(std::string& e
     return true;
 }
 
+bool PamPasswordTopologyTransitionExecutor::apply(
+    bool qualityRequested, bool historyRequested,
+    const ManagedPwhistorySlotOptions& historyOptions,
+    PamPasswordTransitionResult& result, std::string& error,
+    const std::function<bool(std::string&)>& preflight) {
+    return transitionImpl(qualityRequested, historyRequested, historyOptions,
+        result, error, [&](std::string& admissionError) {
+            return confirmApplyOwnership(admissionError) &&
+                (!preflight || preflight(admissionError));
+        });
+}
+
 bool PamPasswordTopologyTransitionExecutor::transition(
     bool qualityRequested, bool historyRequested,
     const ManagedPwhistorySlotOptions& historyOptions,
     PamPasswordTransitionResult& result, std::string& error) {
+    return transitionImpl(qualityRequested, historyRequested, historyOptions,
+        result, error, {});
+}
+
+bool PamPasswordTopologyTransitionExecutor::transitionImpl(
+    bool qualityRequested, bool historyRequested,
+    const ManagedPwhistorySlotOptions& historyOptions,
+    PamPasswordTransitionResult& result, std::string& error,
+    const std::function<bool(std::string&)>& admission) {
     result = {};
 
     // 1. Fresh inspection of the current physical topology.
@@ -685,6 +706,14 @@ bool PamPasswordTopologyTransitionExecutor::transition(
         return false;
     }
     result.topologyBefore = pre.classification.topologyClass;
+
+    // Ordinary apply must not execute a peer action on dangling provenance.
+    // Recovery above uses the historical transaction, never new intent.
+    // Recheck the typed snapshot after the external Structural proof so it
+    // cannot authorize a plan based on a state changed during preflight.
+    if (admission && (!admission(error) || !driftGate(pre, error))) {
+        return false;
+    }
 
     // 2. The planner is the ONLY semantic decision source.
     const PamPasswordTopologyPlan plan = planPamPasswordTopology(

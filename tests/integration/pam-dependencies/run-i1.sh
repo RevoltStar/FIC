@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixed I1 native build + fixture regressions; never apply policies to the host.
+# Fixed I1/I2 native build + fixture regressions; never apply policies to the host.
 set -euo pipefail
 [[ $# == 3 ]] || { echo 'usage: run-i1.sh TAG PLATFORM BUILD_DIR'; exit 2; }
 tag=$1 platform=$2
@@ -7,7 +7,9 @@ case "$tag:$platform" in debian12:debian-12|debian13:debian-13|ubuntu2404:ubuntu
 mkdir -p "$3"
 build=$(realpath "$3")
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
-out="$repo/build-pam-i1"; mkdir -p "$out"
+stage=${FIC_PAM_GATE_STAGE:-i1}
+case "$stage" in i1|i2) ;; *) exit 2;; esac
+out="$repo/build-pam-$stage"; mkdir -p "$out"
 image="fic-package-native:$tag"
 if [[ $tag == alt-p11 ]]; then image=fic-pam-dependencies-native:alt-p11; fi
 targets='pam_dependency_contract_tests pam_configuration_tests pam_control_flow_analyzer_tests pam_auth_update_topology_tests pam_capability_activation_policy_tests pam_password_wiring_tests policy_execution_planner_tests pam_provider_rollback_tests pam_provider_package_release_tests pam_provider_managed_entry_executor_tests pam_provider_managed_flag_executor_tests rollback_executor_tests alt_pam_faillock_topology_tests alt_pam_password_history_topology_tests pam_managed_password_slots_tests pam_managed_password_slot_writer_tests pam_password_topology_model_tests pam_password_topology_planner_tests pam_password_topology_executor_tests pam_password_package_release_tests'
@@ -23,9 +25,9 @@ for name in sorted(p for p in paths if p and pathlib.Path(p).suffix in {'.cpp','
 print(h.hexdigest())
 PY
 }
-receipt > "$out/i1-source-$tag.before"
-: > "$out/i1-tests-$tag.log"
-docker image inspect "$image" --format '{{json .Id}}' > "$out/i1-image-$tag.json"
+receipt > "$out/$stage-source-$tag.before"
+: > "$out/$stage-tests-$tag.log"
+docker image inspect "$image" --format '{{json .Id}}' > "$out/$stage-image-$tag.json"
 docker run --rm --network none \
  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/src \
  -v "$repo:/src:ro" -v "$build:/build" "$image" sh -ec '
@@ -34,16 +36,16 @@ docker run --rm --network none \
  mkdir -p /build/Testing/Temporary
  touch /build/pam-i3-contracts.json /build/pam-i1-audit.json
  chown 0:0 /build/Testing /build/Testing/Temporary /build/pam-i3-contracts.json /build/pam-i1-audit.json
- ' sh "$platform" "$targets" > "$out/i1-build-$tag.log" 2>&1
+ ' sh "$platform" "$targets" > "$out/$stage-build-$tag.log" 2>&1
 docker run --rm --network none --cap-drop DAC_OVERRIDE --cap-drop DAC_READ_SEARCH \
  -v "$repo:/src:ro" -v "$build:/build" "$image" sh -ec '
  ctest --test-dir /build -R "$1" --output-on-failure
  /build/tests/pam_dependency_contract_tests --audit /build/pam-i1-audit.json
  cat /etc/os-release
  if command -v rpm >/dev/null; then rpm -q cmake ctest gcc-c++ libpam0-devel; else dpkg-query -W cmake g++ libpam0g libpam-runtime; fi
- ' sh "$regex" > "$out/i1-tests-$tag.log" 2>&1
-receipt > "$out/i1-source-$tag.after"
-cmp "$out/i1-source-$tag.before" "$out/i1-source-$tag.after"
-cp "$build/pam-i3-contracts.json" "$out/i1-contracts-$tag.json"
-cp "$build/pam-i1-audit.json" "$out/i1-audit-$tag.json"
-sha256sum "$build/fic/fic" "$build/tests/pam_dependency_contract_tests" > "$out/i1-binaries-$tag.sha256"
+ ' sh "$regex" > "$out/$stage-tests-$tag.log" 2>&1
+receipt > "$out/$stage-source-$tag.after"
+cmp "$out/$stage-source-$tag.before" "$out/$stage-source-$tag.after"
+cp "$build/pam-i3-contracts.json" "$out/$stage-contracts-$tag.json"
+cp "$build/pam-i1-audit.json" "$out/$stage-audit-$tag.json"
+sha256sum "$build/fic/fic" "$build/tests/pam_dependency_contract_tests" > "$out/$stage-binaries-$tag.sha256"

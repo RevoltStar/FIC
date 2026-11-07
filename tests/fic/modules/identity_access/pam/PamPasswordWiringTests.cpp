@@ -1035,6 +1035,110 @@ void testPolicyLayerUsesJointIntent() {
 // recovery of the exact selected+Active+Prepared crash state MUST work at
 // this layer, not only at the raw writer/executor layer.
 
+// I2: a conflict in one domain must stop an actual new action in the other.
+void testDanglingOwnershipBeforePeerMutation(bool quality) {
+    for (const auto status : {MutationStatus::Prepared, MutationStatus::Applied, MutationStatus::RollbackFailed}) {
+        WiringEnvironment env;
+        const std::string name = quality ? "enable_password_quality" : "enable_password_history";
+        fic::rollback::MutationRecord record;
+        record.policy = {"IDENTITY_ACCESS", "PAM", name};
+        record.resource = "capability/" + name;
+        fic::rollback::UndoDisablePamCapability undo;
+        undo.topology = fic::rollback::PamTopologyKind::PamAuthUpdate;
+        undo.capability = name;
+        undo.activationIdentifiers = {quality ? kFicPasswordQualityHookProfileId
+                                             : kFicPasswordHistoryHookProfileId};
+        record.undo = {fic::rollback::MutationBackend::Pam, undo};
+        fic::rollback::MutationId id = 0;
+        std::string error;
+        require(env.journal().prepareMutation(record, id, error), error);
+        if (status != MutationStatus::Prepared)
+            require(env.journal().setStatus(id, status, error), error);
+        if (quality) env.mutator.forceSelect(kStockPwqualityProfileId);
+        env.setIntent(!quality, quality);
+        std::vector<std::pair<std::filesystem::path, std::string>> before;
+        for (const auto& entry : std::filesystem::directory_iterator(env.tree.pamd()))
+            before.emplace_back(entry.path(), readFile(entry.path()));
+        const auto state = readFile(env.mutator.stateFile());
+        const auto journal = readFile(env.tree.path() / "mutation-journal.json");
+        const auto calls = env.mutator.invocations.size();
+        env.applyFail("dangling ownership before peer action");
+        require(env.mutator.invocations.size() == calls,
+            "I2: dangling " + name + " allowed native peer mutation");
+        for (const auto& [path, bytes] : before)
+            require(readFile(path) == bytes, "I2: changed " + path.string());
+        require(readFile(env.mutator.stateFile()) == state &&
+                readFile(env.tree.path() / "mutation-journal.json") == journal,
+            "I2: changed selection or journal before admission");
+        require(!env.coordinator->lastResult().changedSystemState,
+            "admission rejection reported own mutation");
+        if (status == MutationStatus::Applied) {
+            env.setIntent(false, false);
+            const auto release = env.rollback(name);
+            require(release.rollbackCompleted(), "explicit absent-ownership release blocked: " + release.message);
+            require(env.mutator.invocations.size() == calls &&
+                    readFile(env.mutator.stateFile()) == state,
+                "absent-ownership rollback reconstructed a slot or touched foreign selection");
+        }
+    }
+}
+
+// Exact recovery is independent of the newly requested goal/preflight.
+// Both selected history variants must complete the OLD receipt before an
+// unavailable new goal is rejected; no topology/options mutation is allowed.
+void testExactRecoveryBeforeRejectedIntent() {
+    for (const bool quality : {true, false}) {
+        WiringEnvironment env;
+        env.setIntent(quality, true);
+        env.applyOk();
+        env.optionDepth = 7;
+        env.coordinator->setHistoryJournalCompletionFaultHookForTests([] { return false; });
+        env.applyFail("completion fault");
+        const auto crash = env.inspect();
+        require(quality ? crash.ownership.ficHistoryPrepared : crash.ownership.ficHistoryInitialPrepared,
+            "expected exact selected Prepared variant");
+        const auto recordCount = env.journal().records().size();
+        const auto calls = env.mutator.invocations.size();
+        std::vector<std::pair<std::filesystem::path, std::string>> bytes;
+        for (const auto& entry : std::filesystem::directory_iterator(env.tree.pamd()))
+            bytes.emplace_back(entry.path(), readFile(entry.path()));
+        env.optionDepth = 11; // must not become the historical recovery value
+        env.setIntent(!quality, true);
+        env.rebuildCoordinator(); // persisted Prepared recovery, fresh executor
+        bool proofSawRecovered = false;
+        std::string error;
+        require(!env.coordinator->applyJointRequestedState(error,
+            [&](const PamPasswordRequestedState& intent, std::string& proofError) {
+                proofSawRecovered = env.statusOf("enable_password_history") == MutationStatus::Applied;
+                require(intent.qualityRequested == !quality && intent.historyOptions.remember == 11,
+                    "preflight received stale intent");
+                proofError = "new requested provider unavailable";
+                return false;
+            }), "rejected new Structural goal succeeded");
+        require(proofSawRecovered, "Structural preflight blocked existing exact recovery");
+        require(env.mutator.invocations.size() == calls && env.journal().records().size() == recordCount,
+            "recovery performed new action or added record");
+        for (const auto& [path, value] : bytes)
+            require(readFile(path) == value, "recovery rewrote slot/generated stack");
+        const auto recovered = env.inspect();
+        require(quality ? recovered.ownership.ficHistoryOwned : recovered.ownership.ficHistoryInitialOwned,
+            "recovery did not prove historical ownership");
+    }
+}
+
+void testPreflightDriftBeforeMutation() {
+    WiringEnvironment env;
+    env.setIntent(true, true);
+    std::string error;
+    require(!env.coordinator->applyJointRequestedState(error,
+        [&](const PamPasswordRequestedState&, std::string&) {
+            env.mutator.forceSelect(kStockPwqualityProfileId);
+            return true;
+        }), "preflight drift authorized stale plan");
+    require(env.mutator.invocations.empty() && env.journal().records().empty(),
+        "preflight drift mutated or acquired ownership");
+}
+
 void testJointOptionRetryPreparedCompletion() {
     WiringEnvironment env;
     // 1. Normal joint activation (Q + history consumer): selected + Active
@@ -1585,6 +1689,10 @@ int main() {
         {"policyLayerJointIntent", testPolicyLayerUsesJointIntent},
         {"jointDesiredStateReaderOptions",
             testJointDesiredStateReaderOptions},
+        {"danglingQualityBeforeHistoryMutation", [] { testDanglingOwnershipBeforePeerMutation(true); }},
+        {"danglingHistoryBeforeQualityMutation", [] { testDanglingOwnershipBeforePeerMutation(false); }},
+        {"exactRecoveryBeforeRejectedIntent", testExactRecoveryBeforeRejectedIntent},
+        {"preflightDriftBeforeMutation", testPreflightDriftBeforeMutation},
         {"jointOptionRetryPreparedCompletion",
             testJointOptionRetryPreparedCompletion},
         {"jointRestartRecoveryPreparedCompletion",

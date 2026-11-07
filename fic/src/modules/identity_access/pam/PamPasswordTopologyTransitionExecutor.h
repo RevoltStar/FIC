@@ -149,11 +149,19 @@ public:
     // (journal-safe updateC2HistoryOptions lifecycle) BEFORE the final
     // proof. Pure option changes therefore never call pam-auth-update and
     // never change the topology class.
-    // Read-only ordinary-apply postcondition: every active Q/H record must
+    // Read-only ordinary-apply admission/postcondition: every active Q/H record must
     // still bind an Applied, selected, physical slot. Called after existing
-    // recovery/transition by the coordinator; explicit release/rollback does
-    // not use this admission gate. It never modifies journal or files.
+    // recovery before planning, and after transition by the coordinator.
+    // Explicit release/rollback does not use this admission gate. It never modifies journal or files.
     bool confirmApplyOwnership(std::string& error);
+
+    // Ordinary apply alone admits both domains after exact recovery and
+    // before Structural preflight/planning. Explicit release uses transition().
+    bool apply(
+        bool qualityRequested, bool historyRequested,
+        const ManagedPwhistorySlotOptions& historyOptions,
+        PamPasswordTransitionResult& result, std::string& error,
+        const std::function<bool(std::string&)>& preflight = {});
 
     bool transition(
         bool qualityRequested, bool historyRequested,
@@ -161,6 +169,11 @@ public:
         PamPasswordTransitionResult& result, std::string& error);
 
 private:
+    bool transitionImpl(
+        bool qualityRequested, bool historyRequested,
+        const ManagedPwhistorySlotOptions& historyOptions,
+        PamPasswordTransitionResult& result, std::string& error,
+        const std::function<bool(std::string&)>& admission);
     // Step 6 follow-up (P1): classify the ONE recoverable pre-planner
     // state — a history identity physically selected, its slot canonical
     // Active bound to the exact Prepared record of the domain (the

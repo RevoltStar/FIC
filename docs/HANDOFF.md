@@ -1,30 +1,32 @@
 # Current workspace
 
 ## Current base
-* main; I1 task base `8ae2ebb84a10084044652594b7fe166e37df0324` (completed R1/I3).
-* I1 is the next single commit, subject `refactor(pam): enforce structural capability activation contract`; no push.
+* main; I2 base `04906dfd8683ddb3f2561a37282c329316aabb80`.
+* This changeset completes I2: `fix(pam): reconcile ownership before topology mutations`. No push.
 
 ## Current task
-* Attachment ac9a7544: I1 complete. Do not start I2 or other PAM stages automatically.
+* Attachment ec854788: PAM I2 complete. Stop after its single commit; do not start I4–I6 automatically.
 
 ## Accepted architecture / invariants
-* Structural only, not SecurityEffective. Existing C2 single writer/planner, ALT strict managers/blocks and StaticVerifyOnly passwdqc. I3 Required edges preserved.
-* Foreign compliance cannot bypass active ownership. No adoption, marker/schema migration, new writer or recovery mechanism. Explicit rollback/release remains independent of ordinary-apply gates.
-* Docker authorized; no host PAM mutation. R1/I3 historical artifacts unchanged.
+* Existing C2 executor is the single writer. Ordinary apply: fresh snapshot → existing exact selected Active Prepared history completion → both-domain ownership admission → Structural preflight using the SAME requested snapshot → existing drift gate → unchanged planner/transition → existing AFTER proofs.
+* Explicit transition/rollback/release does not use ordinary admission or activation preflight. Exact historical recovery is independent of new intent; no additional Quality recovery.
+* No adoption, schema/marker migration, parameter-backend, I3 Required, planner semantics or package lifecycle changes. ALT marker causal ambiguity remains; no new historical ownership guarantee.
 
 ## Completed / changed areas
-* Real manager/verifier RED→GREEN fixes: foreign permanent-slot faillock strategy detection; C2 full Structural pre/post proof; StaticVerifyOnly active-provenance refusal; C2 ordinary-apply ownership postcondition.
-* Narrow coordinator preflight callback receives the SAME requested-state snapshot consumed by transition. Requested peer Missing fails before any slot/journal mutation; unrequested peer stays optional.
-* Structural C2 legacy history-initial permits producer semantics; parameter/security preflights retain strict use_authtok. No topology writer/planner/recovery/rollback redesign.
-* Activation/configuration/wiring regressions cover foreign/no ownership, bypass/unknown controls, weak effect values, idempotency, active Prepared/Applied/RollbackFailed for both C2 members, failed AFTER proof retaining provenance and requested-peer preflight.
-* Authoritative detail: docs/pam-r1-architecture-research.md §10. Harness/evidence: tests/integration/pam-dependencies/{run-i1.sh,native-initial-probe.sh,i1-evidence.json}. Platform static guard updated without permitting direct platform commands in policy.
+* Reproduced peer mutation before rejection for dangling Q/H provenance, early preflight blocking exact recovery, and preflight drift. Four RED wiring groups on base production code; GREEN on final code.
+* Production changes only PamPasswordTopologyCoordinator.cpp and PamPasswordTopologyTransitionExecutor.{h,cpp}; shared existing transition implementation, no parallel ownership grammar.
+* Wiring regressions cover both peers and active statuses, byte-exact rejection, honest no-mutation result, explicit absent-ownership release, Normal/Initial exact recovery with changed new intent and rejected preflight, and preflight drift.
+* Real faillock manager/Structural verifier regressions retain journal on neutral+foreign with active records. ALT history real manager/journal matrix covers idempotency, dangling/corrupt/partial/orphan ownership, unsupported duplicate tcb and preservation of supported foreign account rules (explicit verifier seam).
+* Existing provider release independence, C2 compensation/drift, faillock exact-ID partial recovery and ALT storage/CAS tests retained. No production changes to these paths.
+* Contract/table: docs/pam-r1-architecture-research.md §11 and docs/rollback.md PAM section. Historical R1/I1 evidence unchanged; harness supports FIC_PAM_GATE_STAGE=i2 to keep output separate.
 
 ## Validation
-* All5 native Docker toolchains: fic +20 targets built;22 unique relevant CTest PASS per platform. Final8 affected apply/C2/rollback/registry/static suites rerun after final code changes:8/8 PASS on each.
-* All5 final stable source receipts match current code/tests. Raw logs/receipts retained under build-pam-i1; earlier iteration source drift/static/fixture/stale-object failures are explicitly distinguished from final PASS in report/evidence.
-* Native pwhistory initial producer: real pam_chauthtok on disposable users D12/D13/U24/U26; two changes succeed, reuse rejected. Narrow consumer probe, not FIC policy E2E.
-* D12 nonroot registry/Structural fixture PASS uid65534, read-only source/build/rootfs. Harness syntax, platform static checks and git diff --check PASS.
+* All five Docker native toolchains (D12/D13/U24/U26/ALT p11): `FIC_PAM_GATE_STAGE=i2 bash tests/integration/pam-dependencies/run-i1.sh TAG PLATFORM BUILD_DIR` → fic +20 test targets built, 22/22 relevant CTest PASS on EACH; production registry audit PASS.
+* Cached build dirs: build-pam-i1/{debian12,debian13,ubuntu2404,ubuntu2604}, build-pam-r1-i3/alt-p11. Final before/after source receipts all match `9737b219fbc71e106b0e33881262a0046720bd371d6eca1f33a9987afc476e47`; final binaries checked for new regression strings to rule out stale objects.
+* Four disposable native-initial-probe.sh runs: actual pam_chauthtok, two changes succeed/reuse rejected, D12/D13/U24/U26. No host PAM changes.
+* Raw logs in ignored build-pam-i2; compact hashes/results in tests/integration/pam-dependencies/i2-evidence.json. Earlier source-drift/stale-object and incorrect ALT-fixture expectation iterations are NOT final PASS.
+* Harness bash -n, evidence aggregation assertions and git diff --check PASS.
 
 ## Remaining / limits
-* No unfinished I1 implementation. Full I6 functional matrix, native ALT passwdqc/history consumers and package/FIC activation E2E not run.
-* I2: reconciliation/repair of retained unresolved records or post-proof drift; existing recovery transitions remain unchanged. ALT marker MutationId/legacy causal-ownership ambiguity and broader unsupported foreign topologies remain out of scope. No automatic cleanup/adoption added.
+* No unfinished I2 implementation. Full project CTest, I6 functional authentication/FIC activation matrix, native ALT passwdqc/history consumer and package E2E were not run.
+* ALT markers lack MutationId-based causal binding; do not broaden ownership or migrate them automatically. Unsupported/ambiguous states remain fail-closed. Quality Prepared package-release lifecycle remains unchanged.

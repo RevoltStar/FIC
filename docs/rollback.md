@@ -1467,6 +1467,17 @@ Foreign relation / root-определение без активной запи�
 
 ## PAM capability topology rollback (IDENTITY_ACCESS/PAM)
 
+C2 ordinary apply проверяет ownership **обоих** password-доменов до planner
+и новых slot/native mutations, после существующего exact selected Active
+Prepared HistoryNormal/HistoryInitial completion. Structural preflight
+исполняется после этого recovery; новый desired intent не заменяет historical
+receipt. Dangling Applied/Prepared/RollbackFailed не скрывается foreign
+compliance. Existing recovery classifier и Quality Prepared ограничения не
+расширены. Explicit rollback/release использует прежний joint transition без
+ordinary admission и без требования активной Structural compliance; отсутствие
+собственных artifacts не приводит к их реконструкции ради удаления.
+Матрица и границы I2: `pam-r1-architecture-research.md`, §11.
+
 Автоматический rollback разрешён только для `enable_authentication_lockout`,
 `enable_password_history`, `enable_password_quality`. Journal payload
 `UndoDisablePamCapability` содержит capability, native topology kind и полный

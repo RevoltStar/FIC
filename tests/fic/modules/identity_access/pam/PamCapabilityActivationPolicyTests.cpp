@@ -690,13 +690,36 @@ void testForeignManagedSlotFaillock(const std::filesystem::path& root) {
         PamCapabilityActivationPolicy policy(platform, PamCapability::AuthenticationLockout, options);
         require(policy.apply() && policy.apply(), "I1: supported foreign faillock rejected: " + name);
         std::string error; auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
-        require(journal && journal->records().empty() && nativeCalls == 0 && readFile(tree / "pam.d/login") == auth,
+        require(journal && journal->activeRecords({"IDENTITY_ACCESS", "PAM", "enable_authentication_lockout"}).empty() && nativeCalls == 0 && readFile(tree / "pam.d/login") == auth,
             "foreign faillock was mutated/adopted");
+        // I2: the same foreign graph cannot hide dangling provenance when
+        // every permanent FIC slot is neutral. Never discard/recreate it.
+        for (const auto status : {fic::rollback::MutationStatus::Prepared,
+                fic::rollback::MutationStatus::Applied, fic::rollback::MutationStatus::RollbackFailed}) {
+            fic::rollback::MutationRecord record;
+            record.policy = {"IDENTITY_ACCESS", "PAM", "enable_authentication_lockout"};
+            record.resource = "capability/enable_authentication_lockout";
+            fic::rollback::UndoDisablePamCapability undo;
+            undo.capability = "enable_authentication_lockout";
+            undo.topology = fic::rollback::PamTopologyKind::PamAuthUpdate;
+            undo.activationIdentifiers = hooks;
+            undo.targetStrategy = name;
+            record.undo = {fic::rollback::MutationBackend::Pam, undo};
+            fic::rollback::MutationId id = 0;
+            require(journal->prepareMutation(record, id, error), error);
+            if (status != fic::rollback::MutationStatus::Prepared)
+                require(journal->setStatus(id, status, error), error);
+            const auto journalBytes = readFile(journalPath);
+            require(!policy.apply() && nativeCalls == 0 && readFile(tree / "pam.d/login") == auth &&
+                    readFile(journalPath) == journalBytes,
+                "foreign faillock hid dangling provenance or changed journal");
+            require(journal->setStatus(id, fic::rollback::MutationStatus::RolledBack, error), error);
+        }
         for (const auto& prefix : {std::string("auth sufficient pam_permit.so\n"),
                 std::string("auth [success=done default=ignore] pam_permit.so\n"),
                 std::string("auth unsupported pam_permit.so\n")}) {
             writeFile(tree / "pam.d/login", prefix + auth);
-            require(!policy.apply() && nativeCalls == 0 && journal->records().empty() &&
+            require(!policy.apply() && nativeCalls == 0 && journal->activeRecords({"IDENTITY_ACCESS", "PAM", "enable_authentication_lockout"}).empty() &&
                     readFile(tree / "pam.d/login") == prefix + auth,
                 "unsupported foreign faillock bypass mutated/adopted");
         }
@@ -705,7 +728,7 @@ void testForeignManagedSlotFaillock(const std::filesystem::path& root) {
         writeFile(root / "config/IDENTITY_ACCESS.conf", "enable_authentication_lockout.status=ENABLE\n"
             "enable_authentication_lockout.value=" + std::string(other) + "\n");
         PamCapabilityActivationPolicy mismatched(platform, PamCapability::AuthenticationLockout, options);
-        require(!mismatched.apply() && nativeCalls == 0 && journal->records().empty(),
+        require(!mismatched.apply() && nativeCalls == 0 && journal->activeRecords({"IDENTITY_ACCESS", "PAM", "enable_authentication_lockout"}).empty(),
             "foreign strategy mismatch must not rewrite/adopt the external graph");
     }
 }
@@ -742,6 +765,70 @@ void testAltOwnedStructuralApply(const std::filesystem::path& root) {
     writeFile(path, foreign);
     require(!policy.apply() && readFile(path) == foreign && journal->activeRecords(ref).size() == 1,
         "ALT foreign-compliant graph bypassed conflicting Applied ownership");
+}
+
+// I2 real ALT history manager + journal ownership matrix. The verifier seam
+// isolates ownership admission; native module/security efficacy is not claimed.
+void testAltHistoryOwnershipMatrix(const std::filesystem::path& root) {
+    using namespace fic::identity::pam;
+    using namespace fic::platform;
+    const auto tree = root / "alt-history-ownership";
+    const auto path = tree / "pam.d/system-auth-local-only";
+    const std::string canonical = "password required pam_passwdqc.so config=/etc/passwdqc.conf\n"
+        "password required pam_tcb.so use_authtok shadow fork nullok write_to=tcb\n";
+    writeFile(path, canonical);
+    std::filesystem::create_directories(tree / "run");
+    std::filesystem::create_directories(tree / "data");
+    PamPlatformConfig platform;
+    platform.configDirectories = {tree / "pam.d"};
+    platform.scopes = {{PamScope::LocalPasswordChange, {"system-auth-local-only"}}};
+    platform.capabilities = {{PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
+        PamScope::LocalPasswordChange, "/etc/security/fic-pwhistory.conf",
+        PamTopologyStrategyKind::AltTcbManaged, path}};
+    AltPamPasswordHistoryTopologyOptions managerOptions;
+    managerOptions.lockFilePath = tree / "run/topology.lock";
+    managerOptions.stateDirectory = tree / "state";
+    managerOptions.historyFile = tree / "state/opasswd";
+    managerOptions.transactionLockFile = tree / "state/.lock";
+    managerOptions.storageOwner = ::geteuid(); managerOptions.storageGroup = ::getegid();
+    managerOptions.semanticVerifier = [](std::string& error) { error.clear(); return true; };
+    PamCapabilityActivationPolicyOptions options;
+    options.managerFactory = [&](const auto&, const auto&, std::string& error) {
+        error.clear();
+        return std::make_unique<AltPamPasswordHistoryTopologyManager>(platform, managerOptions);
+    };
+    options.verifier = [](const auto&, const auto&, auto& proof) {
+        proof.state = PamEnforcementState::Effective; return true;
+    };
+    const auto journalPath = tree / "data/journal.json";
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(journalPath);
+    PamCapabilityActivationPolicy policy(platform, PamCapability::PasswordHistory, options);
+    require(policy.apply(), "ALT history canonical activation failed");
+    std::string error;
+    auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    const PolicyRef ref{"IDENTITY_ACCESS", "PAM", "enable_password_history"};
+    const auto owned = readFile(path);
+    const auto receipt = readFile(journalPath);
+    require(journal && journal->activeRecords(ref).size() == 1, "missing ALT history receipt");
+    require(policy.apply() && readFile(path) == owned && readFile(journalPath) == receipt,
+        "ALT history idempotency changed provenance");
+    for (const auto& altered : {canonical, owned + "password required pam_tcb.so use_authtok write_to=tcb\n",
+            std::string(AltPamPasswordHistoryTopologyManager::BEGIN) + "\n" + canonical}) {
+        writeFile(path, altered);
+        require(!policy.apply() && readFile(path) == altered && readFile(journalPath) == receipt,
+            "ALT history dangling/corrupt/foreign drift bypassed ownership");
+    }
+    // Supported foreign account rules do not confer ownership and survive.
+    const auto supportedForeign = owned + "account required pam_tcb.so shadow fork\n";
+    writeFile(path, supportedForeign);
+    require(policy.apply() && readFile(path) == supportedForeign && readFile(journalPath) == receipt,
+        "supported foreign ALT change was rewritten or adopted");
+    writeFile(path, owned);
+    const auto id = journal->activeRecords(ref)[0].id;
+    require(journal->setStatus(id, fic::rollback::MutationStatus::RolledBack, error), error);
+    const auto terminal = readFile(journalPath);
+    require(!policy.apply() && readFile(path) == owned && readFile(journalPath) == terminal,
+        "ALT history orphan block adopted without journal");
 }
 
 void testStaticPasswdqcStructural(const std::filesystem::path& root) {
@@ -1635,6 +1722,7 @@ int main() {
         testPamJournalLifecycle(root, platform);
         testJournalBoundPreparedPartialRecovery(root, platform);
         testAltOwnedStructuralApply(root);
+        testAltHistoryOwnershipMatrix(root);
         testStaticPasswdqcStructural(root);
         testForeignManagedSlotFaillock(root);
         testExternalPwquality(root);
