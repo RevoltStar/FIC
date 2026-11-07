@@ -1,29 +1,30 @@
 # Current workspace
 
 ## Current base
-* main; base `8a1c24bc0c356a908230a6e2e406b04f20651a22`.
-* R1: `e5c2798d961afa791b6568dfc10b25d1f5ae9816`. I3 is the second task commit; no push.
+* main; I1 task base `8ae2ebb84a10084044652594b7fe166e37df0324` (completed R1/I3).
+* I1 is the next single commit, subject `refactor(pam): enforce structural capability activation contract`; no push.
 
 ## Current task
-* Attachment a6a92742: R1 research + I3 Required PAM dependencies completed. No additional PAM stages authorized.
+* Attachment ac9a7544: I1 complete. Do not start I2 or other PAM stages automatically.
 
 ## Accepted architecture / invariants
-* Every registered supported/read-only option has one canonical Required activation. Activation registration follows actual option capabilities, not a representative feature.
-* Structural only; ALT passwdqc StaticVerifyOnly gains registration, not a writer or ownership. Preserve Recommended disable_nopasswdlogin, C2 joint Q/H, ALT blocks, provider rollback and package lifecycle.
-* R1 evidence remains historical. No host PAM mutation; Docker authorized.
+* Structural only, not SecurityEffective. Existing C2 single writer/planner, ALT strict managers/blocks and StaticVerifyOnly passwdqc. I3 Required edges preserved.
+* Foreign compliance cannot bypass active ownership. No adoption, marker/schema migration, new writer or recovery mechanism. Explicit rollback/release remains independent of ordinary-apply gates.
+* Docker authorized; no host PAM mutation. R1/I3 historical artifacts unchanged.
 
 ## Completed / changed areas
-* R1 report and registry/control research committed; authoritative bounded findings: docs/pam-r1-architecture-research.md.
-* I3 production changes only PamOptionPolicy.cpp and daemon/main_function.cpp.
-* Actual registry/planner/disable/ReadOnly/missing-ref/foreign Structural/no-mutation contracts in tests/integration/pam-dependencies. Provider rollback regression proves release independent of effective activation. Platform static check and CMake updated.
-* Existing wiring supportContract corrected for ALT StaticVerifyOnly/AltTcbManaged; no production support change.
+* Real manager/verifier RED→GREEN fixes: foreign permanent-slot faillock strategy detection; C2 full Structural pre/post proof; StaticVerifyOnly active-provenance refusal; C2 ordinary-apply ownership postcondition.
+* Narrow coordinator preflight callback receives the SAME requested-state snapshot consumed by transition. Requested peer Missing fails before any slot/journal mutation; unrequested peer stays optional.
+* Structural C2 legacy history-initial permits producer semantics; parameter/security preflights retain strict use_authtok. No topology writer/planner/recovery/rollback redesign.
+* Activation/configuration/wiring regressions cover foreign/no ownership, bypass/unknown controls, weak effect values, idempotency, active Prepared/Applied/RollbackFailed for both C2 members, failed AFTER proof retaining provenance and requested-peer preflight.
+* Authoritative detail: docs/pam-r1-architecture-research.md §10. Harness/evidence: tests/integration/pam-dependencies/{run-i1.sh,native-initial-probe.sh,i1-evidence.json}. Platform static guard updated without permitting direct platform commands in policy.
 
 ## Validation
-* Before disk cleanup: fic +10 test targets built all5; D12/D13/U24/U26 each12/12 CTest PASS. D12 Driver also PASS uid65534. U24 Docker wrapper exit125 AFTER successful CTest/audit due storage I/O.
-* User deleted raw logs/build receipts/images. Successful D/U tests not repeated as requested. Do not claim recovered historical hashes or final revised wiring-test binaries on D/U.
-* Fresh ALT image and10 targets built; initial9/10 PASS, existing wiring test expectation fixed; only failed suite rebuilt/rerun1/1 PASS. Actual registry audit PASS;12 options/36 planner cases. Fresh hashes/contracts/audit in i3-evidence.json.
-* Generic packaging/platform static checks and harness syntax passed before cleanup; git diff --check passed at completion.
+* All5 native Docker toolchains: fic +20 targets built;22 unique relevant CTest PASS per platform. Final8 affected apply/C2/rollback/registry/static suites rerun after final code changes:8/8 PASS on each.
+* All5 final stable source receipts match current code/tests. Raw logs/receipts retained under build-pam-i1; earlier iteration source drift/static/fixture/stale-object failures are explicitly distinguished from final PASS in report/evidence.
+* Native pwhistory initial producer: real pam_chauthtok on disposable users D12/D13/U24/U26; two changes succeed, reuse rejected. Narrow consumer probe, not FIC policy E2E.
+* D12 nonroot registry/Structural fixture PASS uid65534, read-only source/build/rootfs. Harness syntax, platform static checks and git diff --check PASS.
 
 ## Remaining / limits
-* No unfinished I3 implementation. Full functional authentication/password-change/package-manager E2E and native ALT libpasswdqc-devel probe not run.
-* R1 follow-ups intentionally outside I3: ALT block MutationId/physical ownership ambiguity, broader control modes/foreign topology, enforcement redesign and unrelated stale comments. See report §8.
+* No unfinished I1 implementation. Full I6 functional matrix, native ALT passwdqc/history consumers and package/FIC activation E2E not run.
+* I2: reconciliation/repair of retained unresolved records or post-proof drift; existing recovery transitions remain unchanged. ALT marker MutationId/legacy causal-ownership ambiguity and broader unsupported foreign topologies remain out of scope. No automatic cleanup/adoption added.

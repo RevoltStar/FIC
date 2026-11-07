@@ -6,6 +6,8 @@
 // -> joint C2 transition), exactly as the daemon wires it.
 #include "modules/identity_access/IdentityAccessPolicy.h"
 #include "modules/identity_access/pam/PamManagedPasswordSlots.h"
+#include "modules/identity_access/pam/PamCapabilityVerifier.h"
+#include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "modules/identity_access/pam/PamPasswordTopologyState.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
@@ -809,7 +811,8 @@ void testUnsafeStateFailsBeforeMutation() {
 
 // ---- Policy layer: joint wiring through the activation policy ----
 
-void testPolicyLayerUsesJointIntent() {
+void testPolicyLayerUsesJointIntentForMode(
+    fic::platform::PamCapabilityConfigurationMode mode) {
     WiringEnvironment env;
     // Production runtime paths pointing at the test config root: the
     // policy's module configuration AND the coordinator's default
@@ -828,6 +831,7 @@ void testPolicyLayerUsesJointIntent() {
     // same shape the daemon registry sees on the lifted platforms.
     fic::platform::PamPlatformConfig platform;
     platform.configDirectories = {env.tree.pamd()};
+    platform.moduleDirectories = {env.tree.path() / "security"};
     platform.scopes = {
         {fic::platform::PamScope::EffectivePasswordStack, {"passwd"}}};
     platform.capabilities = {
@@ -846,10 +850,22 @@ void testPolicyLayerUsesJointIntent() {
     // full per-option evidence (the production reader fail-closes on a
     // remember rendering without it).
     platform.capabilities[1].moduleArgumentSupport = {true, true};
+    platform.capabilities[1].configurationMode = mode;
+    if (mode == fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile) {
+        auto& history = platform.capabilities[1];
+        history.configPath = env.tree.path() / "security/pwhistory.conf";
+        fic::platform::PamProviderConfigTopology topology;
+        topology.primaryPath = history.configPath;
+        history.configTopology = topology;
+    }
+    fic::platform::PamProviderConfigTopology qualityConfig;
+    qualityConfig.primaryPath = env.tree.path() / "security/pwquality.conf";
+    platform.capabilities[0].configTopology = qualityConfig;
     platform.passwordTopologyRuntimeMutable = true;
+    bool corruptNativeGraph = false;
     PamCapabilityActivationPolicyOptions options;
     const fic::platform::PamPlatformConfig readerPlatform = platform;
-    options.passwordCoordinatorFactory = [&env, readerPlatform]() {
+    options.passwordCoordinatorFactory = [&env, readerPlatform, &corruptNativeGraph]() {
         PamPasswordTopologyCoordinator::Options coordinatorOptions;
         coordinatorOptions.configDirectory = env.tree.pamd();
         coordinatorOptions.stateDirectory = env.tree.state();
@@ -864,10 +880,15 @@ void testPolicyLayerUsesJointIntent() {
                     env.tree.conf());
             };
         coordinatorOptions.executorOptions.runner =
-            [&env](const std::string& executable,
+            [&env, &corruptNativeGraph](const std::string& executable,
                 const std::vector<std::string>& arguments,
                 const ProcessOptions& processOptions) {
-                return env.mutator.run(executable, arguments, processOptions);
+                auto result = env.mutator.run(executable, arguments, processOptions);
+                if (corruptNativeGraph)
+                    writeFile(env.tree.pamd() / "common-password",
+                        "password sufficient pam_permit.so\n" +
+                        readFile(env.tree.pamd() / "common-password"));
+                return result;
             };
         return std::unique_ptr<PamPasswordTopologyCoordinator>(
             new PamPasswordTopologyCoordinator(
@@ -875,10 +896,42 @@ void testPolicyLayerUsesJointIntent() {
     };
     PamCapabilityActivationPolicy qualityPolicy(
         platform, fic::platform::PamCapability::PasswordQuality,
-        std::move(options));
+        options);
+    // I1: C2 selection/slot postconditions cannot prove module trust.
+    // An otherwise valid fresh joint transition must not report success
+    // when the requested provider is missing.
+    env.setIntent(true, true);
+    writeFile(env.tree.pamd() / "passwd", "password include common-password\n");
+    fic::identity::pam::PamConfiguration missingConfiguration(platform);
+    fic::identity::pam::PamCapabilityVerification missingProof;
+    require(!fic::identity::pam::PamCapabilityVerifier::verify(missingConfiguration,
+                platform, {"passwd"}, fic::platform::PamCapability::PasswordQuality,
+                fic::platform::PamProviderKind::PamPwquality, missingProof,
+                fic::identity::pam::PamCapabilityVerificationMode::Structural) &&
+            missingProof.state == fic::identity::pam::PamEnforcementState::Missing,
+        "missing-provider fixture must have a real service and Missing proof");
+    require(!qualityPolicy.apply(), "I1: C2 accepted missing provider module");
+    require(env.mutator.invocations.empty() && env.journal().records().empty(),
+        "I1: missing provider should fail before C2 mutation");
+    // A joint request also needs the PEER provider before any native write.
+    writeFile(env.tree.path() / "security/pam_pwquality.so", "fixture\n");
+    writeFile(env.tree.path() / "security/pam_unix.so", "fixture\n");
+    writeFile(env.tree.path() / "security/pwquality.conf", "enforcing=0\n");
+    require(!qualityPolicy.apply() && env.mutator.invocations.empty() && env.journal().records().empty(),
+        "I1: joint apply mutated slots before proving requested peer module");
+    // The absent peer remains optional when it is NOT requested.
+    env.setIntent(true, false);
+    require(qualityPolicy.apply(), "missing unrequested peer must not block Quality-only");
+    env.setIntent(false, false); env.applyOk();
+    env.setIntent(true, true);
     // The configuration intent requests BOTH capabilities; a single
     // quality-policy apply must drive ONE joint transition to Q+H.
-    env.setIntent(true, true);
+    // Real Structural inputs (the native operation itself remains fake).
+    for (const auto* module : {"pam_pwquality.so", "pam_pwhistory.so", "pam_unix.so"})
+        writeFile(env.tree.path() / "security" / module, "fixture\n");
+    writeFile(env.tree.path() / "security/pwquality.conf", "enforcing=0\n");
+    writeFile(env.tree.path() / "security/pwhistory.conf", "remember=3\n");
+    writeFile(env.tree.pamd() / "passwd", "password include common-password\n");
     require(qualityPolicy.apply(), "policy-layer joint apply failed");
     require(env.inspect().classification.topologyClass ==
             PamPasswordTopologyClass::FicQualityPlusFicHistory,
@@ -888,6 +941,92 @@ void testPolicyLayerUsesJointIntent() {
     require(qualityPolicy.apply(), "idempotent policy-layer apply failed");
     require(env.mutator.invocations.size() == invocations,
         "policy-layer idempotent reapply must not mutate");
+    PamCapabilityActivationPolicy historyPolicy(platform,
+        fic::platform::PamCapability::PasswordHistory, options);
+    require(historyPolicy.apply(), "joint history Structural proof failed");
+    const auto records = env.journal().records().size();
+    const auto graph = readFile(env.tree.pamd() / "common-password");
+    for (const auto* control : {"sufficient", "[success=done default=ignore]", "unsupported"}) {
+        const auto invalid = std::string("password ") + control + " pam_permit.so\n" + graph;
+        writeFile(env.tree.path() / "security/pam_permit.so", "fixture\n");
+        writeFile(env.tree.pamd() / "common-password", invalid);
+        require(!qualityPolicy.apply() && !historyPolicy.apply(), "C2 accepted bypass/unknown control");
+        require(env.mutator.invocations.size() == invocations &&
+                env.journal().records().size() == records &&
+                readFile(env.tree.pamd() / "common-password") == invalid,
+            "C2 preflight mutated unsupported graph or ownership");
+    }
+    writeFile(env.tree.pamd() / "common-password", graph);
+    // Both native-only and joint policy states must reach the real verifier.
+    for (bool quality : {false, true}) {
+        env.setIntent(quality, !quality);
+        require((quality ? qualityPolicy.apply() : historyPolicy.apply()),
+            "single-capability C2 Structural apply failed");
+    }
+    env.setIntent(false, false); env.applyOk();
+    env.mutator.forceSelect(kStockPwqualityProfileId);
+    env.setIntent(true, false);
+    const auto foreign = readFile(env.tree.pamd() / "common-password");
+    const auto foreignCalls = env.mutator.invocations.size();
+    const auto foreignRecords = env.journal().records().size();
+    require(qualityPolicy.apply() && qualityPolicy.apply(), "foreign quality Structural rejected");
+    require(env.mutator.invocations.size() == foreignCalls &&
+            env.journal().records().size() == foreignRecords &&
+            readFile(env.tree.pamd() / "common-password") == foreign,
+        "foreign quality was adopted or mutated");
+    // A compliant foreign producer cannot hide an active Applied record
+    // whose physical slot is absent. Do not silently retire/adopt it.
+    for (const auto member : {fic::platform::PamCapability::PasswordQuality,
+                              fic::platform::PamCapability::PasswordHistory}) {
+        for (const auto status : {MutationStatus::Prepared, MutationStatus::Applied,
+                                  MutationStatus::RollbackFailed}) {
+            fic::rollback::MutationRecord dangling;
+            const std::string name = pamCapabilityActivationPolicyName(member);
+            dangling.policy = {"IDENTITY_ACCESS", "PAM", name};
+            dangling.resource = "capability/" + name;
+            fic::rollback::UndoDisablePamCapability undo;
+            undo.topology = fic::rollback::PamTopologyKind::PamAuthUpdate;
+            undo.capability = name;
+            undo.activationIdentifiers = {member == fic::platform::PamCapability::PasswordQuality
+                ? kFicPasswordQualityHookProfileId : kFicPasswordHistoryHookProfileId};
+            dangling.undo = {fic::rollback::MutationBackend::Pam, undo};
+            fic::rollback::MutationId id = 0;
+            require(env.journal().prepareMutation(dangling, id, error), error);
+            if (status != MutationStatus::Prepared)
+                require(env.journal().setStatus(id, status, error), error);
+            require(!qualityPolicy.apply() && env.mutator.invocations.size() == foreignCalls &&
+                    env.journal().activeRecords(dangling.policy).size() == 1 &&
+                    env.journal().activeRecords(dangling.policy)[0].status == status &&
+                    readFile(env.tree.pamd() / "common-password") == foreign,
+                "I1: C2 foreign no-op bypassed unresolved active provenance");
+            // Explicit fixture cleanup, not production recovery or adoption.
+            require(env.journal().setStatus(id, MutationStatus::RolledBack, error), error);
+        }
+    }
+    // C2 has no foreign-history state: reject it before creating a duplicate.
+    writeFile(env.tree.pamd() / "common-password", foreign +
+        "password required pam_pwhistory.so use_authtok remember=0\n");
+    env.setIntent(true, true);
+    require(!historyPolicy.apply() && !qualityPolicy.apply() && env.mutator.invocations.size() == foreignCalls,
+        "unsupported foreign history duplicated by C2");
+    env.mutator.run("pam-auth-update", {"--disable", kStockPwqualityProfileId}, ProcessOptions{});
+    env.setIntent(true, true);
+    corruptNativeGraph = true;
+    require(!qualityPolicy.apply(), "C2 native success bypassed Structural AFTER proof");
+    require(env.mutator.invocations.size() > foreignCalls && !env.journal().records().empty(),
+        "failed AFTER proof lost existing C2 mutation provenance");
+}
+
+void testPolicyLayerUsesJointIntent() {
+    // Exercise the selected profile's real history mode: ModuleArguments
+    // on D12, ProviderConfigFile on D13/Ubuntu (and in the ALT fixture).
+    const auto profile = fic::platform::makeBuildPlatformProfile();
+    const auto capability = std::find_if(profile.pam.capabilities.begin(),
+        profile.pam.capabilities.end(), [](const auto& config) {
+            return config.capability == fic::platform::PamCapability::PasswordHistory;
+        });
+    require(capability != profile.pam.capabilities.end(), "missing history capability");
+    testPolicyLayerUsesJointIntentForMode(capability->configurationMode);
 }
 
 // ---- Step 6 follow-up (P1): coordinator-level retry of the option-update

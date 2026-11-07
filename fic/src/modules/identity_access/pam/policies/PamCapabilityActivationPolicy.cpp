@@ -1,6 +1,7 @@
 #include "modules/identity_access/pam/policies/PamCapabilityActivationPolicy.h"
 
 #include "modules/identity_access/pam/PamConfiguration.h"
+#include "modules/identity_access/pam/PamManagedPasswordSlots.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "rollback/DaemonMutationJournal.h"
 
@@ -176,10 +177,83 @@ bool PamCapabilityActivationPolicy::applyPam(
                 logLevel::ERROR);
             return false;
         }
-        if (!coordinator->applyJointRequestedState(error)) {
+        // C2 proves selections, slot ownership and composition, not provider
+        // trust or arbitrary control flow. Check BOTH members of the joint
+        // domain, since either activation can cause its single writer to act
+        // on the peer. These are proof gates, never foreign ownership adoption
+        // or a shortcut around the coordinator's journal/recovery checks.
+        const auto provePasswordDomain = [&](bool after,
+            const fic::identity::pam::PamPasswordRequestedState& requested,
+            std::string& proofError) {
+            for (const auto member : {fic::platform::PamCapability::PasswordQuality,
+                                      fic::platform::PamCapability::PasswordHistory}) {
+                const fic::platform::PamCapabilityConfig* config = nullptr;
+                const std::vector<std::string>* memberServices = nullptr;
+                if (!fic::identity::pam::resolveCapability(platformConfig_, member,
+                        config, memberServices, proofError)) return false;
+                if (config->topology != fic::platform::PamTopologyStrategyKind::PamAuthUpdate)
+                    continue;
+                const bool required = member == capability_ ||
+                    (member == fic::platform::PamCapability::PasswordQuality
+                        ? requested.qualityRequested : requested.historyRequested);
+                fic::identity::pam::PamCapabilityVerification proof;
+                if (!verifyFresh(*config, *memberServices, proof)) {
+                    // An Inactive result can describe only the FIRST missing
+                    // service. Prove absence across the whole existing scope;
+                    // a partially connected mechanism is not absent.
+                    const auto isAbsent = [&](const auto& value) {
+                        return value.state == fic::identity::pam::PamEnforcementState::Inactive ||
+                            (!required && value.state ==
+                                fic::identity::pam::PamEnforcementState::Missing);
+                    };
+                    bool absent = (!after || !required) && isAbsent(proof);
+                    fic::identity::pam::PamConfiguration configuration(platformConfig_);
+                    std::vector<std::string> existing;
+                    if (absent && !configuration.existingServices(*memberServices, existing, proofError))
+                        absent = false;
+                    for (const auto& service : existing) {
+                        fic::identity::pam::PamCapabilityVerification perService;
+                        if (verifyFresh(*config, {service}, perService) || !isAbsent(perService)) {
+                            absent = false;
+                            break;
+                        }
+                    }
+                    if (!absent) {
+                        proofError = pamCapabilityActivationPolicyName(member) + std::string(": ") +
+                            fic::identity::pam::formatPamCapabilityVerification(proof);
+                        return false;
+                    }
+                } else if (member == fic::platform::PamCapability::PasswordHistory &&
+                    std::any_of(proof.inspection.providerRules.begin(), proof.inspection.providerRules.end(),
+                        [](const auto& rule) {
+                            const auto name = rule.source.filename();
+                            return name != fic::identity::pam::PamManagedPasswordSlots::historyNormalSlot().fileName &&
+                                name != fic::identity::pam::PamManagedPasswordSlots::historyInitialSlot().fileName;
+                        })) {
+                    // C2 supports foreign quality, but has no foreign-history
+                    // state. Its own full slot grammar/ownership is proven by
+                    // the coordinator, never inferred from this file name.
+                    proofError = "foreign password history is outside the supported C2 topology";
+                    return false;
+                }
+            }
+            return true;
+        };
+        fic::identity::pam::PamPasswordRequestedState appliedRequest;
+        if (!coordinator->applyJointRequestedState(error,
+                [&](const auto& requested, std::string& preflightError) {
+                    appliedRequest = requested;
+                    if (provePasswordDomain(false, requested, preflightError)) return true;
+                    preflightError = "PAM Structural preflight failed: " + preflightError;
+                    return false;
+                })) {
             log("PAM joint password topology transition failed for " +
                     policyName + ": " + error,
                 logLevel::ERROR);
+            return false;
+        }
+        if (!provePasswordDomain(true, appliedRequest, error)) {
+            log("PAM joint activation Structural postcondition failed: " + error, logLevel::ERROR);
             return false;
         }
         const fic::identity::pam::PamPasswordTransitionResult& result =
@@ -222,6 +296,19 @@ bool PamCapabilityActivationPolicy::applyPam(
     const auto policy = policyRef();
     fic::rollback::UndoDisablePamCapability undo;
     undo.capability = policyName;
+    journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    if (journal == nullptr) {
+        log("PAM mutation journal unavailable: " + error, logLevel::ERROR);
+        return false;
+    }
+    active = journal->activeRecords(policy);
+    // Verify-only is never an owner. A record from another/previous
+    // topology cannot be ignored on the strength of current compliance.
+    if (!mutableTopology && !active.empty()) {
+        log("Static PAM verification cannot bypass active topology provenance (fail closed)",
+            logLevel::ERROR);
+        return false;
+    }
     if (mutableTopology) {
         undo.topology = capability->topology ==
                 fic::platform::PamTopologyStrategyKind::PamAuthUpdate
@@ -229,12 +316,6 @@ bool PamCapabilityActivationPolicy::applyPam(
             : fic::rollback::PamTopologyKind::AltTcbManaged;
         undo.activationIdentifiers =
             fic::identity::pam::activationIdentifiers(*capability);
-        journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
-        if (journal == nullptr) {
-            log("PAM mutation journal unavailable: " + error, logLevel::ERROR);
-            return false;
-        }
-        active = journal->activeRecords(policy);
         if (active.size() > 1) {
             log("Multiple active PAM topology mutations (fail closed)",
                 logLevel::ERROR);

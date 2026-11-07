@@ -634,6 +634,172 @@ void testJournalBoundPreparedPartialRecovery(
             "physical provenance");
 }
 
+// I1: exercise the real permanent-slot manager AND Structural verifier.
+void testForeignManagedSlotFaillock(const std::filesystem::path& root) {
+    using namespace fic::identity::pam;
+    using namespace fic::platform;
+    const auto tree = root / "foreign-slot-faillock";
+    auto platform = makePlatform(tree);
+    auto& capability = platform.capabilities[0];
+    const std::vector<std::string> hooks = {"fic-faillock-hook-preauth",
+        "fic-faillock-hook-authfail", "fic-faillock-hook-authsucc", "fic-faillock-hook-account"};
+    for (auto& activation : capability.strategyActivations) activation.activationIdentifiers = hooks;
+    for (const auto* slot : {"preauth", "authfail", "authsucc", "account"}) {
+        const std::string group = std::string(slot) == "account" ? "account" : "auth";
+        writeFile(tree / "pam.d" / (std::string("fic-faillock-") + slot),
+            "#@FIC_PAM_SLOT_NEUTRAL version=1 capability=enable_authentication_lockout slot=" +
+            std::string(slot) + "\n" + group + " optional pam_deny.so\n");
+    }
+    for (const auto* module : {"pam_faillock.so", "pam_unix.so", "pam_deny.so", "pam_permit.so"})
+        writeFile(tree / "security" / module, "fixture\n");
+    writeFile(capability.configPath, "deny=0\n");
+    const std::string conf = " conf=" + capability.configPath.string();
+    PlatformExecutableResolver resolver(PlatformExecutables{});
+    int nativeCalls = 0;
+    PamAuthUpdateTopologyManagerOptions managerOptions;
+    managerOptions.configDirectory = tree / "pam.d";
+    managerOptions.stateDirectory = tree / "state";
+    managerOptions.runner = [&](const auto&, const auto&, const auto&) {
+        ++nativeCalls; return ProcessResult{};
+    };
+    PamCapabilityActivationPolicyOptions options;
+    options.managerFactory = [&](const auto& config, const auto& services, std::string&) {
+        return std::make_unique<PamAuthUpdateTopologyManager>(platform, config, services, resolver, managerOptions);
+    };
+    std::filesystem::create_directories(tree / "data");
+    const auto journalPath = tree / "data/journal.json";
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(journalPath);
+    for (auto strategy : capability.supportedFaillockStrategies) {
+        const auto name = pamFaillockStrategyName(strategy);
+        const bool authsucc = strategy == PamFaillockStrategy::Authsucc;
+        const std::string auth = (authsucc ? std::string() :
+            "auth " + std::string(strategy == PamFaillockStrategy::PreauthRequisite ? "requisite" : "required") +
+                " pam_faillock.so preauth" + conf + "\n") +
+            "auth [success=1 default=bad] pam_unix.so\n" +
+            "auth [default=die] pam_faillock.so authfail" + conf + "\n" +
+            (authsucc ? "auth required pam_faillock.so authsucc" + conf + "\n" : std::string()) +
+            "auth required pam_permit.so\n" +
+            (authsucc ? "account required pam_unix.so\n" : "account required pam_faillock.so" + conf + "\n");
+        writeFile(tree / "pam.d/login", auth);
+        writeFile(root / "config/IDENTITY_ACCESS.conf", "enable_authentication_lockout.status=ENABLE\n"
+            "enable_authentication_lockout.value=" + name + "\n");
+        PamConfiguration configuration(platform); PamCapabilityVerification proof;
+        require(PamCapabilityVerifier::verify(configuration, platform, {"login"},
+            PamCapability::AuthenticationLockout, PamProviderKind::PamFaillock, proof,
+            PamCapabilityVerificationMode::Structural), "foreign fixture Structural: " + formatPamCapabilityVerification(proof));
+        PamCapabilityActivationPolicy policy(platform, PamCapability::AuthenticationLockout, options);
+        require(policy.apply() && policy.apply(), "I1: supported foreign faillock rejected: " + name);
+        std::string error; auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+        require(journal && journal->records().empty() && nativeCalls == 0 && readFile(tree / "pam.d/login") == auth,
+            "foreign faillock was mutated/adopted");
+        for (const auto& prefix : {std::string("auth sufficient pam_permit.so\n"),
+                std::string("auth [success=done default=ignore] pam_permit.so\n"),
+                std::string("auth unsupported pam_permit.so\n")}) {
+            writeFile(tree / "pam.d/login", prefix + auth);
+            require(!policy.apply() && nativeCalls == 0 && journal->records().empty() &&
+                    readFile(tree / "pam.d/login") == prefix + auth,
+                "unsupported foreign faillock bypass mutated/adopted");
+        }
+        writeFile(tree / "pam.d/login", auth);
+        const auto other = strategy == PamFaillockStrategy::Authsucc ? "preauth_required" : "authsucc";
+        writeFile(root / "config/IDENTITY_ACCESS.conf", "enable_authentication_lockout.status=ENABLE\n"
+            "enable_authentication_lockout.value=" + std::string(other) + "\n");
+        PamCapabilityActivationPolicy mismatched(platform, PamCapability::AuthenticationLockout, options);
+        require(!mismatched.apply() && nativeCalls == 0 && journal->records().empty(),
+            "foreign strategy mismatch must not rewrite/adopt the external graph");
+    }
+}
+
+void testAltOwnedStructuralApply(const std::filesystem::path& root) {
+    const auto tree = root / "alt-owned-policy";
+    for (const auto* module : {"pam_faillock.so", "pam_tcb.so"})
+        writeFile(tree / "security" / module, "fixture\n");
+    const auto path = tree / "pam.d/system-auth-local-only";
+    writeFile(path, "auth required pam_tcb.so shadow fork nullok\n"
+        "account required pam_tcb.so shadow fork\n");
+    std::filesystem::create_directories(tree / "run");
+    std::filesystem::create_directories(tree / "data");
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(tree / "data/journal.json");
+    writeFile(root / "config/IDENTITY_ACCESS.conf", "enable_authentication_lockout.status=ENABLE\n"
+        "enable_authentication_lockout.value=preauth_required\n");
+    const auto platform = makeAltLockoutPlatform(tree);
+    auto policy = makeAltLockoutPolicy(platform, tree);
+    require(policy.apply(), "ALT absent mechanism did not activate with real Structural proof");
+    const auto owned = readFile(path);
+    std::string error; auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    const PolicyRef ref{"IDENTITY_ACCESS", "PAM", "enable_authentication_lockout"};
+    const auto records = journal->activeRecords(ref);
+    require(records.size() == 1 && records[0].status == fic::rollback::MutationStatus::Applied,
+        "ALT successful activation has no Applied provenance");
+    require(policy.apply() && readFile(path) == owned && journal->records().size() == 1 &&
+            journal->activeRecords(ref)[0].id == records[0].id,
+        "ALT owned reapply mutated files or lost provenance");
+    // Keep the same effective foreign rules but strip the managed markers.
+    std::istringstream input(owned); std::string line, foreign;
+    while (std::getline(input, line))
+        if (line.rfind("# BEGIN FIC ", 0) != 0 && line.rfind("# END FIC ", 0) != 0 &&
+                line.rfind("# FIC ORIGINAL ", 0) != 0) foreign += line + "\n";
+    writeFile(path, foreign);
+    require(!policy.apply() && readFile(path) == foreign && journal->activeRecords(ref).size() == 1,
+        "ALT foreign-compliant graph bypassed conflicting Applied ownership");
+}
+
+void testStaticPasswdqcStructural(const std::filesystem::path& root) {
+    using namespace fic::identity::pam;
+    using namespace fic::platform;
+    const auto tree = root / "static-passwdqc";
+    auto platform = makePlatform(tree);
+    auto& quality = platform.capabilities[2];
+    quality.provider = PamProviderKind::PamPasswdqc;
+    quality.topology = PamTopologyStrategyKind::StaticVerifyOnly;
+    quality.configPath = tree / "security/passwdqc.conf";
+    writeFile(quality.configPath, "min=disabled,24,11,8,7\n");
+    for (const auto* module : {"pam_passwdqc.so", "pam_unix.so", "pam_permit.so"})
+        writeFile(tree / "security" / module, "fixture\n");
+    const std::string stack = "password required pam_passwdqc.so config=" +
+        quality.configPath.string() + " enforce=none\npassword required pam_unix.so use_authtok\n";
+    writeFile(tree / "pam.d/passwd", stack);
+    writeFile(root / "config/IDENTITY_ACCESS.conf", "enable_password_quality.status=ENABLE\n"
+        "enable_password_quality.value=ENABLE\n");
+    std::filesystem::create_directories(tree / "data");
+    fic::rollback::DaemonMutationJournal::instance().setOverridePath(tree / "data/journal.json");
+    PlatformExecutableResolver resolver(PlatformExecutables{});
+    PamCapabilityActivationPolicyOptions options;
+    options.managerFactory = [&](const auto& config, const auto& services, std::string& error) {
+        return createPamTopologyManager(platform, config, services, resolver, error);
+    };
+    PamCapabilityActivationPolicy policy(platform, PamCapability::PasswordQuality, options);
+    require(policy.apply() && policy.apply(), "StaticVerifyOnly enforce=none must pass Structural");
+    std::string error; auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+    require(journal && journal->records().empty() && readFile(tree / "pam.d/passwd") == stack,
+        "StaticVerifyOnly mutated/adopted a foreign graph");
+    for (const auto& invalid : {std::string("password required pam_unix.so\n"),
+            "password sufficient pam_permit.so\n" + stack,
+            "password [success=done default=ignore] pam_permit.so\n" + stack,
+            "password unsupported pam_permit.so\n" + stack}) {
+        writeFile(tree / "pam.d/passwd", invalid);
+        require(!policy.apply() && journal->records().empty() && readFile(tree / "pam.d/passwd") == invalid,
+            "StaticVerifyOnly must refuse missing/bypassed/unsupported graph without mutation");
+    }
+    writeFile(tree / "pam.d/passwd", stack);
+    // A stale mutable-profile record cannot be ignored just because the
+    // currently configured verify-only provider is foreign and compliant.
+    fic::rollback::MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM", "enable_password_quality"};
+    record.resource = "capability/enable_password_quality";
+    fic::rollback::UndoDisablePamCapability undo;
+    undo.topology = fic::rollback::PamTopologyKind::PamAuthUpdate;
+    undo.capability = "enable_password_quality";
+    undo.activationIdentifiers = {"fic-pwquality"};
+    record.undo = {fic::rollback::MutationBackend::Pam, undo};
+    fic::rollback::MutationId id = 0;
+    require(journal->prepareMutation(record, id, error) &&
+        journal->setStatus(id, fic::rollback::MutationStatus::Applied, error), error);
+    require(!policy.apply() && journal->activeRecords(record.policy).size() == 1 &&
+            readFile(tree / "pam.d/passwd") == stack,
+        "I1: StaticVerifyOnly bypassed active journal provenance");
+}
+
 void testExternalPwquality(const std::filesystem::path& root) {
     const auto qualityRoot = root / "external-pwquality";
     writeFile(root / "config/IDENTITY_ACCESS.conf",
@@ -1468,6 +1634,9 @@ int main() {
                 "factory did not select the ALT faillock manager");
         testPamJournalLifecycle(root, platform);
         testJournalBoundPreparedPartialRecovery(root, platform);
+        testAltOwnedStructuralApply(root);
+        testStaticPasswdqcStructural(root);
+        testForeignManagedSlotFaillock(root);
         testExternalPwquality(root);
     } catch (const std::exception& exception) {
         std::cerr << "PamCapabilityActivationPolicyTests failed: "

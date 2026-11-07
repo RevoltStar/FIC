@@ -306,3 +306,163 @@ lift-assertions сохранены; новая версия этого тест�
 на ALT (Q6/H2/A4). Свежий ALT contract содержит36 planner cases. Native
 libpasswdqc-devel parser probe не запускался; шесть passwdqc assignments
 покрыты provider lifecycle regression suite, а не functional password change.
+
+## 10. I1: Structural activation contract
+
+База I1: `8ae2ebb84a10084044652594b7fe166e37df0324`. Разделы R1 и
+`r1-evidence.json` — исторические; их выводы не переписываются задним числом.
+
+### Что существовало и что исправлено
+
+До I1 обычный single-manager apply уже выполнял inspect → preflight →
+journal prepare → activation → physical ownership check → fresh Structural
+proof → durability/Applied. Идемпотентный apply и foreign no-op тоже проходили
+свежую проверку, а активные mutable journal records, orphan markers и
+неподдерживаемые стратегии блокировали обход ownership. ALT managers уже
+ограничивали собственные topology; StaticVerifyOnly уже не имел writer.
+C2 уже был единственным joint Q/H writer с точными слотами, planner,
+пооперационными ownership/durability proofs и своими recovery/compensation.
+Эти механизмы сохранены.
+
+Воспроизведены и исправлены локальные нарушения обычного apply:
+
+* D/U permanent-slot faillock: при нейтральных FIC slots внешний граф
+  обнаруживался, но `activeStrategy` не заполнялась. Настоящий Structural
+  verifier принимал граф, а policy отказывала из-за неизвестной стратегии.
+  Manager теперь использует существующий `detectUniformStrategy`; наличие
+  provider само по себе не доказывает Structural. Policy независимо проверяет
+  весь граф, requested strategy и отсутствие conflicting ownership.
+* C2: selections/slot/order postconditions не заменяли проверки provider trust
+  и PAM control-flow. Policy могла сообщить успех при отсутствующем модуле;
+  quality apply мог создать history поверх стороннего pwhistory. В policy
+  добавлены реальные Structural gates обоих членов Q/H до и после прежнего
+  coordinator. Отсутствие проверяется по каждому существующему service:
+  `Inactive` первого service не означает отсутствия во всём scope. Проверки
+  не заменяют ownership/recovery и не возвращают success в обход coordinator.
+  Дополнительный RED показал, что отсутствующий provider запрошенного peer
+  нельзя считать optional: иначе slots публиковались до отказа AFTER proof.
+  Узкий optional preflight callback существующего ordinary coordinator apply
+  получает тот же immutable Q/H/options snapshot, который потребляет transition.
+  Для всех запрошенных members требуется установленный trusted provider ДО
+  записи; отсутствие незапрошенного peer допускается. Второго reader/config
+  snapshot и самостоятельного writer не добавлено. Проверены отказ без slots/
+  journal records для Missing requested peer и успешный Quality-only без него.
+* Полный Structural proof выявил несовместимость legacy module-argument
+  parser с уже поддержанным C2 history-initial. Этот producer получает токен
+  сам, без `use_authtok`. Только Structural для C2 ModuleArguments допускает
+  producer semantics initial-source. Полный C2 grammar/journal proof остаётся
+  у coordinator. Само имя файла не доказывает ownership. Default evaluator,
+  parameter preflight, option mutation и SecurityEffective сохраняют прежнее
+  требование `use_authtok`; произвольный foreign initial history не принимается
+  activation policy.
+* C2 foreign no-op мог скрыть dangling active record: ownership snapshot
+  сопоставлял records с существующими slots, но отсутствие slot не запрещало
+  принять foreign quality. RED воспроизвёл SUCCESS при dangling Applied.
+  Ordinary coordinator apply теперь после прежней transition/recovery вызывает
+  read-only `confirmApplyOwnership` существующего executor: каждый active Q/H
+  record обязан быть Applied и точно связан с выбранным owned slot. Prepared,
+  Applied и RollbackFailed без такой связи возвращают failure без изменения
+  records/files; проверены оба members. Policy не дублирует C2 ownership
+  grammar/пути: проверка находится у executor с его прежним inspector.
+  Явный `transition()` для rollback/release этот gate не вызывает. Это локальный
+  I1 postcondition, а не новый recovery или journal transition.
+* StaticVerifyOnly мог игнорировать активную запись от прежней mutable
+  topology. Теперь наличие активного provenance для этой policy блокирует
+  static apply. Запись не усыновляется, не удаляется и не мигрируется.
+
+### Поддерживаемые платформенные маршруты
+
+| Платформа / capability | Отсутствие | Foreign Structural-compliant | Собственная activation / reapply |
+|---|---|---|---|
+| Debian12/13, Ubuntu24.04/26.04 / Quality | Trusted provider без подключения во всех существующих services → C2 planner | Stock pwquality selection + соответствующий direct producer, совместимость с C2 и полный Structural → no mutation/no ownership | Прежний C2 quality slot; exact journal/physical proof, post-Structural; повторный apply no-op |
+| Те же / History | C2 history-initial либо consumer согласно joint Q/H | Произвольный foreign pwhistory не представлен в C2 model → отказ до записи, без дублирования | Прежние парные slots/варианты, storage/options contracts; C2 proof плюс Structural; повторный apply сохраняет ownership |
+| Те же / Lockout | Neutral permanent slots, нет external graph → прежний writer/strategy preflight | Uniform supported strategy + совпадение requested strategy + Structural при neutral FIC slots → success без ownership | Journal-ID-bound slots, прежние prepare/proof/durability transitions; повторный apply no-op |
+| ALT p11 / Quality | Отказ; passwdqc writer отсутствует | Поддержанный passwdqc Structural, trusted configuration/modules, нет active policy provenance → success без файловой mutation и ownership | Собственная topology не создаётся |
+| ALT p11 / History | Только прежний AltPamPasswordHistoryTopologyManager, tcb/pwtxn/storage preflight | Backend отказывает в произвольной внешней topology, даже когда отдельный общий verifier способен доказать Structural | Прежний строгий block: pwtxn begin → pwhistory → tcb → pwtxn end; transaction locks/storage, Structural; идемпотентность |
+| ALT p11 / Lockout | Только прежний AltPamFaillockTopologyManager со строгими tcb anchors/targets | Backend не принимает произвольный внешний faillock как supported managed topology; отказ без дублирования | Прежние FIC blocks, стратегии, CAS/durability и независимый Structural proof; идемпотентность |
+
+Disabled означает доказанный BEFORE в поддерживаемой модели manager, а не
+просто отсутствие строки или записи journal. Enabled описывает topology;
+`manageable` и physical witness отдельно отличают FIC ownership от foreign.
+Broken — malformed/conflicting/недоказанный graph или ownership; Unavailable —
+недоступная инфраструктура, объект либо lock. Оба состояния завершаются отказом.
+C2 использует собственные classification/coherence/safety/ownership gates,
+а не искусственно подменяет их этими четырьмя состояниями manager.
+
+Structural подтверждает provider/configuration trust в пределах существующих
+проверок, участие во всех существующих services объявленного scope и отсутствие
+допустимого успешного обхода механизма, включая поддержанные include/substack,
+bracket controls и faillock strategy. Неизвестная семантика — fail-closed.
+`enforcing=0`, `enforce=none`, `remember=0` сами по себе не превращаются в
+Structural failure; это не доказательство защитного эффекта или native
+прохождения конкретного password-change/authentication path.
+
+Первичные источники сверены повторно:
+[Linux-PAM control/include/substack](https://raw.githubusercontent.com/linux-pam/linux-pam/master/doc/man/pam.conf-syntax.xml),
+[pam-auth-update(8)](https://manpages.debian.org/bookworm/libpam-runtime/pam-auth-update.8.en.html),
+[Linux-PAM 1.5.2 pwhistory consumer](https://raw.githubusercontent.com/linux-pam/linux-pam/v1.5.2/modules/pam_pwhistory/pam_pwhistory.c).
+Последний вызывает pam_get_authtok и поддерживает собственное получение токена;
+`use_authtok` относится к режиму использования уже полученного токена.
+ALT Control wiki снова вернула Anubis, поэтому её недоступное содержимое не
+считается проверенным; native ALT findings R1 и текущий код managers имеют
+явно указанные границы поддержки.
+
+### Вопросы I2 и границы доказательства
+
+Prepared/Applied/RollbackFailed, partial slots, wrong IDs, orphan markers,
+recovery, C2 compensation и rollback/package release в I1 не перепроектируются.
+Fresh Structural failure не даёт права удалить доказанный physical ownership.
+В частности, если C2 уже завершил свои пооперационные journal transitions,
+а независимый AFTER proof обнаружил drift/обход, policy возвращает failure и
+сохраняет активные записи. Их проверка/reconciliation — существующий lifecycle
+и последующий I2, без автоматического восстановления/усыновления в I1.
+
+ALT block MutationId/legacy ownership ambiguity, более широкие control modes,
+произвольные foreign history/faillock и recovery redesign остаются отдельными
+задачами. Проверка Structural не расширяет эту платформенную поддержку.
+
+### Проверки I1
+
+`run-i1.sh TAG PLATFORM BUILD_DIR` использует существующие disposable builders,
+собирает fic и20 relevant targets и запускает22 targeted CTest (включая два
+static checks). Source/build mounts изолированы, runtime без DAC_OVERRIDE и
+DAC_READ_SEARCH, host PAM не меняется. Source receipts до/после gate должны
+совпадать; audit реального selected-profile registry сохраняет контракт I3.
+Unit/fixture tests скомпилированы нативными toolchains каждого дистрибутива,
+но fake pam-auth-update runner и fixture `.so` не объявляются native
+аутентификацией. Реальные managers/verifier/control-flow не подменяются там,
+где утверждается Structural proof.
+
+Дополнительно `native-initial-probe.sh` использует существующий fic_pam_probe.c
+в отдельных disposable Debian12/13 и Ubuntu24.04/26.04: настоящий
+pam_chauthtok для одноразового пользователя, pwhistory initial producer,
+две успешные смены и отказ reuse.
+Это узкий consumer probe, а не FIC activation E2E или функциональная матрица I6.
+Фактические receipts и ограничения сохранены в `i1-evidence.json`:
+
+| Native userspace/toolchain | fic +20 targets | Уникальные targeted CTest | Финальные affected suites | Native history-initial consumer |
+|---|---|---|---|---|
+| Debian 12 | PASS | 22 PASS | 8/8 PASS | PASS |
+| Debian 13 | PASS | 22 PASS | 8/8 PASS | PASS |
+| Ubuntu 24.04 | PASS | 22 PASS | 8/8 PASS | PASS |
+| Ubuntu 26.04 | PASS | 22 PASS | 8/8 PASS | PASS |
+| ALT p11 | PASS | 22 PASS | 8/8 PASS | Не запускался |
+
+В ходе первых сборок уточнялись wiring/static fixtures и C2 postconditions.
+Source-stability guard честно отклонял изменившийся во время итерации source
+snapshot; эти wrapper failures не называются полным gate PASS. Финальные
+incremental builds пересобрали затронутые leaf objects, после чего повторены
+только восемь связанных suites. Остальные успешные suites не повторялись.
+Все пять финальных before/after receipts совпали между собой и с текущими
+кодом/тестами. Исправлен ложный static-check запрет слова control в комментарии;
+прямой platform command literal/ExecutableId по-прежнему запрещён в policy.
+Тестовая повторная инициализация runtime paths устранена выбором history mode
+скомпилированного profile. Для stale object, созданного во время редактирования
+translation unit, выполнена явная пересборка; он не используется как evidence.
+
+Debian12 registry/Structural fixture также PASS uid65534 с read-only rootfs,
+source/build mounts и отдельным tmpfs. В native consumer probes начальная
+подготовка пользователя могла печатать warning об отсутствующем cracklib
+словаре; сам probe использует явный pwhistory/unix stack и не доказывает
+pwquality enforcement. Полная I6 authentication/password-change matrix,
+native ALT consumers и FIC package/activation E2E не заявляются.

@@ -43,6 +43,7 @@ struct PamPasswordRequestedState {
 // Responsibility (exactly this and nothing more):
 //   read the effective joint requested state (configuration intent)
 //   -> invoke ONE PamPasswordTopologyTransitionExecutor.transition(Q, H)
+//   -> ask that executor for the read-only ordinary-apply ownership proof
 //
 // The executor is the only component that inspects, plans, mutates and
 // proves the physical topology. The coordinator adds no semantic decisions
@@ -86,7 +87,10 @@ public:
     // Reads the joint configuration intent and performs ONE semantic
     // transition toward it. Idempotent: a proven desired topology is a
     // no-op success (no native mutation, no new journal ownership).
-    bool applyJointRequestedState(std::string& error);
+    // Optional activation preflight receives the SAME immutable intent
+    // snapshot that transition() consumes, before any native mutation.
+    bool applyJointRequestedState(std::string& error,
+        const std::function<bool(const PamPasswordRequestedState&, std::string&)>& preflight = {});
 
     // Explicit joint target (rollback wiring and tests). Same single
     // semantic transition contract as applyJointRequestedState.

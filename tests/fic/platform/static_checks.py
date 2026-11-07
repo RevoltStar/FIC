@@ -545,11 +545,17 @@ def main():
         and "PamCapabilityActivationPolicy" in registry,
         "PAM activation policy does not enforce structural-only enable semantics",
     )
-    for forbidden in ("debian", "ubuntu", "alt-p11", "pam-auth-update", "control"):
+    for forbidden in ("debian", "ubuntu", "alt-p11", "pam-auth-update"):
         require(
             forbidden not in activation_policy.lower(),
             f"generic PAM activation policy branches on platform detail: {forbidden}",
         )
+    # PAM control-flow is a generic concept, not an ALT command invocation.
+    require(
+        not re.search(r"[\"']control[\"']", activation_policy)
+        and "ExecutableId::Control" not in activation_policy,
+        "generic PAM activation policy invokes the platform control utility",
+    )
     require(
         "PamTopologyStrategyKind::PamAuthUpdate" in topology_factory
         and "PamTopologyStrategyKind::AltTcbManaged" in topology_factory

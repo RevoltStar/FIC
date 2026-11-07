@@ -149,6 +149,12 @@ public:
     // (journal-safe updateC2HistoryOptions lifecycle) BEFORE the final
     // proof. Pure option changes therefore never call pam-auth-update and
     // never change the topology class.
+    // Read-only ordinary-apply postcondition: every active Q/H record must
+    // still bind an Applied, selected, physical slot. Called after existing
+    // recovery/transition by the coordinator; explicit release/rollback does
+    // not use this admission gate. It never modifies journal or files.
+    bool confirmApplyOwnership(std::string& error);
+
     bool transition(
         bool qualityRequested, bool historyRequested,
         const ManagedPwhistorySlotOptions& historyOptions,

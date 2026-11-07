@@ -626,6 +626,35 @@ bool PamPasswordTopologyTransitionExecutor::reconcileHistoryOptions(
     return true;
 }
 
+bool PamPasswordTopologyTransitionExecutor::confirmApplyOwnership(std::string& error) {
+    PamPasswordTopologySnapshot snapshot;
+    if (!inspectFresh(snapshot, error) || !requireUsableCurrentState(snapshot, error))
+        return false;
+    for (const auto capability : {ManagedPasswordCapability::PasswordQuality,
+                                  ManagedPasswordCapability::PasswordHistory}) {
+        const PolicyRef ref{"IDENTITY_ACCESS", "PAM",
+            PamManagedPasswordSlots::capabilityName(capability)};
+        const auto active = journal_.activeRecords(ref);
+        if (active.empty()) continue;
+        const auto bound = [&](const auto& record) {
+            if (record.status != fic::rollback::MutationStatus::Applied) return false;
+            if (capability == ManagedPasswordCapability::PasswordQuality)
+                return snapshot.selections.ficQualitySelected && snapshot.ownership.ficQualityOwned &&
+                    snapshot.qualitySlotMutationId == record.id;
+            return (snapshot.selections.ficHistorySelected && snapshot.ownership.ficHistoryOwned &&
+                        snapshot.historySlotMutationId == record.id) ||
+                (snapshot.selections.ficHistoryInitialSelected && snapshot.ownership.ficHistoryInitialOwned &&
+                        snapshot.historyInitialSlotMutationId == record.id);
+        };
+        if (active.size() != 1 || !bound(active.front())) {
+            error = "active C2 provenance has no proven selected owned slot: " + ref.policyName;
+            return false;
+        }
+    }
+    error.clear();
+    return true;
+}
+
 bool PamPasswordTopologyTransitionExecutor::transition(
     bool qualityRequested, bool historyRequested,
     const ManagedPwhistorySlotOptions& historyOptions,

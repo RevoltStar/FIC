@@ -26,7 +26,8 @@ class PamPwhistoryArguments {
 public:
     static bool evaluate(const PamRule& rule,
                          PamPwhistoryArgumentState& state,
-                         std::string& error);
+                         std::string& error,
+                         bool requireUseAuthtok = true);
 
     static bool uniqueRule(const PamProviderInspection& inspection,
                            PamRule& rule,

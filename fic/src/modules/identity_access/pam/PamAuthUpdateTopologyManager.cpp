@@ -418,6 +418,15 @@ bool PamAuthUpdateTopologyManager::inspectManagedFaillockSlots(
             return false;
         }
         if (graph == ExternalFaillockGraphState::Present) {
+            // Presence is not a strategy proof. Use the same effective-stack
+            // detector as the legacy inspection route; policy still performs
+            // an independent Structural proof before accepting this foreign
+            // topology without ownership.
+            if (!detectUniformStrategy(status.activeStrategy, error)) {
+                status.state = PamTopologyState::Broken;
+                status.detail = error;
+                return false;
+            }
             status.state = PamTopologyState::Enabled;
             status.manageable = false;
             status.detail =

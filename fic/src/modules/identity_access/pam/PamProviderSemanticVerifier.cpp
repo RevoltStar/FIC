@@ -399,16 +399,22 @@ bool typedManagedConfigCanApplyFlag(
     return true;
 }
 
-bool pwhistoryArgumentsCapability(
+bool evaluatePwhistoryArgumentsCapability(
     const PamProviderInspection& inspection,
     const fic::platform::PamCapabilityConfig&,
     bool requireSecurityEnforcement,
     PamProviderSemanticFailure& failure,
-    std::string& error)
+    std::string& error,
+    bool allowInitialProducer)
 {
     for (const auto& rule : inspection.providerRules) {
         PamPwhistoryArgumentState state;
-        if (!PamPwhistoryArguments::evaluate(rule, state, error)) {
+        // Structural participation also covers the supported C2 initial
+        // producer, which deliberately obtains its own token. Option-policy
+        // evaluators retain their strict use_authtok default. This check is
+        // not a topology/ownership authorization; C2 proves that separately.
+        if (!PamPwhistoryArguments::evaluate(rule, state, error,
+                !allowInitialProducer || rule.source.filename() != "fic-password-history-initial")) {
             failure = PamProviderSemanticFailure::Broken;
             return false;
         }
@@ -423,6 +429,18 @@ bool pwhistoryArgumentsCapability(
     failure = PamProviderSemanticFailure::None;
     error.clear();
     return true;
+}
+
+// Parameter preflight/security checks retain their original consumer contract.
+bool pwhistoryArgumentsCapability(
+    const PamProviderInspection& inspection,
+    const fic::platform::PamCapabilityConfig& capability,
+    bool requireSecurityEnforcement,
+    PamProviderSemanticFailure& failure,
+    std::string& error)
+{
+    return evaluatePwhistoryArgumentsCapability(inspection, capability,
+        requireSecurityEnforcement, failure, error, false);
 }
 
 bool pwhistoryArgumentsOption(
@@ -1189,6 +1207,16 @@ bool PamProviderSemanticVerifier::verifyCapability(
     PamProviderSemanticFailure& failure,
     std::string& error)
 {
+    if (!requireSecurityEnforcement &&
+        capability.provider == fic::platform::PamProviderKind::PamPwhistory &&
+        capability.topology == fic::platform::PamTopologyStrategyKind::PamAuthUpdate &&
+        capability.configurationMode == fic::platform::PamCapabilityConfigurationMode::ModuleArguments) {
+        // C2 alone authorizes the canonical initial slot and its journal
+        // binding. This permits its native producer argument semantics only
+        // in Structural proof; it neither assigns nor infers ownership.
+        return evaluatePwhistoryArgumentsCapability(inspection, capability,
+            false, failure, error, true);
+    }
     return backendFor(inspection, capability).verifyCapability(
         inspection, capability, requireSecurityEnforcement, failure, error);
 }

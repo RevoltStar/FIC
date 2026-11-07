@@ -147,7 +147,8 @@ bool renderMutatedContent(const PamRule& expectedRule,
 bool PamPwhistoryArguments::evaluate(
     const PamRule& rule,
     PamPwhistoryArgumentState& state,
-    std::string& error) {
+    std::string& error,
+    bool requireUseAuthtok) {
     state = PamPwhistoryArgumentState{};
     bool rememberSeen = false;
     bool useAuthtokSeen = false;
@@ -229,7 +230,7 @@ bool PamPwhistoryArguments::evaluate(
             return false;
         }
     }
-    if (!useAuthtokSeen) {
+    if (requireUseAuthtok && !useAuthtokSeen) {
         error = rule.source.string() + ":" + std::to_string(rule.line) +
             ": pam_pwhistory requires use_authtok";
         return false;

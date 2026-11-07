@@ -2766,6 +2766,12 @@ void testLegacyPwhistoryNativeRememberSemantics() {
     require(verification.state ==
                 fic::identity::pam::PamEnforcementState::Ineffective,
             "explicit legacy remember=0 was considered effective");
+    verification = verifyCapability(platform,
+        fic::identity::pam::PamCapability::PasswordHistory,
+        fic::identity::pam::PamProviderKind::PamPwhistory, platform.passwordServices,
+        fic::identity::pam::PamCapabilityVerificationMode::Structural);
+    require(verification.state == fic::identity::pam::PamEnforcementState::Effective,
+        "Structural must accept valid history participation with remember=0");
 }
 
 // ---------------------------------------------------------------------------
@@ -3607,6 +3613,12 @@ void testPasswdqcConfigArgumentAndInlineOverride() {
         ineffective.state ==
             fic::identity::pam::PamEnforcementState::Ineffective,
         "passwdqc enforce=none was reported as effective");
+    auto structural = verifyCapability(platform,
+        fic::identity::pam::PamCapability::PasswordQuality,
+        fic::identity::pam::PamProviderKind::PamPasswdqc, platform.passwordServices,
+        fic::identity::pam::PamCapabilityVerificationMode::Structural);
+    require(structural.state == fic::identity::pam::PamEnforcementState::Effective,
+        "Structural must accept valid passwdqc participation with enforce=none");
 
     platform.passwordServices = {"passwd", "chpasswd"};
     writeFile(
