@@ -3,6 +3,7 @@
 
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,17 @@ struct PamCapabilityVerification {
 
 class PamCapabilityVerifier {
 public:
+    using StructuralProof = std::function<bool(
+        const fic::platform::PamCapabilityConfig&, const std::vector<std::string>&,
+        PamCapabilityVerification&)>;
+    // Shared C2 policy gate. Ownership/recovery remain with its coordinator;
+    // this proves provider trust and full-scope control flow for BOTH members.
+    static bool verifyPasswordDomain(
+        const fic::platform::PamPlatformConfig& platformConfig,
+        PamCapability requiredCapability, bool qualityRequested,
+        bool historyRequested, bool after, std::string& error,
+        const StructuralProof& proof = {});
+
     static bool verify(
         PamConfiguration& configuration,
         const fic::platform::PamPlatformConfig& platformConfig,

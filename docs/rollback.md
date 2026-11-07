@@ -1586,6 +1586,14 @@ recovery, а не восстановления historical snapshot.
 
 ### Managed history module arguments (Step 6) — topology ownership vs option values
 
+I4 parameter apply использует тот же joint Structural pre/post proof, что и
+activation: I3 Required traversal не доказывает сохранность module files и
+полного service control flow между вызовами. Проверка выполняется после
+существующего exact recovery/admission I2 и перед новыми mutations. Текущий
+joint snapshot должен запрашивать History и соответствовать значению
+применяемого parameter. Этот gate не используется explicit ownership release
+и не вводит самостоятельного per-option rollback.
+
 C2 password domain владеет двумя РАЗНЫМИ уровнями состояния, и rollback их
 не смешивает:
 
@@ -2292,6 +2300,15 @@ Status matrix (assignment):
   `PreparedConflict` → `Conflict`.
 * Placement — не ownership: смещённый foreign content'ом валидный block
   остаётся FIC-владением и освобождается; foreign bytes байт-в-байт.
+
+Suppression wrappers используют ID-only ownership: FIC-owned структура,
+provider/policy/key, MutationId и suppression IDs проверяются строго; wrapper
+с MutationId текущей транзакции не может стать foreign при подмене identity.
+Изменение комментариев/пробелов/форматирования внутри raw допустимо, если это
+по-прежнему корректное активное вхождение того же managed key. Rollback
+возвращает **текущее** raw-содержимое byte-exact, не историческую строку.
+Историческая неизменность raw не доказывается; fingerprints и новые journal
+fields не добавляются. Недопустимый raw или повреждённые FIC metadata — отказ.
 
 Flag rollback: физическое состояние должно строго соответствовать одной
 из авторизованных ownership states (Applied/RollbackFailed — только

@@ -265,6 +265,12 @@ FlagPhysicalInspection inspectFlagPhysicalState(
             wrapper.policy == request.policyName &&
             wrapper.managedKey == request.managedKey;
         if (!matchingIdentity) {
+            // A journal MutationId names ONE policy transaction globally.
+            // It cannot become a foreign wrapper by changing its identity.
+            if (expectedMutationId != 0 && wrapper.mutationId == expectedMutationId) {
+                inspection.error = "suppression wrapper identity conflicts with its journal mutation id";
+                return inspection;
+            }
             continue;
         }
         // Identity matching is independent of the expected mutation id:

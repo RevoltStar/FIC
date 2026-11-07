@@ -758,6 +758,28 @@ void testAppliedNoOpIsProven() {
         "a no-op must not allocate a second record");
 }
 
+// I4: RollbackFailed is ownership to prove, never a reason to adopt state.
+void testRollbackFailedOwnership() {
+    auto harness = appliedPolicy("failed_authentication_attempts", "deny", "5");
+    const auto id = harness.soleEntryRecord("failed_authentication_attempts", "base").id;
+    require(harness.journal.setStatus(id, MutationStatus::RollbackFailed, harness.error), harness.error);
+    const auto before = readFile(harness.configPath);
+    const auto journalBefore = readFile(harness.journalPath);
+    require(harness.apply(harness.request("failed_authentication_attempts", "deny", "5")), harness.error);
+    require(readFile(harness.configPath) == before && readFile(harness.journalPath) == journalBefore,
+        "RollbackFailed no-op fabricated lifecycle progress");
+    require(harness.apply(harness.request("failed_authentication_attempts", "deny", "7")), harness.error);
+    const auto refreshed = harness.soleEntryRecord("failed_authentication_attempts", "refresh");
+    require(refreshed.id == id && refreshed.status == MutationStatus::Applied,
+        "proven RollbackFailed refresh lost identity");
+    require(harness.journal.setStatus(id, MutationStatus::RollbackFailed, harness.error), harness.error);
+    writeFile(harness.configPath, "# externally removed ownership\ndeny=7\n");
+    const auto missing = readFile(harness.configPath);
+    require(!harness.apply(harness.request("failed_authentication_attempts", "deny", "9")) &&
+                readFile(harness.configPath) == missing,
+        "RollbackFailed without physical ownership reconstructed an entry");
+}
+
 void testSecondPolicyReusesContainerProvenance() {
     auto harness = appliedPolicy(
         "failed_authentication_attempts", "deny", "5");
@@ -2751,6 +2773,7 @@ int main() {
         testAbsentContainerFailClosed();
         testFreshCreateFicOwnedContainer();
         testAppliedNoOpIsProven();
+        testRollbackFailedOwnership();
         testSecondPolicyReusesContainerProvenance();
         testRecoveryPreparedFreshAbsent();
         testRecoveryPreparedFreshTargetPresent();

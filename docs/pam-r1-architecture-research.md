@@ -552,3 +552,135 @@ stale objects. Четыре disposable native-initial-probe.sh — PASS. Усл�
 TAG PLATFORM BUILD_DIR`. Источник точных хешей/версий и ограничений — отдельный
 `i2-evidence.json`; промежуточные source-drift и ошибочное ожидание ALT fixture
 не выдаются за финальный PASS.
+
+## 12. I4 — parameter backend audit
+
+База `f2c6941bd06b0547e8f4d64dfcabe3bcbd383d8a`. Исторические R1/I1/I2
+artifacts не изменяются. Ниже разделяются production-fixture, native parser,
+consumer и FIC policy E2E evidence.
+
+### Маршруты
+
+Матрица соответствует production registry/profile routing (I3 contract driver;
+итоговые текущие registry receipts сохраняются отдельно).
+
+| Platform | Policy | Backend | Apply | Refresh | Rollback | Evidence |
+|---|---|---|---|---|---|---|
+| D12/D13/U24/U26 | 9 pwquality scalar policies | ManagedEntry, EOF | OwnWhileEnabled, даже при foreign compliance | Same ID, durable target first | Exact entry release, foreign bytes сохраняются | entry/configuration/provider rollback fixtures; native libpwquality parser |
+| D12/D13/U24/U26 | password_quality_enforce_for_root | ManagedFlag, EOF | Собственный flag/sentinel, suppression foreign occurrences | true/false, subset/new occurrences | Entry + current authorized wrappers; не реконструировать исчезнувшие строки | flag/rollback fixtures; native set-presence parser |
+| Все 5 | failed_authentication_attempts/counting_period/unlock_time | ManagedEntry, EOF | Journal + native numeric scalar | Same ID, historical target recovery | Ownership-only release | entry/configuration/rollback fixtures |
+| Все 5 | failed_authentication_enforce_for_root | ManagedFlag, EOF | even_deny_root; root_unlock_time конфликт при false | Suppress/unsuppress | Current authorized wrappers, ID-bound | flag/configuration/rollback fixtures |
+| D13/U24/U26 | password_history_depth/root | ManagedEntry/ManagedFlag, BOF | Native first-match placement | Same ID, durable target first | Persistent managed release | entry/flag/configuration/provider rollback; native libpam lookup helper |
+| D12 | password_history_depth/root | C2 ModuleArguments | Joint slot ownership, shared Structural proof | Existing slot options; no native call for pure value update | Нет отдельного per-option rollback; release capability через joint topology | wiring/executor/slot fixtures; native pwhistory consumer |
+| ALT | password_history_depth/root | Legacy option-file transaction | fic-pwhistory.conf, existing activation/storage/TCB contract | Transactional option update | Нет самостоятельного persistent per-option rollback; только transient failure rollback | real option-policy transaction fixture + ALT storage/topology tests |
+| ALT | 5 passwdqc_* + password_quality_enforce_for_root | ManagedEntry, EOF | min/passphrase/match/similar/retry/enforce native encoding | Same managed-entry lifecycle | Provider entry ownership release | configuration/rollback/registry fixtures; native libpasswdqc 2.0.3 parser |
+| D/U passwdqc_*; ALT pwquality-only policies | Unsupported | Writer не регистрируется | Нет | Нет | Нет | production registry/dependency/routing tests |
+| Profiles без evidenced C2 mutable route | ReadOnly | Существующее support gating | Не расширяется | Не расширяется | Existing topology contract | routing/evidence support tests |
+
+ALT `enforce=everyone` ↔ yes, `enforce=users` ↔ no. `none` не имеет exact
+logical mapping и не принимается как no; текущая encoding logic не изменена.
+Native source и parser подтверждают три разных masks. Managed backend пишет
+собственное `enforce`, а не присваивает совпадающую foreign директиву.
+
+### Подтверждённый C2 parameter дефект и локальный fix
+
+RED на базе: после успешной activation удаление provider module не мешало
+`PamPasswordHistoryDepthPolicy` обновить C2 slot и вернуть SUCCESS. Typed C2
+proof проверяет common-password composition/ownership, но не заменяет trust
+и control-flow proof полного configured service scope. I3 проверяет порядок
+политик, а не неизменность ОС между activation и parameter apply.
+
+Существующий joint Structural proof I1 вынесен без изменения алгоритма в
+`PamCapabilityVerifier::verifyPasswordDomain` и используется обоими policy
+callers. Parameter передаёт callback существующему I2 coordinator: exact
+historical recovery → ownership admission → callback → прежний planner.
+После writer повторяется full-domain Structural proof. Кроме того, cached
+parameter value должен совпасть с SAME requested snapshot; disabled History
+или другая generation target не разрешает mutation/SUCCESS.
+Ни второго writer, ни изменения recovery/planner/journal нет. Activation
+продолжает использовать прежний verifier seam/алгоритм; пять standalone CMake
+fixture targets дополнительно линкуют existing canonical slot definitions.
+
+Regressions: missing provider после activation, bypass в passwd над
+common-password, healthy refresh/idempotency без native calls, Normal →
+Initial по текущему joint intent, root flag, missing requested peer, cached
+value mismatch и disabled History intent. Existing I2 tests сохраняют exact
+recovery, cross-domain admission, drift и explicit release independence.
+
+### Existing managed/legacy contracts
+
+ManagedEntry/Flag production state machines не переписываются. Existing
+fixtures проверяют exact entry, foreign duplicates, BOF/EOF placement,
+provider separation, target-before-new-desired Prepared recovery, missing/
+drifted/foreign IDs, orphan markers, metadata и semantic postcondition failure
+с сохранением Prepared. Добавлен scalar RollbackFailed no-op/status retention,
+proven same-ID refresh и отказ при отсутствующем physical ownership.
+Release tests отдельно подтверждают удаление только owned state без
+активационной политики/при broken stack; Required edges не добавляются в release.
+
+ALT legacy fixture вызывает production option transaction: apply, matching
+no-op, refresh, root flag toggle, foreign retry preservation, injected AFTER
+failure с exact transient restore и inline-argument conflict до записи.
+Это не persistent rollback на предыдущее административное значение и не
+новый managed-provider route. Existing transaction CAS граница против
+non-cooperating writer сохраняется.
+
+### Согласованный ID-only suppression contract
+
+Пользователь явно сохранил существующий ID-only ownership contract.
+FIC-owned структура, provider/policy/key identity, MutationId и suppression ID
+проверяются строго. Raw должен оставаться допустимым активным вхождением того
+же managed key по семантике провайдера. Изменение комментария, пробелов или
+форматирования raw при этом допустимо. Release/rollback восстанавливает
+**текущую** raw-строку byte-exact, не историческое значение.
+
+Историческая неизменность raw не доказуема из ID-only journal; это явное
+ограничение принятого контракта, не дефект и не основание расширять I4.
+Fingerprints, новые journal fields, миграция и отдельный recovery не добавлены.
+Первоначальный RED на изменённом комментарии был проверкой более строгого,
+впоследствии явно отвергнутого ожидания; он не считается production-дефектом.
+
+Дополнительный реальный RED: wrapper с прежним глобально уникальным
+MutationId, но изменённым provider/policy мог быть проигнорирован как foreign,
+а исчезнувшая suppression — исключена из provenance. В существующий apply
+inspector и release primitive добавлен отказ при такой identity-коллизии.
+Это не adoption и не новый ownership receipt. Same-identity/different-ID и
+unknown suppression IDs по-прежнему отклоняются существующим кодом.
+
+Regressions проверяют provider/policy/MutationId/suppression ID, повреждённый
+raw delimiter, чужой key, comment-only и пустой raw, отказ без записи и
+изменения journal, а также допустимый same-key edit/no-op/unsuppress.
+Настоящий provider rollback отдельно доказывает byte-exact возврат текущей
+raw-строки (tabs, spaces, изменённый comment), отказ при недопустимом raw и
+подмене identity/структуры. Flag RollbackFailed проверен для обоих состояний:
+no-op не фабрикует lifecycle progress, proven refresh сохраняет ID, отсутствие
+собственного state не допускает реконструкции.
+
+### Native семантика и ограничения
+
+`native-parameter-probe.py` запускается только root внутри disposable Docker,
+не имеет production usage. Проверяет настоящие libraries без собственной
+реализации их парсеров: D/U libpwquality primary-after-dropins, last wins,
+inline override, negative credit, set-presence; libpam search_key first match,
+case-insensitivity; ALT libpasswdqc nested config/argv ordering и root masks.
+Это native library/helper parser evidence, не PAM consumer/FIC E2E.
+
+Первичные источники, сопоставленные с installed versions:
+[Linux-PAM 1.5.2 pwhistory](https://github.com/linux-pam/linux-pam/blob/v1.5.2/modules/pam_pwhistory/pam_pwhistory.c),
+[Linux-PAM 1.7.0 pwhistory config](https://github.com/linux-pam/linux-pam/blob/v1.7.0/modules/pam_pwhistory/pwhistory_config.c),
+[libpwquality 1.4.5 settings](https://github.com/libpwquality/libpwquality/blob/libpwquality-1.4.5/src/settings.c),
+[passwdqc 2.0.3 parser](https://github.com/openwall/passwdqc/blob/v2.0.3/passwdqc_parse.c).
+Современные manpages не считаются доказательством конфигурационного route
+PAM 1.5.2 Debian12. Никакой полной I6 functional matrix или native ALT
+history authentication этим не заявлено.
+
+Итог I4: все пять native profiles собрали `fic` и 22 relevant test targets;
+на каждой платформе 24/24 CTest и текущий production registry audit PASS.
+Required edges и отсутствие writers у Unsupported policies проверены по
+актуальным audit receipts. Before/after source receipts всех пяти совпадают;
+итоговые binaries содержат новые regressions. Пять native parser probes и
+четыре узких pwhistory consumer probes PASS. Результаты/версии/хеши —
+`tests/integration/pam-dependencies/i4-evidence.json`. Полные I6/FIC auth и
+package E2E не запускались. Exact v1.5.3 source U24 получить не удалось;
+там доказаны native installed helper/parser и fixture contracts, а не
+retrieved exact-source/module-authentication proof.

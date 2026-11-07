@@ -185,59 +185,12 @@ bool PamCapabilityActivationPolicy::applyPam(
         const auto provePasswordDomain = [&](bool after,
             const fic::identity::pam::PamPasswordRequestedState& requested,
             std::string& proofError) {
-            for (const auto member : {fic::platform::PamCapability::PasswordQuality,
-                                      fic::platform::PamCapability::PasswordHistory}) {
-                const fic::platform::PamCapabilityConfig* config = nullptr;
-                const std::vector<std::string>* memberServices = nullptr;
-                if (!fic::identity::pam::resolveCapability(platformConfig_, member,
-                        config, memberServices, proofError)) return false;
-                if (config->topology != fic::platform::PamTopologyStrategyKind::PamAuthUpdate)
-                    continue;
-                const bool required = member == capability_ ||
-                    (member == fic::platform::PamCapability::PasswordQuality
-                        ? requested.qualityRequested : requested.historyRequested);
-                fic::identity::pam::PamCapabilityVerification proof;
-                if (!verifyFresh(*config, *memberServices, proof)) {
-                    // An Inactive result can describe only the FIRST missing
-                    // service. Prove absence across the whole existing scope;
-                    // a partially connected mechanism is not absent.
-                    const auto isAbsent = [&](const auto& value) {
-                        return value.state == fic::identity::pam::PamEnforcementState::Inactive ||
-                            (!required && value.state ==
-                                fic::identity::pam::PamEnforcementState::Missing);
-                    };
-                    bool absent = (!after || !required) && isAbsent(proof);
-                    fic::identity::pam::PamConfiguration configuration(platformConfig_);
-                    std::vector<std::string> existing;
-                    if (absent && !configuration.existingServices(*memberServices, existing, proofError))
-                        absent = false;
-                    for (const auto& service : existing) {
-                        fic::identity::pam::PamCapabilityVerification perService;
-                        if (verifyFresh(*config, {service}, perService) || !isAbsent(perService)) {
-                            absent = false;
-                            break;
-                        }
-                    }
-                    if (!absent) {
-                        proofError = pamCapabilityActivationPolicyName(member) + std::string(": ") +
-                            fic::identity::pam::formatPamCapabilityVerification(proof);
-                        return false;
-                    }
-                } else if (member == fic::platform::PamCapability::PasswordHistory &&
-                    std::any_of(proof.inspection.providerRules.begin(), proof.inspection.providerRules.end(),
-                        [](const auto& rule) {
-                            const auto name = rule.source.filename();
-                            return name != fic::identity::pam::PamManagedPasswordSlots::historyNormalSlot().fileName &&
-                                name != fic::identity::pam::PamManagedPasswordSlots::historyInitialSlot().fileName;
-                        })) {
-                    // C2 supports foreign quality, but has no foreign-history
-                    // state. Its own full slot grammar/ownership is proven by
-                    // the coordinator, never inferred from this file name.
-                    proofError = "foreign password history is outside the supported C2 topology";
-                    return false;
-                }
-            }
-            return true;
+            return fic::identity::pam::PamCapabilityVerifier::verifyPasswordDomain(
+                platformConfig_, capability_, requested.qualityRequested,
+                requested.historyRequested, after, proofError,
+                [&](const auto& config, const auto& services, auto& proof) {
+                    return verifyFresh(config, services, proof);
+                });
         };
         fic::identity::pam::PamPasswordRequestedState appliedRequest;
         if (!coordinator->applyJointRequestedState(error,

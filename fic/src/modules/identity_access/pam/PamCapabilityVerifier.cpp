@@ -1,9 +1,80 @@
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 
 #include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamManagedPasswordSlots.h"
 #include "modules/identity_access/pam/PamProviderSemanticVerifier.h"
 
+#include <algorithm>
+
 namespace fic::identity::pam {
+
+bool PamCapabilityVerifier::verifyPasswordDomain(
+    const fic::platform::PamPlatformConfig& platformConfig,
+    PamCapability requiredCapability, bool qualityRequested,
+    bool historyRequested, bool after, std::string& proofError,
+    const StructuralProof& customProof) {
+    const auto verifyFresh = [&](const fic::platform::PamCapabilityConfig& config,
+                                 const std::vector<std::string>& services,
+                                 PamCapabilityVerification& proof) {
+        if (customProof) return customProof(config, services, proof);
+        PamConfiguration configuration(platformConfig);
+        return verify(configuration, platformConfig, services, config.capability,
+            config.provider, proof, PamCapabilityVerificationMode::Structural);
+    };
+    for (const auto member : {fic::platform::PamCapability::PasswordQuality,
+                              fic::platform::PamCapability::PasswordHistory}) {
+        const fic::platform::PamCapabilityConfig* config = nullptr;
+        const std::vector<std::string>* memberServices = nullptr;
+        if (!fic::identity::pam::resolveCapability(platformConfig, member,
+                config, memberServices, proofError)) return false;
+        if (config->topology != fic::platform::PamTopologyStrategyKind::PamAuthUpdate)
+            continue;
+        const bool required = member == requiredCapability ||
+            (member == fic::platform::PamCapability::PasswordQuality
+                ? qualityRequested : historyRequested);
+        fic::identity::pam::PamCapabilityVerification proof;
+        if (!verifyFresh(*config, *memberServices, proof)) {
+            // An Inactive result can describe only the FIRST missing
+            // service. Prove absence across the whole existing scope;
+            // a partially connected mechanism is not absent.
+            const auto isAbsent = [&](const auto& value) {
+                return value.state == fic::identity::pam::PamEnforcementState::Inactive ||
+                    (!required && value.state ==
+                        fic::identity::pam::PamEnforcementState::Missing);
+            };
+            bool absent = (!after || !required) && isAbsent(proof);
+            fic::identity::pam::PamConfiguration configuration(platformConfig);
+            std::vector<std::string> existing;
+            if (absent && !configuration.existingServices(*memberServices, existing, proofError))
+                absent = false;
+            for (const auto& service : existing) {
+                fic::identity::pam::PamCapabilityVerification perService;
+                if (verifyFresh(*config, {service}, perService) || !isAbsent(perService)) {
+                    absent = false;
+                    break;
+                }
+            }
+            if (!absent) {
+                proofError = (member == PamCapability::PasswordQuality ? "enable_password_quality" : "enable_password_history") + std::string(": ") +
+                    fic::identity::pam::formatPamCapabilityVerification(proof);
+                return false;
+            }
+        } else if (member == fic::platform::PamCapability::PasswordHistory &&
+            std::any_of(proof.inspection.providerRules.begin(), proof.inspection.providerRules.end(),
+                [](const auto& rule) {
+                    const auto name = rule.source.filename();
+                    return name != fic::identity::pam::PamManagedPasswordSlots::historyNormalSlot().fileName &&
+                        name != fic::identity::pam::PamManagedPasswordSlots::historyInitialSlot().fileName;
+                })) {
+            // C2 supports foreign quality, but has no foreign-history
+            // state. Its own full slot grammar/ownership is proven by
+            // the coordinator, never inferred from this file name.
+            proofError = "foreign password history is outside the supported C2 topology";
+            return false;
+        }
+    }
+    return true;
+}
 
 bool PamCapabilityVerifier::verify(
     PamConfiguration& configuration,

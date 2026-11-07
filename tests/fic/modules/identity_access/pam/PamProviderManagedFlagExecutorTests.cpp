@@ -971,6 +971,75 @@ void testForeignWrapperProvenanceFailsClosed() {
             harness.error);
 }
 
+// I4 accepted ID-only contract: current same-key raw bytes are foreign
+// content; structure/identity and the journal-authorized IDs remain strict.
+void testSuppressionRawOwnershipContract() {
+    Harness harness;
+    writeFile(harness.configPath, "even_deny_root # original\n");
+    auto request = harness.faillockRequest(kFlagPolicy, "even_deny_root", false);
+    require(harness.apply(request), harness.error);
+    const auto before = readFile(harness.configPath);
+    const auto edited = replaceAll(before, "raw=even_deny_root # original", "raw= \teven_deny_root   # edited  ");
+    require(edited != before, "body-edit fixture did not change wrapper");
+    writeFile(harness.configPath, edited);
+    const auto journalBefore = readFile(harness.journalPath);
+    require(harness.apply(request) && readFile(harness.configPath) == edited &&
+            readFile(harness.journalPath) == journalBefore,
+        "same-key raw edit changed ownership or was rewritten");
+    const auto wrappers = wrappersOf(edited);
+    require(wrappers.size() == 1, "expected one owned suppression");
+    const auto& wrapper = wrappers.front();
+    const auto marker = pamProviderSuppressionWrapperLine(wrapper.provider, wrapper.policy,
+        wrapper.managedKey, wrapper.mutationId, wrapper.suppressionId, wrapper.rawLine);
+    for (const auto& badMarker : {
+            replaceAll(marker, "pam_faillock", "pam_pwquality"),
+            replaceAll(marker, "policy=" + std::string(kFlagPolicy), "policy=password_quality_enforce_for_root"),
+            replaceAll(marker, "mutation=" + std::to_string(wrapper.mutationId), "mutation=99999"),
+            replaceAll(marker, "suppression=" + wrapper.suppressionId, "suppression=s99999"),
+            replaceAll(marker, "raw=", "raw ="),
+            replaceAll(marker, wrapper.rawLine, "unlock_time=3"),
+            replaceAll(marker, wrapper.rawLine, "# even_deny_root"),
+            replaceAll(marker, wrapper.rawLine, "")}) {
+        const auto invalid = replaceAll(edited, marker, badMarker);
+        writeFile(harness.configPath, invalid);
+        require(!harness.apply(request) && readFile(harness.configPath) == invalid &&
+                readFile(harness.journalPath) == journalBefore,
+            "invalid wrapper accepted or changed provenance: " + badMarker);
+        auto enable = request; enable.expectedEnabled = true;
+        require(!harness.apply(enable) && readFile(harness.configPath) == invalid,
+            "invalid wrapper was unwrapped during refresh");
+    }
+    writeFile(harness.configPath, edited);
+    auto enable = request; enable.expectedEnabled = true;
+    require(harness.apply(enable) && readFile(harness.configPath).rfind(wrapper.rawLine + "\n", 0) == 0,
+        "unsuppress failed to preserve CURRENT raw bytes");
+}
+
+void testRollbackFailedFlagOwnership() {
+    for (const bool enabled : {false, true}) {
+        Harness harness;
+        writeFile(harness.configPath, "even_deny_root # foreign\n");
+        auto request = harness.faillockRequest(kFlagPolicy, "even_deny_root", enabled);
+        require(harness.apply(request), harness.error);
+        const auto id = harness.soleFlagRecord(kFlagPolicy, "base").id;
+        require(harness.journal.setStatus(id, MutationStatus::RollbackFailed, harness.error), harness.error);
+        const auto bytes = readFile(harness.configPath);
+        const auto journal = readFile(harness.journalPath);
+        require(harness.apply(request) && readFile(harness.configPath) == bytes &&
+                readFile(harness.journalPath) == journal,
+            "flag RollbackFailed no-op fabricated progress");
+        request.expectedEnabled = !enabled;
+        require(harness.apply(request), harness.error);
+        const auto refreshed = harness.soleFlagRecord(kFlagPolicy, "refresh");
+        require(refreshed.id == id && refreshed.status == MutationStatus::Applied,
+            "flag RollbackFailed refresh lost proven identity");
+        require(harness.journal.setStatus(id, MutationStatus::RollbackFailed, harness.error), harness.error);
+        writeFile(harness.configPath, "# owned state absent\n");
+        require(!harness.apply(request) && readFile(harness.configPath) == "# owned state absent\n",
+            "flag RollbackFailed reconstructed missing ownership");
+    }
+}
+
 void testMetadataPreservation() {
     Harness harness;
     writeFile(harness.configPath, "even_deny_root\n");
@@ -1278,6 +1347,8 @@ int main() {
             testFreshApplyRefusesPreExistingEntry},
         {"testForeignWrapperProvenanceFailsClosed",
             testForeignWrapperProvenanceFailsClosed},
+        {"suppressionRawOwnershipContract", testSuppressionRawOwnershipContract},
+        {"rollbackFailedFlagOwnership", testRollbackFailedFlagOwnership},
         {"testMetadataPreservation", testMetadataPreservation},
         {"testSemanticFailureKeepsPreparedThenRecovers",
             testSemanticFailureKeepsPreparedThenRecovers},

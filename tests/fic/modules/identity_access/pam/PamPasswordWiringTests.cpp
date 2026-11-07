@@ -14,6 +14,7 @@
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/policies/PamCapabilityActivationPolicy.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.h"
+#include "modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "platform/PlatformProfile.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
@@ -962,6 +963,144 @@ void testPolicyLayerUsesJointIntentForMode(
         env.setIntent(quality, !quality);
         require((quality ? qualityPolicy.apply() : historyPolicy.apply()),
             "single-capability C2 Structural apply failed");
+    }
+    // I4: exercise the REAL ModuleArguments parameter policy independently
+    // of the selected profile's history route. Required ordering is not a
+    // proof that modules/control flow stayed valid since activation.
+    {
+        auto modulePlatform = platform;
+        modulePlatform.capabilities[1].configurationMode =
+            fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
+        modulePlatform.capabilities[1].configPath.clear();
+        modulePlatform.capabilities[1].configTopology.reset();
+        auto factory = [&]() {
+            PamPasswordTopologyCoordinator::Options opts;
+            opts.configDirectory = env.tree.pamd(); opts.stateDirectory = env.tree.state();
+            opts.desiredStateReader = [&](PamPasswordRequestedState& intent, std::string& why) {
+                return fic::identity::pam::readJointPasswordDesiredState(intent, modulePlatform, why, env.tree.conf());
+            };
+            opts.executorOptions.runner = [&](const auto& executable, const auto& args, const auto& options) {
+                return env.mutator.run(executable, args, options);
+            };
+            return std::make_unique<PamPasswordTopologyCoordinator>(env.journal(), env.resolver, opts);
+        };
+        const auto applyDepth = [&]() {
+            PamPasswordHistoryDepthPolicy depth(modulePlatform, factory);
+            return depth.apply();
+        };
+        env.setIntent(true, true);
+        writeFile(env.tree.conf() / "IDENTITY_ACCESS.conf",
+            readFile(env.tree.conf() / "IDENTITY_ACCESS.conf") + "password_history_depth.value=007\n");
+        require(applyDepth(), "I4: healthy C2 depth apply failed");
+        const auto slot = readFile(env.tree.pamd() / "fic-password-history");
+        const auto journal = readFile(env.tree.path() / "mutation-journal.json");
+        const auto calls = env.mutator.invocations.size();
+        writeFile(env.tree.conf() / "IDENTITY_ACCESS.conf",
+            "enable_password_quality.status=ENABLE\nenable_password_history.status=ENABLE\npassword_history_depth.value=11\n");
+        std::filesystem::remove(env.tree.path() / "security/pam_pwhistory.so");
+        require(!applyDepth(), "I4: parameter apply accepted missing provider after activation");
+        require(readFile(env.tree.pamd() / "fic-password-history") == slot &&
+                readFile(env.tree.path() / "mutation-journal.json") == journal &&
+                env.mutator.invocations.size() == calls,
+            "I4: missing-provider parameter apply mutated C2 state");
+        writeFile(env.tree.path() / "security/pam_pwhistory.so", "fixture\n");
+        writeFile(env.tree.pamd() / "passwd",
+            "password sufficient pam_permit.so\npassword include common-password\n");
+        writeFile(env.tree.path() / "security/pam_permit.so", "fixture\n");
+        require(!applyDepth() && readFile(env.tree.pamd() / "fic-password-history") == slot &&
+                readFile(env.tree.path() / "mutation-journal.json") == journal,
+            "I4: parameter apply bypassed full-scope Structural proof");
+        writeFile(env.tree.pamd() / "passwd", "password include common-password\n");
+        require(applyDepth(), "I4: healthy C2 refresh failed");
+        const auto refreshed = env.inspect();
+        require(refreshed.ownership.ficHistoryOwned &&
+                env.mutator.invocations.size() == calls,
+            "I4: pure depth refresh lost ownership or invoked native mutator");
+        const auto stableJournal = readFile(env.tree.path() / "mutation-journal.json");
+        require(applyDepth() && readFile(env.tree.path() / "mutation-journal.json") == stableJournal,
+            "I4: repeated depth apply was not idempotent");
+        // An old policy instance must not report success for another target.
+        PamPasswordHistoryDepthPolicy staleDepth(modulePlatform, factory);
+        writeFile(env.tree.conf() / "IDENTITY_ACCESS.conf",
+            "enable_password_quality.status=DISABLE\nenable_password_history.status=ENABLE\n"
+            "password_history_depth.value=13\npassword_history_enforce_for_root.value=yes\n");
+        require(!staleDepth.apply() && readFile(env.tree.path() / "mutation-journal.json") == stableJournal,
+            "I4: cached parameter value silently applied another configuration generation");
+        // Current joint intent switches Normal -> Initial; both parameter
+        // policies still share that single writer and historical slot journal.
+        require(applyDepth(), "I4: changed joint intent did not produce HistoryInitial");
+        PamPasswordHistoryEnforceForRootPolicy rootPolicy(modulePlatform, factory);
+        require(rootPolicy.apply(), "I4: root flag parameter failed for HistoryInitial");
+        require(env.inspect().ownership.ficHistoryInitialOwned,
+            "I4: parameter apply lost initial-slot ownership");
+        const auto initialJournal = readFile(env.tree.path() / "mutation-journal.json");
+        const auto initialCalls = env.mutator.invocations.size();
+        require(rootPolicy.apply() && readFile(env.tree.path() / "mutation-journal.json") == initialJournal &&
+                env.mutator.invocations.size() == initialCalls,
+            "I4: root flag idempotency changed topology or journal");
+        writeFile(env.tree.conf() / "IDENTITY_ACCESS.conf",
+            "enable_password_quality.status=ENABLE\nenable_password_history.status=ENABLE\n"
+            "password_history_depth.value=13\npassword_history_enforce_for_root.value=yes\n");
+        std::filesystem::remove(env.tree.path() / "security/pam_pwquality.so");
+        require(!rootPolicy.apply() && readFile(env.tree.path() / "mutation-journal.json") == initialJournal &&
+                env.mutator.invocations.size() == initialCalls,
+            "I4: parameter joint peer attach ignored missing quality provider");
+        writeFile(env.tree.path() / "security/pam_pwquality.so", "fixture\n");
+        // A stale Required traversal must not let a parameter detach History.
+        env.setIntent(false, false);
+        require(!rootPolicy.apply() && readFile(env.tree.path() / "mutation-journal.json") == initialJournal &&
+                env.mutator.invocations.size() == initialCalls,
+            "I4: parameter apply changed topology after activation intent disabled");
+
+    }
+    // I4 ALT legacy route: production option transaction, not persistent
+    // managed-entry ownership. Inject only the postcondition failure seam.
+    {
+        class LegacyProbe final : public PamPasswordHistoryOptionPolicy {
+        public:
+            LegacyProbe(const fic::platform::PamPlatformConfig& config, fic::platform::PamPolicyFeature feature)
+                : PamPasswordHistoryOptionPolicy(config, feature) {}
+            bool run(const std::string& value) { return applyPam(value); }
+            bool failPost = false;
+        protected:
+            bool verifyPostMutationPamState(const fic::platform::PamCapabilityConfig& config,
+                const std::vector<std::string>& services,
+                const fic::identity::pam::PamProviderPolicyBinding& binding,
+                const std::string& value, bool flag, std::size_t& count, std::string& why) const override {
+                if (failPost) { why = "injected legacy postcondition failure"; return false; }
+                return PamOptionPolicy::verifyPostMutationPamState(config, services, binding, value, flag, count, why);
+            }
+        };
+        auto legacy = platform;
+        auto& history = legacy.capabilities[1];
+        history.topology = fic::platform::PamTopologyStrategyKind::AltTcbManaged;
+        history.configurationMode = fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
+        history.configPath = env.tree.path() / "legacy/fic-pwhistory.conf";
+        fic::platform::PamProviderConfigTopology config; config.primaryPath = history.configPath;
+        history.configTopology = config;
+        legacy.configDirectories = {env.tree.path() / "legacy/pam.d"};
+        writeFile(env.tree.path() / "legacy/pam.d/passwd",
+            "password required pam_pwhistory.so use_authtok conf=" + history.configPath.string() +
+            "\npassword required pam_unix.so use_authtok\n");
+        writeFile(history.configPath, "# foreign\nretry=2\nremember=3\n");
+        LegacyProbe depth(legacy, fic::platform::PamPolicyFeature::PasswordHistoryDepth);
+        require(depth.run("7"), "I4: legacy depth apply failed");
+        const auto seven = readFile(history.configPath);
+        require(seven.find("retry=2") != std::string::npos && depth.run("7") && readFile(history.configPath) == seven,
+            "I4: legacy idempotency/foreign preservation failed");
+        depth.failPost = true;
+        require(!depth.run("11") && readFile(history.configPath) == seven,
+            "I4: failed legacy transaction did not restore its exact pre-write state");
+        depth.failPost = false;
+        require(depth.run("11"), "I4: legacy refresh failed");
+        LegacyProbe root(legacy, fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot);
+        require(root.run("yes") && root.run("no"), "I4: legacy flag toggle failed");
+        writeFile(env.tree.path() / "legacy/pam.d/passwd",
+            "password required pam_pwhistory.so use_authtok remember=1 conf=" + history.configPath.string() +
+            "\npassword required pam_unix.so use_authtok\n");
+        const auto before = readFile(history.configPath);
+        require(!depth.run("13") && readFile(history.configPath) == before,
+            "I4: legacy inline override conflict mutated config");
     }
     env.setIntent(false, false); env.applyOk();
     env.mutator.forceSelect(kStockPwqualityProfileId);

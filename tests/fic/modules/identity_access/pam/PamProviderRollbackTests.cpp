@@ -440,6 +440,47 @@ void testFlagAppliedFalseReleasesWrappers() {
             "fixture had wrappers");
 }
 
+// ID-only provenance releases CURRENT valid same-key raw bytes, not history.
+void testFlagRollbackPreservesEditedRawBytes() {
+    Harness harness;
+    auto content = renderDisabledState({"s1"});
+    const std::string raw = " \teven_deny_root   # edited by admin  ";
+    const auto position = content.find("raw=even_deny_root");
+    require(position != std::string::npos, "wrapper fixture absent");
+    content.replace(position, std::string("raw=even_deny_root").size(), "raw=" + raw);
+    writeFile(harness.configPath, content);
+    auto undo = flagUndo(harness, false, {"s1"});
+    auto record = makeFlagRecord(harness, 9, undo, MutationStatus::Applied);
+    for (const auto& invalidRaw : {std::string("unlock_time=3"), std::string("# even_deny_root"),
+                                   std::string("")}) {
+        auto invalid = content;
+        const auto rawPosition = invalid.find("raw=" + raw);
+        invalid.replace(rawPosition, std::string("raw=" + raw).size(), "raw=" + invalidRaw);
+        writeFile(harness.configPath, invalid);
+        const auto refused = undoPamProviderManagedFlag(harness.options(), harness.journal, record, undo);
+        require(!refused.ok && readFile(harness.configPath) == invalid,
+            "rollback unwrapped invalid same-identity raw semantics");
+    }
+    for (const auto& fields : std::vector<std::pair<std::string, std::string>>{
+            {"provider=pam_faillock", "provider=pam_pwquality"},
+            {"policy=" + std::string(kFlagPolicy), "policy=password_quality_enforce_for_root"},
+            {"mutation=9 suppression=", "mutation=99 suppression="},
+            {"suppression=s1", "suppression=s99"}, {"raw=", "raw ="}}) {
+        auto invalid = content;
+        const auto fieldPosition = invalid.find(fields.first);
+        require(fieldPosition != std::string::npos, "invalid identity fixture absent");
+        invalid.replace(fieldPosition, fields.first.size(), fields.second);
+        writeFile(harness.configPath, invalid);
+        const auto refused = undoPamProviderManagedFlag(harness.options(), harness.journal, record, undo);
+        require(!refused.ok && readFile(harness.configPath) == invalid,
+            "rollback ignored invalid wrapper identity/structure");
+    }
+    writeFile(harness.configPath, content);
+    const auto result = undoPamProviderManagedFlag(harness.options(), harness.journal, record, undo);
+    require(result.ok && readFile(harness.configPath) == kForeign + raw + "\n",
+        "rollback did not preserve current same-key raw bytes exactly: " + result.message);
+}
+
 void testFlagMissingAuthorizedWrapperSubset() {
     Harness harness;
     // s2 vanished externally: release must unwrap only s1/s3 and NEVER
@@ -1319,6 +1360,7 @@ int main() {
         testDisplacedBlockOwnershipSurvives();
         testPlatformIdentityProof();
         testFlagAppliedFalseReleasesWrappers();
+        testFlagRollbackPreservesEditedRawBytes();
         testFlagAppliedEnabledZeroWrappers();
         testFlagAppliedDisabledZeroWrappers();
         testFlagPreparedTargetEnabledZeroWrappers();

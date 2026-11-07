@@ -1,7 +1,9 @@
 #include "modules/identity_access/pam/policies/PamPasswordHistoryOptionPolicy.h"
 
 #include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamCapabilityVerifier.h"
 
+#include <charconv>
 #include <utility>
 
 PamPasswordHistoryOptionPolicy::PamPasswordHistoryOptionPolicy(
@@ -54,10 +56,43 @@ bool PamPasswordHistoryOptionPolicy::applyPam(
         return false;
     }
     std::string error;
-    if (!coordinator->applyJointRequestedState(error)) {
+    fic::identity::pam::PamPasswordRequestedState appliedRequest;
+    if (!coordinator->applyJointRequestedState(error,
+            [&](const auto& requested, std::string& proofError) {
+                // A cached policy value must not claim another generation's
+                // target. This is the SAME snapshot consumed by the writer.
+                bool sameTarget = false;
+                if (feature_ == fic::platform::PamPolicyFeature::PasswordHistoryDepth) {
+                    unsigned depth = 0;
+                    const auto parsed = std::from_chars(expectedValue.data(),
+                        expectedValue.data() + expectedValue.size(), depth);
+                    sameTarget = parsed.ec == std::errc{} &&
+                        parsed.ptr == expectedValue.data() + expectedValue.size() &&
+                        requested.historyOptions.remember == depth;
+                } else {
+                    sameTarget = expectedValue ==
+                        (requested.historyOptions.enforceForRoot ? "yes" : "no");
+                }
+                if (!requested.historyRequested || !sameTarget) {
+                    proofError = "history parameter differs from current joint configuration intent";
+                    return false;
+                }
+                appliedRequest = requested;
+                return fic::identity::pam::PamCapabilityVerifier::verifyPasswordDomain(
+                    platformConfig_, fic::platform::PamCapability::PasswordHistory,
+                    requested.qualityRequested, requested.historyRequested,
+                    false, proofError);
+            })) {
         this->log("PAM joint password topology transition failed for " +
                       this->policyName + ": " + error,
                   logLevel::ERROR);
+        return false;
+    }
+    if (!fic::identity::pam::PamCapabilityVerifier::verifyPasswordDomain(
+            platformConfig_, fic::platform::PamCapability::PasswordHistory,
+            appliedRequest.qualityRequested, appliedRequest.historyRequested,
+            true, error)) {
+        this->log("PAM joint parameter Structural postcondition failed: " + error, logLevel::ERROR);
         return false;
     }
     const fic::identity::pam::PamPasswordTransitionResult& result =

@@ -573,8 +573,8 @@ bool parsePamProviderSuppressionWrapper(const std::string& physicalLine,
     }
     // Strict wrapper proof (Step 7E §11): the embedded raw line must be an
     // ACTIVE occurrence of the same managed key under the provider-specific
-    // key semantics. A manually edited embedded line is never proven
-    // suppressed state.
+    // key semantics. ID-only provenance permits same-key raw edits; it
+    // never proves historical byte identity. Invalid raw semantics fail closed.
     if (!pamProviderFlagLineIsActiveOccurrence(wrapper.provider, raw, key)) {
         error = "FIC PAM suppression wrapper: embedded raw line is not an "
                 "active occurrence of the managed key " +
@@ -1580,6 +1580,10 @@ PamProviderFlagReleaseResult releasePamProviderManagedFlag(
         if (wrapper.provider != expectation.provider ||
             wrapper.policy != expectation.policy ||
             wrapper.managedKey != expectation.managedKey) {
+            if (wrapper.mutationId == expectation.mutationId) {
+                result.error = "suppression wrapper identity conflicts with its journal mutation id";
+                return result;
+            }
             continue;
         }
         if (wrapper.mutationId != expectation.mutationId) {
