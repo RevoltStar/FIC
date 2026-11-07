@@ -1,36 +1,35 @@
 # Current workspace
 
 ## Current base
-* main; follow-up task base `3f61116f2ab12059702542428945fbfe9d5d344f`.
-* Completion belongs to the commit containing this snapshot; no push.
+* main; PAM R1/I3 task base `8a1c24bc0c356a908230a6e2e406b04f20651a22`. No push.
 
 ## Current task
-* Attachment a16c595f: SYSCTL crash-consistent ownership release completed and validated.
+* Attachment a6a92742: exactly R1 research and I3 Required dependencies, two sequential commits with specified names. R1 complete; I3 production edits not started.
 
-## Accepted architecture / invariants
-* User-approved optional AtomicWriteOptions::beforePublish: exact fsynced temp snapshot → durable SYSCTL prepared receipt → rechecked CAS → rename. Refusal/exception/indeterminate journal prevents rename. Ordinary callers retain default behavior.
-* Existing SysctlSettingState optional release intent: before snapshot, deterministic target bytes/metadata or absence, prepared inode receipt and temporary-legacy marker. Existing mutation ID binds operation; global schema3 unchanged, no migration/framework/background recovery.
-* Explicit same-operation retry: exact before state resumes conditional release; exact prepared identity/metadata/bytes or planned absence gets durability barrier and journal completion without rewriting. Receipt is not rename proof; unknown state refuses without adoption/helper.
-* Atomic terminal journal completion clears intent and updates surviving container identities. Generic RollbackFailed/discard and other SYSCTL apply cannot cross/erase unresolved release. Legacy origin/delegation and apply/REFRESH contracts preserved.
-* Native helper unchanged: after durable completion only, error WARNING. Crash after terminal journal but before helper can skip auxiliary execution; no outbox/retry store.
+## Accepted architecture / findings
+* Keep Structural activation, C2 joint password topology, ALT managers/blocks, existing provider ownership/rollback and package lifecycle. No enforcement policies, writer for ALT passwdqc, new migrations/recovery or arbitrary foreign adoption.
+* R1 production source unchanged. Actual registry driver: 16 option policies per D12/D13/U24/U26,12 ALT; graphs valid. Current options only Recommend activation; ALT6 Supported passwdqc/root options have none and activation absent.
+* ALT bug is TWO gates: StaticVerifyOnly returns Supported for its bindings, but representative PasswordMinLength is Unsupported for passwdqc. Merely replacing equality RequiresTopologyActivation is insufficient.
+* Minimal I3: collect capabilities from actually registered supported options via existing pamPolicyCapability; append one existing activation per used capability. Parent PamOptionPolicy adds Required for every supported/read-only registered feature, preserves Recommended disable_nopasswdlogin. No Q↔H/A artificial edges.
+* StaticVerifyOnly apply/factory already exists, Structural only/no journal. Unrecorded static rollback AlreadyReleased; no backend/rollback redesign needed unless a concrete test proves otherwise.
+* Four D/U selected profiles currently C2 mutable=true; stale older docs/comments are not current contract. D12 history uses C2 module args; ALT history options use legacy config transaction/topology lifecycle, not managed-provider entries; ALT passwdqc6 use managed entries.
 
 ## Completed / changed areas
-* RED on task base: post-publication journal rename failure, reopen, retry fails stale inode. Tracked evidence includes exact test-only patch, exit1 and diagnostic; local raw log/source under build-sysctl-validation/release-crash-red*.
-* Core AtomicFileWriter admission callback; SYSCTL deterministic plan/durability/retry; journal release serialization/validation/prepare/receipt/completion; RollbackExecutor retains pending typed state.
-* Fault regressions cover intent/receipt/completion failures, indeterminate persistence, pre-rename CAS refusal, actual journal reopening, A/B/last absence/legacy delegation, identical bytes/new foreign inode, metadata drift, competing apply, idempotence and helper ordering.
-* Debian12 package fixture enrolls two SYSCTL owners before prepare-uninstall/rollback all/remove/purge. Fresh source/harness/image/ELF-bound evidence replaces previous snapshot; no old PASS reused for changed code.
-* Contract: docs/sysctl-lifecycle.md; related rollback/diagram/fixture documentation updated.
+* docs/pam-r1-architecture-research.md: full platform/parameter/dependency/ownership/rollback matrix, history, primary documentation and scope limits.
+* tests/integration/pam-dependencies/Driver.cpp links actual production source closure and invokes initPolicyRegistry; --audit emits native matrix without policy apply. --alt-control is isolated/narrowed native experiment only.
+* tests/CMakeLists adds EXCLUDE_FROM_ALL research target pam_dependency_contract_tests using fic source/link contract, daemon main excluded. Global existing libsystemd test import substitutes daemon-directory-local equivalent.
+* build-and-audit.sh, alt-control.sh reproduce disposable Docker probes. Docker used per prior authorization; no host PAM writes.
+* r1-evidence.json contains five actual audits, source-harness/image/ELF hashes and native ALT control results. R1 evidence is historical; do not rewrite it as I3 proof.
 
 ## Validation
-* Final targeted5/5 PASS: sysctl_configuration_tests, sysctl_ownership_tests, atomic_file_writer_remove_tests, mutation_journal_tests, rollback_executor_tests. Log release-targeted.log.
-* Full project build + actual Debian12 DEBs PASS. Full Debian12 CTest:219 passed,0 failed,4 opt-in skipped,223 registered;162.53s. Logs release-full-build-package.log and release-full-ctest.log.
-* Fresh native SYSCTL and two unit suites each: Debian12(systemd252.39), Debian13(257.13), Ubuntu24.04(255.4), Ubuntu26.04(259.9), ALT p11(258.9) PASS. Actual helper/default-loader/exact-prefix behavior rerun against current code.
-* Actual Debian12 daemon/CLI/two-owner package lifecycle PASS, including remove/purge, unchanged administrative configs, foreign sysctl source retained/applied by native helper. Installed daemon ELF matched rebuilt binary SHA.
-* Source inventory recheck, Python/shell syntax, relevant static checks, historical I6 checker and git diff --check PASS. Current evidence: tests/integration/sysctl-ownership/evidence.json; local logs build-sysctl-validation/release-*.
+* All5 research target builds and actual registry graph audits PASS. Logs build-pam-r1-i3/r1-{build,audit}-TAG.log; audit-PLATFORM.json.
+* ALT native manager + control multi→ldap→local: blocks preserved, Enabled/manageable under scope={system-auth}, RPM pam-config1.10.0-alt0.p11.2/control0.8.0-alt3. Initial invalid root-scope fixture was corrected, not claimed as a production defect.
+* Official Linux-PAM and Debian pam-auth-update docs compared. ALT wiki blocked by Anubis; used installed RPM facility/templates instead. No functional PAM auth/password-change claim.
+* git diff --check and shell syntax PASS. Production diff empty before R1 commit.
 
-## Remaining / limits
-* No unfinished required follow-up work. No real reboot/power-loss experiment: deterministic syscall/persistence faults plus journal reopening. Runtime fixtures isolated; global kernel/sysfs readonly, only private-network leaves writable; no host security mutation.
-* Existing stale inode from pre-intent code cannot be auto-resolved without historical proof. Unknown inode/bytes/metadata remains pending and fail-closed. Apply/REFRESH uncertainty is not expanded by this release-only recovery.
-* Existing optimistic CAS residual race against noncooperating privileged writers remains. Crash after terminal journal can skip auxiliary helper as above.
-* Package E2E is Debian12; other four have real backend/loader/unit gates. Supplemental ALT SDDM profile assertion was an unrelated known baseline from preceding task, outside this change.
-* Four opt-in CTest skips: verified_config_service_native_tests, daemon_singleton_startup_native, maintenance_preflight_native, package_pam_hooks_native. Required SYSCTL/package native gates were run separately.
+## Remaining
+* Create/finish R1 commit then implement I3; do not add a third stage or extra commit.
+* Add real registered-policy tests for one unconditional Required/activation ref, disabled/failed/success executor suppression, Structural foreign success, static no-mutation/no-journal, reverse production disable guard, ReadOnly registration, no missing refs/cycles, preserved recommended/nonparam/C2 edges.
+* Run relevant native builds/tests all5, C2 history/ALT passwdqc/provider rollback regressions. Update CI CTest target registration; no broad test framework.
+* Replace current research target EXCLUDE_FROM_ALL with normal test target for I3 and add --test mode; preserve --audit/R1 data. Existing caches: D12 build-sssd-i1/full; others build-package-release/{debian13,ubuntu2404,ubuntu2604,alt-p11}.
+* Final I3 evidence/docs/HANDOFF, diff checks, second named commit; no push. Unrelated ALT SDDM baseline remains outside scope.

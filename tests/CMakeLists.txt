@@ -3449,3 +3449,21 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 target_link_libraries(identity_policy_hierarchy_tests PRIVATE fic-sssd-integration-test-support)
+
+# PAM R1/I3: exercise the actual production registry factory. Reuse its
+# existing source closure and link contract; do not copy registration logic.
+get_target_property(pam_dependency_sources fic SOURCES)
+list(FILTER pam_dependency_sources INCLUDE REGEX "\\.cpp$")
+list(FILTER pam_dependency_sources EXCLUDE REGEX "/src/main\\.cpp$")
+get_target_property(pam_dependency_includes fic INCLUDE_DIRECTORIES)
+get_target_property(pam_dependency_libraries fic LINK_LIBRARIES)
+get_target_property(pam_dependency_definitions fic COMPILE_DEFINITIONS)
+# The daemon-local libsystemd import is not visible in tests; use its existing equivalent.
+list(REMOVE_ITEM pam_dependency_libraries PkgConfig::FIC_LIBSYSTEMD)
+list(APPEND pam_dependency_libraries PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
+add_executable(pam_dependency_contract_tests EXCLUDE_FROM_ALL
+    integration/pam-dependencies/Driver.cpp ${pam_dependency_sources})
+target_include_directories(pam_dependency_contract_tests PRIVATE ${pam_dependency_includes})
+target_compile_definitions(pam_dependency_contract_tests PRIVATE ${pam_dependency_definitions}
+    FIC_PAM_DEPENDENCIES_CONFIG_DIR="${CMAKE_BINARY_DIR}/fic/generated/scripts/config")
+target_link_libraries(pam_dependency_contract_tests PRIVATE ${pam_dependency_libraries})

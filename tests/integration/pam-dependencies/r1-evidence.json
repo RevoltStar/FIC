@@ -1,0 +1,1707 @@
+{
+  "production_base": "8a1c24bc0c356a908230a6e2e406b04f20651a22",
+  "stage": "R1: research, no production changes",
+  "platforms": {
+    "debian-12": {
+      "audit": {
+        "graph_valid": true,
+        "mode": "--audit",
+        "platform": "debian-12",
+        "policies": [
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_length",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_classes",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_check_username",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_check_gecos",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_quality_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_changed_characters",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_lowercase",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_uppercase",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_digits",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_other",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_strength_thresholds",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_passphrase_words",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_match_length",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_similar_password",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_retry_count",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ModuleArguments",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_depth",
+            "parameter_executor": "C2ModuleArguments",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ModuleArguments",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_enforce_for_root",
+            "parameter_executor": "C2ModuleArguments",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_attempts",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_counting_period",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_unlock_time",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          }
+        ]
+      },
+      "driver_sha256": "bde9d91965e89753f66ce4d3911b9cfcec535f6fe3c3166624f9a0230512d25d",
+      "builder_image": "sha256:2c8a7e2c4897b43b4556c2ca27581c3563a6c7b1ee71008a7fa0a3884d32e47e"
+    },
+    "debian-13": {
+      "audit": {
+        "graph_valid": true,
+        "mode": "--audit",
+        "platform": "debian-13",
+        "policies": [
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_length",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_classes",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_check_username",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_check_gecos",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_quality_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_changed_characters",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_lowercase",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_uppercase",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_digits",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_other",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_strength_thresholds",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_passphrase_words",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_match_length",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_similar_password",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_retry_count",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_depth",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_attempts",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_counting_period",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_unlock_time",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          }
+        ]
+      },
+      "driver_sha256": "d573e7712f92696dc1b9d3ad8b3cca157eb1e773581a9814c477dd1c01ea7f42",
+      "builder_image": "sha256:99197dc0617a8aaf7c26006d0404f7d355438e38a0505690f093993119c55684"
+    },
+    "ubuntu-24.04": {
+      "audit": {
+        "graph_valid": true,
+        "mode": "--audit",
+        "platform": "ubuntu-24.04",
+        "policies": [
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_length",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_classes",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_check_username",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_check_gecos",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_quality_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_changed_characters",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_lowercase",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_uppercase",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_digits",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_other",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_strength_thresholds",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_passphrase_words",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_match_length",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_similar_password",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_retry_count",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_depth",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_attempts",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_counting_period",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_unlock_time",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          }
+        ]
+      },
+      "driver_sha256": "fabcc35b148d15f3c4fe2f57a53e18b8a4b2c365653e2d20a700a67ed5db45b2",
+      "builder_image": "sha256:79b54052d205b995f4db1840cd852e8a1b40b92211133e5971860af6a13e64af"
+    },
+    "ubuntu-26.04": {
+      "audit": {
+        "graph_valid": true,
+        "mode": "--audit",
+        "platform": "ubuntu-26.04",
+        "policies": [
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_length",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_classes",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_check_username",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_check_gecos",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_quality_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_changed_characters",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_lowercase",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_uppercase",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_digits",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_quality",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_min_other",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwquality",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_strength_thresholds",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_passphrase_words",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_match_length",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_similar_password",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_retry_count",
+            "provider": "pam_pwquality",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_depth",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_attempts",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_counting_period",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_unlock_time",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "PamAuthUpdate"
+          }
+        ]
+      },
+      "driver_sha256": "957538a5ea4e8a6566952eb0681a5929ed64064e61c17d34cb1cdf3a0b226691",
+      "builder_image": "sha256:aecac4eb2268fd84e3405c6ae8d04b49687c3c61dd700a0e2b24be8b8631f7ff"
+    },
+    "alt-p11": {
+      "audit": {
+        "graph_valid": true,
+        "mode": "--audit",
+        "platform": "alt-p11",
+        "policies": [
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_min_length",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_min_classes",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_check_username",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_check_gecos",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_quality_enforce_for_root",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_passwdqc",
+            "registered": true,
+            "support": "Supported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_min_changed_characters",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_min_lowercase",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_min_uppercase",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_min_digits",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "password_min_other",
+            "provider": "pam_passwdqc",
+            "registered": false,
+            "support": "Unsupported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_strength_thresholds",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_passwdqc",
+            "registered": true,
+            "support": "Supported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_passphrase_words",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_passwdqc",
+            "registered": true,
+            "support": "Supported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_match_length",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_passwdqc",
+            "registered": true,
+            "support": "Supported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_similar_password",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_passwdqc",
+            "registered": true,
+            "support": "Supported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_quality",
+            "activation_registered": false,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [],
+            "name": "passwdqc_retry_count",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_passwdqc",
+            "registered": true,
+            "support": "Supported",
+            "topology": "StaticVerifyOnly"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_depth",
+            "parameter_executor": "Other",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "AltTcbManaged"
+          },
+          {
+            "activation": "enable_password_history",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_password_history",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "password_history_enforce_for_root",
+            "parameter_executor": "Other",
+            "provider": "pam_pwhistory",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "AltTcbManaged"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              },
+              {
+                "name": "disable_nopasswdlogin",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_attempts",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "AltTcbManaged"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              },
+              {
+                "name": "disable_nopasswdlogin",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_counting_period",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "AltTcbManaged"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              },
+              {
+                "name": "disable_nopasswdlogin",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_enforce_for_root",
+            "parameter_executor": "ManagedFlag",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "AltTcbManaged"
+          },
+          {
+            "activation": "enable_authentication_lockout",
+            "activation_registered": true,
+            "configuration_mode": "ProviderConfigFile",
+            "dependencies": [
+              {
+                "name": "enable_authentication_lockout",
+                "strength": "Recommended"
+              },
+              {
+                "name": "disable_nopasswdlogin",
+                "strength": "Recommended"
+              }
+            ],
+            "name": "failed_authentication_unlock_time",
+            "parameter_executor": "ManagedEntry",
+            "provider": "pam_faillock",
+            "registered": true,
+            "support": "RequiresTopologyActivation",
+            "topology": "AltTcbManaged"
+          }
+        ]
+      },
+      "driver_sha256": "39c7e15641a65cb501860df4e01a64dea7d5166626f2d870149b6c910b7e2088",
+      "builder_image": "sha256:2241c970ecfc922512a8f9d8fba7263d0836b859da9fbabb040c2884bae3e69d"
+    }
+  },
+  "harness_sha256": {
+    "tests/CMakeLists.txt": "5a0a8ba403459ca7614c057a98d59ee4e4fef7aba63061016c18378be3fbcea3",
+    "tests/integration/pam-dependencies/Driver.cpp": "4a60374a610c91a65e09b559b9cb7fa63ce7a14b5a2074dff6be019c24452fe5",
+    "tests/integration/pam-dependencies/alt-control.sh": "67ad2fb32ba059e1092e2f74c13366bd4d5855882e5206ae162692a0979075c4",
+    "tests/integration/pam-dependencies/build-and-audit.sh": "db677ee79a668b212e220bce5dfb2c6e6c5bb58106eaea991f79cc52ca6a698a"
+  },
+  "scope": "Native selected profiles and actual initPolicyRegistry; audit does not apply policies. ALT control probe narrows authentication scope to system-auth; not a stock-global-scope guarantee.",
+  "alt_control": {
+    "before_detail": "",
+    "before_inspect": true,
+    "enable": true,
+    "enable_detail": "",
+    "first_contains_managed": true,
+    "mode": "--alt-control",
+    "modes": [
+      {
+        "control_exit": 0,
+        "detail": "",
+        "inspect": true,
+        "local_file_bytes_preserved": true,
+        "manageable": true,
+        "mode": "multi",
+        "state": 1,
+        "system_auth_target": "system-auth-multi"
+      },
+      {
+        "control_exit": 0,
+        "detail": "",
+        "inspect": true,
+        "local_file_bytes_preserved": true,
+        "manageable": true,
+        "mode": "ldap",
+        "state": 1,
+        "system_auth_target": "system-auth-ldap"
+      },
+      {
+        "control_exit": 0,
+        "detail": "",
+        "inspect": true,
+        "local_file_bytes_preserved": true,
+        "manageable": true,
+        "mode": "local",
+        "state": 1,
+        "system_auth_target": "system-auth-local"
+      }
+    ],
+    "platform": "alt-p11"
+  },
+  "alt_packages": "pam-config-1.10.0-alt0.p11.2.noarch\ncontrol-0.8.0-alt3.noarch\npam0_passwdqc-2.0.3-alt3.x86_64\npam-1.7.1-alt1.x86_64\nd3bf62ddaab8cf5d94f2341c4c4788b60a1cf81795dc81cbc51e81f6d5a87ef0  /etc/control.d/facilities/system-auth\n"
+}
