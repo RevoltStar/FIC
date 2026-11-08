@@ -71,3 +71,23 @@ for row in x['journal_states']:
 assert all(not a['ok'] for a in x['orphan_apply'] + x['orphan_release'])
 assert x['orphan_bytes_preserved'] and x['orphan_journal_preserved']
 print('PASS I5 native ALT control/configuration proof: modes, two targets, local scope, journal, diagnostics, release; NOT authentication E2E')
+
+for row in x['foreign_history']:
+    broken = row['phase'] == 'BrokenBlock'
+    assert all(a['ok'] for a in row['activate'])
+    assert row['physical_proof'] is not broken
+    assert row['before']['capabilities'][1]['inspect'] is False
+    assert row['apply'][1]['ok'] is False and row['apply_preserved']
+    assert row['release'][1]['ok'] is not broken
+    assert row['foreign_preserved']
+    if broken:
+        assert row['broken_preserved']
+        assert row['after_release']['capabilities'][1]['active_records'] == 1
+        assert all(a['ok'] for a in row['cleanup_release'])
+    else:
+        assert row['after_release']['targets']['/etc/pam.d/system-auth-local-only'] == baseline['/etc/pam.d/system-auth-local-only'] + 'password include i5-admin-history\n'
+        assert row['after_release']['capabilities'][1]['active_records'] == 0
+        assert row['repeat_release'][1]['ok'] and row['repeat_preserved']
+        if row['phase'] == 'AppliedAbsent':
+            assert row['already_released'] and row['already_preserved']
+print('PASS I5 follow-up: foreign included history retained, journal-backed release and proven absence, malformed/orphan refused')

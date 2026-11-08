@@ -827,3 +827,39 @@ Raw logs/reports находятся в ignored build-pam-i5; компактны�
 [Linux-PAM 1.7.1 include/substack syntax](https://github.com/linux-pam/linux-pam/blob/v1.7.1/doc/man/pam.conf-syntax.xml).
 Историческое [обсуждение ALT templates](https://lists.altlinux.org/pipermail/devel/2017-June/202807.html)
 даёт контекст, но не заменяет native p11 evidence.
+
+### I5 follow-up — History release при стороннем provider в include
+
+База follow-up: `ace474877aa360b8702446b3a730a678b73a4610`.
+Подтверждённый RED: после успешной journal-backed activation отдельный
+`password include i5-admin-history` с чужим pam_pwhistory не менял FIC-block,
+но `inspectForRelease` и rollback отказывали из-за verifyNoExternalHistory.
+Та же ошибка блокировала AlreadyReleased при Applied + отсутствующем блоке.
+Ordinary inspect/apply обоснованно отказывали и продолжают отказывать.
+
+Минимальное исправление: verifyNoExternalHistory остаётся в ordinary
+inspection/enable, но не требуется physical inspection/disable. Строгие
+inspectTopology/inspectBlock, trusted target/storage/transaction locks/CAS и
+post-release durability не отключены. Разрешён независимый provider через
+include; поддержка произвольных прямых pwhistory rules в managed target не
+расширена. В unrecorded rollback только ALT History использует тот же physical
+inspector: отсутствие собственного блока позволяет идемпотентный повтор,
+а присутствующий orphan по-прежнему Conflict без удаления или adoption.
+
+Регрессии используют настоящий PamRollback/RollbackExecutor и journal в
+native ALT: AppliedPresent удаляет только FIC block, возвращает исходный tcb
+и сохраняет include/foreign file byte-exact; AppliedAbsent возвращает
+AlreadyReleased без записи в PAM/journal до штатной journal finalization;
+повторный rollback успешен. Повреждённый block и orphan с foreign include
+отклоняются без изменения чужих bytes; повреждённая запись остаётся active.
+Fixture cleanup исправляет только намеренно повреждённый тестом marker,
+не является production recovery. Нормальные I5 control cases сохраняются.
+
+Evidence: `tests/integration/pam-dependencies/i5-history-release-evidence.json`.
+ALT native build +24 relevant CTest, registry audit/control probe и Debian12
+shared regression gate проверены; Debian13/Ubuntu24/Ubuntu26 повторно не
+запускались, поскольку routing change ограничен AltTcbManaged PasswordHistory.
+Это ownership/configuration lifecycle proof, не I6/authentication E2E.
+Ограничения причинного ownership/ABA, missing entry services и остаточной
+CAS-гонки из основного I5 остаются. API, markers/schema, C2, faillock,
+activation policy, Required, pwtxn и package lifecycle не менялись.

@@ -1,0 +1,246 @@
+{
+  "task": "PAM I5 ALT History foreign-provider release follow-up",
+  "base_commit": "ace474877aa360b8702446b3a730a678b73a4610",
+  "result": "PASS within existing legacy ALT ownership contract",
+  "production_files": [
+    "fic/src/modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.cpp",
+    "fic/src/rollback/PamRollback.cpp"
+  ],
+  "red": {
+    "unit_log": {
+      "path": "build-pam-i5/followup-red-build.log",
+      "sha256": "b5888f0e0d6415fa319a52431c3c2b8b3d40b09bfd851c30df2bca2715a9df5c"
+    },
+    "unit_failure": "foreign include blocked physical release proof",
+    "native_report": {
+      "path": "build-pam-i5/followup-red.json",
+      "sha256": "8490fbca5a90684b75de13d921f0d8a8ed7aea20f934ff3eeeab7d0ea6a3c5e5"
+    },
+    "native_log": {
+      "path": "build-pam-i5/followup-red.log",
+      "sha256": "dbdb54a3666ce7175974c07b35fdf3865535b96eebbc393ef5b1ce33c9116bc4"
+    },
+    "checker_log": {
+      "path": "build-pam-i5/followup-red-check.log",
+      "sha256": "b202162d82e0cae0ba0e1f577ea5d9a9808398a3f24620085ab9019b938bae5c"
+    },
+    "cases": [
+      {
+        "phase": "AppliedPresent",
+        "physical_proof": false,
+        "ordinary_inspect": false,
+        "ordinary_apply": false,
+        "apply_preserved": true,
+        "journal_backed_release": {
+          "detail": "PAM topology drift: external pam_pwhistory rule is effective at /etc/pam.d/i5-admin-history:2",
+          "name": "enable_password_history",
+          "ok": false,
+          "status": 2
+        },
+        "foreign_file_preserved": true,
+        "active_after": 1,
+        "repeat_release": {
+          "detail": "PAM topology drift: external pam_pwhistory rule is effective at /etc/pam.d/i5-admin-history:2",
+          "name": "enable_password_history",
+          "ok": false,
+          "status": 2
+        }
+      },
+      {
+        "phase": "AppliedAbsent",
+        "physical_proof": false,
+        "ordinary_inspect": false,
+        "ordinary_apply": false,
+        "apply_preserved": true,
+        "journal_backed_release": {
+          "detail": "PAM topology drift: external pam_pwhistory rule is effective at /etc/pam.d/i5-admin-history:2",
+          "name": "enable_password_history",
+          "ok": false,
+          "status": 2
+        },
+        "foreign_file_preserved": true,
+        "active_after": 1,
+        "already_released": false,
+        "already_preserved": true,
+        "repeat_release": {
+          "detail": "PAM topology drift: external pam_pwhistory rule is effective at /etc/pam.d/i5-admin-history:2",
+          "name": "enable_password_history",
+          "ok": false,
+          "status": 2
+        }
+      },
+      {
+        "phase": "BrokenBlock",
+        "physical_proof": false,
+        "ordinary_inspect": false,
+        "ordinary_apply": false,
+        "apply_preserved": true,
+        "journal_backed_release": {
+          "detail": "PAM topology drift: broken FIC pam_pwhistory managed block",
+          "name": "enable_password_history",
+          "ok": false,
+          "status": 2
+        },
+        "foreign_file_preserved": true,
+        "active_after": 1
+      }
+    ],
+    "orphan_apply_release_refused": true,
+    "orphan_bytes_journal_preserved": true,
+    "scope": "AppliedPresent/AppliedAbsent release failures reproduce the production defect. Initial broken_preserved used an invalid whole-target comparison including independent faillock release; corrected GREEN compares history/foreign suffix."
+  },
+  "green": {
+    "native_report": {
+      "path": "build-pam-i5/followup-green.json",
+      "sha256": "ef79092568ea49aeb81646109fb4924be239fae6d8740859662d08f93e4a4c99"
+    },
+    "native_log": {
+      "path": "build-pam-i5/followup-green.log",
+      "sha256": "30ea04af7e77199f6e8a6003931e630ab3c61573c76aa132ae9faa4e5bd58657"
+    },
+    "checker_log": {
+      "path": "build-pam-i5/followup-green-check.log",
+      "sha256": "6c18f248f587a20a8eccc8b939313bef3cf7be29b99237384fee2a95d46b38da"
+    },
+    "cases": [
+      {
+        "phase": "AppliedPresent",
+        "physical_proof": true,
+        "ordinary_inspect": false,
+        "ordinary_apply": false,
+        "apply_preserved": true,
+        "journal_backed_release": {
+          "detail": "Rollback выполнен для 1 mutation",
+          "name": "enable_password_history",
+          "ok": true,
+          "status": 0
+        },
+        "foreign_file_preserved": true,
+        "active_after": 0,
+        "repeat_preserved": true,
+        "repeat_release": {
+          "detail": "No journal-backed FIC PAM topology to release",
+          "name": "enable_password_history",
+          "ok": true,
+          "status": 1
+        }
+      },
+      {
+        "phase": "AppliedAbsent",
+        "physical_proof": true,
+        "ordinary_inspect": false,
+        "ordinary_apply": false,
+        "apply_preserved": true,
+        "journal_backed_release": {
+          "detail": "Активные mutation не требуют отката: FIC не владеет текущим состоянием",
+          "name": "enable_password_history",
+          "ok": true,
+          "status": 1
+        },
+        "foreign_file_preserved": true,
+        "active_after": 0,
+        "already_released": true,
+        "already_preserved": true,
+        "repeat_preserved": true,
+        "repeat_release": {
+          "detail": "No journal-backed FIC PAM topology to release",
+          "name": "enable_password_history",
+          "ok": true,
+          "status": 1
+        }
+      },
+      {
+        "phase": "BrokenBlock",
+        "physical_proof": false,
+        "ordinary_inspect": false,
+        "ordinary_apply": false,
+        "apply_preserved": true,
+        "journal_backed_release": {
+          "detail": "PAM topology drift: broken FIC pam_pwhistory managed block",
+          "name": "enable_password_history",
+          "ok": false,
+          "status": 2
+        },
+        "foreign_file_preserved": true,
+        "active_after": 1,
+        "broken_preserved": true
+      }
+    ],
+    "orphan_apply_release_refused": true,
+    "orphan_bytes_journal_preserved": true
+  },
+  "platforms": {
+    "alt-p11": {
+      "build": "fic +22 relevant targets PASS +pam_fic_pwtxn",
+      "ctest_passed": 24,
+      "ctest_failed": 0,
+      "registry_required_audit": "PASS",
+      "source_before_sha256": "f4c2d7b0214a8a1b65d9ce9ae8e9d8debfa276f6cf2a7136d5725fcfa784c2e4",
+      "source_after_sha256": "f4c2d7b0214a8a1b65d9ce9ae8e9d8debfa276f6cf2a7136d5725fcfa784c2e4",
+      "image_id": "sha256:f06b64ce360662f90026ccfc9e489be6b824b416e43a89ab5501a5c7db4607e3",
+      "artifacts": {
+        "build": {
+          "path": "build-pam-i5/i5-build-alt-p11.log",
+          "sha256": "70ab1cdd2309400ae3c6a69088fbb4fd0212e9bd58c12d993dd24e45a27b8b29"
+        },
+        "tests": {
+          "path": "build-pam-i5/i5-tests-alt-p11.log",
+          "sha256": "de822d0d7b1d70dc1c36448312acb4b8f52baa4b4bb2fcfe4ab4699771fa62a6"
+        },
+        "audit": {
+          "path": "build-pam-i5/i5-audit-alt-p11.json",
+          "sha256": "7c9ecb1b65a6696a1877b981bc3efdf7e641061debd2ddd38b34bd0ae707d713"
+        },
+        "contracts": {
+          "path": "build-pam-i5/i5-contracts-alt-p11.json",
+          "sha256": "234eaeb0f7f4d6347ee6f68fa848a650a7776303be801ceee3031369f6b081c9"
+        },
+        "binaries": {
+          "path": "build-pam-i5/i5-binaries-alt-p11.sha256",
+          "sha256": "52c2ff30d06834ed842562bd1fe6cdc887a3d34f4bc11fd8f5d4cf4be2fbbbcd"
+        }
+      }
+    },
+    "debian12": {
+      "build": "fic +22 relevant targets PASS",
+      "ctest_passed": 24,
+      "ctest_failed": 0,
+      "registry_required_audit": "PASS",
+      "source_before_sha256": "f4c2d7b0214a8a1b65d9ce9ae8e9d8debfa276f6cf2a7136d5725fcfa784c2e4",
+      "source_after_sha256": "f4c2d7b0214a8a1b65d9ce9ae8e9d8debfa276f6cf2a7136d5725fcfa784c2e4",
+      "image_id": "sha256:3050e7a79b0dc16874f8ec2a9d14c9a88a1abd0019cd1188736827577591cd33",
+      "artifacts": {
+        "build": {
+          "path": "build-pam-i5/i5-build-debian12.log",
+          "sha256": "783383bdcd11839e29b269f4dcfd0bf5a08a731d49b6c6c588dcf3925f220f5f"
+        },
+        "tests": {
+          "path": "build-pam-i5/i5-tests-debian12.log",
+          "sha256": "f83a8e125ab1e7641d8bb226a1ec86ae92c61661877e705d18deb082e35f72bb"
+        },
+        "audit": {
+          "path": "build-pam-i5/i5-audit-debian12.json",
+          "sha256": "9a6846e9263d0b7bd7cb08640acc484e1d460399ed35972d91cdc547348f4e45"
+        },
+        "contracts": {
+          "path": "build-pam-i5/i5-contracts-debian12.json",
+          "sha256": "e4150f3ad7a8f600ea361601a9317b7ec25bfe0319f8d00bb1f4b8d8d692287e"
+        },
+        "binaries": {
+          "path": "build-pam-i5/i5-binaries-debian12.sha256",
+          "sha256": "670bd9f1e0e3efa709d7fb50fdd2aab2400b5ca38bf3be2635d2d7bfe429e54b"
+        }
+      }
+    }
+  },
+  "limits": [
+    "Configuration/ownership lifecycle proof, not PAM authentication or I6",
+    "No full project CTest/package E2E or repeat of Debian13/Ubuntu24/Ubuntu26",
+    "Minimal ALT lacks production service entry files as documented in I5",
+    "Existing ALT ABA causal ownership and non-cooperating writer CAS limits retained",
+    "No API/schema/markers, C2/faillock/activation/Required/pwtxn/lifecycle changes",
+    "Raw reports local ignored build-pam-i5; historical i5-evidence.json/R1-I4 unchanged"
+  ],
+  "source_manifest_definition": "run-i1.sh existing sorted git-tracked code manifest; docs/evidence excluded",
+  "checker_sha256": "cdf7b507de8fbf213ae2baf4f057704894906d2f928c376771eae82b7f9df0a8"
+}

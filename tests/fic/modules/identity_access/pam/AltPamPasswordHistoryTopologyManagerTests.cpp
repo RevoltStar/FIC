@@ -134,6 +134,33 @@ void testReleaseProofIndependentOfEffectiveness() {
         "history release did not preserve current tcb rule: " + error);
 }
 
+void testForeignIncludedHistoryDoesNotBlockRelease() {
+    TemporaryTree tree;
+    AltPamPasswordHistoryTopologyManager manager(tree.platform(), tree.options());
+    std::string error;
+    require(manager.enable(error), error);
+    const auto foreign = tree.root / "pam.d/admin-history";
+    const std::string foreignBytes = "# administrator\npassword required pam_pwhistory.so remember=7\n";
+    const std::string include = "password include admin-history\n";
+    TemporaryTree::write(foreign, foreignBytes);
+    TemporaryTree::write(tree.target(), TemporaryTree::read(tree.target()) + include);
+    fic::identity::pam::PamTopologyStatus status;
+    require(!manager.inspect(status, error) && !manager.enable(error),
+            "ordinary history accepted foreign provider");
+    require(manager.inspectForRelease(status, error),
+            "foreign include blocked physical release proof: " + error);
+    require(manager.disable(error), "foreign include blocked release: " + error);
+    require(manager.inspectForRelease(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Disabled,
+            "own-block absence not proven with foreign include: " + error);
+    require(manager.disable(error), "repeated disable failed: " + error);
+    require(TemporaryTree::read(tree.target()) == kCanonical + include &&
+                TemporaryTree::read(foreign) == foreignBytes,
+            "release changed foreign bytes or original tcb");
+    require(!manager.inspect(status, error) && !manager.enable(error),
+            "ordinary history adopted foreign-only topology");
+}
+
 void testRoundTripAndStorage() {
     TemporaryTree tree;
     AltPamPasswordHistoryTopologyManager manager(
@@ -570,6 +597,7 @@ void testTransactionModuleTrustedInspection() {
 int main() {
     try {
         testRoundTripAndStorage();
+        testForeignIncludedHistoryDoesNotBlockRelease();
         testReleaseProofIndependentOfEffectiveness();
         testProviderOwnedHistoryFilesRemainValid();
         testUnsafeHistoryStorageFailsClosed();

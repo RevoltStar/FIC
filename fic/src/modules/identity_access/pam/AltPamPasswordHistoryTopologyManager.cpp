@@ -704,7 +704,7 @@ bool AltPamPasswordHistoryTopologyManager::inspectReadOnlyImpl(AltPamPasswordHis
         !inspectTopology(capability->topologyTarget, snapshot.content, lines,
                          rules, block, error))
         return false;
-    if (!verifyNoExternalHistory(
+    if (proveEffective && !verifyNoExternalHistory(
             platformConfig_, *capability, block.present, error))
         return false;
     if (!block.present) {
@@ -881,9 +881,8 @@ bool AltPamPasswordHistoryTopologyManager::disable(std::string& error) {
         !inspectTopology(capability->topologyTarget, original.content, lines,
                          rules, block, error))
         return false;
-    if (!verifyNoExternalHistory(
-            platformConfig_, *capability, block.present, error))
-        return false;
+    // Releasing our exact block does not own providers reached through
+    // independent includes. inspectTopology above remains strict.
     if (!block.present) {
         error.clear();
         return true;

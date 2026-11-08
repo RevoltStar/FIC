@@ -288,7 +288,14 @@ PamRollbackResult inspectUnrecordedPamCapability(
     auto manager = options.managerFactory(*capability, *services, error);
     if (!manager) return {PamRollbackState::Failed, error};
     fic::identity::pam::PamTopologyStatus status;
-    if (!manager->inspect(status, error))
+    // After ALT history release, an independent included provider must not
+    // turn proven own-block absence into a conflict. A present orphan still
+    // returns Enabled/manageable below and is never adopted or removed.
+    const bool altHistory = capability->topology ==
+        fic::platform::PamTopologyStrategyKind::AltTcbManaged &&
+        capability->capability == fic::platform::PamCapability::PasswordHistory;
+    if (!(altHistory ? manager->inspectForRelease(status, error)
+                     : manager->inspect(status, error)))
         return {PamRollbackState::Conflict,
                 "PAM topology cannot be classified: " + error};
     if (status.state == PamTopologyState::Enabled && status.manageable)

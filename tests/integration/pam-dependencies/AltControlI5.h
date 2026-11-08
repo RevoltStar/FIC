@@ -4,6 +4,7 @@
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "rollback/RollbackExecutor.h"
+#include "rollback/PamRollback.h"
 
 json altControlI5(const PlatformProfile& profile,
     const PlatformExecutableResolver& executables, const fs::path& root) {
@@ -194,12 +195,79 @@ json altControlI5(const PlatformProfile& profile,
         test["release"]=release();test["after_release"]=snapshot();
         result["journal_states"].push_back(test);
     }
+    // Journal-backed history release must not own or erase an independent
+    // provider reached through an otherwise valid include outside our block.
+    const fs::path foreignHistory = "/etc/pam.d/i5-admin-history";
+    const std::string foreignBytes = "# admin history\npassword required pam_pwhistory.so remember=7\n";
+    const std::string foreignInclude = "password include i5-admin-history\n";
+    result["foreign_history"]=json::array();
+    for(const auto* phase:{"AppliedPresent","AppliedAbsent","BrokenBlock"}) {
+        json test={{"phase",phase},{"activate",apply()}};
+        const auto* c=p::capabilityConfig(profile.pam,PamCapability::PasswordHistory);
+        const auto* scope=p::scopeConfig(profile.pam,c->scope);
+        auto manager=p::createPamTopologyManager(profile.pam,*c,scope->services,executables,error);
+        need(bool(manager),error);
+        if(std::string(phase)=="AppliedAbsent") need(manager->disable(error),error);
+        write(foreignHistory,foreignBytes);
+        write(targets[0],read(targets[0])+foreignInclude);
+        if(std::string(phase)=="BrokenBlock") {
+            auto broken=read(targets[0]);
+            const auto marker=broken.find("# BEGIN FIC pam_pwhistory transaction");
+            need(marker!=std::string::npos,"history fixture marker missing");
+            broken.replace(marker,5,"# BAD");write(targets[0],broken);
+        }
+        const auto before=bytes();const auto priorJournal=read(paths.mutationJournalFile);
+        p::PamTopologyStatus physical;error.clear();
+        test["physical_proof"]=manager->inspectForRelease(physical,error);
+        test["physical_detail"]=error;test["before"]=snapshot();
+        test["apply"]=apply();
+        test["apply_preserved"]=bytes()==before && read(paths.mutationJournalFile)==priorJournal;
+        if(std::string(phase)=="AppliedAbsent") {
+            const auto records=journal->activeRecords({"IDENTITY_ACCESS","PAM","enable_password_history"});
+            need(records.size()==1,"missing Applied absence fixture record");
+            fic::rollback::PamRollbackOptions options;options.platform=profile.pam;
+            options.managerFactory=deps.pamManagerFactory;
+            auto proof=fic::rollback::undoPamCapability(options,records[0].id,
+                std::get<fic::rollback::UndoDisablePamCapability>(records[0].undo.payload));
+            test["already_released"]=proof.state==fic::rollback::PamRollbackState::AlreadyReleased;
+            test["already_preserved"]=bytes()==before && read(paths.mutationJournalFile)==priorJournal;
+        }
+        test["release"]=release();test["after_release"]=snapshot();
+        test["foreign_preserved"]=read(foreignHistory)==foreignBytes;
+        if(std::string(phase)=="BrokenBlock") {
+            const auto prior=before[targets[0].string()].get<std::string>();
+            const auto start=prior.find("# BADIN FIC pam_pwhistory transaction");
+            need(start!=std::string::npos,"broken fixture block missing");
+            const auto tail=prior.substr(start);const auto current=read(targets[0]);
+            test["broken_preserved"]=current.size()>=tail.size() &&
+                current.compare(current.size()-tail.size(),tail.size(),tail)==0;
+            auto repaired=read(targets[0]);
+            const auto marker=repaired.find("# BADIN FIC pam_pwhistory transaction");
+            need(marker!=std::string::npos,"broken fixture marker missing");
+            repaired.replace(marker,5,"# BEG");write(targets[0],repaired);
+            test["cleanup_release"]=release();
+        } else {
+            const auto priorBytes=bytes();const auto priorJournal=read(paths.mutationJournalFile);
+            test["repeat_release"]=release();
+            test["repeat_preserved"]=bytes()==priorBytes && read(paths.mutationJournalFile)==priorJournal;
+        }
+        fs::remove(foreignHistory);
+        auto cleaned=read(targets[0]);const auto at=cleaned.find(foreignInclude);
+        need(at!=std::string::npos,"release lost foreign include");cleaned.erase(at,foreignInclude.size());
+        write(targets[0],cleaned);
+        // Independent cases also run on the unfixed base: remove only the
+        // test-owned include, then close any failed fixture record normally.
+        test["reset_without_foreign"]=release();
+        result["foreign_history"].push_back(test);
+    }
     result["orphan"]=json::array();
     for(auto kind:{PamCapability::AuthenticationLockout,PamCapability::PasswordHistory}) {
         const auto* c=p::capabilityConfig(profile.pam,kind);const auto* scope=p::scopeConfig(profile.pam,c->scope);
         auto manager=p::createPamTopologyManager(profile.pam,*c,scope->services,executables,error);
         need(manager && manager->enable(error),error);
     }
+    write(foreignHistory,foreignBytes);
+    write(targets[0],read(targets[0])+foreignInclude);
     const auto orphanBytes=bytes();const auto orphanJournal=read(paths.mutationJournalFile);
     result["orphan_apply"]=apply();result["orphan_release"]=release();
     result["orphan_bytes_preserved"]=bytes()==orphanBytes;
