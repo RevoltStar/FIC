@@ -25,6 +25,10 @@ if [[ $stage == i6 ]]; then extra='|pam_native_consumer_conversation_tests'; fi
 regex="^($(tr ' ' '|' <<< "$targets")|pam_packaging_static_checks|platform_profile_static_checks${extra})$"
 # Source receipt excludes docs/evidence, so later reporting cannot change it.
 receipt() {
+ if [[ $stage == i6 ]]; then
+  python3 "$repo/tests/integration/pam-dependencies/i6-source-manifest.py"
+  return
+ fi
  python3 - "$repo" <<'PY'
 import hashlib,pathlib,subprocess,sys
 root=pathlib.Path(sys.argv[1]); h=hashlib.sha256()

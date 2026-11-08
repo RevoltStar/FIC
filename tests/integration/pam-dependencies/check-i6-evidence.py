@@ -4,11 +4,11 @@ import hashlib,json,pathlib,re,subprocess,sys
 root=pathlib.Path(__file__).resolve().parents[3]
 evidence=pathlib.Path(sys.argv[1] if len(sys.argv)>1 else root/'build-pam-i6')
 def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
-paths=subprocess.check_output(['git','-C',str(root),'ls-files','-z','fic','fic-common','tests','cmake','CMakeLists.txt']).decode().split('\0')
-h=hashlib.sha256()
-for name in sorted(p for p in paths if p and pathlib.Path(p).suffix in {'.cpp','.h','.c','.cmake','.txt','.py','.sh'}):
- h.update(name.encode()+b'\0'+hashlib.sha256((root/name).read_bytes()).digest())
-source=h.hexdigest()
+import importlib.util
+_spec=importlib.util.spec_from_file_location('i6_source_manifest',pathlib.Path(__file__).with_name('i6-source-manifest.py'))
+_manifest=importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_manifest)
+source=_manifest.source_manifest(root)
 required=['baseline password change','baseline correct authentication','baseline incorrect authentication',
  'quality positive','quality weak rejected','quality root bypass positive','quality root enforce negative',
  'quality refresh short candidate rejected','quality refresh relaxed candidate accepted',

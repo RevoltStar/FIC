@@ -1055,3 +1055,36 @@ parameter cycle; системный root специально не блокир�
 binaries сообщают version 0.0.0-alpha/build_commit unknown: фактические source
 и binary hashes записаны, release artifact attestation не заявляется.
 Принятые ALT ABA/causal ownership и non-cooperating-writer CAS limits сохранены.
+
+### I6 follow-up: привязка к native runtime inputs
+
+Follow-up от базы `69cdb12df31e26562c63655edb92d9b810a02565` использует
+единый `i6-source-manifest.py` в I6 runner и checker. Сохраняется прежний
+набор tracked code inputs (`fic/`, `fic-common/`, `tests/`, `cmake/`,
+`CMakeLists.txt`, расширения cpp/h/c/cmake/txt/py/sh); добавлены configure-time
+`.in` templates. Дополнительно **без
+фильтра расширений** включены tracked `packaging/deb/pam-slots/`,
+`packaging/deb/pam-configs/`, `fic/src/resources/pam/`,
+`fic/src/resources/config/`, `fic/src/resources/lang/` и
+`tests/integration/pam-dependencies/Dockerfile.functional-runtime`.
+Также учтены читаемые двумя выбранными static CTest packaging builders
+`packaging/{deb,rpm}/build-fic-*.sh`, `Dockerfile.debian13`,
+DEB `fic.postinst`/`fic.prerm`, RPM `fic-pam-faillock`,
+`fic-trust-sync.filetrigger`, `fic-dick.pre`/`fic.post`/`fic.preun`. Это
+проверено трассировкой `Path.read_text` обоих static scripts; packaging
+целиком в manifest не включается.
+Helper, checker и связанные test scripts входят в code inputs. Сортировка
+путей детерминирована; digest учитывает путь, NUL и SHA-256 содержимого.
+Документация и generated evidence не входят в manifest. Внешние image IDs,
+package versions и binary hashes остаются отдельными receipts.
+
+`test-i6-source-manifest.py` изменяет только временный checkout: проверяет
+стабильность hash и цепочку input → новый hash → отказ настоящего checker
+для production C++, neutral History slot, History hook, ALT history config,
+runtime recipe, helper и checker. Изменение docs/generated evidence не
+инвалидирует native результаты. Старое evidence намеренно отклоняется новым
+алгоритмом; новые source receipts требуют повторного исполнения основной
+матрицы, а не замены hash в старых отчётах. Исторические R1–I5 manifest и
+evidence не меняются. Supplemental результаты сохраняют исходные receipts
+и явно отделены от повторного основного запуска; их production/payload/gate
+inputs не изменились. L4 по-прежнему не подтверждён.
