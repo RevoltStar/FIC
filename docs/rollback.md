@@ -1518,6 +1518,18 @@ permanent pam-auth-update hooks являются инфраструктурой,
 нейтрализует только strict FIC slot markers с exact journal mutation id. Crash-
 partial subset допускается к release только при совпадении id; malformed/wrong
 id — conflict. ALT использует существующие topology managers и их lock order.
+Для ALT known-journal release использует physical `inspectForRelease`, а не
+проверку участия в selected control graph. Неэффективный selection или
+отсутствующий provider module сами по себе не препятствуют удалению корректных
+blocks. Marker/placement, согласованность обоих faillock targets/strategy/tcb,
+history storage/transaction lock, payload/profile, CAS и durability остаются
+обязательными. Ordinary inspect/apply и control status требуют effectiveness;
+orphans не усыновляются. При компенсации неизвестные текущие bytes не
+перезаписываются старым whole-file snapshot; возвращается явный failure.
+Это не multi-file atomicity. ALT markers без MutationId/file-generation receipt
+не доказывают causal ownership при согласованном ABA recreation под оставшейся
+active записью. Существующий legacy release-контракт сохранён; подробная граница
+и native mode matrix — §13 docs/pam-r1-architecture-research.md.
 `StaticVerifyOnly`
 никогда не создаёт provenance и не запускает native deactivation. PAM provider
 options (`PamOptionPolicy`, включая

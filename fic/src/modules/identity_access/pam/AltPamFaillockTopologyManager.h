@@ -81,6 +81,7 @@ public:
     // creating/truncating the topology PID lock. Repeat under admission later.
     bool inspectReadOnly(AltPamFaillockTopologyState& state,std::string& error);
     bool inspect(PamTopologyStatus& status, std::string& error) override;
+    bool inspectForRelease(PamTopologyStatus& status, std::string& error) override;
     bool canEnable(std::string& error) const override;
     bool enable(std::string& error) override;
     bool disable(std::string& error) override;
@@ -101,6 +102,9 @@ private:
                 std::string& error);
     bool inspectReadOnly(AltPamFaillockTopologyState& state,
                 std::optional<fic::platform::PamFaillockStrategy>& strategy,std::string& error);
+    bool inspectReadOnlyImpl(AltPamFaillockTopologyState& state,
+        std::optional<fic::platform::PamFaillockStrategy>& strategy,
+        std::string& error, bool proveEffective);
     bool verifySemanticEffectiveness(std::string& error) const;
 };
 

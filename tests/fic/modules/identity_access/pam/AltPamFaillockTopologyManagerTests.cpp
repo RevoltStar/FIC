@@ -299,6 +299,67 @@ AltPamPasswordHistoryTopologyOptions historyOptions(
     return options;
 }
 
+void testTwoTargetReleaseConflicts() {
+    TemporaryTree tree;
+    writeSshUseFirstPassGraph(tree);
+    auto platform = useFirstPassPlatform(tree);
+    auto options = tree.options();
+    options.semanticVerifier = [](std::string& why) { why.clear(); return true; };
+    AltPamFaillockTopologyManager manager(platform, options);
+    std::string error;
+    require(manager.enableStrategy(fic::platform::PamFaillockStrategy::PreauthRequired, error), error);
+    const auto secondary = tree.root / "pam.d/system-auth-use_first_pass-local-only";
+    const auto primaryBytes = TemporaryTree::read(tree.target());
+    const auto secondaryBytes = TemporaryTree::read(secondary);
+    PamTopologyStatus status;
+    fs::remove(secondary);
+    require(!manager.inspectForRelease(status, error) && TemporaryTree::read(tree.target()) == primaryBytes,
+        "release proof accepted missing second target");
+    TemporaryTree::write(secondary, secondaryBytes);
+    auto mixed = secondaryBytes;
+    const auto position = mixed.find(AltPamFaillockTopologyManager::PREAUTH_RULE_REQUIRED);
+    require(position != std::string::npos, "strategy fixture absent");
+    mixed.replace(position, std::strlen(AltPamFaillockTopologyManager::PREAUTH_RULE_REQUIRED),
+                  AltPamFaillockTopologyManager::PREAUTH_RULE_REQUISITE);
+    TemporaryTree::write(secondary, mixed);
+    require(!manager.inspectForRelease(status, error) && TemporaryTree::read(secondary) == mixed,
+        "release proof accepted mixed strategies");
+    TemporaryTree::write(secondary, secondaryBytes);
+    auto changedTcb = primaryBytes;
+    const std::string anchor = "pam_tcb.so shadow fork nullok";
+    const auto tcb = changedTcb.find(anchor);
+    require(tcb != std::string::npos, "tcb fixture absent");
+    changedTcb.replace(tcb, anchor.size(), anchor + " bogus");
+    TemporaryTree::write(tree.target(), changedTcb);
+    require(!manager.inspectForRelease(status, error) && TemporaryTree::read(tree.target()) == changedTcb,
+        "release proof accepted tcb drift relative to FIC ORIGINAL");
+    TemporaryTree::write(tree.target(), primaryBytes);
+    require(manager.inspectForRelease(status, error), error);
+}
+
+void testReleaseProofIndependentOfEffectiveness() {
+    TemporaryTree tree;
+    bool effective = true;
+    auto options = tree.options();
+    options.semanticVerifier = [&](std::string& why) { why = effective ? "" : "selected graph ineffective"; return effective; };
+    AltPamFaillockTopologyManager manager(tree.platform(), options);
+    std::string error;
+    require(manager.enable(error), error);
+    const auto owned = TemporaryTree::read(tree.target());
+    effective = false;
+    PamTopologyStatus state;
+    require(!manager.inspect(state, error), "ordinary inspection accepted ineffective graph");
+    require(manager.inspectForRelease(state, error) && state.state == PamTopologyState::Enabled,
+        "physical release proof incorrectly required active effectiveness: " + error);
+    require(TemporaryTree::read(tree.target()) == owned, "physical release proof changed target");
+    TemporaryTree::write(tree.target(), owned + AltPamFaillockTopologyManager::PREAUTH_BEGIN + "\n");
+    require(!manager.inspectForRelease(state, error), "release proof accepted duplicated marker");
+    TemporaryTree::write(tree.target(), owned);
+    require(manager.disable(error) && manager.inspectForRelease(state, error) &&
+            state.state == PamTopologyState::Disabled && TemporaryTree::read(tree.target()) == kCanonical,
+        "release did not preserve original tcb bytes under ineffective graph: " + error);
+}
+
 void testCanonicalRoundTrip() {
     TemporaryTree tree;
     AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
@@ -771,6 +832,29 @@ void testSecondTargetWriteFailureRollsBackFirstTarget() {
             "second-target failure did not restore the first target exactly");
 }
 
+void testCompensationPreservesConcurrentEdit() {
+    TemporaryTree tree;
+    writeSshUseFirstPassGraph(tree);
+    auto options = tree.options();
+    std::size_t writes = 0;
+    options.writer = [&](const std::string& path, const std::string& content,
+                         const AtomicWriteOptions& writeOptions, std::string* error) {
+        if (++writes == 2) {
+            TemporaryTree::write(tree.target(), TemporaryTree::read(tree.target()) + "# admin edit\n");
+            if (error) *error = "injected second-target failure";
+            return false;
+        }
+        return AtomicFileWriter::write(path, content, writeOptions, error);
+    };
+    AltPamFaillockTopologyManager manager(useFirstPassPlatform(tree), options);
+    std::string error;
+    require(!manager.enable(error), "second-target failure ignored");
+    require(TemporaryTree::read(tree.target()).find("# admin edit\n") != std::string::npos,
+            "compensation overwrote concurrent administrator edit");
+    require(error.find("CRITICAL") != std::string::npos && writes == 2,
+            "conflicted compensation was not refused: " + error);
+}
+
 void testSssModeVerifiesManagedLocalBranch() {
     TemporaryTree tree;
     TemporaryTree::write(
@@ -800,7 +884,11 @@ void testSssModeVerifiesManagedLocalBranch() {
         "auth required pam_sss.so forward_pass\n"
         "account required pam_sss.so\n");
     TemporaryTree::write(tree.root / "pam.d/system-auth-common", "# empty\n");
-    AltPamFaillockTopologyManager manager(tree.platform(), tree.options());
+    auto platform = tree.platform();
+    // Match the production ALT local-user subject contract; the fixture
+    // intentionally has an independent unprotected domain SSSD branch.
+    platform.capabilities.front().subjectScope = fic::platform::PamIdentitySubjectScope::LocalUsersOnly;
+    AltPamFaillockTopologyManager manager(platform, tree.options());
     std::string error;
     const bool enabled = manager.enable(error);
     require(enabled,
@@ -1000,16 +1088,15 @@ void testDisablePostconditionRollback() {
     };
     AltPamFaillockTopologyManager manager(
         tree.platform(), std::move(options));
-    require(!manager.disable(error) &&
-                error.find("original PAM configuration restored") !=
-                    std::string::npos,
-            "disable postcondition failure did not trigger rollback");
-    require(TemporaryTree::read(tree.target()) == enabled,
-            "disable rollback did not restore enabled bytes");
+    require(!manager.disable(error) && error.find("CRITICAL") != std::string::npos,
+            "unexpected publication did not refuse compensation: " + error);
+    require(writes == 1 && TemporaryTree::read(tree.target()) != enabled &&
+                TemporaryTree::read(tree.target()).find(
+                    "# BEGIN FIC pam_faillock unexpected\n") != std::string::npos,
+            "compensation overwrote unexpected publication bytes");
     AltPamFaillockTopologyState state;
-    require(manager.status(state, error) &&
-                state == AltPamFaillockTopologyState::Enabled,
-            "disable rollback did not restore effective enabled state: " + error);
+    require(!manager.status(state, error),
+            "unexpected publication was reported as effective topology");
 }
 
 void testSymlinkRejected() {
@@ -1299,6 +1386,8 @@ int main(int argc, char** argv) {
         }
         require(argc == 1, "unknown ALT topology test arguments");
         testCanonicalRoundTrip();
+        testReleaseProofIndependentOfEffectiveness();
+        testTwoTargetReleaseConflicts();
         testAltStrategyTransitions();
         testAltAuthsuccRoundTripChains();
         testWhitespaceAndUnrelatedContent();
@@ -1313,6 +1402,7 @@ int main(int argc, char** argv) {
         testUseFirstPassUnsafeAuthTailRejectedBeforeWrite();
         testFaillockAndPasswordHistoryCoexistence();
         testSecondTargetWriteFailureRollsBackFirstTarget();
+        testCompensationPreservesConcurrentEdit();
         testExecutableAuthTailRejectedBeforeWrite();
         testExternalTopologyRejected();
         testBrokenMarkersRejected();

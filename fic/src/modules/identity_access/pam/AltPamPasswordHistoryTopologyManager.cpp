@@ -630,6 +630,24 @@ bool AltPamPasswordHistoryTopologyManager::verifySemanticEffectiveness(
         error = formatPamCapabilityVerification(verification);
         return false;
     }
+    const auto* roots = scopeConfig(platformConfig_, fic::platform::PamScope::EffectivePasswordStack);
+    if (roots == nullptr || roots->services.empty()) {
+        error = "selected ALT password scope is unavailable";
+        return false;
+    }
+    // LocalPasswordChange remains a local-user contract. Prove its path in
+    // the selected native stack without claiming enforcement on LDAP users.
+    auto localPlatform = platformConfig_;
+    for (auto& member : localPlatform.capabilities)
+        if (member.capability == PamCapability::PasswordHistory)
+            member.subjectScope = fic::platform::PamIdentitySubjectScope::LocalUsersOnly;
+    PamConfiguration selected(localPlatform);
+    if (!PamCapabilityVerifier::verify(selected, localPlatform, roots->services,
+            PamCapability::PasswordHistory, PamProviderKind::PamPwhistory,
+            verification, PamCapabilityVerificationMode::Structural)) {
+        error = "selected ALT password graph: " + formatPamCapabilityVerification(verification);
+        return false;
+    }
     return true;
 }
 
@@ -672,7 +690,7 @@ bool AltPamPasswordHistoryTopologyManager::inspectReadOnly(AltPamPasswordHistory
 }
 
 bool AltPamPasswordHistoryTopologyManager::inspectReadOnlyImpl(AltPamPasswordHistoryTopologyState& state,
-    bool& unavailable,std::string& error) {
+    bool& unavailable,std::string& error, bool proveEffective) {
     unavailable=false;
     if(!canEnable(error))return false;
     const auto* capability = capabilityConfig(
@@ -704,9 +722,24 @@ bool AltPamPasswordHistoryTopologyManager::inspectReadOnlyImpl(AltPamPasswordHis
     }
     if (lockResult == TransactionLockResult::Failed ||
         !validateHistoryFiles(options_, error) ||
-        !verifySemanticEffectiveness(error))
+        (proveEffective && !verifySemanticEffectiveness(error)))
         return false;
     state = AltPamPasswordHistoryTopologyState::Enabled;
+    return true;
+}
+
+bool AltPamPasswordHistoryTopologyManager::inspectForRelease(PamTopologyStatus& result,
+    std::string& error) {
+    ExclusivePidLock lock(options_.lockFilePath.string(), options_.lockDebugLogPath.string(), false);
+    if (!lock.acquire()) { error = "could not acquire PAM topology lock"; return false; }
+    AltPamPasswordHistoryTopologyState state;
+    bool unavailable = false;
+    if (!inspectReadOnlyImpl(state, unavailable, error, false)) {
+        result = {unavailable ? PamTopologyState::Unavailable : PamTopologyState::Broken, true, {}, error};
+        return false;
+    }
+    result = {state == AltPamPasswordHistoryTopologyState::Enabled ? PamTopologyState::Enabled
+        : PamTopologyState::Disabled, true, {}, {}};
     return true;
 }
 
@@ -805,7 +838,15 @@ bool AltPamPasswordHistoryTopologyManager::enable(std::string& error) {
         std::string rollbackError;
         if (!inspectSecureTarget(capability->topologyTarget, written,
                                  rollbackError,
-                                 options_.readValidationHook) ||
+                                 options_.readValidationHook)) {
+            error += "; CRITICAL: rollback failed: " + rollbackError;
+            return false;
+        }
+        if (written.content != candidate && written.content != original.content) {
+            error += "; CRITICAL: rollback refused: concurrent content change";
+            return false;
+        }
+        if (written.content != original.content &&
             !options_.writer(capability->topologyTarget.string(),
                 original.content,
                 writeOptionsFor(options_.writeOptions, written),

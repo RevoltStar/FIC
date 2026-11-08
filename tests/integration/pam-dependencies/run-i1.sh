@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fixed I1/I2/I4 native build + fixture regressions; never apply policies to the host.
+# Fixed I1/I2/I4/I5 native build + fixture regressions; never apply policies to the host.
 set -euo pipefail
 [[ $# == 3 ]] || { echo 'usage: run-i1.sh TAG PLATFORM BUILD_DIR'; exit 2; }
 tag=$1 platform=$2
@@ -8,13 +8,16 @@ mkdir -p "$3"
 build=$(realpath "$3")
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)
 stage=${FIC_PAM_GATE_STAGE:-i1}
-case "$stage" in i1|i2|i4) ;; *) exit 2;; esac
+case "$stage" in i1|i2|i4|i5) ;; *) exit 2;; esac
 out="$repo/build-pam-$stage"; mkdir -p "$out"
 image="fic-package-native:$tag"
 if [[ $tag == alt-p11 ]]; then image=fic-pam-dependencies-native:alt-p11; fi
 targets='pam_dependency_contract_tests pam_configuration_tests pam_control_flow_analyzer_tests pam_auth_update_topology_tests pam_capability_activation_policy_tests pam_password_wiring_tests policy_execution_planner_tests pam_provider_rollback_tests pam_provider_package_release_tests pam_provider_managed_entry_executor_tests pam_provider_managed_flag_executor_tests rollback_executor_tests alt_pam_faillock_topology_tests alt_pam_password_history_topology_tests pam_managed_password_slots_tests pam_managed_password_slot_writer_tests pam_password_topology_model_tests pam_password_topology_planner_tests pam_password_topology_executor_tests pam_password_package_release_tests'
-if [[ $stage == i4 ]]; then
+if [[ $stage == i4 || $stage == i5 ]]; then
  targets+=' pam_provider_managed_block_tests pam_provider_managed_block_file_tests'
+fi
+if [[ $stage == i5 && $tag == alt-p11 ]]; then
+ targets+=' pam_fic_pwtxn'
 fi
 regex="^($(tr ' ' '|' <<< "$targets")|pam_packaging_static_checks|platform_profile_static_checks)$"
 # Source receipt excludes docs/evidence, so later reporting cannot change it.

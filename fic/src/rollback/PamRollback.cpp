@@ -245,7 +245,7 @@ PamRollbackResult undoPamCapability(
     }
 
     fic::identity::pam::PamTopologyStatus before;
-    if (!manager->inspect(before, error))
+    if (!manager->inspectForRelease(before, error))
         return {PamRollbackState::Conflict, "PAM topology drift: " + error};
     if (before.state == PamTopologyState::Disabled) {
         if (!manager->confirmDurable(error))
@@ -261,7 +261,7 @@ PamRollbackResult undoPamCapability(
     if (!manager->disable(error))
         return {PamRollbackState::Failed, "PAM release failed: " + error};
     fic::identity::pam::PamTopologyStatus after;
-    if (!manager->inspect(after, error) ||
+    if (!manager->inspectForRelease(after, error) ||
         after.state != PamTopologyState::Disabled) {
         return {PamRollbackState::Failed,
                 "PAM release postcondition failed: " + error};

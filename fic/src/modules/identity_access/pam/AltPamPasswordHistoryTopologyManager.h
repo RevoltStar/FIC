@@ -59,6 +59,7 @@ public:
                 std::string& error);
     bool inspectReadOnly(AltPamPasswordHistoryTopologyState& state,std::string& error);
     bool inspect(PamTopologyStatus& status, std::string& error) override;
+    bool inspectForRelease(PamTopologyStatus& status, std::string& error) override;
     bool canEnable(std::string& error) const override;
     bool enable(std::string& error) override;
     bool disable(std::string& error) override;
@@ -70,7 +71,7 @@ private:
     bool statusImpl(AltPamPasswordHistoryTopologyState& state,
                     bool& unavailable, std::string& error);
     bool inspectReadOnlyImpl(AltPamPasswordHistoryTopologyState& state,
-                    bool& unavailable,std::string& error);
+                    bool& unavailable,std::string& error, bool proveEffective = true);
     bool verifySemanticEffectiveness(std::string& error) const;
 };
 

@@ -1067,6 +1067,15 @@ bool restoreOriginalTargets(
                 targetError;
             continue;
         }
+        // Compensation may restore only our planned publication, never a
+        // subsequently edited whole file. The writer still checks CAS.
+        if (current.content != original.snapshot.content &&
+            current.content != original.candidate) {
+            if (!rollbackFailures.empty()) rollbackFailures += "; ";
+            rollbackFailures += original.target.path.string() +
+                ": concurrent content change; refusing snapshot restore";
+            continue;
+        }
         if (current.content != original.snapshot.content &&
             !options.writer(
                 original.target.path.string(), original.snapshot.content,
@@ -1245,6 +1254,15 @@ bool AltPamFaillockTopologyManager::verifySemanticEffectiveness(
         error = formatPamCapabilityVerification(verification);
         return false;
     }
+    // Physical local targets alone do not prove that the selected native
+    // system-auth graph still reaches the mechanism for local subjects.
+    if (!PamCapabilityVerifier::verify(configuration, platformConfig_,
+            *configuredServices, PamCapability::AuthenticationLockout,
+            PamProviderKind::PamFaillock, verification,
+            PamCapabilityVerificationMode::Structural)) {
+        error = formatPamCapabilityVerification(verification);
+        return false;
+    }
     error.clear();
     return true;
 }
@@ -1282,6 +1300,13 @@ bool AltPamFaillockTopologyManager::inspectReadOnly(AltPamFaillockTopologyState&
 
 bool AltPamFaillockTopologyManager::inspectReadOnly(AltPamFaillockTopologyState& state,
     std::optional<fic::platform::PamFaillockStrategy>& strategy,std::string& error) {
+    return inspectReadOnlyImpl(state, strategy, error, true);
+}
+
+bool AltPamFaillockTopologyManager::inspectReadOnlyImpl(
+    AltPamFaillockTopologyState& state,
+    std::optional<fic::platform::PamFaillockStrategy>& strategy,
+    std::string& error, bool proveEffective) {
     const auto* capability=capabilityConfig(platformConfig_,PamCapability::AuthenticationLockout);
     if(!canEnable(error)||!capability)return false;
     std::vector<ManagedTargetState> targets;
@@ -1308,6 +1333,16 @@ bool AltPamFaillockTopologyManager::inspectReadOnly(AltPamFaillockTopologyState&
             error = "mixed FIC pam_faillock strategies across managed targets";
             return false;
         }
+    }
+    if (!proveEffective) {
+        for (const auto& target : targets) {
+            if (!verifyManagedPlacement(target.rules, target.lines, target.target.role,
+                    target.managed, error)) return false;
+        }
+        strategy = detected;
+        state = AltPamFaillockTopologyState::Enabled;
+        error.clear();
+        return true;
     }
     const auto externalGraph = inspectExternalFaillockInRelevantGraph(
         platformConfig_, targets, error);
@@ -1346,6 +1381,21 @@ bool AltPamFaillockTopologyManager::inspect(PamTopologyStatus& result,
     result.activeStrategy =
         result.state == PamTopologyState::Enabled ? strategy : std::nullopt;
     result.detail.clear();
+    return true;
+}
+
+bool AltPamFaillockTopologyManager::inspectForRelease(PamTopologyStatus& result,
+    std::string& error) {
+    ExclusivePidLock lock(options_.lockFilePath.string(), options_.lockDebugLogPath.string(), false);
+    if (!lock.acquire()) { error = "could not acquire PAM topology lock"; return false; }
+    AltPamFaillockTopologyState state;
+    std::optional<fic::platform::PamFaillockStrategy> strategy;
+    if (!inspectReadOnlyImpl(state, strategy, error, false)) {
+        result = {PamTopologyState::Broken, true, {}, error};
+        return false;
+    }
+    result = {state == AltPamFaillockTopologyState::Enabled ? PamTopologyState::Enabled
+        : PamTopologyState::Disabled, true, strategy, {}};
     return true;
 }
 

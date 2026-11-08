@@ -36,6 +36,13 @@ public:
 
     virtual bool inspect(PamTopologyStatus& status,
                          std::string& error) = 0;
+    // Release must prove physical ownership, not the effectiveness of the
+    // policy being removed. Default preserves existing backend semantics.
+    // ALT overrides retain strict target/storage/lock checks; disable repeats
+    // its physical proof under the mutation lock before any write.
+    virtual bool inspectForRelease(PamTopologyStatus& status, std::string& error) {
+        return inspect(status, error);
+    }
     virtual bool canEnable(std::string& error) const = 0;
     virtual bool enable(std::string& error) = 0;
     virtual bool disable(std::string& error) = 0;

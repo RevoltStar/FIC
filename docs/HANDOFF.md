@@ -1,32 +1,35 @@
 # Current workspace
 
 ## Current base
-* main; I4 base `f2c6941bd06b0547e8f4d64dfcabe3bcbd383d8a`.
-* This changeset completes I4: `fix(pam): enforce parameter backend ownership contracts`. One commit; no push.
+* main; I5 base `e5696dca97971188e9248f3d1d174b5617f45b8e`.
+* This changeset completes I5: `fix(pam): preserve ALT topology contracts across control changes`. One commit; no push.
 
 ## Current task
-* Attachment 967b88c1: PAM I4 complete. Stop; do not start I5/I6 automatically.
+* Attachment 176f51c1: PAM I5 complete within the explicitly documented legacy ALT ownership boundary. Stop; do not start I6 automatically.
 
 ## Accepted architecture / invariants
-* Suppression ownership remains ID-only. Strict FIC structure/identity/MutationId/suppression IDs and valid same-key raw semantics. Same-key comment/whitespace changes allowed; rollback restores CURRENT raw bytes exactly. Historical raw-byte immutability is not proven and is NOT an I4 defect. No fingerprints, journal fields, migration or new recovery.
-* Existing ManagedEntry/Flag lifecycles, C2 single writer/I2 recovery/admission and I3 Required remain. C2 parameter Structural callback runs after exact recovery/admission and before planner; cached typed parameter must match SAME requested snapshot; AFTER proof repeats. Explicit release stays independent of activation proof.
-* No MutationJournal/schema, C2 planner/recovery, ALT topology/markers, parameter route, I3 or package lifecycle changes.
+* Production ALT profile/targets/aliases unchanged. Faillock: local-only auth+account and use_first_pass-local-only auth; strategies PreauthRequired/PreauthRequisite only. History: original tcb inside pwtxn begin→pwhistory→tcb→end. Existing storage, transaction/topology lock order, CAS/durability preserved.
+* Physical blocks, selected graph, Structural proof and actual authentication are separate. History selected graph proof is local-user only; no domain history claim.
+* Known-journal ALT release uses physical inspectForRelease; ordinary inspect/apply/control status require effectiveness. No orphan adoption. Other backend default delegates to previous inspect.
+* ALT markers have no MutationId/generation receipt: coherent ABA recreation with an active journal record remains indistinguishable. Legacy release contract retained, NOT historical creator proof. No migration/schema/marker change.
+* No I1–I4/C2/Required/parameter/lifecycle redesign. No control writer or automatic mode switching.
 
 ## Completed / changed areas
-* RED→GREEN: C2 parameter could mutate/return SUCCESS after provider module disappeared. Shared unchanged I1 joint Structural proof extracted into PamCapabilityVerifier, reused by activation and parameter; missing/bypass/peer trust now fails before mutation. Target comparison handles 007 == 7 and rejects stale/disabled intent.
-* RED→GREEN: suppression wrapper under the expected globally unique MutationId with changed provider/policy could be ignored as foreign. Existing flag inspector and release primitive now reject that identity collision. Accepted same-key raw edits remain valid and byte-exact on release.
-* Production: PamCapabilityVerifier.{h,cpp}; policies/PamCapabilityActivationPolicy.cpp; policies/PamPasswordHistoryOptionPolicy.cpp; PamProviderManagedFlagExecutor.cpp; PamProviderManagedBlock.cpp. CMake links canonical slot definitions into five standalone verifier fixture targets.
-* Regressions: C2 parameter trust/control flow/intent/options, both history variants; ALT legacy transaction apply/no-op/refresh/transient postcondition rollback/foreign preservation/inline conflict; Entry/Flag RollbackFailed; raw structure/identity/ID/semantic refusal and current-byte rollback preservation.
-* Authoritative matrix/limits: docs/pam-r1-architecture-research.md §12 and PAM sections of docs/rollback.md. Historical R1/I1/I2 artifacts unchanged. New native-parameter-probe.py tests actual distro libraries, not a replacement parser.
+* RED→GREEN native: multi preserved blocks but could yield false enabled/history SUCCESS; added selected/full configured graph proofs with existing verifier.
+* RED→GREEN native: provider disappearance/unsupported selection blocked release solely on effectiveness. Physical release now retains strict block/target/storage/lock checks independently.
+* Two deterministic compensation RED→GREEN: faillock second-target failure and history postcondition failure previously erased concurrent admin edits. Unknown current bytes now preserved with CRITICAL; normal exact compensation remains successful. Old unexpected-publication test now requires refusal, not unsafe snapshot restore.
+* Existing ALT manager tests extended for release, partial/mixed/drifted targets, malformed markers, storage and transaction contention. Existing native Driver/alt-control/run-i1 extended with I5 only; real policies/journal/RollbackExecutor/control facilities, no production scope narrowing.
+* Authoritative mode matrix, ownership limits and evidence boundaries: docs/pam-r1-architecture-research.md §13; release clarification in docs/rollback.md. Compact evidence: tests/integration/pam-dependencies/i5-evidence.json; raw reports/logs ignored build-pam-i5. R1–I4 evidence untouched.
 
 ## Validation
-* All5 Docker profiles D12/D13/U24/U26/ALT p11: `FIC_PAM_GATE_STAGE=i4 bash tests/integration/pam-dependencies/run-i1.sh TAG PLATFORM BUILD_DIR` → fic +22 test targets built; 24/24 relevant CTest PASS EACH; current production registry audit/Required routing PASS EACH.
-* Final before/after source receipts all equal 4cda4231817d12ea17d47bafb5f922371b31c522c5b8269d01e5a26658012522. Final regression binaries checked against stale objects. Evidence: tests/integration/pam-dependencies/i4-evidence.json; raw logs ignored build-pam-i4.
-* Five native library/helper parser probes PASS (D/U libpwquality + libpam search_key; ALT libpasswdqc 2.0.3). Four existing native-initial-probe.sh consumer runs PASS: two password changes succeed/reuse rejected. Probe sources unchanged since those successful runs; no unnecessary repeats.
-* Harness bash -n, probe py_compile, evidence assertions and git diff --check PASS. Initial stricter comment-edit expectation was superseded by explicit user decision, not classified as a defect. Earlier ALT extra build cache permission failure was infrastructure, repeated gate passed.
+* All5 Docker native gates: `FIC_PAM_GATE_STAGE=i5 bash tests/integration/pam-dependencies/run-i1.sh TAG PLATFORM BUILD_DIR` → fic +22 test targets built; 24/24 relevant CTest and production registry/Required audit PASS EACH. ALT additionally pam_fic_pwtxn built.
+* Final before/after source receipts on all5: `6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b`.
+* `FIC_ALT_CONTROL_STEM=native-final bash tests/integration/pam-dependencies/alt-control.sh build-pam-r1-i3/alt-p11 --i5` + check-i5-control.py PASS. Native modes local→multi→ldap→krb5→krb5_ccreds→winbind→pkcs11→local; all targets/journal preserved by control. Explicit release PASS in every mode without changing selection.
+* Unsupported alias/provider module absence/orphan/Prepared BEFORE+AFTER/RollbackFailed/AppliedAbsent and real readonly/rejected control actions PASS. Supplemental empty facilities returned disabled without target/journal mutation.
+* Compensation targeted CTest 2/2 PASS after 2/2 RED. Harness bash -n, checker py_compile, evidence JSON assertions and git diff --check PASS.
 
 ## Remaining / limits
-* No unfinished I4 work. No full project CTest, full FIC/PAM I6 E2E, package E2E or native ALT history authentication. Parser/helper probes do not prove real authentication.
-* ID-only wrappers do not prove historical raw-byte identity. Existing AtomicFileWriter/CAS boundaries against non-cooperating privileged writers remain. No automatic adoption or stronger historical provenance claim.
-* U24 exact v1.5.3 source fetch was unavailable; actual installed native helper/parser behavior and production fixtures were checked, not a retrieved exact-source/module-authentication proof.
-* Build caches: build-pam-i1/{debian12,debian13,ubuntu2404,ubuntu2604}, build-pam-r1-i3/alt-p11. Images fic-package-native:TAG; ALT fic-pam-dependencies-native:alt-p11. No host PAM mutations.
+* No unfinished I5 implementation. Configuration proof only: minimal ALT lacks entry files login/sshd/sudo/su/sddm/gdm-password/lightdm/passwd and sss template. No packages added to hide gaps, no domain auth or I6/native history authentication. Default remember=0 does not prove positive history enforcement.
+* No full project CTest or package E2E; host PAM untouched. Per-file atomic/CAS + compensation is not two-file atomicity; partial failure remains explicit, non-cooperating privileged writer race persists.
+* ABA causal ownership limitation requires a separately agreed marker/receipt/version design if stronger guarantees are wanted; do not implement it automatically.
+* Build caches: build-pam-i1/{debian12,debian13,ubuntu2404,ubuntu2604}, build-pam-r1-i3/alt-p11. Images fic-package-native:TAG and fic-pam-dependencies-native:alt-p11.

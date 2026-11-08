@@ -1,0 +1,591 @@
+{
+  "stage": "PAM I5",
+  "base_commit": "e5696dca97971188e9248f3d1d174b5617f45b8e",
+  "status": "COMPLETE within documented ALT legacy ownership and configuration-proof boundary",
+  "source_manifest_definition": "run-i1.sh: sorted git-tracked fic/fic-common/tests/cmake/CMakeLists.txt code paths cpp/h/c/cmake/txt/py/sh, name+NUL+SHA256(content); excludes docs/evidence",
+  "source_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+  "platforms": {
+    "debian12": {
+      "profile": "debian-12",
+      "build": "fic +22 test targets PASS",
+      "ctest_pass": [
+        "platform_profile_static_checks",
+        "pam_packaging_static_checks",
+        "policy_execution_planner_tests",
+        "pam_provider_managed_block_tests",
+        "pam_provider_managed_block_file_tests",
+        "pam_provider_rollback_tests",
+        "pam_provider_package_release_tests",
+        "pam_provider_managed_entry_executor_tests",
+        "pam_provider_managed_flag_executor_tests",
+        "rollback_executor_tests",
+        "pam_configuration_tests",
+        "pam_control_flow_analyzer_tests",
+        "pam_auth_update_topology_tests",
+        "pam_managed_password_slots_tests",
+        "pam_managed_password_slot_writer_tests",
+        "pam_password_topology_model_tests",
+        "pam_password_topology_planner_tests",
+        "pam_password_topology_executor_tests",
+        "pam_password_wiring_tests",
+        "pam_password_package_release_tests",
+        "pam_capability_activation_policy_tests",
+        "alt_pam_faillock_topology_tests",
+        "alt_pam_password_history_topology_tests",
+        "pam_dependency_contract_tests"
+      ],
+      "registry_and_required_audit": "PASS",
+      "source_before_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "source_after_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "image_id": "sha256:3050e7a79b0dc16874f8ec2a9d14c9a88a1abd0019cd1188736827577591cd33",
+      "artifacts": {
+        "build": {
+          "path": "build-pam-i5/i5-build-debian12.log",
+          "sha256": "56ceb2804204be505e19da9e8cc550e9b077353314dff01b9e3d6adb6b7f9d59"
+        },
+        "tests": {
+          "path": "build-pam-i5/i5-tests-debian12.log",
+          "sha256": "e489900e739c1feca4f7c7149798cf7b57c5c6228d433c3f3c2046f82ea9c4af"
+        },
+        "audit": {
+          "path": "build-pam-i5/i5-audit-debian12.json",
+          "sha256": "9a6846e9263d0b7bd7cb08640acc484e1d460399ed35972d91cdc547348f4e45"
+        },
+        "contracts": {
+          "path": "build-pam-i5/i5-contracts-debian12.json",
+          "sha256": "e4150f3ad7a8f600ea361601a9317b7ec25bfe0319f8d00bb1f4b8d8d692287e"
+        },
+        "binaries": {
+          "path": "build-pam-i5/i5-binaries-debian12.sha256",
+          "sha256": "a448aaa55ebe90aec9b05622004cb647360963b9a740d20e378e2d19f889a6d7"
+        }
+      },
+      "binaries_sha256": [
+        "560d0a3857bc33b165ff6ee9aa06680f65b9d8cb7691f586701fdc634fdffcbc  /home/admsys/FIC/build-pam-i1/debian12/fic/fic",
+        "f63858e74ff2033fe7f9a6767836dd0054b96c51fa9b2bada3f5f8eed1571b82  /home/admsys/FIC/build-pam-i1/debian12/tests/pam_dependency_contract_tests"
+      ]
+    },
+    "debian13": {
+      "profile": "debian-13",
+      "build": "fic +22 test targets PASS",
+      "ctest_pass": [
+        "platform_profile_static_checks",
+        "pam_packaging_static_checks",
+        "policy_execution_planner_tests",
+        "pam_provider_managed_block_tests",
+        "pam_provider_managed_block_file_tests",
+        "pam_provider_rollback_tests",
+        "pam_provider_package_release_tests",
+        "pam_provider_managed_entry_executor_tests",
+        "pam_provider_managed_flag_executor_tests",
+        "rollback_executor_tests",
+        "pam_configuration_tests",
+        "pam_control_flow_analyzer_tests",
+        "pam_auth_update_topology_tests",
+        "pam_managed_password_slots_tests",
+        "pam_managed_password_slot_writer_tests",
+        "pam_password_topology_model_tests",
+        "pam_password_topology_planner_tests",
+        "pam_password_topology_executor_tests",
+        "pam_password_wiring_tests",
+        "pam_password_package_release_tests",
+        "pam_capability_activation_policy_tests",
+        "alt_pam_faillock_topology_tests",
+        "alt_pam_password_history_topology_tests",
+        "pam_dependency_contract_tests"
+      ],
+      "registry_and_required_audit": "PASS",
+      "source_before_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "source_after_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "image_id": "sha256:63ae33b28fd79519c49a6b7016e0a83b7ee833f7d25c2ba30970b614f3828d9e",
+      "artifacts": {
+        "build": {
+          "path": "build-pam-i5/i5-build-debian13.log",
+          "sha256": "bd3c2b5dd3da9a295dbd542b4b43f39adcd78d8746808486fff9579e978f5c5c"
+        },
+        "tests": {
+          "path": "build-pam-i5/i5-tests-debian13.log",
+          "sha256": "4469226d5515eb44c7c9ff2e75dd05cc8b2942d7b80de94c53d228393a5d2537"
+        },
+        "audit": {
+          "path": "build-pam-i5/i5-audit-debian13.json",
+          "sha256": "ada00d38d006a4185b8ce124fa1d347aa10d5283fcac20a2e8695f1d012ab845"
+        },
+        "contracts": {
+          "path": "build-pam-i5/i5-contracts-debian13.json",
+          "sha256": "ed7a84f0322dcc9620c1c877a9c99428666be24a263a3b90703f717a27e1c9ef"
+        },
+        "binaries": {
+          "path": "build-pam-i5/i5-binaries-debian13.sha256",
+          "sha256": "69babb8d4189377a1bb42a9da724e14838ae53f8b09b9a6a3d4f82149edafb8e"
+        }
+      },
+      "binaries_sha256": [
+        "dbc9d54397c4cd012029022e2ff91f6093d9039df08c1738ced4434f1339ca28  /home/admsys/FIC/build-pam-i1/debian13/fic/fic",
+        "7de5ff5eb155c45a6592d5f4c458ed5f801667d4f4abd1d63c3d5ef1f66ac3c0  /home/admsys/FIC/build-pam-i1/debian13/tests/pam_dependency_contract_tests"
+      ]
+    },
+    "ubuntu2404": {
+      "profile": "ubuntu-24.04",
+      "build": "fic +22 test targets PASS",
+      "ctest_pass": [
+        "platform_profile_static_checks",
+        "pam_packaging_static_checks",
+        "policy_execution_planner_tests",
+        "pam_provider_managed_block_tests",
+        "pam_provider_managed_block_file_tests",
+        "pam_provider_rollback_tests",
+        "pam_provider_package_release_tests",
+        "pam_provider_managed_entry_executor_tests",
+        "pam_provider_managed_flag_executor_tests",
+        "rollback_executor_tests",
+        "pam_configuration_tests",
+        "pam_control_flow_analyzer_tests",
+        "pam_auth_update_topology_tests",
+        "pam_managed_password_slots_tests",
+        "pam_managed_password_slot_writer_tests",
+        "pam_password_topology_model_tests",
+        "pam_password_topology_planner_tests",
+        "pam_password_topology_executor_tests",
+        "pam_password_wiring_tests",
+        "pam_password_package_release_tests",
+        "pam_capability_activation_policy_tests",
+        "alt_pam_faillock_topology_tests",
+        "alt_pam_password_history_topology_tests",
+        "pam_dependency_contract_tests"
+      ],
+      "registry_and_required_audit": "PASS",
+      "source_before_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "source_after_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "image_id": "sha256:93380deb332fea08b03cff9d882b7ee66fbc23cfde9f3e4998ab0c5ea1f4f80a",
+      "artifacts": {
+        "build": {
+          "path": "build-pam-i5/i5-build-ubuntu2404.log",
+          "sha256": "604945a28c3ffc404794b90e241cfd317805e7d854658c5f704f679c6b1dcf77"
+        },
+        "tests": {
+          "path": "build-pam-i5/i5-tests-ubuntu2404.log",
+          "sha256": "c06112db4f2d2a2cc10cffd69a1f288577dc887f57767941bbdd896ed09b3be2"
+        },
+        "audit": {
+          "path": "build-pam-i5/i5-audit-ubuntu2404.json",
+          "sha256": "e7c96b5f174091417db8bd3fdaa63f7cec64867ea3a1150285ff4a6372907cb8"
+        },
+        "contracts": {
+          "path": "build-pam-i5/i5-contracts-ubuntu2404.json",
+          "sha256": "1bb3757e5b5cb5b60eb11b9a339921f2101d8fd98e2a3528b3937c911433f567"
+        },
+        "binaries": {
+          "path": "build-pam-i5/i5-binaries-ubuntu2404.sha256",
+          "sha256": "4a7194906b87c3b28d96da2046eec6a06e9f3710a40679d572c83dfe903ef62c"
+        }
+      },
+      "binaries_sha256": [
+        "990c0eb93e7b972ece80731b96f3dc65e29d4a33469fee00461413beda8d7d86  /home/admsys/FIC/build-pam-i1/ubuntu2404/fic/fic",
+        "031cdd4cc8017c77b63da2ba812a134a2182ced091c4e336e3f8de9b5bd999d7  /home/admsys/FIC/build-pam-i1/ubuntu2404/tests/pam_dependency_contract_tests"
+      ]
+    },
+    "ubuntu2604": {
+      "profile": "ubuntu-26.04",
+      "build": "fic +22 test targets PASS",
+      "ctest_pass": [
+        "platform_profile_static_checks",
+        "pam_packaging_static_checks",
+        "policy_execution_planner_tests",
+        "pam_provider_managed_block_tests",
+        "pam_provider_managed_block_file_tests",
+        "pam_provider_rollback_tests",
+        "pam_provider_package_release_tests",
+        "pam_provider_managed_entry_executor_tests",
+        "pam_provider_managed_flag_executor_tests",
+        "rollback_executor_tests",
+        "pam_configuration_tests",
+        "pam_control_flow_analyzer_tests",
+        "pam_auth_update_topology_tests",
+        "pam_managed_password_slots_tests",
+        "pam_managed_password_slot_writer_tests",
+        "pam_password_topology_model_tests",
+        "pam_password_topology_planner_tests",
+        "pam_password_topology_executor_tests",
+        "pam_password_wiring_tests",
+        "pam_password_package_release_tests",
+        "pam_capability_activation_policy_tests",
+        "alt_pam_faillock_topology_tests",
+        "alt_pam_password_history_topology_tests",
+        "pam_dependency_contract_tests"
+      ],
+      "registry_and_required_audit": "PASS",
+      "source_before_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "source_after_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "image_id": "sha256:d712444d7a1a0e3ceba8ef52625f640602a14f70e627d13a2fbc6e808fbf8eb9",
+      "artifacts": {
+        "build": {
+          "path": "build-pam-i5/i5-build-ubuntu2604.log",
+          "sha256": "5c71ae22f8a8b0189f3fb7f3f22cc956fb575b9ac59971e486d3b448b6fb7db6"
+        },
+        "tests": {
+          "path": "build-pam-i5/i5-tests-ubuntu2604.log",
+          "sha256": "d1cc687f86581ab5dba29d1279e468318b8184aed2ea2659ff6609bc74203ad5"
+        },
+        "audit": {
+          "path": "build-pam-i5/i5-audit-ubuntu2604.json",
+          "sha256": "25a3e04a435528c7188fe8203538e96cc5226ece63721f17a1dc71d3b068b3b0"
+        },
+        "contracts": {
+          "path": "build-pam-i5/i5-contracts-ubuntu2604.json",
+          "sha256": "892ff6344040671412fc7face7fa825db3e24ae4f171b2a80a0040bd8df08014"
+        },
+        "binaries": {
+          "path": "build-pam-i5/i5-binaries-ubuntu2604.sha256",
+          "sha256": "646679761d707d2c2cbd2a6b9582b27c968be122a86cfa5fe924555e07b3b6e2"
+        }
+      },
+      "binaries_sha256": [
+        "ea1a5a61f7112696955dcd933a2d86d0ccaecebb8cdd96c343d0fc3f8c836ae9  /home/admsys/FIC/build-pam-i1/ubuntu2604/fic/fic",
+        "1797dc967af8898bda1780d9d93df9e03be6b0833990a3f5906f3ad7c5b45e5a  /home/admsys/FIC/build-pam-i1/ubuntu2604/tests/pam_dependency_contract_tests"
+      ]
+    },
+    "alt-p11": {
+      "profile": "alt-p11",
+      "build": "fic +22 test targets PASS + pam_fic_pwtxn",
+      "ctest_pass": [
+        "platform_profile_static_checks",
+        "pam_packaging_static_checks",
+        "policy_execution_planner_tests",
+        "pam_provider_managed_block_tests",
+        "pam_provider_managed_block_file_tests",
+        "pam_provider_rollback_tests",
+        "pam_provider_package_release_tests",
+        "pam_provider_managed_entry_executor_tests",
+        "pam_provider_managed_flag_executor_tests",
+        "rollback_executor_tests",
+        "pam_configuration_tests",
+        "pam_control_flow_analyzer_tests",
+        "pam_auth_update_topology_tests",
+        "pam_managed_password_slots_tests",
+        "pam_managed_password_slot_writer_tests",
+        "pam_password_topology_model_tests",
+        "pam_password_topology_planner_tests",
+        "pam_password_topology_executor_tests",
+        "pam_password_wiring_tests",
+        "pam_password_package_release_tests",
+        "pam_capability_activation_policy_tests",
+        "alt_pam_faillock_topology_tests",
+        "alt_pam_password_history_topology_tests",
+        "pam_dependency_contract_tests"
+      ],
+      "registry_and_required_audit": "PASS",
+      "source_before_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "source_after_sha256": "6adc0f01bcfcde9a2e8e37f96edb6442ed6b1b4d4706fb8e11ed6a9be2fef77b",
+      "image_id": "sha256:f06b64ce360662f90026ccfc9e489be6b824b416e43a89ab5501a5c7db4607e3",
+      "artifacts": {
+        "build": {
+          "path": "build-pam-i5/i5-build-alt-p11.log",
+          "sha256": "71485e041a213a0e6ace4a8b0a9a673361ed388c074cb3c102eeaaae5cd5ad42"
+        },
+        "tests": {
+          "path": "build-pam-i5/i5-tests-alt-p11.log",
+          "sha256": "908a8b2d8f14826dcae34704c93639c19a201bcfe56cbc352f0d796f0ac2c1a5"
+        },
+        "audit": {
+          "path": "build-pam-i5/i5-audit-alt-p11.json",
+          "sha256": "7c9ecb1b65a6696a1877b981bc3efdf7e641061debd2ddd38b34bd0ae707d713"
+        },
+        "contracts": {
+          "path": "build-pam-i5/i5-contracts-alt-p11.json",
+          "sha256": "234eaeb0f7f4d6347ee6f68fa848a650a7776303be801ceee3031369f6b081c9"
+        },
+        "binaries": {
+          "path": "build-pam-i5/i5-binaries-alt-p11.sha256",
+          "sha256": "3a3c7a73e9d0f8ce33572cbd912ce0efb4569574b06efc68963a3d1d099488a6"
+        }
+      },
+      "binaries_sha256": [
+        "698e539d45f2bee20510fa66f2235bb52c8c3f396849d11f291f3c891b0801b6  /home/admsys/FIC/build-pam-r1-i3/alt-p11/fic/fic",
+        "90da713f6879d08fce4c16f684c74c82ab83585dca512ffa159f2e05b4819f05  /home/admsys/FIC/build-pam-r1-i3/alt-p11/tests/pam_dependency_contract_tests"
+      ]
+    }
+  },
+  "native_alt": {
+    "result": "PASS configuration/control/ownership lifecycle; NOT authentication E2E",
+    "report": {
+      "path": "build-pam-i5/native-final.json",
+      "sha256": "53b55122e1dbf63d6f0ef38d761fbd1391d48f596191b959233be2671707008e"
+    },
+    "log": {
+      "path": "build-pam-i5/native-final.log",
+      "sha256": "bad38587e773512a8efc172439638eb1ef3d5b528876a60b5ecb8190336f6a36"
+    },
+    "checker_sha256": "30495e66eac11d1b355455b678183ad57fd15a1df4229f007fee517e894d70c1",
+    "versions": [
+      "pam-config-1.10.0-alt0.p11.2.noarch",
+      "control-0.8.0-alt3.noarch",
+      "libpam0-1.7.1-alt1.x86_64",
+      "libpasswdqc-2.0.3-alt3.x86_64",
+      "pam0_tcb-1.2-alt2.x86_64"
+    ],
+    "inventory": {
+      "entry_services": {
+        "login": false,
+        "sshd": false,
+        "sudo": false,
+        "su": false,
+        "sddm": false,
+        "gdm-password": false,
+        "lightdm": false,
+        "passwd": false
+      },
+      "pam_config_executable": "",
+      "control_manfiles": [
+        "/usr/share/man/man8/control-dump.8.xz",
+        "/usr/share/man/man8/control-restore.8.xz",
+        "/usr/share/man/man8/control.8.xz",
+        "/usr/share/man/ru/man8/control-dump.8.xz",
+        "/usr/share/man/ru/man8/control-restore.8.xz",
+        "/usr/share/man/ru/man8/control.8.xz"
+      ]
+    },
+    "available_modes": {
+      "exit": 0,
+      "started": true,
+      "stderr": "",
+      "stdout": "krb5 krb5_ccreds ldap local multi pkcs11 winbind\n"
+    },
+    "sss_available": false,
+    "production_scope_narrowed": false,
+    "managed_targets": {
+      "/etc/pam.d/system-auth-local-only": [
+        "faillock auth/account",
+        "history LocalPasswordChange"
+      ],
+      "/etc/pam.d/system-auth-use_first_pass-local-only": [
+        "faillock auth use_first_pass"
+      ]
+    },
+    "supported_production_strategies": [
+      "PreauthRequired",
+      "PreauthRequisite"
+    ],
+    "modes": [
+      {
+        "mode": "local",
+        "control_exit": 0,
+        "physical_preserved": true,
+        "journal_preserved": true,
+        "inspect_A_H": [
+          true,
+          true
+        ],
+        "apply_A_H": [
+          true,
+          true
+        ],
+        "release_A_H": [
+          true,
+          true
+        ]
+      },
+      {
+        "mode": "multi",
+        "control_exit": 0,
+        "physical_preserved": true,
+        "journal_preserved": true,
+        "inspect_A_H": [
+          false,
+          false
+        ],
+        "apply_A_H": [
+          false,
+          false
+        ],
+        "release_A_H": [
+          true,
+          true
+        ]
+      },
+      {
+        "mode": "ldap",
+        "control_exit": 0,
+        "physical_preserved": true,
+        "journal_preserved": true,
+        "inspect_A_H": [
+          true,
+          true
+        ],
+        "apply_A_H": [
+          true,
+          true
+        ],
+        "release_A_H": [
+          true,
+          true
+        ]
+      },
+      {
+        "mode": "krb5",
+        "control_exit": 0,
+        "physical_preserved": true,
+        "journal_preserved": true,
+        "inspect_A_H": [
+          true,
+          true
+        ],
+        "apply_A_H": [
+          true,
+          true
+        ],
+        "release_A_H": [
+          true,
+          true
+        ]
+      },
+      {
+        "mode": "krb5_ccreds",
+        "control_exit": 0,
+        "physical_preserved": true,
+        "journal_preserved": true,
+        "inspect_A_H": [
+          true,
+          true
+        ],
+        "apply_A_H": [
+          true,
+          true
+        ],
+        "release_A_H": [
+          true,
+          true
+        ]
+      },
+      {
+        "mode": "winbind",
+        "control_exit": 0,
+        "physical_preserved": true,
+        "journal_preserved": true,
+        "inspect_A_H": [
+          true,
+          true
+        ],
+        "apply_A_H": [
+          true,
+          true
+        ],
+        "release_A_H": [
+          true,
+          true
+        ]
+      },
+      {
+        "mode": "pkcs11",
+        "control_exit": 0,
+        "physical_preserved": true,
+        "journal_preserved": true,
+        "inspect_A_H": [
+          false,
+          true
+        ],
+        "apply_A_H": [
+          false,
+          true
+        ],
+        "release_A_H": [
+          true,
+          true
+        ]
+      },
+      {
+        "mode": "local",
+        "control_exit": 0,
+        "physical_preserved": true,
+        "journal_preserved": true,
+        "inspect_A_H": [
+          true,
+          true
+        ],
+        "apply_A_H": [
+          true,
+          true
+        ],
+        "release_A_H": [
+          true,
+          true
+        ]
+      }
+    ],
+    "cases": [
+      "unsupported selection: apply refused, exact physical release succeeds without selection change",
+      "provider modules absent: inspect refused, exact physical release succeeds",
+      "orphan: apply/release refused without bytes/journal change",
+      "PreparedBefore/PreparedAfter: existing apply recovery then release",
+      "RollbackFailed/AppliedAbsent: apply refused unchanged, release succeeds",
+      "facilities enabled/error status readonly; enabled/disabled actions denied",
+      "empty facilities: disabled, targets unchanged, journal not created"
+    ],
+    "supplemental_artifacts": [
+      {
+        "path": "build-pam-i5/native-empty-facilities.log",
+        "sha256": "0311fca3e4fe79165808456a852e59f1f7fb6796441cff1357cb9d18bb395050"
+      },
+      {
+        "path": "build-pam-i5/native-inventory.json",
+        "sha256": "4a6f8796822f9c7642983a474351da2bb5a87c41708ce2942e1cdf19e2cb4480"
+      },
+      {
+        "path": "build-pam-i5/native-control-scripts.log",
+        "sha256": "e2831bc82fc663c367b1efc5e1e126450c587dd6c7982c4a360554d4e0e2c6e0"
+      },
+      {
+        "path": "build-pam-i5/pam-config-files.log",
+        "sha256": "87ddeb3c198c9e79c82ee3cb8e147131cb9ffdc0e69cdf8ca2a98a92bc98adb6"
+      },
+      {
+        "path": "build-pam-i5/control-manpage.log",
+        "sha256": "efdf2f364e90ebce6fe999ff15e5081f247eca795661f607f4bcb74d8afb3367"
+      }
+    ]
+  },
+  "red_green": {
+    "native_defects": [
+      "selected multi graph ineffective despite retained blocks and enabled diagnostics/history apply",
+      "known-journal release blocked by missing module effectiveness"
+    ],
+    "native_red_artifacts": [
+      {
+        "path": "build-pam-i5/native-red.json",
+        "sha256": "73a6363a08d9675e183a76c11f0f328d99d506ff6c1a73379b0f65d017d1f5f9"
+      },
+      {
+        "path": "build-pam-i5/native-red.log",
+        "sha256": "8ccc7828b72fd06467116c40fe598c9277714eea1ded90168fcd99186559c772"
+      },
+      {
+        "path": "build-pam-i5/native-red-selected.json",
+        "sha256": "ae17279b196b7b97b4c6e43e03a6217888be99739280b94a393d459b95f60f2a"
+      },
+      {
+        "path": "build-pam-i5/native-red-release.json",
+        "sha256": "e0686f009e354be77ff46741b603be7442b3d4b480b6f7b4cac7eb28f66ca6b8"
+      }
+    ],
+    "compensation": {
+      "red": "both managers overwrite administrator edit during compensation",
+      "green": "both refuse foreign content with CRITICAL; no-drift compensation remains successful",
+      "red_log": {
+        "path": "build-pam-i5/compensation-red.log",
+        "sha256": "44dd38d58b6b36da1741f13753f5c907b81f84f31c1b366ac311c72b310c413c"
+      },
+      "green_log": {
+        "path": "build-pam-i5/compensation-green.log",
+        "sha256": "65a3c439fb4f7e0fca24d0a395a065e8b60ea6126cb655718c6736c381b50052"
+      }
+    }
+  },
+  "limits": [
+    "Missing native entry files login/sshd/sudo/su/sddm/gdm-password/lightdm/passwd: no full installed-service proof",
+    "No domain authentication, LDAP/SSSD installation, I6, full project CTest or package E2E",
+    "Default history remember=0: Structural proof is participation, not positive enforcement",
+    "ALT markers have no MutationId/generation receipt: active record plus canonical block cannot distinguish coherent external ABA recreation; legacy release limitation retained",
+    "Per-file CAS with compensation is not multi-file atomicity; residual race against non-cooperating privileged writers remains",
+    "Raw logs/reports remain local ignored build-pam-i5; compact hashes recorded here. R1-I4 evidence unchanged."
+  ]
+}

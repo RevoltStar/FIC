@@ -40,6 +40,7 @@ const Option options[]={
 const char* support(PamPolicySupport s){switch(s){case PamPolicySupport::Unsupported:return "Unsupported";case PamPolicySupport::Supported:return "Supported";case PamPolicySupport::ReadOnly:return "ReadOnly";case PamPolicySupport::RequiresTopologyActivation:return "RequiresTopologyActivation";}return "unknown";}
 const char* topology(PamTopologyStrategyKind s){switch(s){case PamTopologyStrategyKind::StaticVerifyOnly:return "StaticVerifyOnly";case PamTopologyStrategyKind::PamAuthUpdate:return "PamAuthUpdate";case PamTopologyStrategyKind::AltTcbManaged:return "AltTcbManaged";}return "unknown";}
 #include "Contracts.h"
+#include "AltControlI5.h"
 int main(int argc,char** argv){
  fs::path root=fs::temp_directory_path()/("fic-pam-dependencies-"+std::to_string(getpid()));
  try {
@@ -77,6 +78,8 @@ int main(int argc,char** argv){
     row["dependencies"]=json::array();if(policy)for(const auto& dep:policy->dependencies())row["dependencies"].push_back({{"name",dep.policy.policyName},{"strength",dep.strength==PolicyDependencyStrength::Required?"Required":"Recommended"}});
     result["policies"].push_back(row);
    }
+  } else if(std::string(argv[1])=="--alt-control-i5") {
+   result["i5"]=altControlI5(profile,executables,root);
   } else if(std::string(argv[1])=="--alt-control") {
    need(profile.id=="alt-p11"&&fs::exists("/.dockerenv"),"ALT disposable container required");
    // Scope is deliberately narrowed for this control experiment; this does

@@ -111,6 +111,29 @@ public:
     fs::path root;
 };
 
+void testReleaseProofIndependentOfEffectiveness() {
+    TemporaryTree tree;
+    bool effective = true;
+    auto options = tree.options();
+    options.semanticVerifier = [&](std::string& why) { why = effective ? "" : "selected graph ineffective"; return effective; };
+    AltPamPasswordHistoryTopologyManager manager(tree.platform(), options);
+    std::string error;
+    require(manager.enable(error), error);
+    const auto owned = TemporaryTree::read(tree.target());
+    effective = false;
+    fic::identity::pam::PamTopologyStatus state;
+    require(!manager.inspect(state, error), "ordinary history inspection accepted ineffective graph");
+    require(manager.inspectForRelease(state, error) &&
+            state.state == fic::identity::pam::PamTopologyState::Enabled && TemporaryTree::read(tree.target()) == owned,
+        "history physical proof required effectiveness or rewrote target: " + error);
+    TemporaryTree::write(tree.target(), owned + AltPamPasswordHistoryTopologyManager::BEGIN + "\n");
+    require(!manager.inspectForRelease(state, error), "history release proof accepted duplicate marker");
+    TemporaryTree::write(tree.target(), owned);
+    require(manager.disable(error) && manager.inspectForRelease(state, error) &&
+            state.state == fic::identity::pam::PamTopologyState::Disabled && TemporaryTree::read(tree.target()) == kCanonical,
+        "history release did not preserve current tcb rule: " + error);
+}
+
 void testRoundTripAndStorage() {
     TemporaryTree tree;
     AltPamPasswordHistoryTopologyManager manager(
@@ -222,6 +245,11 @@ void requireBrokenStorage(
     require(!manager.inspect(status, error) &&
                 status.state == fic::identity::pam::PamTopologyState::Broken,
             message);
+    const auto before = TemporaryTree::read(tree.target());
+    require(!manager.inspectForRelease(status, error) &&
+                status.state == fic::identity::pam::PamTopologyState::Broken &&
+                TemporaryTree::read(tree.target()) == before,
+            "release proof accepted unsafe storage or changed target: " + message);
 }
 
 std::optional<gid_t> alternateWritableGroup() {
@@ -367,6 +395,9 @@ void testTransactionContentionIsUnavailableUntilStorageStabilizes() {
         topologyStatus.state ==
             fic::identity::pam::PamTopologyState::Unavailable;
 
+    const bool releaseUnavailable = !manager.inspectForRelease(topologyStatus, error) &&
+        topologyStatus.state == fic::identity::pam::PamTopologyState::Unavailable;
+
     const char release = 'X';
     require(::write(releasePipe[1], &release, 1) == 1,
             "could not release transaction lock holder");
@@ -375,7 +406,7 @@ void testTransactionContentionIsUnavailableUntilStorageStabilizes() {
     require(::waitpid(child, &childStatus, 0) == child &&
                 WIFEXITED(childStatus) && WEXITSTATUS(childStatus) == 0,
             "transaction lock holder failed");
-    require(unavailable,
+    require(unavailable && releaseUnavailable,
             "transaction contention was not reported as unavailable");
 
     AltPamPasswordHistoryTopologyState state;
@@ -435,6 +466,23 @@ void testPostconditionFailureRollsBack() {
     require(!manager.enable(error), "injected verification failure was ignored");
     require(TemporaryTree::read(tree.target()) == kCanonical,
             "failed enable did not restore exact original content");
+}
+
+void testCompensationPreservesConcurrentEdit() {
+    TemporaryTree tree;
+    auto options = tree.options();
+    options.semanticVerifier = [&](std::string& error) {
+        TemporaryTree::write(tree.target(), TemporaryTree::read(tree.target()) + "# admin edit\n");
+        error = "injected postcondition failure";
+        return false;
+    };
+    AltPamPasswordHistoryTopologyManager manager(tree.platform(), options);
+    std::string error;
+    require(!manager.enable(error), "postcondition failure ignored");
+    require(TemporaryTree::read(tree.target()).find("# admin edit\n") != std::string::npos,
+            "compensation overwrote concurrent administrator edit");
+    require(error.find("CRITICAL") != std::string::npos,
+            "conflicted compensation was not reported: " + error);
 }
 
 void testHistoryStorageConfigTrustedRead() {
@@ -522,6 +570,7 @@ void testTransactionModuleTrustedInspection() {
 int main() {
     try {
         testRoundTripAndStorage();
+        testReleaseProofIndependentOfEffectiveness();
         testProviderOwnedHistoryFilesRemainValid();
         testUnsafeHistoryStorageFailsClosed();
         testUnsafeHistoryBackupFailsClosed();
@@ -530,6 +579,7 @@ int main() {
         testExternalIncludedProviderIsRejected();
         testBrokenMarkersFailClosed();
         testPostconditionFailureRollsBack();
+        testCompensationPreservesConcurrentEdit();
         testHistoryStorageConfigTrustedRead();
         testTransactionModuleTrustedInspection();
     } catch (const std::exception& exception) {

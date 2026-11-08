@@ -684,3 +684,146 @@ Required edges и отсутствие writers у Unsupported policies пров�
 package E2E не запускались. Exact v1.5.3 source U24 получить не удалось;
 там доказаны native installed helper/parser и fixture contracts, а не
 retrieved exact-source/module-authentication proof.
+
+## 13. I5 — ALT p11 managed topology и native control
+
+База: `e5696dca97971188e9248f3d1d174b5617f45b8e`. I5 не меняет
+production profile, targets, aliases, Required, parameter backends, C2,
+MutationJournal schema или package lifecycle. Итоговые receipts и ограничения:
+`tests/integration/pam-dependencies/i5-evidence.json`. Расширение существующего
+`alt-control.sh --i5` использует реальный factory, activation policies,
+MutationJournal, RollbackExecutor и установленные control facilities; исходный
+R1 probe со суженным scope сохранён отдельно и не служит доказательством I5.
+
+### Штатные templates и область доказательства
+
+В disposable ALT: pam-config 1.10.0-alt0.p11.2, control 0.8.0-alt3,
+libpam0 1.7.1-alt1, pam0_tcb 1.2-alt2, libpasswdqc 2.0.3-alt3.
+`pam-config` здесь пакет templates, отдельного executable нет. Реальные
+`control system-auth`/`system-policy`, package manifest и control(8)
+исследованы из установленного образа. `system-auth` и
+`system-auth-use_first_pass` переключаются парой на соответствующие templates;
+`system-policy` — local для local и remote для остальных проверенных modes.
+Control меняет selection, но не bytes обоих managed targets и не journal.
+Сохранность bytes не доказывает, что выбранный include/substack-граф их использует.
+
+| Managed target | Faillock | History |
+|---|---|---|
+| system-auth-local-only | Authentication + Account | LocalPasswordChange |
+| system-auth-use_first_pass-local-only | Authentication, сохраняет use_first_pass | Нет |
+
+Production faillock strategies остаются только PreauthRequired и
+PreauthRequisite. Более широкая тестовая реализация Authsucc не становится
+поддерживаемой production-стратегией. History сохраняет порядок
+`pwtxn begin timeout=15 → pwhistory use_authtok conf=… → original pam_tcb → pwtxn end`.
+Существующие round-trip, strategy transitions, foreign-rule preservation,
+anchor checks, storage trust, transaction contention и CAS regressions сохранены.
+
+Ни production auth services (`login sshd sudo su sddm gdm-password lightdm
+system-auth`), ни password scopes в profile не сужены. Однако в минимальном
+образе отсутствуют entry files для login, sshd, sudo, su, sddm, gdm-password,
+lightdm и passwd. Проверены реально существующие system-auth/targets и их
+графы, а не все сервисы установленной рабочей станции. `sss` template
+недоступен; LDAP/SSSD не устанавливались. Domain authentication не выполнялась.
+
+### Матрица native control
+
+A/H ниже — AuthenticationLockout/PasswordHistory. Structural означает
+configuration/control-flow proof для локального субъекта, не authentication.
+Для history дополнительно проверяется selected EffectivePasswordStack
+(`passwd`, `system-auth`) с LocalUsersOnly, поскольку контракт managed target —
+LocalPasswordChange; profile и его AllPamSubjects проверки target не меняются.
+
+| Control mode | Physical FIC blocks | Effective PAM graph | Structural A/H | Apply A/H | Explicit rollback |
+|---|---|---|---|---|---|
+| local | Все сохранены | Local-only targets используются | PASS/PASS | PASS/PASS | PASS |
+| multi | Все сохранены | Managed local-only paths пропущены | FAIL/FAIL | FAIL/FAIL | PASS |
+| ldap | Все сохранены | Проверенная local-user branch | PASS/PASS | PASS/PASS | PASS |
+| krb5 | Все сохранены | Проверенная local-user branch | PASS/PASS | PASS/PASS | PASS |
+| krb5_ccreds | Все сохранены | Проверенная local-user branch | PASS/PASS | PASS/PASS | PASS |
+| winbind | Все сохранены | Проверенная local-user branch | PASS/PASS | PASS/PASS | PASS |
+| pkcs11 | Все сохранены | Auth вне managed path; password local-only | FAIL/PASS | FAIL/PASS | PASS |
+
+Последовательность local → multi → ldap → local и дополнительные доступные
+modes проверены реальными командами. Release не переключает control selection;
+возврат local перед новым acquire выполняет только тест. LDAP all-subject
+history proof отдельно отрицательный: положительный local proof нельзя
+распространять на доменных пользователей. Default history `remember=0` и
+Structural participation не являются доказательством положительного history
+enforcement. Полной I6 authentication/password-change matrix нет.
+
+### Воспроизведённые дефекты и исправления
+
+* RED native: при multi физические блоки оставались, оба control status могли
+  сообщать enabled, а history apply — SUCCESS. Проверка только managed local
+  target не доказывала его участия в selected stack. Faillock сохраняет прежний
+  SecurityEffective proof и дополнительно проверяет полный configured scope
+  Structural; history сохраняет target/storage proof и проверяет selected
+  local-user password path. GREEN: матрица выше, отказ без изменения bytes/journal.
+* RED native: исчезновение provider modules блокировало known-journal release
+  только из-за semantic inspection. ALT `inspectForRelease` отделяет physical
+  validation от effectiveness. Ordinary inspect/apply/control status остаются
+  строгими. Default метода для других backend делегирует прежнему inspect;
+  остальные rollback paths не меняются. Unsupported selected alias тоже не
+  мешает release корректных локальных blocks.
+* Два deterministic RED: после первой записи faillock и отказа второй либо
+  после history postcondition failure конкурентная административная правка
+  стиралась whole-file compensation. Теперь компенсация допускает только
+  исходные bytes или точный candidate текущей операции; неизвестные bytes
+  сохраняются с CRITICAL. Старый fault-тест unexpected publication теперь
+  требует такого отказа. Без конфликтов существующая exact compensation PASS.
+
+Операции удерживают существующий topology lock; history затем transaction lock
+(OFD с прежним fallback), сохраняет storage checks/type/owner/group/mode/nlink,
+pam_tcb и pwtxn protocol. Release повторяет physical proof и durability barrier;
+неизвестный journal/profile, orphan, malformed/duplicate marker, partial pair,
+mixed strategies или несовпадающий tcb anchor не дают права на удаление.
+Native journal cases: Prepared BEFORE/AFTER проходят существующий recovery;
+RollbackFailed и AppliedAbsent блокируют ordinary apply без переписывания
+provenance, но допускают подтверждённый release. Orphan apply/release — отказ
+без изменения bytes/journal. Unit tests дополняют повреждённые blocks, storage
+и занятый transaction lock. Facilities status readonly, enabled/disabled
+отклоняются без изменения targets и обоих journal paths; отсутствие topology
+диагностируется disabled без создания journal.
+
+Faillock — два последовательных per-file atomic/CAS writes с компенсацией,
+а не filesystem-level multi-file transaction. При конфликте компенсация может
+оставить частичную topology и явно возвращает failure; existing Prepared
+provenance сохраняется. Сравнение bytes и последующий CAS/rename не устраняют
+остаточную гонку с привилегированным non-cooperating writer. Равные bytes не
+доказывают историческую identity inode. Никакого нового transaction engine нет.
+
+### Архитектурное ограничение причинного ownership ALT
+
+ALT markers не содержат journal MutationId или file-generation receipt.
+`physical_mutation_id` в native report явно null. Active record + точный
+поддерживаемый block остаются существующим legacy release-контрактом, но не
+доказательством исторического создателя. Контрпример ABA: при сохранённом Applied
+record внешний actor удаляет и создаёт идентичный canonical block; текущие
+проверки не отличают его от прежнего. Поэтому release может удалить такой
+вновь созданный FIC-shaped block. Синтаксическое совпадение не устраняет риск.
+Orphan без записи не принимается; coherent lookalike при существующей записи
+остаётся ограничением. Status enabled — диагностика topology, не authorization
+по journal.
+
+Обычные проверки текущего graph и освобождение корректных blocks продолжают
+работать в принятой границе legacy ownership. Более сильный causal release
+потребовал бы отдельно согласованных marker/version/receipt contracts и
+миграции; I5 их не реализует. History возвращает текущую сохранённую tcb rule,
+не произвольный исторический файл; faillock проверяет tcb относительно FIC
+ORIGINAL hex, но согласованная подмена обеих частей также не даёт causal proof.
+
+### Validation
+
+Итоговые пять native gates собирают fic и 22 relevant test targets, проверяют
+24 CTest и production registry/Required audit на каждой платформе; ALT также
+собирает pam_fic_pwtxn. Native ALT control checker проверяет mode matrix,
+bytes/journal, facilities, missing modules, unsupported alias и recovery cases.
+Raw logs/reports находятся в ignored build-pam-i5; компактный evidence содержит
+их SHA-256 и source/image/binary receipts. R1–I4 artifacts не переписывались.
+Полная project CTest, package E2E и I6 не выполнялись; host PAM не изменялся.
+
+Первичные материалы: установленные control scripts/templates/manpage и
+[Linux-PAM 1.7.1 include/substack syntax](https://github.com/linux-pam/linux-pam/blob/v1.7.1/doc/man/pam.conf-syntax.xml).
+Историческое [обсуждение ALT templates](https://lists.altlinux.org/pipermail/devel/2017-June/202807.html)
+даёт контекст, но не заменяет native p11 evidence.
