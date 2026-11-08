@@ -10,6 +10,13 @@ add_test(NAME prelogin_controller_tests COMMAND prelogin_controller_tests)
 add_executable(prelogin_daemon_fixture fic/incident/PreLoginDaemonFixture.cpp)
 target_include_directories(prelogin_daemon_fixture PRIVATE ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src)
 target_link_libraries(prelogin_daemon_fixture PRIVATE fic-prelogin-core)
+# Pure conversation contract test: no pam_start and no system mutation.
+enable_language(C)
+add_executable(pam_native_consumer_probe integration/pam-c2/fic_pam_probe.c)
+target_include_directories(pam_native_consumer_probe PRIVATE ${FIC_ACCESS_PAM_INCLUDE_DIR})
+target_link_libraries(pam_native_consumer_probe PRIVATE ${FIC_ACCESS_PAM_LIBRARY})
+add_test(NAME pam_native_consumer_conversation_tests COMMAND pam_native_consumer_probe --conversation-test)
+set_tests_properties(pam_native_consumer_conversation_tests PROPERTIES LABELS "unit")
 add_executable(prelogin_pam_probe fic/incident/PreLoginPamProbe.cpp)
 target_include_directories(prelogin_pam_probe PRIVATE ${FIC_ACCESS_PAM_INCLUDE_DIR})
 target_link_libraries(prelogin_pam_probe PRIVATE ${FIC_ACCESS_PAM_LIBRARY})
@@ -1940,6 +1947,7 @@ add_executable(fic-pam-c2-gate-driver EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlotBootstrap.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
 )
 target_include_directories(fic-pam-c2-gate-driver PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -2049,6 +2057,9 @@ add_executable(fic-pam-c2-wiring-driver EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.cpp
 )
 target_include_directories(fic-pam-c2-wiring-driver PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src

@@ -863,3 +863,195 @@ shared regression gate проверены; Debian13/Ubuntu24/Ubuntu26 повто
 Ограничения причинного ownership/ABA, missing entry services и остаточной
 CAS-гонки из основного I5 остаются. API, markers/schema, C2, faillock,
 activation policy, Required, pwtxn и package lifecycle не менялись.
+
+## 14. I6 — native functional validation
+
+База: `db7a1d270404340de1e77eb6da91ce5d8e2d482d`. Это test-only этап:
+production PAM algorithms, ownership, journal schema, C2, ALT markers,
+Required и package lifecycle не меняются. Текущие итоговые результаты и
+полнота обязательных scenarios определяются I6 evidence checker, а не
+историческими PASS R1–I5.
+
+### Harness и границы доказательства
+
+Расширены существующие pam-dependencies Driver и fic_pam_probe.c. Закрытый
+`--functional-i6` работает только root в disposable Docker; production
+registry/planner и RollbackExecutor используют отдельные config/journal в
+`/var/tmp/fic-pam-i6-state`, но реальные distro PAM/provider files. Он не
+содержит собственной реализации enforcement/planning/ownership. При каждой
+mutation конфигурация сначала загружается, затем сохраняется; новый registry
+строится из актуального snapshot. Factory wiring соответствует daemon.
+
+L1: parsers/planner/Required/reverse-disable guard, journal/recovery,
+managed blocks/CAS/storage/locks и чистый consumer conversation self-test.
+L2: настоящие зарегистрированные policy classes, production coordinator,
+настоящие journal и physical provider/PAM files. L3: Linux-PAM pam_start,
+authenticate + acct_mgmt через штатный login и chauthtok через штатный passwd,
+положительные и отрицательные controls с настоящими shadow/TCB credentials.
+Полный daemon/CLI lifecycle с systemd не выполняется: L4 остаётся BLOCKED,
+а L2+L3 не переименовываются в installed daemon E2E.
+
+Conversation callback обрабатывает несколько messages, отвечает только на
+prompts, оставляет response null для INFO/ERROR, выбирает current/new token
+по prompt и отвергает неизвестный message style. Self-test не вызывает PAM.
+Probe фиксирует real UID/EUID. Self-change исполняется с real UID временного
+пользователя и EUID 0, как passwd(1); root differentials — с UID/EUID 0,
+но целевой account по-прежнему тестовый, не системный root. Проверяются
+изменение password-hash digest при успехе и его сохранность при отказе.
+Пароли не записываются в evidence; checker дополнительно проверяет утечки
+тестовых tokens. Hash digest не считается самостоятельным enforcement proof.
+
+### Native окружение и support routing
+
+Runtime images строятся поверх уже существующих native build images через
+`Dockerfile.functional-runtime`. Debian/Ubuntu получают штатные
+cracklib-runtime и wamerican с построенным словарём. Начальный отказ baseline
+при отсутствующем cracklib dictionary был ENVIRONMENT failure до FIC apply,
+не production bug. ALT получает штатные passwd/util-linux/openssh-server/sudo;
+ручных stock templates, LDAP/SSSD/domain infrastructure нет. Версии всех
+установленных пакетов, os-release, baseline PAM, source/image/binary hashes
+сохраняются отдельно для каждого запуска.
+
+| Platform | Quality | History parameter route | Lockout |
+|---|---|---|---|
+| Debian12 | pwquality / C2 | C2 ModuleArguments | managed faillock slots |
+| Debian13 | pwquality / C2 | ProviderConfigFile + C2 | managed faillock slots |
+| Ubuntu24.04 | pwquality / C2 | ProviderConfigFile + C2 | managed faillock slots |
+| Ubuntu26.04 | pwquality / C2 | ProviderConfigFile + C2 | managed faillock slots |
+| ALT p11 | passwdqc / StaticVerifyOnly | AltTcbManaged / fic-pwhistory.conf | AltTcbManaged |
+
+Для owned Quality case D/U штатной командой pam-auth-update отключается
+сторонний distro pwquality profile перед baseline. Затем FIC создаёт свою
+топологию. Отдельный завершающий native case включает distro profile обратно
+и проверяет отсутствие adoption, сохранность generated foreign graph и
+продолжающийся enforcement после release. В ALT StaticVerifyOnly activation
+не получает writer: provider options могут иметь собственный journal,
+но это не ownership сторонней штатной activation topology.
+
+### Измеряемые scenarios
+
+* Для каждого зарегистрированного параметра: apply, repeat apply, другое
+  допустимое target value, refresh, возврат исходного target и release.
+  Audit проверяет platform support/backend/Required; Unsupported не получает
+  writer. Реальные Disabled/Failed activation cases подавляют own parameter
+  executor, включая временно отсутствующий provider module.
+* Quality: положительный complex token, слабый token, root enforce/bypass,
+  min-length refresh с изменением consumer outcome; D/U дополнительно
+  missing-digit/username/gecos/difok cases, ALT similar/match rejection.
+* History: depth отличается от нуля, несколько успешных смен, reuse rejection
+  с неизменным hash, refresh окна и принятие token за пределами окна, root
+  differentials, переход Quality+History → History-only → Quality+History.
+* ALT использует настоящий pam_tcb, pam_pwhistory и собранный pam_fic_pwtxn.
+  Удержание штатного transaction lock блокирует password change; после
+  освобождения тот же рабочий consumer снова меняет TCB credentials.
+* Lockout: правильный пароль до ошибок, три неверных попытки, штатный faillock
+  tally, отказ правильного пароля при блокировке, reset и успешный вход.
+  В ALT обе production strategies Required/Requisite; Authsucc не добавлен.
+  Reset не доказывает автоматический unlock timeout или истечение fail_interval.
+  Системный root не блокируется ради теста.
+* Сочетания Q+H, Q+L, H+L, Q+H+L; освобождение одной capability при сохранении
+  остальных; password-change/auth controls после release. OFF означает FIC
+  intent/ownership, а не отсутствие любой внешней защиты (особенно ALT).
+* Release идёт через существующий RollbackExecutor/coordinator; конфигурационный
+  status меняется отдельно после release. Это backend rollback validation,
+  не заявление о выполненном daemon IPC disable. Повторный rollback,
+  preservation foreign provider и post-release consumers проверяются отдельно.
+
+Существующие I2/I5 negative fixtures остаются L1 ownership/recovery evidence;
+их не следует называть authentication tests. Source-current native ALT
+control probe дополнительно подтверждает mode-specific refusals и History
+foreign-provider release. Прямой use_first_pass auth consuming path и все
+установленные GUI/service paths нельзя выводить из одного login consumer.
+Полная LDAP/AD/Kerberos/SSSD/DM среда не поднималась.
+
+### Evidence и воспроизведение
+
+Для каждой платформы:
+
+```
+FIC_PAM_GATE_STAGE=i6 bash tests/integration/pam-dependencies/run-i1.sh TAG PLATFORM BUILD_DIR
+bash tests/integration/pam-dependencies/run-functional.sh TAG BUILD_DIR
+```
+
+Затем `python3 tests/integration/pam-dependencies/check-i6-evidence.py build-pam-i6`.
+Checker требует все пять платформ, полный набор consumer scenarios/parameter
+identities, 25 CTest на каждой, текущие source hashes, согласованные receipts,
+UID/EUID и hash-change oracle. Отсутствие required functional case не является
+SKIP/PASS. Raw artifacts остаются в ignored build-pam-i6; компактный итог
+фиксирует их hashes, package/build identities и явные limits. Исторические
+R1–I5 evidence не переписываются.
+
+Важное уточнение oracle: сохранность password hash после отказа не означает
+неизменности history storage. В upstream
+[pwhistory 1.5.2](https://github.com/linux-pam/linux-pam/blob/v1.5.2/modules/pam_pwhistory/pam_pwhistory.c)
+сохранение старого hash предшествует проверке нового token. Поэтому тест не
+предполагает, что произвольно выбранный более старый пароль всё ещё находится
+в окне после промежуточных вызовов. Root differential имеет отрицательный
+контроль перед bypass; после восстановления enforcement делает свежую
+успешную смену и сразу проверяет непосредственно предыдущий пароль.
+Первоначальный FAIL старого-token oracle не объявляется FIC production bug.
+Release не удаляет provider-owned историю/TCB credentials: освобождаются
+journal-backed configuration/topology элементы в существующем контракте.
+
+### Итог I6
+
+Итоговый набор: `tests/integration/pam-dependencies/i6-evidence/summary.json`.
+Source-current checker PASS; code manifest:
+`6c076b980a6999d2e5e6429583f6db8da08dca6656c491ac674a5871ae3a1bbe`.
+До/после gates receipts совпадают на всех пяти платформах. Raw before/after
+PAM/config/journal, requests, outcomes и полный artifact manifest находятся
+в ignored build-pam-i6; итог сохраняет hashes и все основные L3 результаты,
+без паролей. Девять позитивных/негативных проверок самого checker PASS.
+
+| Platform | L1 CTest | Parameter L2 cycles | Native Q/H/L (L3) | Main consumer operations | Daemon L4 |
+|---|---|---|---|---|---|
+| Debian12 | 25/25 | 16/16 | PASS/PASS/PASS | 49 | Not proven |
+| Debian13 | 25/25 | 16/16 | PASS/PASS/PASS | 49 | Not proven |
+| Ubuntu24.04 | 25/25 | 16/16 | PASS/PASS/PASS | 49 | Not proven |
+| Ubuntu26.04 | 25/25 | 16/16 | PASS/PASS/PASS | 49 | Not proven |
+| ALT p11 | 25/25 | 12/12 | PASS/PASS/PASS | 50 | Not proven |
+
+Всего 246 основных реальных consumer operations. В дополнение:
+
+* Existing D12 options gate подтвердил ModuleArguments window и отсутствие
+  pam-auth-update при чистом refresh. Existing D13/U24/U26 ProviderConfigFile
+  flows после актуализации test adapter подтвердили реальный рост окна 2→4.
+  Legacy return-code-only root checks этих supplementary scripts не служат
+  самостоятельным hash/UID proof; этот более строгий proof даёт main matrix.
+* Дополнительные четыре D/U foreign-faillock experiments: корректные чужие
+  preauth/authfail/account rules, отсутствие activation ownership/adoption,
+  ровно три tally-записи после трёх ошибок, byte-exact сохранность чужих файлов
+  и neutral slots при release, reset→пустой tally→успешный вход.
+* Native module-argument > primary > drop-in precedence подтверждён реальными
+  pwquality/chauthtok и hash controls во всех четырёх D/U. Это calibration на
+  явно искусственном `fic-i6-precedence` service, не заявление о поддержке
+  произвольного custom graph FIC и не L4.
+* ALT runtime дополнительно получил штатный пакет su. Su PAM consumer с
+  non-root caller проверил обе lockout strategies, reset и точное освобождение
+  двух targets. Это PAM service proof, не execution `/bin/su`/daemon L4.
+  Current installed-services I5 control/History foreign-release gate PASS.
+  Нативные parser probes all5 остаются отдельно обозначенным parser evidence.
+
+Audit теперь получает rollback enrollment из production
+`effectiveRollbackEnrollment()`. D12 History scalar options и ALT legacy
+History options — `NotEnrolled`: отдельный scalar rollback
+**NOT_APPLICABLE**, он не восстанавливает прежние значения. C2/ALT capability
+release отдельно проверен и удаляет своё topology ownership. На ALT legacy
+scalar values могут оставаться в dedicated configuration после release;
+это сохранённый R1–I5 контракт, не новая гарантия независимого undo.
+
+Подтверждённых новых production defects не обнаружено; production files не
+изменены. Исправлены тестовые ошибки: conversation handling, недостающие
+link dependencies двух C2 test targets, obsolete unnamed protected-policy
+adapter, его config/runtime prerequisites и слабый History oracle. Adapter
+использует конкретные публичные policy classes с typed configuration и тем
+же journal; production preflight не обходится. Runtime dependencies добавлены
+только в disposable test images, не в FIC package Depends.
+
+Ограничения: нет полного daemon/IPC/systemd/package L4, GUI/domain services,
+отдельного consuming-path proof для use_first_pass и автоматического timeout
+unlock/interval expiry. Flag enforce-for-root для Lockout проверен как L2
+parameter cycle; системный root специально не блокировался. Development
+binaries сообщают version 0.0.0-alpha/build_commit unknown: фактические source
+и binary hashes записаны, release artifact attestation не заявляется.
+Принятые ALT ABA/causal ownership и non-cooperating-writer CAS limits сохранены.

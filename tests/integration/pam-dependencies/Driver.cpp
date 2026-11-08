@@ -41,8 +41,12 @@ const char* support(PamPolicySupport s){switch(s){case PamPolicySupport::Unsuppo
 const char* topology(PamTopologyStrategyKind s){switch(s){case PamTopologyStrategyKind::StaticVerifyOnly:return "StaticVerifyOnly";case PamTopologyStrategyKind::PamAuthUpdate:return "PamAuthUpdate";case PamTopologyStrategyKind::AltTcbManaged:return "AltTcbManaged";}return "unknown";}
 #include "Contracts.h"
 #include "AltControlI5.h"
+#include "FunctionalI6.h"
 int main(int argc,char** argv){
- fs::path root=fs::temp_directory_path()/("fic-pam-dependencies-"+std::to_string(getpid()));
+ const bool i6=argc==3 && std::string(argv[1])=="--functional-i6";
+ fs::path root=i6?fs::path("/var/tmp/fic-pam-i6-state"):
+     fs::temp_directory_path()/("fic-pam-dependencies-"+std::to_string(getpid()));
+ const bool existing=fs::exists(root/"config");
  try {
   need(argc==3,"usage: driver --audit|--test|--alt-control OUTPUT");fs::create_directories(root);
   fic::core::FicProductPaths paths;
@@ -53,22 +57,32 @@ int main(int argc,char** argv){
   paths.deviceDatabaseFile=root/"data/devices.db"; paths.deviceDatabaseLockFile=root/"data/devices.lock";
   paths.lockDebugLogFile=root/"log/lock.log"; paths.mutationJournalFile=root/"data/mutation-journal.json";
   for(const auto& dir:{paths.configDir,paths.dataDir,paths.logDir,paths.runtimeDir})fs::create_directories(dir);
-  if (fs::exists(FIC_PAM_DEPENDENCIES_STATIC_CONFIG_DIR))
+  if (!existing && fs::exists(FIC_PAM_DEPENDENCIES_STATIC_CONFIG_DIR))
    fs::copy(FIC_PAM_DEPENDENCIES_STATIC_CONFIG_DIR, paths.configDir, fs::copy_options::recursive|fs::copy_options::overwrite_existing);
-  fs::copy(FIC_PAM_DEPENDENCIES_CONFIG_DIR,paths.configDir,fs::copy_options::recursive|fs::copy_options::overwrite_existing);
+  if(!existing) fs::copy(FIC_PAM_DEPENDENCIES_CONFIG_DIR,paths.configDir,fs::copy_options::recursive|fs::copy_options::overwrite_existing);
   std::string error;need(fic::core::FicRuntimePaths::initialize(paths,error),error);
   auto profile=makeBuildPlatformProfile();PlatformExecutableResolver executables(profile.executables);
   json result={{"platform",profile.id},{"mode",argv[1]}};
-  if(std::string(argv[1])=="--test") {
+  if(i6) {
+   need(fs::exists("/.dockerenv") && geteuid()==0,"I6 requires disposable root container");
+   result["functional"]=functionalI6(profile,executables);
+  } else if(std::string(argv[1])=="--test") {
    result["contracts"] = contracts(profile, root);
   } else if(std::string(argv[1])=="--audit") {
    PolicyRegistry registry;need(initPolicyRegistry(profile,executables,registry,error),error);need(validatePolicyDependencyGraph(registry,error),error);
+   const auto rollbackDeps=fic::rollback::productionRollbackDeps(profile,executables,&registry);
    result["graph_valid"]=true;result["policies"]=json::array();
    for(const auto& option:options){
     const auto capability=p::pamPolicyCapability(option.feature);const auto* config=p::capabilityConfig(profile.pam,capability);
     const auto* policy=registry.findPolicy({"IDENTITY_ACCESS","PAM",option.name});
     json row={{"name",option.name},{"support",support(p::pamPolicySupport(profile.pam,option.feature))},{"registered",policy!=nullptr},
       {"activation",pamCapabilityActivationPolicyName(capability)},{"activation_registered",registry.findPolicy({"IDENTITY_ACCESS","PAM",pamCapabilityActivationPolicyName(capability)})!=nullptr}};
+    const auto enrollment=fic::rollback::effectiveRollbackEnrollment(pamRef(option.name),rollbackDeps);
+    switch(enrollment) {
+     case fic::rollback::RollbackEnrollment::Supported: row["rollback_enrollment"]="Supported";break;
+     case fic::rollback::RollbackEnrollment::Unsupported: row["rollback_enrollment"]="Unsupported";break;
+     case fic::rollback::RollbackEnrollment::NotEnrolled: row["rollback_enrollment"]="NotEnrolled";break;
+    }
     if(config){
      row["provider"]=p::pamProviderDescriptor(config->provider).name;row["topology"]=topology(config->topology);
      row["configuration_mode"]=config->configurationMode==PamCapabilityConfigurationMode::ModuleArguments?"ModuleArguments":"ProviderConfigFile";
@@ -100,6 +114,6 @@ int main(int argc,char** argv){
        {"local_file_bytes_preserved",read(first)==firstBytes&&read(second)==secondBytes},{"inspect",inspected},{"state",static_cast<int>(status.state)},{"manageable",status.manageable},{"detail",status.detail+error}});
    }
   } else throw std::runtime_error("unknown mode");
-  write(argv[2],result.dump(2)+"\n");fs::remove_all(root);return 0;
- }catch(const std::exception& e){std::cerr<<e.what()<<'\n';fs::remove_all(root);return 1;}
+  write(argv[2],result.dump(2)+"\n");if(!i6)fs::remove_all(root);return 0;
+ }catch(const std::exception& e){std::cerr<<e.what()<<'\n';if(!i6)fs::remove_all(root);return 1;}
 }

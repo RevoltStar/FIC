@@ -6,10 +6,10 @@
 #
 # Platform semantics (evidence-based; the compiled-in profile decides the
 # flow via the driver "platform-mode" report, never the distro name):
-#   - ModuleArguments mode (Debian 12, Debian 13): the O-flow IS production
+#   - ModuleArguments mode (Debian 12): the O-flow IS production
 #     Step 6 wiring evidence (the C2 coordinator renders the managed
 #     options into the FIC-owned slot bodies).
-#   - ProviderConfigFile mode (Ubuntu 24.04, Ubuntu 26.04): the PC-flow is
+#   - ProviderConfigFile mode (Debian 13, Ubuntu 24.04, Ubuntu 26.04): the PC-flow is
 #     the PRODUCTION evidence (classic option-policy path writing the real
 #     /etc/security/pwhistory.conf + functional reuse/root differentials).
 #     A ModuleArguments capability probe alone is NEVER production
@@ -86,6 +86,8 @@ cmake --build /tmp/fic-gate-build --target fic-pam-c2-gate-driver -j2 \
 DRIVER_BIN="$(find /tmp/fic-gate-build -name fic-pam-c2-gate-driver -type f | head -1)"
 [ -n "$DRIVER_BIN" ] || die_environment "driver binary not found"
 cp "$DRIVER_BIN" "$DRIVER"
+sha256sum "$DRIVER" "$PROBE" > "$EVID/binaries.sha256"
+dpkg-query -W libpam0g libpam-modules libpam-pwquality > "$EVID/native-packages.txt"
 
 # The compiled-in production platform state decides which flow is
 # production evidence and which is a capability probe (never the distro
@@ -371,6 +373,7 @@ WD_BIN="$(find /tmp/fic-gate-build -name fic-pam-c2-wiring-driver -type f | head
 [ -n "$WD_BIN" ] || die_environment "wiring driver binary not found"
 WIRING_DRIVER=/tmp/fic-gate-bin/fic-pam-c2-wiring-driver
 cp "$WD_BIN" "$WIRING_DRIVER"
+sha256sum "$WIRING_DRIVER" >> "$EVID/binaries.sha256"
 
 # ---- PC1: bare H-only attach renders NO module arguments ----
 transition 0 1 - || die_environment "PC1: bare H-only attach failed"

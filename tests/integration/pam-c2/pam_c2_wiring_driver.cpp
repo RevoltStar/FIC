@@ -13,6 +13,8 @@
 #include "modules/identity_access/pam/PamManagedPasswordSlotBootstrap.h"
 #include "modules/identity_access/pam/PamPasswordTopologyCoordinator.h"
 #include "modules/identity_access/pam/policies/PamPasswordHistoryOptionPolicy.h"
+#include "modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.h"
+#include "modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.h"
 #include "modules/identity_access/pam/PamPasswordTopologyState.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
@@ -20,6 +22,7 @@
 #include "rollback/PamRollback.h"
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
+#include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 
@@ -109,7 +112,10 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    std::filesystem::create_directories("/opt/fic/db");
+    const auto& paths = fic::core::FicRuntimePaths::get();
+    for (const auto& directory : {paths.configDir, paths.dataDir,
+                                 paths.logDir, paths.runtimeDir})
+        std::filesystem::create_directories(directory);
     std::string hashError;
     if (!CommandHashStore::saveHash("/usr/sbin/pam-auth-update", hashError)) {
         std::cerr << "command hash registration failed: " << hashError
@@ -211,24 +217,39 @@ int main(int argc, char** argv) {
             std::cerr << "provider-option requires <depth|enforce> <value>\n";
             return 2;
         }
-        class GateHistoryOptionPolicy
-            : public PamPasswordHistoryOptionPolicy {
-        public:
-            GateHistoryOptionPolicy(
-                fic::platform::PamPlatformConfig config,
-                fic::platform::PamPolicyFeature feature)
-                : PamPasswordHistoryOptionPolicy(
-                      std::move(config), feature) {}
-            using PamPasswordHistoryOptionPolicy::applyPam;
-        };
+        // The bare topology executor above uses the same journal as this
+        // command. Supply its test configuration intent, then exercise the
+        // concrete policy's public apply() instead of an unnamed protected
+        // applyPam() call that bypasses type/configuration validation.
         const bool isDepth = std::string(argv[2]) == "depth";
-        GateHistoryOptionPolicy policy(
-            fic::platform::makeBuildPlatformProfile().pam,
-            isDepth
-                ? fic::platform::PamPolicyFeature::PasswordHistoryDepth
-                : fic::platform::PamPolicyFeature::
-                      PasswordHistoryEnforceForRoot);
-        const bool ok = policy.applyPam(argv[3]);
+        if (!isDepth && std::string(argv[2]) != "enforce") return 2;
+        const std::string name = isDepth ? "password_history_depth"
+                                         : "password_history_enforce_for_root";
+        ModuleConfigFileHandler config("IDENTITY_ACCESS");
+        if (!std::filesystem::exists(config.path())) {
+            AtomicWriteOptions create;
+            create.createIfMissing = true;
+            create.exclusiveCreate = true;
+            create.rejectSymlink = true;
+            create.fileMode = 0644;
+            if (!AtomicFileWriter::write(config.path(), "_schema_version=1\n",
+                                         create, &hashError))
+                return 2;
+        }
+        if (!config.loadConfig()) return 2;
+        if (!config.hasPolicyStatus("enable_password_quality"))
+            config.setPolicyStatus("enable_password_quality", "DISABLE");
+        if (!config.setPolicyStatus("enable_password_history", "ENABLE") ||
+            !config.setPolicyStatus(name, "ENABLE") ||
+            !config.setPolicyValue(name, argv[3]) || !config.saveConfig())
+            return 2;
+        const auto profile = fic::platform::makeBuildPlatformProfile();
+        std::unique_ptr<Policy> policy;
+        if (isDepth)
+            policy = std::make_unique<PamPasswordHistoryDepthPolicy>(profile.pam);
+        else
+            policy = std::make_unique<PamPasswordHistoryEnforceForRootPolicy>(profile.pam);
+        const bool ok = policy->apply();
         std::cout << "success=" << (ok ? 1 : 0) << "\n";
         return ok ? 0 : 1;
     }

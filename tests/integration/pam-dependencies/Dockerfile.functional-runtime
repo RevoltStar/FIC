@@ -1,0 +1,8 @@
+ARG BASE
+FROM ${BASE}
+# Native distro resources only; no synthetic stock PAM files.
+RUN apt-get update && \
+    if command -v dpkg-query >/dev/null; then \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends cracklib-runtime wamerican && \
+      create-cracklib-dict /usr/share/dict/words; \
+    else apt-get install -y passwd util-linux openssh-server sudo su; fi
