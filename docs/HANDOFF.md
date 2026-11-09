@@ -1,29 +1,29 @@
 # Current workspace
 
 ## Current base / task
-* main; base `69cdb12df31e26562c63655edb92d9b810a02565`.
-* Attachment 1fd56dc8: PAM I6 source-manifest follow-up; one commit `test(pam): bind I6 evidence to native runtime inputs`, no push. Stop after completion.
+* `main`; task base `68b546ad` (PAM I6 evidence follow-up).
+* Private fic-cli/fic-gui permissions regression from `752354c8` fixed. Single user-authorized completion commit; no push.
 
 ## Accepted architecture / invariants
-* Test-only: no production PAM/registry/Required/C2/ALT topology/MutationJournal/rollback/package payload changes. R1–I5 algorithms/evidence untouched.
-* I6 runner/checker share `i6-source-manifest.py`: deterministic tracked path + NUL + SHA256(content). Legacy source roots/extensions plus `.in` templates, native PAM payloads, config/lang resources, runtime recipe and actual packaging static-test inputs. Docs/generated evidence excluded; image/package/binary receipts remain separate.
-* L1/L2/L3 evidence does not establish daemon/CLI/systemd L4. All native account/PAM/shadow/TCB changes only disposable Docker; no host mutation.
-* Existing supplemental results retain original source/binary/package receipts; not relabelled as current reruns. Their production/payload/gate subjects are unchanged.
+* Private clients fic-cli, fic-gui, fic-gui.real: root:fic0750. Private root/bin: root:fic2750, group cannot write. Outsiders cannot execute clients.
+* DEB --root-owner-group retained; each client's configure postinst independently fixes exact own files + two parents, validates complete path set before mutation (physical/root-owned/non-writable dirs and single-link regular root-owned/non-writable files). Abort actions no-op; unsafe objects fail closed.
+* RPM native attrs for three files and identical %dir attrs for shared bin in all generated owners; no chown scriptlet. Existing root/config exclusions retained.
+* No recursive metadata repair or changes to persistent state, package lifecycle/admission, rollback/journal, IPC auth or uninstall overload. Native tests ONLY disposable rootless Podman, no host security mounts/apply.
 
 ## Completed / changed areas
-* Shared I6-only manifest helper; historical receipt branch in run-i1.sh unchanged.
-* Isolated-checkout regressions exercise real checker: relevant input mutation invalidates hash/evidence; docs/generated evidence do not. Original checkout/resources never modified by negative tests.
-* Research §14 documents exact input scope and evidence boundary.
+* Two production builders + ownership sections of DEB/RPM READMEs.
+* New static/contract CTest and focused tests/integration/package-lifecycle client runner, production-helper repackaging, native access test, reproducible runtime recipes, compact evidence/private-client-permissions.json.
+* docs/private-client-permissions-validation.md contains exact commands, results and limits.
 
 ## Validation
-* Repeated `FIC_PAM_GATE_STAGE=i6 bash tests/integration/pam-dependencies/run-i1.sh TAG PLATFORM BUILD_DIR` + `run-functional.sh TAG BUILD_DIR` on Debian12/13, Ubuntu24.04/26.04, ALT p11: fic/affected targets build PASS, 25/25 relevant CTest each, registry/Required audit and native functional reports PASS (246 main consumer operations).
-* All5 before==after source: `ddffb22f1c6739303a70d4597e5fd3f67495e3c4b2a1b4f06b3ec5c154bddd2c`; 1226 tracked inputs. Observed 35 packaging static-test reads all included. Old source evidence rejected before rerun.
-* `python3 tests/integration/pam-dependencies/check-i6-evidence.py build-pam-i6` PASS current-source L1/L2/L3, no active final journal ownership.
-* `python3 tests/integration/pam-dependencies/test-i6-source-manifest.py build-pam-i6` PASS stable hash +14 mutation cases (12 invalidate hash/checker, 2 docs/evidence remain valid); resources restored in isolated checkout.
-* Binary/consumer/image/package receipts match the previous accepted run all5; no supplemental subject changes. Original supplementary receipts/results preserved separately in compact evidence. Main native runs actually repeated; no source hash substitution.
-* Bash syntax, Python compilation and git diff --check PASS. Compact evidence updated; historical R1–I5 unchanged.
+* Fresh CMake configure PASS: /tmp/fic-client-permissions-check; affected CTest8/8 PASS, five static labelled. /tmp/fic-client-{configure,ctest}.log. DEB dependency and Qt bundle tests directly PASS as well.
+* Actual client DEB/RPM archives built via current production helpers:20 archives (client pairs0.1.1→0.1.2 across5 distro rows). DEB archive IDs root:root0750; native configure root:fic0750. RPM archive and installed attrs root:fic0750/bin2750.
+* Native Debian12/13, Ubuntu24.04/26.04 and ALT p11 ALL PASS install/reinstall/upgrade and independent metadata check after each client, real non-root CLI,30 Qt/Xvfb xcb/JPEG/private-Qt launches,45 outsider EACCES proofs, no group write, unchanged owner/group/mode/inode/mtime/ctime/content for persistent metadata fixtures (config/DB/journal/witness/incident/log/notify). DEB unsafe type/link/owner/writable path refusals PASS.
+* Final native-only rerun all5 exit0; raw build-package-lifecycle/client-access-<row>/{build.log,native.log,packages/,results/}. Compact tracked receipts contain source/image-independent OS/manager facts, source/package/raw-evidence hashes and results.
+* Bash syntax, Python compile, final diff check PASS. No full C++ build/CTest; no production C++/install-layout changes.
 
 ## Remaining / limits
-* No mandatory follow-up work remains. This changeset is the single completion commit requested above; no push or further I6 changes.
-* No production/source payload changes, no new PAM scenarios, full-project CTest or daemon/CLI/systemd L4. Existing I6 limits (root not locked, reset rather than timeout expiry, domain/GUI infrastructure absent, legacy NotEnrolled/ABA/CAS boundaries) unchanged.
-* Raw current evidence: ignored build-pam-i6; supplemental source receipts retain their original algorithm and are not claims of new complete-manifest runs. Accepted compiled/runtime subjects and tracked payload bytes unchanged from base; historical evidence not upgraded retroactively.
+* No required permissions work remains. Repackaged unchanged native cached FIC ELF payloads, not current-HEAD release rebuilds. Dependency admission bypassed (dpkg --force-depends/rpm --nodeps); not a full clean-system daemon stack install or GUI/IPC functional-policy claim. GUI tests really create QWidget/event loop, not just test-x.
+* Existing main FIC root initialization is seeded in RPM fixture; main fic.postinst never used to fix clients. Native metadata fixtures are not a live daemon journal.
+* Ubuntu24 root dist old GUI lacks smoke flag; newer real cached distro artifact from dist/pam-activation/ubuntu2404 used with hashes. Missing image libraries fixed only in test images. Docker socket/old build-host SSH unavailable; official Docker Hub ALT p11 + verified HTTPS mirror used after ALT registry timeout.
+* Earlier PAM I6 evidence remains historical; do not relabel it for this packaging-source change. No native host state changed, no image/container pruning or push.

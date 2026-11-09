@@ -512,6 +512,13 @@ add_test(
 )
 
 add_test(
+    NAME private_client_permissions_tests
+    COMMAND bash
+            ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/private-client-permissions-test.sh
+)
+set_tests_properties(private_client_permissions_tests PROPERTIES LABELS "static")
+
+add_test(
     NAME deb_binary_depends_tests
     COMMAND bash
             ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/deb-binary-depends-test.sh

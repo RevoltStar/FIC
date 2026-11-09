@@ -118,10 +118,20 @@ During installation each package:
 - initializes a missing `/opt/fic/db/devices.db` directly at the current schema
   through the offline maintenance command;
 - creates `/opt/fic/lockstatus` and `/opt/fic/db/commandhash.txt` only when they do not yet exist;
-- normalizes ordinary package state while excluding `/opt/fic`,
-  `/opt/fic/config`, `GLOBAL.conf` and their aliases from generic metadata
-  repair;
-- applies `0750` to files in `/opt/fic/bin`.
+- never recursively repairs ownership/modes in the shared persistent tree;
+- installs the private clients `fic-cli`, `fic-gui` and `fic-gui.real` as
+  `root:fic 0750`; `/opt/fic` and `/opt/fic/bin` are `root:fic 2750`.
+
+DEB archives retain numeric `root:root` ownership (`--root-owner-group`). Each
+client package's configure postinst independently establishes its own files'
+`root:fic 0750` and the two private parent directories, including on reinstall
+and upgrade. It validates physical root-owned, non-writable parents and
+single-link regular non-writable root-owned payloads before changing metadata;
+symlinks, wrong types/owners and unsafe links fail closed. It never repairs
+config/DB/log/journal/incident files.
+
+Native permissions/GUI evidence and its scope:
+[private client permissions validation](../../docs/private-client-permissions-validation.md).
 
 Members of `fic` mutate configuration and device state through the two
 administrative sockets. Direct access to configuration, database and binary

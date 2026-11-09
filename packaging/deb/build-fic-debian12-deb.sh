@@ -409,9 +409,42 @@ EOF
 }
 
 write_symlink_postinst() {
+    local client_paths
+    case "$2:$3" in
+        fic-cli:/opt/fic/bin/fic-cli) client_paths='/opt/fic/bin/fic-cli' ;;
+        fic-gui:/opt/fic/bin/fic-gui) client_paths='/opt/fic/bin/fic-gui /opt/fic/bin/fic-gui.real' ;;
+        *) echo 'Unknown private client package' >&2; return 1 ;;
+    esac
     cat > "$1/DEBIAN/postinst" <<EOF
 #!/bin/sh
 set -eu
+case "\${1:-}" in
+    configure) ;;
+    abort-upgrade|abort-remove|abort-deconfigure) exit 0 ;;
+    *) echo 'FIC: unsupported client postinst action' >&2; exit 1 ;;
+esac
+# dpkg-deb --root-owner-group intentionally keeps archive IDs root:root.
+# Validate the complete, fixed path set before changing any metadata. Root
+# ownership and non-writable parents exclude unprivileged replacement races;
+# reject symlinks and hardlinked payloads rather than following foreign state.
+for directory in /opt /opt/fic /opt/fic/bin; do
+    [ -d "\$directory" ] && [ ! -L "\$directory" ] &&
+        [ "\$(stat -c '%u' "\$directory")" = 0 ] &&
+        [ \$((0\$(stat -c '%a' "\$directory") & 022)) -eq 0 ] || {
+        echo "FIC: unsafe client parent: \$directory" >&2; exit 1;
+    }
+done
+for client in $client_paths; do
+    [ -f "\$client" ] && [ ! -L "\$client" ] &&
+        [ "\$(stat -c '%u:%h' "\$client")" = 0:1 ] &&
+        [ \$((0\$(stat -c '%a' "\$client") & 022)) -eq 0 ] || {
+        echo "FIC: unsafe client payload: \$client" >&2; exit 1;
+    }
+done
+chown root:fic /opt/fic /opt/fic/bin
+chmod 2750 /opt/fic /opt/fic/bin
+chown root:fic $client_paths
+chmod 0750 $client_paths
 ln -sfn "$3" "/bin/$2"
 EOF
     chmod 0755 "$1/DEBIAN/postinst"

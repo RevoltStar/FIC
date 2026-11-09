@@ -1,0 +1,685 @@
+{
+  "base": "68b546ad28838f93e2285f95c0086397b54418e0",
+  "date": "2026-11-09",
+  "scope": "native client-only permissions, unchanged cached ELF payloads; dependency admission bypassed; not full-stack/release validation",
+  "source_sha256": {
+    "packaging/deb/build-fic-debian12-deb.sh": "32ae1c0b3d123a112d8c241aa78d159c204f5bea2b11ea2b0adbd0953454ba2d",
+    "packaging/rpm/build-fic-alt-p11-rpm.sh": "31323c8a6509f628736c41d946d18e3a7c98576d7972ab9fa8710218dc5a9d0b",
+    "tests/integration/package-lifecycle/build-client-access.sh": "3f2ccf2470bcfad921ddd2393d4490275139b8994b4775ee3753ec8315a928b8",
+    "tests/integration/package-lifecycle/client_access_native.py": "98460055bd237b21c5d4e1a6f9eb60e32072d5980a5dfc5ac20c0562ed7fd22c",
+    "tests/integration/package-lifecycle/run-client-access.sh": "3e57b14ce502c05f076e1be3aa2c22020c4c46aca20788add44f9b19e731bf00",
+    "tests/integration/packaging/private-client-permissions-test.sh": "c3782b72af532270e34ef0b35ddee8a585666ae8bcd9a6084723ffdc56ac7c83"
+  },
+  "rows": [
+    {
+      "result": {
+        "row": "debian12",
+        "status": "PASS",
+        "stages": 3,
+        "gui": "Xvfb/xcb/JPEG/private Qt under non-root UID",
+        "scope": "real client packages; package dependency admission intentionally bypassed, no daemon/full-stack installation claim",
+        "events": 100,
+        "os_release": {
+          "PRETTY_NAME": "Debian GNU/Linux 12 (bookworm)",
+          "NAME": "Debian GNU/Linux",
+          "VERSION_ID": "12",
+          "VERSION": "12 (bookworm)",
+          "VERSION_CODENAME": "bookworm",
+          "ID": "debian",
+          "HOME_URL": "https://www.debian.org/",
+          "SUPPORT_URL": "https://www.debian.org/support",
+          "BUG_REPORT_URL": "https://bugs.debian.org/"
+        }
+      },
+      "manager": "Debian 'dpkg' package management program version 1.21.23 (amd64).",
+      "installed_metadata": [
+        "root:fic 2750 /opt/fic",
+        "root:fic 2750 /opt/fic/bin",
+        "root:fic 750 /opt/fic/bin/fic-cli",
+        "root:fic 750 /opt/fic/bin/fic-gui",
+        "root:fic 750 /opt/fic/bin/fic-gui.real"
+      ],
+      "member_id": "uid=1000(ficmember) gid=1000(ficmember) groups=1000(ficmember),999(fic)",
+      "outsider_id": "uid=1001(ficoutsider) gid=1001(ficoutsider) groups=1001(ficoutsider)",
+      "persistent_stages": [
+        {
+          "stage": "install",
+          "result": "PASS"
+        },
+        {
+          "stage": "reinstall",
+          "result": "PASS"
+        },
+        {
+          "stage": "upgrade",
+          "result": "PASS"
+        }
+      ],
+      "unsafe_refusals": 7,
+      "input_and_payload_receipts": [
+        "351d9826fe012560745be15bfe25c6be6c7a175c6826436cce3fdcb9de8708ee  /inputs/fic-cli_0.0.0~alpha_debian12_amd64.deb",
+        "cc8898aea8fd03b7a8be298f65807f0924e94960a3e5c5989fb4badea734665c  /tmp/tmp.tUStWI1Qh8/fic-cli-0.1.1/opt/fic/bin/fic-cli",
+        "06f56deb9bb019ca791c48b4d51764ef51aba3e18bda367f35c1308a1888a051  /inputs/fic-gui_0.0.0~alpha_debian12_amd64.deb",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.tUStWI1Qh8/fic-gui-0.1.1/opt/fic/bin/fic-gui",
+        "f854b2b773e8d54eae020fb21c0d18ddd490975e2a0c90608f5895abefa9a022  /tmp/tmp.tUStWI1Qh8/fic-gui-0.1.1/opt/fic/bin/fic-gui.real",
+        "351d9826fe012560745be15bfe25c6be6c7a175c6826436cce3fdcb9de8708ee  /inputs/fic-cli_0.0.0~alpha_debian12_amd64.deb",
+        "cc8898aea8fd03b7a8be298f65807f0924e94960a3e5c5989fb4badea734665c  /tmp/tmp.tUStWI1Qh8/fic-cli-0.1.2/opt/fic/bin/fic-cli",
+        "06f56deb9bb019ca791c48b4d51764ef51aba3e18bda367f35c1308a1888a051  /inputs/fic-gui_0.0.0~alpha_debian12_amd64.deb",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.tUStWI1Qh8/fic-gui-0.1.2/opt/fic/bin/fic-gui",
+        "f854b2b773e8d54eae020fb21c0d18ddd490975e2a0c90608f5895abefa9a022  /tmp/tmp.tUStWI1Qh8/fic-gui-0.1.2/opt/fic/bin/fic-gui.real"
+      ],
+      "package_sha256": {
+        "packages/fic-cli_0.1.1_debian12_amd64.deb": "9a26af215cd56b459bfba133825402bf9eb6817c27a3b8000453d3e03f3e290d",
+        "packages/fic-gui_0.1.1_debian12_amd64.deb": "66b96652cec3fa42ece2dbceb1b3e91e3edeb4b8e497fcad19a606aa92d00974",
+        "packages/upgrades/fic-cli_0.1.2_debian12_amd64.deb": "1a9f1ac364486c0405920199a4f7c394a3345ae6d06089fc98cd6d2b8ebf5202",
+        "packages/upgrades/fic-gui_0.1.2_debian12_amd64.deb": "5664a1ff3f1d5f6ffa795afef87d576c6c6ed78b056eec7eb0a23d982d3d5ab6"
+      },
+      "gui_successful_launches": 6,
+      "gui_examples": [
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-ficmember'\nqpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\n"
+        },
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui.real",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-ficmember'\nqpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\n"
+        }
+      ],
+      "persistent_paths": [
+        "/opt/fic/config",
+        "/opt/fic/config/GLOBAL.conf",
+        "/opt/fic/config/client-permissions-sentinel",
+        "/opt/fic/db",
+        "/opt/fic/db/client-permissions-sentinel",
+        "/opt/fic/db/devices.db",
+        "/opt/fic/db/incident-state.json",
+        "/opt/fic/db/mutation-journal.json",
+        "/opt/fic/db/mutation-journal.json.initialized",
+        "/opt/fic/log",
+        "/opt/fic/log/client-permissions-sentinel",
+        "/opt/fic/log/fic.log",
+        "/opt/fic/notify",
+        "/opt/fic/notify/client-permissions-sentinel",
+        "/opt/fic/notify/pending-message"
+      ],
+      "raw_evidence_sha256": {
+        "build.log": "30b9d324e1b109337545f6ab033e06ede1a2fcd206bbc0033cc2a369987b6562",
+        "native.log": "838cf21cc2efa2bf2c76e61aec960682848852b689088180370388849f5e6265",
+        "results/access-events.json": "169598256c6921bf8d3a431c5125b6421260a5c62d211f1ae181373b6a2bb9c2",
+        "results/result.json": "388f3110b7f760d9c7454fe1ae27d2a1c75e95a036f8be41cf1aacb75fb5f7f2"
+      },
+      "runtime_image": {
+        "tag": "localhost/fic-client-access:debian12",
+        "id": "e42ba0106d6db80e255b107cbd88dfe7970f251966589707ef2bcc4a75ea49f8"
+      }
+    },
+    {
+      "result": {
+        "row": "debian13",
+        "status": "PASS",
+        "stages": 3,
+        "gui": "Xvfb/xcb/JPEG/private Qt under non-root UID",
+        "scope": "real client packages; package dependency admission intentionally bypassed, no daemon/full-stack installation claim",
+        "events": 100,
+        "os_release": {
+          "PRETTY_NAME": "Debian GNU/Linux 13 (trixie)",
+          "NAME": "Debian GNU/Linux",
+          "VERSION_ID": "13",
+          "VERSION": "13 (trixie)",
+          "VERSION_CODENAME": "trixie",
+          "DEBIAN_VERSION_FULL": "13.7",
+          "ID": "debian",
+          "HOME_URL": "https://www.debian.org/",
+          "SUPPORT_URL": "https://www.debian.org/support",
+          "BUG_REPORT_URL": "https://bugs.debian.org/"
+        }
+      },
+      "manager": "Debian 'dpkg' package management program version 1.22.22 (amd64).",
+      "installed_metadata": [
+        "root:fic 2750 /opt/fic",
+        "root:fic 2750 /opt/fic/bin",
+        "root:fic 750 /opt/fic/bin/fic-cli",
+        "root:fic 750 /opt/fic/bin/fic-gui",
+        "root:fic 750 /opt/fic/bin/fic-gui.real"
+      ],
+      "member_id": "uid=1000(ficmember) gid=1000(ficmember) groups=1000(ficmember),999(fic)",
+      "outsider_id": "uid=1001(ficoutsider) gid=1001(ficoutsider) groups=1001(ficoutsider)",
+      "persistent_stages": [
+        {
+          "stage": "install",
+          "result": "PASS"
+        },
+        {
+          "stage": "reinstall",
+          "result": "PASS"
+        },
+        {
+          "stage": "upgrade",
+          "result": "PASS"
+        }
+      ],
+      "unsafe_refusals": 7,
+      "input_and_payload_receipts": [
+        "b04d4083405fd63b0d5ca6461f3c646d661e268ecc126117137de9a09c3e4969  /inputs/fic-cli_0.0.0~alpha_debian13_amd64.deb",
+        "31f0a8cd5c3644ff518fba9aa77d70316449fe53f22852f284fea5de276048ef  /tmp/tmp.H9vlZEYzQq/fic-cli-0.1.1/opt/fic/bin/fic-cli",
+        "f6a290ee54ecf9de6fe6944a530964797529c1b817d9f93b37d8b0ad1bb07ccb  /inputs/fic-gui_0.0.0~alpha_debian13_amd64.deb",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.H9vlZEYzQq/fic-gui-0.1.1/opt/fic/bin/fic-gui",
+        "7f64f6cca22caef94831d98f61bcbc05636aa073d70bf8e39814a9672db47d39  /tmp/tmp.H9vlZEYzQq/fic-gui-0.1.1/opt/fic/bin/fic-gui.real",
+        "b04d4083405fd63b0d5ca6461f3c646d661e268ecc126117137de9a09c3e4969  /inputs/fic-cli_0.0.0~alpha_debian13_amd64.deb",
+        "31f0a8cd5c3644ff518fba9aa77d70316449fe53f22852f284fea5de276048ef  /tmp/tmp.H9vlZEYzQq/fic-cli-0.1.2/opt/fic/bin/fic-cli",
+        "f6a290ee54ecf9de6fe6944a530964797529c1b817d9f93b37d8b0ad1bb07ccb  /inputs/fic-gui_0.0.0~alpha_debian13_amd64.deb",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.H9vlZEYzQq/fic-gui-0.1.2/opt/fic/bin/fic-gui",
+        "7f64f6cca22caef94831d98f61bcbc05636aa073d70bf8e39814a9672db47d39  /tmp/tmp.H9vlZEYzQq/fic-gui-0.1.2/opt/fic/bin/fic-gui.real"
+      ],
+      "package_sha256": {
+        "packages/fic-cli_0.1.1_debian13_amd64.deb": "b3806fd6a66b4f89eb0e457ed040b2b239e0e202be33866f863d064ed31b812b",
+        "packages/fic-gui_0.1.1_debian13_amd64.deb": "0b3b157d6a493486d75a899b9e6294c6af8ef4c7522c3b484df2159b74f131ba",
+        "packages/upgrades/fic-cli_0.1.2_debian13_amd64.deb": "900425d08b12af97a953701268e4f7c810a04bc8ba9c50bfb0259132b7438cbc",
+        "packages/upgrades/fic-gui_0.1.2_debian13_amd64.deb": "624d17e6ef9a562e56e954dd6441ca94036e1041e2b9c68348e8b2de103b1056"
+      },
+      "gui_successful_launches": 6,
+      "gui_examples": [
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "qpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\n"
+        },
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui.real",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "qpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\n"
+        }
+      ],
+      "persistent_paths": [
+        "/opt/fic/config",
+        "/opt/fic/config/GLOBAL.conf",
+        "/opt/fic/config/client-permissions-sentinel",
+        "/opt/fic/db",
+        "/opt/fic/db/client-permissions-sentinel",
+        "/opt/fic/db/devices.db",
+        "/opt/fic/db/incident-state.json",
+        "/opt/fic/db/mutation-journal.json",
+        "/opt/fic/db/mutation-journal.json.initialized",
+        "/opt/fic/log",
+        "/opt/fic/log/client-permissions-sentinel",
+        "/opt/fic/log/fic.log",
+        "/opt/fic/notify",
+        "/opt/fic/notify/client-permissions-sentinel",
+        "/opt/fic/notify/pending-message"
+      ],
+      "raw_evidence_sha256": {
+        "build.log": "82e5c6e734dd432d39c2a4bdf1e6473eb10289e4caadb46b12c2617b8d07f44a",
+        "native.log": "c75ec0955b9b4681d5e8f995f879f9a10566a9cca4516c44ae335faf7a523adf",
+        "results/access-events.json": "2e6c649bc7b34287f225ee79e8667ee61f3a7eae7fed016502227afdce7361b2",
+        "results/result.json": "fb7c5a4af61e91d197a8312aee5d158918525ad5471172abe407105285ab2f02"
+      },
+      "runtime_image": {
+        "tag": "localhost/fic-client-access:debian13",
+        "id": "fd515c17c4a66bf90e861e3ef7834b0460bfd2e5276e17a92008aa6955c3753d"
+      }
+    },
+    {
+      "result": {
+        "row": "ubuntu2404",
+        "status": "PASS",
+        "stages": 3,
+        "gui": "Xvfb/xcb/JPEG/private Qt under non-root UID",
+        "scope": "real client packages; package dependency admission intentionally bypassed, no daemon/full-stack installation claim",
+        "events": 100,
+        "os_release": {
+          "PRETTY_NAME": "Ubuntu 24.04.5 LTS",
+          "NAME": "Ubuntu",
+          "VERSION_ID": "24.04",
+          "VERSION": "24.04.5 LTS (Noble Numbat)",
+          "VERSION_CODENAME": "noble",
+          "ID": "ubuntu",
+          "ID_LIKE": "debian",
+          "HOME_URL": "https://www.ubuntu.com/",
+          "SUPPORT_URL": "https://help.ubuntu.com/",
+          "BUG_REPORT_URL": "https://bugs.launchpad.net/ubuntu/",
+          "PRIVACY_POLICY_URL": "https://www.ubuntu.com/legal/terms-and-policies/privacy-policy",
+          "UBUNTU_CODENAME": "noble",
+          "LOGO": "ubuntu-logo"
+        }
+      },
+      "manager": "Debian 'dpkg' package management program version 1.22.6 (amd64).",
+      "installed_metadata": [
+        "root:fic 2750 /opt/fic",
+        "root:fic 2750 /opt/fic/bin",
+        "root:fic 750 /opt/fic/bin/fic-cli",
+        "root:fic 750 /opt/fic/bin/fic-gui",
+        "root:fic 750 /opt/fic/bin/fic-gui.real"
+      ],
+      "member_id": "uid=1001(ficmember) gid=1001(ficmember) groups=1001(ficmember),999(fic)",
+      "outsider_id": "uid=1002(ficoutsider) gid=1002(ficoutsider) groups=1002(ficoutsider)",
+      "persistent_stages": [
+        {
+          "stage": "install",
+          "result": "PASS"
+        },
+        {
+          "stage": "reinstall",
+          "result": "PASS"
+        },
+        {
+          "stage": "upgrade",
+          "result": "PASS"
+        }
+      ],
+      "unsafe_refusals": 7,
+      "input_and_payload_receipts": [
+        "a7aebe63c81b55a8a00daa38cb2dd0ab3ee6f32ea256bd85ba333090155a45a1  /inputs/fic-cli_0.0.0~pam-activation.1_ubuntu2404_amd64.deb",
+        "f3ecac31de9640e4f086cdba58674b051c79fca81c187c919de9c922e1ad7bb6  /tmp/tmp.AP5aR29QWM/fic-cli-0.1.1/opt/fic/bin/fic-cli",
+        "ecb8a4e135727124570069d5d97ba9f4da8b12145d9c177c1a858ba0ffccfd4c  /inputs/fic-gui_0.0.0~pam-activation.1_ubuntu2404_amd64.deb",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.AP5aR29QWM/fic-gui-0.1.1/opt/fic/bin/fic-gui",
+        "930e5b94a5d79cb4962fafb49721fbbf069fb3e98bcea03f83f0bca3c59bdb47  /tmp/tmp.AP5aR29QWM/fic-gui-0.1.1/opt/fic/bin/fic-gui.real",
+        "a7aebe63c81b55a8a00daa38cb2dd0ab3ee6f32ea256bd85ba333090155a45a1  /inputs/fic-cli_0.0.0~pam-activation.1_ubuntu2404_amd64.deb",
+        "f3ecac31de9640e4f086cdba58674b051c79fca81c187c919de9c922e1ad7bb6  /tmp/tmp.AP5aR29QWM/fic-cli-0.1.2/opt/fic/bin/fic-cli",
+        "ecb8a4e135727124570069d5d97ba9f4da8b12145d9c177c1a858ba0ffccfd4c  /inputs/fic-gui_0.0.0~pam-activation.1_ubuntu2404_amd64.deb",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.AP5aR29QWM/fic-gui-0.1.2/opt/fic/bin/fic-gui",
+        "930e5b94a5d79cb4962fafb49721fbbf069fb3e98bcea03f83f0bca3c59bdb47  /tmp/tmp.AP5aR29QWM/fic-gui-0.1.2/opt/fic/bin/fic-gui.real"
+      ],
+      "package_sha256": {
+        "packages/fic-cli_0.1.1_ubuntu2404_amd64.deb": "017575da5ac0726e45510a683d84f092e9fdf37694fb70994a32e09288ca415c",
+        "packages/fic-gui_0.1.1_ubuntu2404_amd64.deb": "248a3566396fa3be35fd58ab3c557916eb77024c89a0adb63505234cb5d36196",
+        "packages/upgrades/fic-cli_0.1.2_ubuntu2404_amd64.deb": "a587d4cc93b48a3eeadbeea43c4146db4ac4924fb9297a64a5bd2cacc121f549",
+        "packages/upgrades/fic-gui_0.1.2_ubuntu2404_amd64.deb": "9082d4b34324af42f0fae8c2bbe0d2c5ff298f1cf95a005eb83b617c1ccd5b7f"
+      },
+      "gui_successful_launches": 6,
+      "gui_examples": [
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-ficmember'\nqpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\n"
+        },
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui.real",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "QStandardPaths: XDG_RUNTIME_DIR not set, defaulting to '/tmp/runtime-ficmember'\nqpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\n"
+        }
+      ],
+      "persistent_paths": [
+        "/opt/fic/config",
+        "/opt/fic/config/GLOBAL.conf",
+        "/opt/fic/config/client-permissions-sentinel",
+        "/opt/fic/db",
+        "/opt/fic/db/client-permissions-sentinel",
+        "/opt/fic/db/devices.db",
+        "/opt/fic/db/incident-state.json",
+        "/opt/fic/db/mutation-journal.json",
+        "/opt/fic/db/mutation-journal.json.initialized",
+        "/opt/fic/log",
+        "/opt/fic/log/client-permissions-sentinel",
+        "/opt/fic/log/fic.log",
+        "/opt/fic/notify",
+        "/opt/fic/notify/client-permissions-sentinel",
+        "/opt/fic/notify/pending-message"
+      ],
+      "raw_evidence_sha256": {
+        "build.log": "414da35e4f648acb6c6d566f433e743f280e09b204dddf620e3c8865598af321",
+        "native.log": "15e247f506bbe3e66c8bbc92f1558c44998d15b3c8b541519fc84b9a88c3fbb1",
+        "results/access-events.json": "bd6890b2cf36bf1f59efcfbf6956e9bb35c35ed774316cbcaa20cfa5d30a7725",
+        "results/result.json": "763cff160d16ad9954210531b703bbbb942f4da65c54bad56cb00f3a2a8b8d55"
+      },
+      "runtime_image": {
+        "tag": "localhost/fic-client-access:ubuntu2404",
+        "id": "426a8611f8c60807cd931ddd9db6b087d170871818c8db602217ff1faadca4dc"
+      }
+    },
+    {
+      "result": {
+        "row": "ubuntu2604",
+        "status": "PASS",
+        "stages": 3,
+        "gui": "Xvfb/xcb/JPEG/private Qt under non-root UID",
+        "scope": "real client packages; package dependency admission intentionally bypassed, no daemon/full-stack installation claim",
+        "events": 100,
+        "os_release": {
+          "PRETTY_NAME": "Ubuntu 26.04.1 LTS",
+          "NAME": "Ubuntu",
+          "VERSION_ID": "26.04",
+          "VERSION": "26.04.1 LTS (Resolute Raccoon)",
+          "VERSION_CODENAME": "resolute",
+          "ID": "ubuntu",
+          "ID_LIKE": "debian",
+          "HOME_URL": "https://www.ubuntu.com/",
+          "SUPPORT_URL": "https://help.ubuntu.com/",
+          "BUG_REPORT_URL": "https://bugs.launchpad.net/ubuntu/",
+          "PRIVACY_POLICY_URL": "https://www.ubuntu.com/legal/terms-and-policies/privacy-policy",
+          "UBUNTU_CODENAME": "resolute",
+          "LOGO": "ubuntu-logo"
+        }
+      },
+      "manager": "Debian 'dpkg' package management program version 1.23.7 (amd64).",
+      "installed_metadata": [
+        "root:fic 2750 /opt/fic",
+        "root:fic 2750 /opt/fic/bin",
+        "root:fic 750 /opt/fic/bin/fic-cli",
+        "root:fic 750 /opt/fic/bin/fic-gui",
+        "root:fic 750 /opt/fic/bin/fic-gui.real"
+      ],
+      "member_id": "uid=1001(ficmember) gid=1001(ficmember) groups=1001(ficmember),999(fic)",
+      "outsider_id": "uid=1002(ficoutsider) gid=1002(ficoutsider) groups=1002(ficoutsider)",
+      "persistent_stages": [
+        {
+          "stage": "install",
+          "result": "PASS"
+        },
+        {
+          "stage": "reinstall",
+          "result": "PASS"
+        },
+        {
+          "stage": "upgrade",
+          "result": "PASS"
+        }
+      ],
+      "unsafe_refusals": 7,
+      "input_and_payload_receipts": [
+        "2b6a75007c765a2a99ac9a1a8df5e33c6b8b8e9b6e874a16c399f4a4b23dbd71  /inputs/fic-cli_0.0.0~alpha_ubuntu2604_amd64.deb",
+        "0c3804364b5906bfef461f5bf4cfb5ca10e4f50f81dff9edace4f475227c2bd0  /tmp/tmp.kGWT1m2NmU/fic-cli-0.1.1/opt/fic/bin/fic-cli",
+        "b51176d2dcea735acd09a42b729ad1773684fc7038f747c37ac0b7501eb565e6  /inputs/fic-gui_0.0.0~alpha_ubuntu2604_amd64.deb",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.kGWT1m2NmU/fic-gui-0.1.1/opt/fic/bin/fic-gui",
+        "41b31cd2344d90a6a3448861395c5ae386819dbd142b327b2b0445682b822a23  /tmp/tmp.kGWT1m2NmU/fic-gui-0.1.1/opt/fic/bin/fic-gui.real",
+        "2b6a75007c765a2a99ac9a1a8df5e33c6b8b8e9b6e874a16c399f4a4b23dbd71  /inputs/fic-cli_0.0.0~alpha_ubuntu2604_amd64.deb",
+        "0c3804364b5906bfef461f5bf4cfb5ca10e4f50f81dff9edace4f475227c2bd0  /tmp/tmp.kGWT1m2NmU/fic-cli-0.1.2/opt/fic/bin/fic-cli",
+        "b51176d2dcea735acd09a42b729ad1773684fc7038f747c37ac0b7501eb565e6  /inputs/fic-gui_0.0.0~alpha_ubuntu2604_amd64.deb",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.kGWT1m2NmU/fic-gui-0.1.2/opt/fic/bin/fic-gui",
+        "41b31cd2344d90a6a3448861395c5ae386819dbd142b327b2b0445682b822a23  /tmp/tmp.kGWT1m2NmU/fic-gui-0.1.2/opt/fic/bin/fic-gui.real"
+      ],
+      "package_sha256": {
+        "packages/fic-cli_0.1.1_ubuntu2604_amd64.deb": "8556606a1fc16827093ce1a1d0079fb88207d84b705d620d7954b29277ab870f",
+        "packages/fic-gui_0.1.1_ubuntu2604_amd64.deb": "d0ebc11be915a0b2d1eb45345854cde3a515be8c4513fff96c845b48f8c21d71",
+        "packages/upgrades/fic-cli_0.1.2_ubuntu2604_amd64.deb": "9218e4264e899e057c24305425d98b847ec4929f6867f2227fe58c36883e7b9e",
+        "packages/upgrades/fic-gui_0.1.2_ubuntu2604_amd64.deb": "4c00e2b24eca4f1f91b16650af8609ff0066558606523e501ac6058752bcf10c"
+      },
+      "gui_successful_launches": 6,
+      "gui_examples": [
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "qpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\n"
+        },
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui.real",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "qpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\n"
+        }
+      ],
+      "persistent_paths": [
+        "/opt/fic/config",
+        "/opt/fic/config/GLOBAL.conf",
+        "/opt/fic/config/client-permissions-sentinel",
+        "/opt/fic/db",
+        "/opt/fic/db/client-permissions-sentinel",
+        "/opt/fic/db/devices.db",
+        "/opt/fic/db/incident-state.json",
+        "/opt/fic/db/mutation-journal.json",
+        "/opt/fic/db/mutation-journal.json.initialized",
+        "/opt/fic/log",
+        "/opt/fic/log/client-permissions-sentinel",
+        "/opt/fic/log/fic.log",
+        "/opt/fic/notify",
+        "/opt/fic/notify/client-permissions-sentinel",
+        "/opt/fic/notify/pending-message"
+      ],
+      "raw_evidence_sha256": {
+        "build.log": "c3de58002be7c49286d293c13902a5afa08dc18b3340dfbf68bc3cd4c324897e",
+        "native.log": "6c67ebd4a5a610e4bd494e2be92e1ff029d66bae926cd25256fb60c0f9a37317",
+        "results/access-events.json": "5fe923ca28931567c45d39818d5e2005daed27088516651e4d1171dc9a7480cb",
+        "results/result.json": "a2b11dc66f2e457ee85e2ec55ab8da4cfd0996cacb6d798d41e0d0989f6a266b"
+      },
+      "runtime_image": {
+        "tag": "localhost/fic-client-access:ubuntu2604",
+        "id": "376835c1b455dcb2263604176aa307310060b1316206f60b361164a3e848f287"
+      }
+    },
+    {
+      "result": {
+        "row": "altp11",
+        "status": "PASS",
+        "stages": 3,
+        "gui": "Xvfb/xcb/JPEG/private Qt under non-root UID",
+        "scope": "real client packages; package dependency admission intentionally bypassed, no daemon/full-stack installation claim",
+        "events": 91,
+        "os_release": {
+          "NAME": "ALT Container",
+          "VERSION": "11",
+          "ID": "altlinux",
+          "VERSION_ID": "11",
+          "PRETTY_NAME": "ALT Container",
+          "ANSI_COLOR": "1;33",
+          "CPE_NAME": "cpe:/o:alt:container:11",
+          "BUILD_ID": "ALT Container 11",
+          "ALT_BRANCH_ID": "p11",
+          "HOME_URL": "https://basealt.ru/"
+        }
+      },
+      "manager": "RPM version 4.13.0.1",
+      "installed_metadata": [
+        "root:fic 2750 /opt/fic",
+        "root:fic 2750 /opt/fic/bin",
+        "root:fic 750 /opt/fic/bin/fic-cli",
+        "root:fic 750 /opt/fic/bin/fic-gui",
+        "root:fic 750 /opt/fic/bin/fic-gui.real"
+      ],
+      "member_id": "uid=1000(ficmember) gid=1000(ficmember) groups=1000(ficmember),996(fic)",
+      "outsider_id": "uid=1001(ficoutsider) gid=1001(ficoutsider) groups=1001(ficoutsider)",
+      "persistent_stages": [
+        {
+          "stage": "install",
+          "result": "PASS"
+        },
+        {
+          "stage": "reinstall",
+          "result": "PASS"
+        },
+        {
+          "stage": "upgrade",
+          "result": "PASS"
+        }
+      ],
+      "unsafe_refusals": 0,
+      "input_and_payload_receipts": [
+        "77aed3e11ef3c9638a8227e1f990c976b876d03acbe12c705f634dc4d032e868  /inputs/fic-cli-0.0.0~alpha-1.altp11.x86_64.rpm",
+        "9e1e465f5b108a4dbe8db8e3b9068425293a146a32b97b72ff727e1bfbb76db6  /tmp/tmp.aI0Ur99QB7/fic-cli-0.1.1/opt/fic/bin/fic-cli",
+        "9abf52c62e7957eb7cd7083f4ee35be87391856d3a309e10869514bb93924913  /inputs/fic-gui-0.0.0~alpha-1.altp11.x86_64.rpm",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.aI0Ur99QB7/fic-gui-0.1.1/opt/fic/bin/fic-gui",
+        "aff899f06fb5df92be093f198153592963205983bc991b56cb395159dc66aa03  /tmp/tmp.aI0Ur99QB7/fic-gui-0.1.1/opt/fic/bin/fic-gui.real",
+        "77aed3e11ef3c9638a8227e1f990c976b876d03acbe12c705f634dc4d032e868  /inputs/fic-cli-0.0.0~alpha-1.altp11.x86_64.rpm",
+        "9e1e465f5b108a4dbe8db8e3b9068425293a146a32b97b72ff727e1bfbb76db6  /tmp/tmp.aI0Ur99QB7/fic-cli-0.1.2/opt/fic/bin/fic-cli",
+        "9abf52c62e7957eb7cd7083f4ee35be87391856d3a309e10869514bb93924913  /inputs/fic-gui-0.0.0~alpha-1.altp11.x86_64.rpm",
+        "65f4c6029318a04cf9d44bd5356e5a9caa16e7f6a530e10b18db1ee726aca50e  /tmp/tmp.aI0Ur99QB7/fic-gui-0.1.2/opt/fic/bin/fic-gui",
+        "aff899f06fb5df92be093f198153592963205983bc991b56cb395159dc66aa03  /tmp/tmp.aI0Ur99QB7/fic-gui-0.1.2/opt/fic/bin/fic-gui.real"
+      ],
+      "package_sha256": {
+        "packages/fic-cli-0.1.1-1.altp11.x86_64.rpm": "d55150396c7653b43581523e2be580d7aa698993935a4bb8c1c74bd45219353c",
+        "packages/fic-gui-0.1.1-1.altp11.x86_64.rpm": "5f80d7ace8edf17f7e57afc17ffb9081e19bf387b19b151a1457a372acd10f28",
+        "packages/upgrades/fic-cli-0.1.2-1.altp11.x86_64.rpm": "1b9cc3a5853beb4b692f0e85d2d5df6fb10fd28f124131fa7bdf1378726dde37",
+        "packages/upgrades/fic-gui-0.1.2-1.altp11.x86_64.rpm": "d1e2cbd6a0bdfdb77739cb2e7995897bafd4260e128ee417ecf74404a508deef"
+      },
+      "gui_successful_launches": 6,
+      "gui_examples": [
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "_XSERVTransmkdir: ERROR: euid != 0,directory /tmp/.X11-unix will not be created.\nThe XKEYBOARD keymap compiler (xkbcomp) reports:\n> Warning:          Could not resolve keysym XF86OK\n> Warning:          Could not resolve keysym XF86GoTo\n> Warning:          Could not resolve keysym XF86VendorLogo\n> Warning:          Could not resolve keysym XF86MediaSelectProgramGuide\n> Warning:          Could not resolve keysym XF86MediaSelectProgramGuide\n> Warning:          Could not resolve keysym XF86MediaSelectHome\n> Warning:          Could not resolve keysym XF86MediaLanguageMenu\n> Warning:          Could not resolve keysym XF86MediaTitleMenu\n> Warning:          Could not resolve keysym XF86AudioChannelMode\n> Warning:          Could not resolve keysym XF86MediaSelectPC\n> Warning:          Could not resolve keysym XF86MediaSelectTV\n> Warning:          Could not resolve keysym XF86MediaSelectCable\n> Warning:          Could not resolve keysym XF86MediaSelectVCR\n> Warning:          Could not resolve keysym XF86MediaSelectVCRPlus\n> Warning:          Could not resolve keysym XF86MediaSelectSatellite\n> Warning:          Could not resolve keysym XF86MediaSelectCD\n> Warning:          Could not resolve keysym XF86MediaSelectTape\n> Warning:          Could not resolve keysym XF86MediaSelectRadio\n> Warning:          Could not resolve keysym XF86MediaSelectTuner\n> Warning:          Could not resolve keysym XF86MediaPlayer\n> Warning:          Could not resolve keysym XF86MediaSelectTeletext\n> Warning:          Could not resolve keysym XF86MediaSelectAuxiliary\n> Warning:          Could not resolve keysym XF86MediaPlaySlow\n> Warning:          Could not resolve keysym XF86NumberEntryMode\n> Warning:          Could not resolve keysym XF86RefreshRateToggle\n> Warning:          Could not resolve keysym XF86Accessibility\n> Warning:          Could not resolve keysym XF86DoNotDisturb\nErrors from xkbcomp are not fatal to the X server\nqpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\nThe XKEYBOARD keymap compiler (xkbcomp) reports:\n> Warning:          Could not resolve keysym XF86OK\n> Warning:          Could not resolve keysym XF86GoTo\n> Warning:          Could not resolve keysym XF86VendorLogo\n> Warning:          Could not resolve keysym XF86MediaSelectProgramGuide\n> Warning:          Could not resolve keysym XF86MediaSelectProgramGuide\n> Warning:          Could not resolve keysym XF86MediaSelectHome\n> Warning:          Could not resolve keysym XF86MediaLanguageMenu\n> Warning:          Could not resolve keysym XF86MediaTitleMenu\n> Warning:          Could not resolve keysym XF86AudioChannelMode\n> Warning:          Could not resolve keysym XF86MediaSelectPC\n> Warning:          Could not resolve keysym XF86MediaSelectTV\n> Warning:          Could not resolve keysym XF86MediaSelectCable\n> Warning:          Could not resolve keysym XF86MediaSelectVCR\n> Warning:          Could not resolve keysym XF86MediaSelectVCRPlus\n> Warning:          Could not resolve keysym XF86MediaSelectSatellite\n> Warning:          Could not resolve keysym XF86MediaSelectCD\n> Warning:          Could not resolve keysym XF86MediaSelectTape\n> Warning:          Could not resolve keysym XF86MediaSelectRadio\n> Warning:          Could not resolve keysym XF86MediaSelectTuner\n> Warning:          Could not resolve keysym XF86MediaPlayer\n> Warning:          Could not resolve keysym XF86MediaSelectTeletext\n> Warning:          Could not resolve keysym XF86MediaSelectAuxiliary\n> Warning:          Could not resolve keysym XF86MediaPlaySlow\n> Warning:          Could not resolve keysym XF86NumberEntryMode\n> Warning:          Could not resolve keysym XF86RefreshRateToggle\n> Warning:          Could not resolve keysym XF86Accessibility\n> Warning:          Could not resolve keysym XF86DoNotDisturb\nErrors from xkbcomp are not fatal to the X server\n"
+        },
+        {
+          "command": [
+            "runuser",
+            "-u",
+            "ficmember",
+            "--",
+            "xvfb-run",
+            "-a",
+            "env",
+            "QT_QPA_PLATFORM=xcb",
+            "LD_LIBRARY_PATH=/opt/fic/qt/lib",
+            "QT_PLUGIN_PATH=/opt/fic/qt/plugins",
+            "QT_QPA_PLATFORM_PLUGIN_PATH=/opt/fic/qt/plugins/platforms",
+            "/opt/fic/bin/fic-gui.real",
+            "--gui-smoke-test"
+          ],
+          "exit": 0,
+          "output": "_XSERVTransmkdir: Owner of /tmp/.X11-unix should be set to root\nThe XKEYBOARD keymap compiler (xkbcomp) reports:\n> Warning:          Could not resolve keysym XF86OK\n> Warning:          Could not resolve keysym XF86GoTo\n> Warning:          Could not resolve keysym XF86VendorLogo\n> Warning:          Could not resolve keysym XF86MediaSelectProgramGuide\n> Warning:          Could not resolve keysym XF86MediaSelectProgramGuide\n> Warning:          Could not resolve keysym XF86MediaSelectHome\n> Warning:          Could not resolve keysym XF86MediaLanguageMenu\n> Warning:          Could not resolve keysym XF86MediaTitleMenu\n> Warning:          Could not resolve keysym XF86AudioChannelMode\n> Warning:          Could not resolve keysym XF86MediaSelectPC\n> Warning:          Could not resolve keysym XF86MediaSelectTV\n> Warning:          Could not resolve keysym XF86MediaSelectCable\n> Warning:          Could not resolve keysym XF86MediaSelectVCR\n> Warning:          Could not resolve keysym XF86MediaSelectVCRPlus\n> Warning:          Could not resolve keysym XF86MediaSelectSatellite\n> Warning:          Could not resolve keysym XF86MediaSelectCD\n> Warning:          Could not resolve keysym XF86MediaSelectTape\n> Warning:          Could not resolve keysym XF86MediaSelectRadio\n> Warning:          Could not resolve keysym XF86MediaSelectTuner\n> Warning:          Could not resolve keysym XF86MediaPlayer\n> Warning:          Could not resolve keysym XF86MediaSelectTeletext\n> Warning:          Could not resolve keysym XF86MediaSelectAuxiliary\n> Warning:          Could not resolve keysym XF86MediaPlaySlow\n> Warning:          Could not resolve keysym XF86NumberEntryMode\n> Warning:          Could not resolve keysym XF86RefreshRateToggle\n> Warning:          Could not resolve keysym XF86Accessibility\n> Warning:          Could not resolve keysym XF86DoNotDisturb\nErrors from xkbcomp are not fatal to the X server\nqpa-platform=xcb\njpeg-plugin=ok\nqt-core-path=/opt/fic/qt/lib/libQt6Core.so.6\nThe XKEYBOARD keymap compiler (xkbcomp) reports:\n> Warning:          Could not resolve keysym XF86OK\n> Warning:          Could not resolve keysym XF86GoTo\n> Warning:          Could not resolve keysym XF86VendorLogo\n> Warning:          Could not resolve keysym XF86MediaSelectProgramGuide\n> Warning:          Could not resolve keysym XF86MediaSelectProgramGuide\n> Warning:          Could not resolve keysym XF86MediaSelectHome\n> Warning:          Could not resolve keysym XF86MediaLanguageMenu\n> Warning:          Could not resolve keysym XF86MediaTitleMenu\n> Warning:          Could not resolve keysym XF86AudioChannelMode\n> Warning:          Could not resolve keysym XF86MediaSelectPC\n> Warning:          Could not resolve keysym XF86MediaSelectTV\n> Warning:          Could not resolve keysym XF86MediaSelectCable\n> Warning:          Could not resolve keysym XF86MediaSelectVCR\n> Warning:          Could not resolve keysym XF86MediaSelectVCRPlus\n> Warning:          Could not resolve keysym XF86MediaSelectSatellite\n> Warning:          Could not resolve keysym XF86MediaSelectCD\n> Warning:          Could not resolve keysym XF86MediaSelectTape\n> Warning:          Could not resolve keysym XF86MediaSelectRadio\n> Warning:          Could not resolve keysym XF86MediaSelectTuner\n> Warning:          Could not resolve keysym XF86MediaPlayer\n> Warning:          Could not resolve keysym XF86MediaSelectTeletext\n> Warning:          Could not resolve keysym XF86MediaSelectAuxiliary\n> Warning:          Could not resolve keysym XF86MediaPlaySlow\n> Warning:          Could not resolve keysym XF86NumberEntryMode\n> Warning:          Could not resolve keysym XF86RefreshRateToggle\n> Warning:          Could not resolve keysym XF86Accessibility\n> Warning:          Could not resolve keysym XF86DoNotDisturb\nErrors from xkbcomp are not fatal to the X server\n"
+        }
+      ],
+      "persistent_paths": [
+        "/opt/fic/config",
+        "/opt/fic/config/GLOBAL.conf",
+        "/opt/fic/config/client-permissions-sentinel",
+        "/opt/fic/db",
+        "/opt/fic/db/client-permissions-sentinel",
+        "/opt/fic/db/devices.db",
+        "/opt/fic/db/incident-state.json",
+        "/opt/fic/db/mutation-journal.json",
+        "/opt/fic/db/mutation-journal.json.initialized",
+        "/opt/fic/log",
+        "/opt/fic/log/client-permissions-sentinel",
+        "/opt/fic/log/fic.log",
+        "/opt/fic/notify",
+        "/opt/fic/notify/client-permissions-sentinel",
+        "/opt/fic/notify/pending-message"
+      ],
+      "raw_evidence_sha256": {
+        "build.log": "52f5b51adec588f26a0011b71e4fb2d0cea2251c4ed292bec4ba24f4eb2e6a05",
+        "native.log": "987232729c254d3b9e3b02578e266e80e9efc99c540022de360e8a62ff2e384d",
+        "results/access-events.json": "779c0fb393e014b02c2731c9dcd0f1fb43d3fea51b32634550304f241364c234",
+        "results/result.json": "1fb77a2e66be17b1cce8fe9d6b80125bc5e66fc5006c33177c751b633bec595e"
+      },
+      "runtime_image": {
+        "tag": "localhost/fic-client-access:altp11",
+        "id": "6b3bfe40fdef6e28eeb6e72d2699509f89134f1516cbd5c7e66ef6c0fff1b144"
+      }
+    }
+  ]
+}

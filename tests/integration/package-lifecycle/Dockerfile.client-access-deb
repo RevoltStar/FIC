@@ -1,0 +1,13 @@
+ARG BASE=docker.io/library/debian:12
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+RUN unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; \
+    apt-get update && apt-get install -y --no-install-recommends \
+    python3 dpkg-dev binutils xauth xvfb libsystemd0 libsqlite3-0 libssl-dev \
+    libgl1 libegl1 libopengl0 libdbus-1-3 libfontconfig1 libxkbcommon-x11-0 \
+    libxcb-cursor0 libx11-xcb1 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+    libxcb-render-util0 libxcb-xinerama0 libxcb-xkb1 libxrender1 libsm6 libice6
+CMD ["bash"]
+# Complete native GUI dependency closure; smoke must still load private Qt.
+RUN unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; \
+    apt-get install -y --no-install-recommends qt6-base-dev

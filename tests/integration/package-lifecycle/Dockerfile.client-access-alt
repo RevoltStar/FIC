@@ -1,0 +1,10 @@
+FROM docker.io/library/alt:p11
+COPY ca.crt /etc/ssl/certs/fic-test-ca.crt
+RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list && \
+    sed -i '/^#rpm \[p11\] http:/s/^#//' /etc/apt/sources.list.d/yandex.list && \
+    sed -i 's|http://mirror.yandex.ru/altlinux|https://distrib-coffee.ipsl.jussieu.fr/pub/linux/altlinux|g' /etc/apt/sources.list.d/yandex.list && \
+    unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; \
+    apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/fic-test-ca.crt update && \
+    apt-get -o Acquire::https::CaInfo=/etc/ssl/certs/fic-test-ca.crt install -y \
+    python3 rpm-build qt6-base-devel xauth xvfb-run libsystemd libsqlite3 libssl3
+CMD ["bash"]

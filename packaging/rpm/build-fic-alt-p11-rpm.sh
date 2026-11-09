@@ -304,6 +304,10 @@ write_file_list() {
             /opt/fic|/opt/fic/config)
                 # Security authority: RPM must not restore its metadata on upgrade.
                 ;;
+            /opt/fic/bin)
+                # Shared package directory: identical attributes in every owner.
+                printf '%%dir %%attr(2750,root,fic) %s\n' "$path" >> "$file_list"
+                ;;
             /opt/fic/*)
                 printf '%%dir %s\n' "$path" >> "$file_list"
                 ;;
@@ -314,6 +318,9 @@ write_file_list() {
         path="${path#$package_root}"
         [ -n "$path" ] || continue
         case "$path" in
+            /opt/fic/bin/fic-cli|/opt/fic/bin/fic-gui|/opt/fic/bin/fic-gui.real)
+                printf '%%attr(0750,root,fic) %s\n' "$path" >> "$file_list"
+                ;;
             /etc/security/fic-pwhistory.conf)
                 printf '%%config(noreplace) %s\n' "$path" >> "$file_list"
                 ;;
