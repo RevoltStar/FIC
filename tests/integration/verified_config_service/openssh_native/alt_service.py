@@ -106,7 +106,12 @@ def main():
     reset();h.DROP.mkdir();h.MAIN.write_text('Include sshd_config.local.d/*.conf\n'+h.MAIN.read_text())
     if kind=='symlink':(h.DROP/'10.conf').symlink_to(h.ENV)
     else:(h.DROP/'10.conf').write_text('Include /etc/openssh/sshd_config.local.d/10.conf\n' if kind=='recursion' else 'Port 2277\n' if kind=='Port' else 'ListenAddress 127.0.0.1:2277\n')
-    row=case('unsupported-Include-'+kind,[{'policy':'ssh_port','value':'2244'}],False)[0];assert row['main_unchanged'] and not row['records']
+    row=case(('owned-Include-' if kind=='Port' else 'unsupported-Include-')+kind,
+             [{'policy':'ssh_port','value':'2244'}],kind=='Port')[0]
+    if kind=='Port':
+     assert not row['main_unchanged'] and row['journal_after']['records'][0]['undo']['included_wrappers']['files']
+     assert '#@FIC_DISABLED_LINE@Port 2277\n' in (h.DROP/'10.conf').read_text()
+    else:assert row['main_unchanged'] and not row['records']
    for options in ('EXTRAOPTIONS=-p2266\n','EXTRAOPTIONS=-oUsePAM=no\n','EXTRAOPTIONS=-f/other\n','EXTRAOPTIONS=\nOTHER=1\n'):
     reset();h.ENV.write_text(options);row=case('unsafe-environment-'+options.strip(),[{'policy':'ssh_use_pam','value':'yes'}],False)[0];assert row['main_unchanged'] and not row['records']
    for mode in ('disabled-active','enabled-inactive','failed','masked','missing-env','missing-key','unsafe-key'):

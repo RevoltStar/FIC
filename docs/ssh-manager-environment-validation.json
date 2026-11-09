@@ -1,0 +1,386 @@
+{
+  "task": "SSH Manager.Environment I1",
+  "base": "27f974394afab1439e7eac847baab67bbaadd2db",
+  "date": "2026-11-09",
+  "production_files_changed": [
+    "fic/src/service/ssh/SshVerifiedActivationAdapter.cpp"
+  ],
+  "final_source_sha256": {
+    "fic/src/service/ssh/SshVerifiedActivationAdapter.cpp": "a4428a607583d6b8adf416f56ee3e456d237346a9f2b641de055f0507b5e249c",
+    "tests/fic/service/SshVerifiedActivationTests.cpp": "3c681811a6bcfc0f8fc6cdb18de68f150d0f5a99d63a3eacffd873d910f2dc43",
+    "tests/integration/verified_config_service/openssh_native/Driver.cpp": "90392088c1029e1d4a8453c37f4b63d670d41a36e7c848134baa64b64361741f",
+    "tests/integration/verified_config_service/openssh_native/environment_cases.py": "8c4cc5f98680d664343528c0f04c034a6005507a4e103eaca49390fa265bdcd9",
+    "tests/integration/verified_config_service/openssh_native/environment_cli.py": "e089071748075ce88922417788c83aee026af5782f32797a538ba65b1c1fdb44",
+    "tests/integration/verified_config_service/openssh_native/harness.py": "b1a6b4f925c7bf965b50d77ce96267d572e982e6b51cefe522a3b33de70554e3",
+    "tests/integration/verified_config_service/openssh_native/ubuntu_socket.py": "602f6e3b5a9df443e5ad1ffbbd60f0104bc811267c949fa1b3f789ae2c82a503",
+    "tests/integration/verified_config_service/openssh_native/alt_service.py": "33626b53ded9ee049eac5b0c86d6ccfa13b92f0d765609c7b02d62d69e213871",
+    "tests/integration/verified_config_service/openssh_native/lifecycle_cases.py": "b5dbdb0fb9f0088c14e5115e4884f2ac3994cd3a4f5ad4259c8f86863b24cf31",
+    "tests/integration/verified_config_service/openssh_native/run-native.sh": "ce2eaa8f9104cc49793b9e879dad00f6683c05db2acf3ad92634c9f701787345",
+    "tests/integration/verified_config_service/openssh_native/Containerfile.environment-runtime": "ef8be4e7392cf2094a292c94ef5d34acc0545ff9b7419d6adc9abaf3aaa41c05"
+  },
+  "unchanged_invariants_sha256": {
+    "fic/src/service/VerifiedConfigServiceActivator.cpp": "b369dce6a6c87022bc513d9b50f57d410edeee66a73fccb8fec470a3dcff7b53",
+    "fic/src/service/VerifiedConfigLaunchContract.cpp": "871e710f7ed9b4e6aaea083d9df953935e7a601bc434a139af00c507bb4e1fe5",
+    "fic/src/service/VerifiedConfigSystemd.cpp": "dd63b89292692bb47a882094ceb4d564da64d7144aa22d84ee8a5f10ee857d86",
+    "fic-common/fic-core/src/process/ProcessExecutor.cpp": "a40a54ac85e5eb5c4bcc7480aa99b5f87e1254c6d02fe6ee43d4f9e71e2b9284",
+    "fic-common/fic-core/src/process/VerifiedProcessExecutor.cpp": "6f6cb7aa152193085b0d28279ac1a515d225d0dc8ef2148fd2611afc9babfcee",
+    "fic/src/modules/net/ssh/SshRuntime.cpp": "eb006b0db0a1013dc420a12dbc50c75e57caa869e5d42156d49a3aaa411bf434",
+    "fic/src/service/ssh/UbuntuSshSocketFlow.cpp": "2a80e6091321fb8609b1a5a27ed04e9ac90f2578339b28726ea2dc7ea595077c",
+    "fic/src/rollback/MutationJournal.cpp": "800094717c06e464f7d6353754b680a9fb477de0e22a375159b656dbd74c0602",
+    "fic/src/rollback/DaemonMutationJournal.cpp": "ed8d1a992d15ca02e0a996ef8a4c22cdf9c83a95ff9403dc9b26ec6d79caaabf"
+  },
+  "platforms": {
+    "debian-12": {
+      "status": "PASS",
+      "unit_test": "ssh_verified_activation_tests PASS",
+      "groups": {
+        "cases": 30,
+        "adapter_cases": 59,
+        "module_cases": 24
+      },
+      "image_id": "sha256:a200d390b48a2d0473df3acad847fe54132c959832d79d279929b030fe970bd7",
+      "image_tag": "fic-ssh-i1-native:debian12",
+      "runtime_kernel": "6.6.87.2-microsoft-standard-WSL2",
+      "native_packages": "openssh-server 1:9.2p1-2+deb12u10\nsystemd 252.39-1~deb12u2\n",
+      "runtime_isolation": {
+        "systemd_pid1": true,
+        "network": "none",
+        "runtime_host_binds": false,
+        "host_ssh_files_unchanged": true
+      },
+      "native_driver_sha256": "f615f9f6381de95d7e1bdacfe00a5aead0d76c89752d05354aca572bbd352adf",
+      "report_sha256": "3db70d7d5a225c98efb22865c261304838478b2c5166127d67b362eab61e1989",
+      "multifile": {
+        "status": "PASS",
+        "operations": 5,
+        "checks": [
+          "apply",
+          "repeat without write",
+          "REFRESH without fragment rewrite",
+          "repeat refresh",
+          "RuntimeVerified active release; exact original files and wrapper provenance"
+        ],
+        "report_sha256": "692e486a04c0b04477a6f9725c75f881de3423857fce6d74399230d3c368e308"
+      }
+    },
+    "debian-13": {
+      "status": "PASS",
+      "unit_test": "ssh_verified_activation_tests PASS",
+      "groups": {
+        "cases": 30,
+        "adapter_cases": 59,
+        "module_cases": 24
+      },
+      "image_id": "sha256:542f5cf9582ffc90e93aca6c0539e95324f8de4889c2516e76573b2139ed1a5e",
+      "image_tag": "fic-ssh-i1-native:debian13",
+      "runtime_kernel": "6.6.87.2-microsoft-standard-WSL2",
+      "native_packages": "openssh-server 1:10.0p1-7+deb13u4\nsystemd 257.13-1~deb13u1\n",
+      "runtime_isolation": {
+        "systemd_pid1": true,
+        "network": "none",
+        "runtime_host_binds": false,
+        "host_ssh_files_unchanged": true
+      },
+      "native_driver_sha256": "6e9bda27f36f336835800447c9632c4381a6d307376ab69703e33b9af820de1a",
+      "report_sha256": "f7cb5a0f36b194d5eaae3e86a1eb29ed94eda3cb61e946ff4657346ba053e4b2",
+      "multifile": {
+        "status": "PASS",
+        "operations": 5,
+        "checks": [
+          "apply",
+          "repeat without write",
+          "REFRESH without fragment rewrite",
+          "repeat refresh",
+          "RuntimeVerified active release; exact original files and wrapper provenance"
+        ],
+        "report_sha256": "c72564e5e27ef6a9f4d10006b1e09fccf109f70062bdb2c9903273b67c6ca17e"
+      }
+    },
+    "ubuntu-24.04": {
+      "status": "PASS",
+      "unit_test": "ssh_verified_activation_tests PASS",
+      "groups": {
+        "cases": 52
+      },
+      "image_id": "sha256:93380deb332fea08b03cff9d882b7ee66fbc23cfde9f3e4998ab0c5ea1f4f80a",
+      "image_tag": "fic-package-native:ubuntu2404",
+      "runtime_kernel": "6.6.87.2-microsoft-standard-WSL2",
+      "native_packages": "openssh-server\t1:9.6p1-3ubuntu13.20\nsystemd\t255.4-1ubuntu8.18\n",
+      "runtime_isolation": {
+        "systemd_pid1": true,
+        "network": "none",
+        "runtime_host_binds": false,
+        "host_ssh_files_unchanged": true
+      },
+      "native_driver_sha256": "87bf128e5887621c6b36cdbd8e85dbbe279ff43cac7d507bbba91c8796a38fd3",
+      "report_sha256": "2567366ef1b358f29d7f353b24317e0d72b783c20b80fcf24ce76d8e4278f38b",
+      "multifile": {
+        "status": "PASS",
+        "operations": 5,
+        "checks": [
+          "apply",
+          "repeat without write",
+          "REFRESH without fragment rewrite",
+          "repeat refresh",
+          "RuntimeVerified active release; exact original files and wrapper provenance"
+        ],
+        "report_sha256": "3bac546c6e05a4bdc1b87da8cd8c8c448bcaf46b9a670672293c27468885b7a9"
+      }
+    },
+    "ubuntu-26.04": {
+      "status": "PASS",
+      "unit_test": "ssh_verified_activation_tests PASS",
+      "groups": {
+        "cases": 52
+      },
+      "image_id": "sha256:d712444d7a1a0e3ceba8ef52625f640602a14f70e627d13a2fbc6e808fbf8eb9",
+      "image_tag": "fic-package-native:ubuntu2604",
+      "runtime_kernel": "6.6.87.2-microsoft-standard-WSL2",
+      "native_packages": "openssh-server\t1:10.2p1-2ubuntu3.8\nsystemd\t259.9-0ubuntu0.1\n",
+      "runtime_isolation": {
+        "systemd_pid1": true,
+        "network": "none",
+        "runtime_host_binds": false,
+        "host_ssh_files_unchanged": true
+      },
+      "native_driver_sha256": "6dd53b0812369f07ab1368c1e496da8594a899404e92cf985f95e142ca9f3d18",
+      "report_sha256": "7d67b626dd13ba7c0586987ff00b2e618c814542d1524fa660b88c5d0509d43f",
+      "multifile": {
+        "status": "PASS",
+        "operations": 5,
+        "checks": [
+          "apply",
+          "repeat without write",
+          "REFRESH without fragment rewrite",
+          "repeat refresh",
+          "RuntimeVerified active release; exact original files and wrapper provenance"
+        ],
+        "report_sha256": "702899d9250b4980d741b896e4d1ed0f35de2489b7ce4c1dc4a9ba1990f156f5"
+      }
+    },
+    "alt-p11": {
+      "status": "PASS",
+      "unit_test": "ssh_verified_activation_tests PASS",
+      "groups": {
+        "cases": 65
+      },
+      "image_id": "sha256:247346c2507ea28c6f1b90c1c6ee98d2b233efe7c144f1f6f9b04814c5f39eb4",
+      "image_tag": "fic-pam-i6-native:alt-p11",
+      "runtime_kernel": "6.6.87.2-microsoft-standard-WSL2",
+      "native_packages": "openssh-server-9.6p1-alt7.x86_64\nsystemd-258.9-alt1.x86_64\n",
+      "runtime_isolation": {
+        "systemd_pid1": true,
+        "network": "none",
+        "runtime_host_binds": false,
+        "host_ssh_files_unchanged": true
+      },
+      "native_driver_sha256": "c22de964896d7b873a9ab373ef3ff2e507164202a6d274130a4724a4096de314",
+      "report_sha256": "3106d29de7bce8023b6eea14fbf1cb12de5d57c22475b724ae545f7077cd2f81",
+      "multifile": {
+        "status": "PASS",
+        "operations": 5,
+        "checks": [
+          "apply",
+          "repeat without write",
+          "REFRESH without fragment rewrite",
+          "repeat refresh",
+          "RuntimeVerified active release; exact original files and wrapper provenance"
+        ],
+        "report_sha256": "0970c8e3355fc319cc223db22a722ee2ee4b16562c1057b95af375475da8cf21"
+      }
+    }
+  },
+  "manager_fault_gate": {
+    "status": "PASS",
+    "positive_environments": 3,
+    "interference_barriers": 21,
+    "pre_save_unknown_refusals": 1,
+    "case_names": [
+      "r1-baseline",
+      "reported-xdg",
+      "snap-exports",
+      "supported-value-before",
+      "unsupported-value-before",
+      "addition-before",
+      "removal-before",
+      "path-before",
+      "xdg-before",
+      "same-keys-before",
+      "supported-value-watching",
+      "unsupported-value-watching",
+      "addition-watching",
+      "removal-watching",
+      "path-watching",
+      "xdg-watching",
+      "same-keys-watching",
+      "supported-value-after",
+      "unsupported-value-after",
+      "addition-after",
+      "removal-after",
+      "path-after",
+      "xdg-after",
+      "same-keys-after",
+      "unknown-before-policy-save"
+    ],
+    "report_sha256": "c01e1ea8bb85e443caacf84936d51ea2ab8125edadd78972001ffafed009a3f6"
+  },
+  "installed_daemon_cli": {
+    "status": "PASS",
+    "deployment": "current-build production CMake install; no package-manager install claim",
+    "proof_boundary": "actual production daemon IPC + fic-cli, not DEB package-manager install or SSH authentication proof",
+    "cases": [
+      {
+        "name": "r1-baseline",
+        "apply_stdout": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nNET:SshEdit:ssh_use_pam applied - Политика успешно применена\n",
+        "disable_stdout": "policy disabled: RuntimeVerified; released SSH configuration active\n",
+        "journal_record": {
+          "backend": "ssh",
+          "created_at_epoch": 1794248044,
+          "error": "",
+          "id": 1,
+          "policy": {
+            "module": "NET",
+            "policy": "ssh_use_pam",
+            "submodule": "SshEdit"
+          },
+          "resource": "ssh:/etc/ssh/sshd_config:UsePAM",
+          "status": "applied",
+          "undo": {
+            "action": "remove_ssh_managed_policy",
+            "applied_value": "yes",
+            "backend": "ssh",
+            "directive": "UsePAM",
+            "disabled_mutation_ids": [],
+            "operation_sequence": 0,
+            "ownership_version": 1,
+            "policy": "ssh_use_pam",
+            "wrapper_fingerprints": {}
+          },
+          "updated_at_epoch": 1794248046
+        },
+        "before": {
+          "InvocationID": "",
+          "MainPID": "0"
+        },
+        "active": {
+          "InvocationID": "7c65fbe27b814855a963daef6e4f0632",
+          "MainPID": "544"
+        },
+        "listeners": [
+          614729
+        ],
+        "repeat_no_change": true,
+        "persistent_restored_exactly": true,
+        "status": "PASS"
+      },
+      {
+        "name": "reported-xdg",
+        "apply_stdout": "policy applied\nsummary: total=1, applied=1, failed=0, disabled=0, not_found=0\nNET:SshEdit:ssh_use_pam applied - Политика успешно применена\n",
+        "disable_stdout": "policy disabled: RuntimeVerified; released SSH configuration active\n",
+        "journal_record": {
+          "backend": "ssh",
+          "created_at_epoch": 1794248054,
+          "error": "",
+          "id": 2,
+          "policy": {
+            "module": "NET",
+            "policy": "ssh_use_pam",
+            "submodule": "SshEdit"
+          },
+          "resource": "ssh:/etc/ssh/sshd_config:UsePAM",
+          "status": "applied",
+          "undo": {
+            "action": "remove_ssh_managed_policy",
+            "applied_value": "yes",
+            "backend": "ssh",
+            "directive": "UsePAM",
+            "disabled_mutation_ids": [],
+            "operation_sequence": 0,
+            "ownership_version": 1,
+            "policy": "ssh_use_pam",
+            "wrapper_fingerprints": {}
+          },
+          "updated_at_epoch": 1794248056
+        },
+        "before": {
+          "InvocationID": "1e9f382f03bb4704ac085f76dcafd882",
+          "MainPID": "763"
+        },
+        "active": {
+          "InvocationID": "735dbc47a81843d4a5e7169aa0f999b2",
+          "MainPID": "1014"
+        },
+        "listeners": [
+          614729
+        ],
+        "repeat_no_change": true,
+        "persistent_restored_exactly": true,
+        "status": "PASS"
+      }
+    ],
+    "report_sha256": "62f8ea0682dcde27eae50f2a409852b113dfa76f85e372ff8b348ef9623019a4",
+    "binaries_sha256": {
+      "fic": "e4907c041f16eda9b023987483b875bc8daaa0e5b98af199639326eb2fcf0d13",
+      "fic-cli": "0c8d6e6dc14b1675ebd640874ce96972c19d7ca604e6446fc2bf59cecb2c67f0",
+      "fic-dick": "3e989be735dc9d6a306ea08ad52f286ec0527e20fcdc86df9544ee5cc48b8d64",
+      "fic-package-infrastructure": "1a4731e2f8153e096e2b6ff5e73d4a4882a10334ee04d5c94aba157060d51d4b"
+    }
+  },
+  "full_validation": {
+    "platform": "ubuntu-26.04",
+    "full_build": "PASS",
+    "build_log_sha256": "e1d16eba3fefca1e9f5a2377823e4db48ffaefc3e8ec154af50125eb9f8ad8d6",
+    "ctest": {
+      "total": 226,
+      "passed": 220,
+      "failed": 2,
+      "skipped": 4,
+      "log_sha256": "abeb46741fb20d6d23ee722151068572d1e4ac647abfd5f7bd84ea43449272c8",
+      "failed_tests": {
+        "incident_state_lifecycle_static_checks": "Same assertion reproduced in clean base archive: old RPM manifest string check does not recognize current bin attrs",
+        "identity_policy_hierarchy_tests": "Unchanged PAM-only target, no SSH adapter linked: expects Recommended activation dependencies, implementation already uses Required"
+      },
+      "skipped_tests": [
+        "verified_config_service_native_tests",
+        "daemon_singleton_startup_native",
+        "maintenance_preflight_native",
+        "package_pam_hooks_native"
+      ]
+    }
+  },
+  "retained_evidence": {
+    "SSSD_I3": "source-bound retained matrix PASS; no native reexecution",
+    "SSSD_I4": "source-bound retained matrix PASS; no native reexecution",
+    "SSSD_I5": "retained matrix PASS; no native reexecution",
+    "SSSD_I6": "historical-evidence CTest and regression PASS",
+    "PAM_I6_current_source": "FAIL stale receipts already on I1 base; no weakening/relabeling/reexecution",
+    "PAM_I6_receipt_sha256": "ddffb22f1c6739303a70d4597e5fd3f67495e3c4b2a1b4f06b3ec5c154bddd2c",
+    "PAM_I6_manifest_on_base": "e3acc8dba5f58057afeb337aed21e40989d05fa2a36c9fe32e327f79ec0c19e1",
+    "PAM_I6_manifest_now": "859163a71b01456b50e28d6897955dbf0a22e484fec054f1272cb490a5a8769e"
+  },
+  "exploratory_failures": [
+    "General build images lacked ss: installed iproute2 only in dedicated Debian test images",
+    "ALT build image default bash: runner explicitly boots /sbin/init",
+    "CMake staging required source RO mount; root extraction preserves usr-merge symlinks",
+    "Checkout PAM files had writable mode bits: fixture installs payloads with package-equivalent root0644, never weakens trust checks",
+    "Stale native Port refusal assertions on all profiles replaced with current multi-file ownership assertions",
+    "Debian journal fsync assertion now distinguishes failed operation/unusable_at_return from subsequent existing durable tryGet recovery and exact retained record",
+    "One Ubuntu suite reached 52 PASS but active runner editing caused a shell tail error; frozen final rerun exit0",
+    "Initial full CTest lacked safe.directory and DAC capability boundary; corrected full rerun leaves only the two unrelated failures"
+  ],
+  "limitations": [
+    "Shared Docker/WSL kernel, five native userspaces, not independent VM kernels",
+    "No SSH authentication/session security proof",
+    "No full native package-manager lifecycle rerun; package contract baseline failure remains",
+    "Research VM only read-only snapd inspection in I1; no SSH restart/config or manager environment changes there",
+    "Trusted OS/loader/libraries and existing privileged change/revert race boundary retained",
+    "Historical matrices are not new native executions"
+  ],
+  "snap_export_proof": {
+    "host": "172.17.1.50, read-only inspection",
+    "package": "snapd 2.74.1+ubuntu26.04.4",
+    "package_owned_profile": "/etc/profile.d/apps-bin-path.sh",
+    "assignment": "snap_xdg_path=/var/lib/snapd/desktop",
+    "role": "system desktop data export appended to XDG_DATA_DIRS; existence is not required by classifier"
+  }
+}

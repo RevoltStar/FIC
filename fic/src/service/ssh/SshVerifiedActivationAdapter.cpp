@@ -9,6 +9,7 @@
 #include <thread>
 #include <mutex>
 #include <algorithm>
+#include <set>
 #include "service/VerifiedConfigActivationProof.h"
 #include "service/VerifiedConfigLaunchContract.h"
 #include "modules/net/ssh/SshInputAuthority.h"
@@ -44,6 +45,81 @@ bool ubuntuSocket() {
 bool altService() {return fic::platform::makeBuildPlatformProfile().id=="alt-p11";}
 d::ActivationProfile activationProfile() {return ubuntuSocket()?d::ActivationProfile::UbuntuSshSocket:altService()?d::ActivationProfile::AltSshSimple:d::ActivationProfile::ActiveNotifyService;}
 bool supportedProfile(const std::string& id) {return id=="debian-12"||id=="debian-13"||id=="ubuntu-24.04"||id=="ubuntu-26.04"||id=="alt-p11";}
+bool localeName(const std::string& text) {
+    if(text.empty()||text.size()>128)return false;
+    if(text=="C"||text=="POSIX"||text=="C.UTF-8"||text=="C.utf8")return true;
+    const auto letter=[](char c){return (c>='a'&&c<='z')||(c>='A'&&c<='Z');};
+    const auto digit=[](char c){return c>='0'&&c<='9';};
+    std::size_t pos=0;
+    const auto component=[&](auto valid,std::size_t minimum,std::size_t maximum) {
+        const auto start=pos;
+        while(pos<text.size()&&valid(text[pos]))++pos;
+        return pos-start>=minimum&&pos-start<=maximum;
+    };
+    if(!component(letter,2,8))return false;
+    if(pos<text.size()&&text[pos]=='_') {
+        ++pos;if(!component([&](char c){return letter(c)||digit(c);},2,8))return false;
+    }
+    const auto token=[&](char c){return letter(c)||digit(c)||c=='_'||c=='-';};
+    if(pos<text.size()&&text[pos]=='.') {
+        ++pos;if(pos==text.size()||!(letter(text[pos])||digit(text[pos]))||!component(token,1,32))return false;
+    }
+    if(pos<text.size()&&text[pos]=='@') {
+        ++pos;if(pos==text.size()||!(letter(text[pos])||digit(text[pos]))||!component(token,1,32))return false;
+    }
+    return pos==text.size();
+}
+void validateManagerEnvironment(const std::string& encoded) {
+    const auto fail=[](const std::string& diagnostic) {
+        throw d::Failure(ActivationStatus::UnsupportedConfiguration,diagnostic);
+    };
+    const auto environment=Json::parse(encoded,nullptr,false);
+    if(!environment.is_array())fail("SSH invalid manager environment array");
+    const std::set<std::string> locales{"LANG","LC_ALL","LC_CTYPE","LC_NUMERIC","LC_TIME","LC_COLLATE",
+        "LC_MONETARY","LC_MESSAGES","LC_PAPER","LC_NAME","LC_ADDRESS","LC_TELEPHONE","LC_MEASUREMENT","LC_IDENTIFICATION"};
+    const std::set<std::string> paths{"/usr/sbin:/usr/bin:/sbin:/bin",
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin"};
+    // System desktop data exports, not arbitrary XDG_* or code search paths.
+    const std::set<std::string> dataDirectories{"/usr/local/share","/usr/share",
+        "/var/lib/flatpak/exports/share","/var/lib/snapd/desktop"};
+    std::set<std::string> names;
+    for(const auto& entry:environment) {
+        if(!entry.is_string())fail("SSH invalid manager environment assignment type");
+        const auto assignment=entry.get<std::string>();const auto equal=assignment.find('=');
+        if(equal==std::string::npos||equal==0||equal>64)fail("SSH invalid manager environment assignment syntax");
+        const auto name=assignment.substr(0,equal);const auto text=assignment.substr(equal+1);
+        for(std::size_t i=0;i<name.size();++i) {
+            const auto c=name[i];
+            if(!((c>='A'&&c<='Z')||(c>='a'&&c<='z')||c=='_'||(i>0&&c>='0'&&c<='9')))
+                fail("SSH invalid manager environment variable name");
+        }
+        if(!names.insert(name).second)fail("SSH duplicate manager environment variable: "+name);
+        if(locales.count(name)) {
+            if(!localeName(text))fail("SSH invalid locale syntax: "+name);
+        } else if(name=="PATH") {
+            if(!paths.count(text))fail("SSH unsupported manager PATH value");
+        } else if(name=="XDG_DATA_DIRS") {
+            if(text.empty()||text.size()>512)fail("SSH invalid XDG_DATA_DIRS length");
+            std::set<std::string> directories;std::size_t begin=0;
+            while(true) {
+                const auto end=text.find(':',begin);auto path=text.substr(begin,end==std::string::npos?end:end-begin);
+                if(path.empty()||path.front()!='/'||path.find("//")!=std::string::npos||
+                   path.find("/./")!=std::string::npos||path.find("/../")!=std::string::npos||
+                   path=="/."||path=="/.."||path.size()>128)
+                    fail("SSH invalid XDG_DATA_DIRS component syntax");
+                if(path.back()=='/')path.pop_back();
+                if(!dataDirectories.count(path))fail("SSH unsupported XDG_DATA_DIRS component");
+                if(!directories.insert(path).second)fail("SSH duplicate XDG_DATA_DIRS directory");
+                if(end==std::string::npos)break;
+                if(directories.size()>=4)fail("SSH XDG_DATA_DIRS component limit exceeded");
+                begin=end+1;
+            }
+        } else fail("SSH unsupported manager environment variable: "+name);
+    }
+    // Classification only: keep the original bytes/order in the launch contract.
+}
 void validateLaunch(const d::LaunchContract& launch, const detail::InputProfile& input=detail::inputProfile(), bool socketProfile=ubuntuSocket(),bool stopped=false) {
     if(socketProfile) {
         const auto state=value(launch,"UnitFileState");
@@ -90,16 +166,7 @@ void validateLaunch(const d::LaunchContract& launch, const detail::InputProfile&
     const auto fragment = value(launch, "FragmentPath").get<std::string>();
     if (fragment != "/usr/lib/systemd/system/"+input.unit && fragment != "/lib/systemd/system/"+input.unit)
         unsupported("SSH v1 requires canonical vendor service");
-    // No blanket acceptance of inherited environment. In particular loader,
-    // allocator, locale collation and SSH option overrides cannot pass here.
-    for (const auto& entry : Json::parse(launch.at("launch.ManagerEnvironment"))) {
-        const auto env = entry.get<std::string>();
-        if (env != "LANG=C" && env != "LANG=C.UTF-8" && env != "LANG=C.utf8" &&
-            env != "LC_ALL=C" && env != "LC_ALL=C.UTF-8" &&
-            env != "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" &&
-            env != "PATH=/usr/sbin:/usr/bin:/sbin:/bin" &&
-            env != "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin") unsupported("SSH v1 manager environment outside supported profile");
-    }
+    validateManagerEnvironment(launch.at("launch.ManagerEnvironment"));
 }
 std::map<std::string,std::string> metadataIdentities(const detail::PersistentMetadata& state) {
     std::map<std::string,std::string> result;

@@ -79,19 +79,70 @@ hooks/envfiles/options и override unit Unsupported. ExecReload не вызыв�
 обычного reload/restart fallback нет.
 Initial argv не извлекается из изменяемого process title `/proc/PID/cmdline`.
 
-Manager.Environment не разрешается произвольно. Допустимы только отдельные
-точные assignments: LANG=C/C.UTF-8/C.utf8, LC_ALL=C/C.UTF-8 и PATH из трёх
-проверенных вариантов:
+### Manager.Environment
+
+SSH-specific pure classification допускает только следующие keys:
+`LANG`, `LC_ALL`, `LC_CTYPE`, `LC_NUMERIC`, `LC_TIME`, `LC_COLLATE`,
+`LC_MONETARY`, `LC_MESSAGES`, `LC_PAPER`, `LC_NAME`, `LC_ADDRESS`,
+`LC_TELEPHONE`, `LC_MEASUREMENT`, `LC_IDENTIFICATION`, `PATH`, `XDG_DATA_DIRS`.
+Пустой массив допустим. Требуются JSON array/string entries и `KEY=VALUE`
+с разделением по первому `=`; дубли keys запрещены. Неизвестные keys —
+UnsupportedConfiguration. Диагностика различает malformed syntax, unknown key,
+unsupported value и duplicate; values не печатаются. Автоматические process
+variables (INVOCATION_ID, USER, LISTEN_FDS и т.п.) не являются автоматически
+разрешёнными assignments в глобальном manager block.
+
+Locale: до128 ASCII bytes, special `C`, `POSIX`, `C.UTF-8`, `C.utf8` либо
+`language[_territory][.codeset][@modifier]`. Language — 2..8 letters,
+territory — 2..8 letters/digits, codeset/modifier — 1..32 letters/digits/`_`/`-`
+с первым letter/digit. Запрещены path separators, controls/whitespace,
+composite LC_ALL, shell syntax и другие формы вне этой малой грамматики.
+Например ru_RU.UTF-8, en_US.UTF-8, de_DE.UTF-8, fr_FR.UTF-8, ru_RU.utf8
+принимаются. Наличие locale на ОС не проверяется: это supported name grammar,
+не availability или ownership proof. LOCPATH/GCONV_PATH не разрешены.
+
+PATH — только четыре exact значения:
 
 ```
 /usr/sbin:/usr/bin:/sbin:/bin
 /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
 ```
 
-Последний — фактически измеренный штатный usr-merge PATH Debian 13. Любой
-другой key/value, в частности SSHD_OPTS/LD_PRELOAD/неизвестная locale, означает
-отказ. Generic engine закрепляет весь launch contract, не только этот subset.
+Первые три сохранены; последний измерен на Ubuntu26.04. Arbitrary absolute,
+relative/user paths, перестановки, empty components не разрешены. Stock
+ExecStart/Pre и server re-exec используют абсолютные пути. Сохраняется trust
+OS/loader/libraries; безопасность произвольных post-auth programs не доказана.
+Применение общей классификации на пяти profiles не означает наличия Snap
+или Flatpak на каждом: они не становятся executable/input dependencies.
+
+XDG_DATA_DIRS: до512 bytes, 1..4 components, разделённых `:`. Конечный набор:
+`/usr/local/share`, `/usr/share`, `/var/lib/flatpak/exports/share`,
+`/var/lib/snapd/desktop`. Допустим один trailing `/`; порядок произвольный,
+но сохраняется. Relative paths, empty components, повторные slash separators,
+dot traversal и duplicate dirs после снятия trailing slash запрещены.
+Отсутствие variable и отсутствие optional export dirs допустимы. Существование,
+recursive ownership и содержимое этих dirs не проверяются и не входят в SSH
+closure: их потребление stock server launch не установлено.
+
+Назначение Snap directory подтверждено установленным Ubuntu26.04 snapd
+2.74.1+ubuntu26.04.4 (`dpkg-query -S /etc/profile.d/apps-bin-path.sh`): profile
+добавляет `/var/lib/snapd/desktop` в XDG_DATA_DIRS для desktop data exports.
+См. также [upstream описание desktop exports](https://forum.snapcraft.io/t/apps-gui-icon-desktop/12187)
+и [XDG basedir specification](https://specifications.freedesktop.org/basedir/latest/).
+
+Default-deny сохраняет отказ для LD_*, LOCPATH, GCONV_PATH, GLIBC_TUNABLES,
+SSHD_OPTS, OPENSSL_* overrides, LANGUAGE, неизвестных LC_/XDG_* и любых других
+keys вне списка. Это allowlist, а не blacklist с разрешением остальных keys.
+
+**Классификация не преобразует исходный launch contract.** Весь sorted D-Bus
+Manager.Environment, включая исходные locale/XDG bytes и порядок XDG paths,
+по-прежнему сравнивается между admission, publication и activation, а затем
+при runtime confirmation. Supported→supported change также interference.
+Generic engine/D-Bus reader и C-localized окружение команд FIC не менялись.
+Read-check-start не становится атомарным против privileged change/revert;
+existing trusted-OS и residual ABA assumptions сохранены.
 
 ### EnvironmentFile
 
@@ -631,3 +682,40 @@ Native-тесты выполняются только в disposable systemd-ко
 зафиксированы в [source-bound multi-file evidence](../tests/integration/verified_config_service/openssh_native/evidence/multifile-port-lifecycle.json).
 Он содержит хеши исходников, harness, ELF, реальных пакетов и сырых отчётов;
 объёмные raw reports остаются локальными build artifacts.
+
+
+## Manager.Environment I1 — результаты проверки
+
+База `27f974394afab1439e7eac847baab67bbaadd2db`; production изменён только
+SSH adapter. [Компактные receipts](ssh-manager-environment-validation.json)
+содержат source/binary/image/report hashes и ограничения; raw evidence —
+ignored `build-ssh-i1/PROFILE/evidence`.
+
+| Native userspace | Default SSH regression | Multi-file Port apply/repeat/REFRESH/verified release |
+|---|---|---|
+| Debian12 | 30 generic +59 adapter +24 module groups PASS | PASS |
+| Debian13 | 30 generic +59 adapter +24 module groups PASS | PASS |
+| Ubuntu24.04 | 52 groups PASS | PASS |
+| Ubuntu26.04 | 52 groups PASS | PASS |
+| ALT p11 | 65 groups PASS; stock simple/EXTRAOPTIONS/keygen preserved | PASS |
+
+Дополнительно Ubuntu26:3 accepted environment profiles,21 full-contract
+interference checkpoints и1 pre-save unknown-key refusal PASS. Настоящий
+current-build CMake-installed daemon/fic-cli проверен с R1 baseline и
+reported XDG: apply/owned block/journal/new process/kernel listener/-t/-T,
+repeat без изменений, RuntimeVerified disable и byte-exact restore — PASS.
+Это не package-manager install proof и не проверка аутентификации/сессий SSH.
+Все mutations происходили в guarded disposable Docker, не на SSH-only ВМ.
+Userspaces используют общий Docker/WSL kernel, не пять независимых VM kernels.
+
+Полная Ubuntu26 сборка PASS. Полный CTest с корректными Git trust/capabilities:
+220 PASS,2 FAIL,4 opt-in native SKIP из226. Оставлены несвязанные baseline
+failures: incident_state_lifecycle_static_checks (устаревшая RPM manifest
+проверка, воспроизведена на чистой базе) и identity_policy_hierarchy_tests
+(PAM-only target ожидает Recommended вместо действующих Required).
+PAM/package implementation и эти тесты в I1 не исправлялись.
+
+SSSD retained source-bound I3/I4/I5 и historical I6 gates PASS без новых
+SSSD native запусков. PAM I6 current-source evidence gate корректно отказывает:
+его receipts не соответствовали уже I1 base. Старые hashes/results и gates
+не менялись; I1 не объявляет историческую матрицу проверкой текущего HEAD.

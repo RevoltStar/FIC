@@ -104,7 +104,9 @@ def main():
             row=case(name,[{'policy':'ssh_root_login','value':'no'}],False)[0]
             assert row['main_unchanged'] and not row['records'],row
         reset();(h.DROP/'foreign.conf').write_text('Port 2277\n')
-        row=case('foreign-extra-Port',[{'policy':'ssh_port','value':'2244'}],False)[0];assert row['main_unchanged']
+        row=case('foreign-extra-Port-owned-wrapper',[{'policy':'ssh_port','value':'2244'}])[0]
+        assert not row['main_unchanged'] and row['journal_after']['records'][0]['undo']['included_wrappers']['files']
+        assert '#@FIC_DISABLED_LINE@Port 2277\n' in (h.DROP/'foreign.conf').read_text()
         for fault in ('main-cas','foreign-input','disable','after-save-stop','after-save-disable','after-save-input','after-save-main','durability','unknown-writer','journal-commit'):
             reset()
             rows=case('module-fault-'+fault,[{'policy':'ssh_use_pam','value':'yes','fault':fault}],False)

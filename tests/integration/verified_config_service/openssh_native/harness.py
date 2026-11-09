@@ -593,8 +593,10 @@ def main():
         module_reset()
         (DROP / '10-foreign-port.conf').write_text('Port 2223\n')
         row=module_case('foreign-included-Port',[{'policy':'ssh_port','value':'2244'}])[0]
-        assert not row['applied'] and row['main_unchanged'] and row['journal_unchanged'],row
-        assert row['before_invocation']==row['after_invocation'],row
+        assert row['applied'] and not row['main_unchanged'] and not row['journal_unchanged'],row
+        assert row['before_invocation']!=row['after_invocation'],row
+        assert row['journal_after']['records'][0]['undo']['included_wrappers']['files']
+        assert '#@FIC_DISABLED_LINE@Port 2223\n' in (DROP/'10-foreign-port.conf').read_text()
         for fault in ('disable','foreign-input','main-cas'):
             module_reset()
             row=module_case('pre-CAS-'+fault,[{'policy':'ssh_use_pam','value':'yes','fault':fault}])[0]
@@ -618,11 +620,16 @@ def main():
         rows=module_case('journal-commit-failure',[
             {'policy':'ssh_use_pam','value':'yes','fault':'journal-commit'},
             {'policy':'ssh_root_login','value':'no'}])
-        assert not rows[0]['applied'] and not rows[0]['main_unchanged'] and rows[0]['journal_unusable'],rows
+        assert not rows[0]['applied'] and not rows[0]['main_unchanged'] and rows[0]['journal_unusable_at_return'],rows
         assert rows[0]['before_invocation']!=rows[0]['after_invocation'],rows
-        assert not rows[1]['applied'] and rows[1]['main_unchanged'] and rows[1]['journal_unusable'],rows
-        assert rows[0]['journal_sha']==rows[1]['journal_sha'],rows
-        assert rows[1]['before_invocation']==rows[1]['after_invocation'],rows
+        # The existing driver removes the injected fsync failure, then calls
+        # tryGet() for observation. The production owner now performs a full
+        # durable reload there; it does not remain permanently poisoned.
+        assert not rows[0]['journal_unusable'] and rows[1]['applied'] and not rows[1]['journal_unusable'],rows
+        first=rows[0]['journal_after']['records'][0]
+        recovered=next(r for r in rows[1]['journal_after']['records'] if r['id']==first['id'])
+        assert recovered==first and first['status']=='applied',rows
+        assert len(rows[1]['journal_after']['records'])==2 and not rows[1]['main_unchanged'],rows
         launch_override=Path('/etc/systemd/system/ssh.service.d/95-fic-negative.conf')
         for name,content in (
             ('ExecStart-f','[Service]\nExecStart=\nExecStart=/usr/sbin/sshd -D -f /run/foreign.conf\n'),

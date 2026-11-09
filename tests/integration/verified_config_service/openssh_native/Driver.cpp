@@ -432,12 +432,18 @@ int main(int argc, char** argv) {
             d::Fd directory(::open(globDirectory.c_str(), O_RDONLY|O_DIRECTORY|O_CLOEXEC));
             pid_t blocked = -1; bool foreign = false; d::Fd fifoReady;
             output["checkpoints"] = J::array();
+            const auto managerFault=[&](const char* stage) {
+                if(fault!=std::string("manager-")+stage)return;
+                for(const auto& assignment:input.at("manager_set"))ctl({"set-environment",assignment.get<std::string>()});
+                for(const auto& name:input.at("manager_unset"))ctl({"unset-environment",name.get<std::string>()});
+            };
             hooks.checkpoint = [&](d::TestPhase phase, const std::string& snapshot) {
                 if (phase == d::TestPhase::SnapshotReadOnly && fault == "inode") {
                     fs::rename(mainPath, (basePath+"/.fic-native-old"));
                     write(mainPath, text((basePath+"/.fic-native-old")));
                 }
                 if (phase == d::TestPhase::Watching) {
+                    managerFault("watching");
                     J evidence = J::array();
                     for (const auto& p : r.paths) {
                         auto fd = d::openAbsolute(p.path, O_RDONLY); const auto id = d::identity(fd.get());
@@ -515,6 +521,7 @@ int main(int argc, char** argv) {
                     output["readiness_barrier_observed"]=true;
                 }
                 if(phase==d::TestPhase::RestartQueued&&fault=="foreign-socket-restart")ctl({"restart","ssh.socket"});
+                if(phase==d::TestPhase::RestartQueued)managerFault("after");
                 if (phase == d::TestPhase::RestartQueued && fault == "contract-after") ctl({"set-environment", "FIC_OPENSSH_TEST_CHANGE=after"});
                 if (phase == d::TestPhase::BeforeCleanup) {
                     if(fault=="socket-disable")ctl({"disable","ssh.socket"});
@@ -565,6 +572,7 @@ int main(int argc, char** argv) {
                         }
                     }; seam.activation = hooks;
                     seam.beforeActivation = [&] {
+                        managerFault("before");
                         if (fault == "source-before") write(mainPath, text(work + "/mutation.conf"));
                         if (fault == "source-inode-before") {
                             fs::rename(mainPath, (basePath+"/.fic-native-old"));

@@ -1,29 +1,31 @@
 # Current workspace
 
 ## Current base / task
-* `main`; task base `68b546ad` (PAM I6 evidence follow-up).
-* Private fic-cli/fic-gui permissions regression from `752354c8` fixed. Single user-authorized completion commit; no push.
+* main; I1 base `27f974394afab1439e7eac847baab67bbaadd2db`.
+* Attachment49f212a7 SSH Manager.Environment fix complete. This changeset is the one requested commit `fix(ssh): validate supported manager environment semantically`; no push. Stop after commit.
 
 ## Accepted architecture / invariants
-* Private clients fic-cli, fic-gui, fic-gui.real: root:fic0750. Private root/bin: root:fic2750, group cannot write. Outsiders cannot execute clients.
-* DEB --root-owner-group retained; each client's configure postinst independently fixes exact own files + two parents, validates complete path set before mutation (physical/root-owned/non-writable dirs and single-link regular root-owned/non-writable files). Abort actions no-op; unsafe objects fail closed.
-* RPM native attrs for three files and identical %dir attrs for shared bin in all generated owners; no chown scriptlet. Existing root/config exclusions retained.
-* No recursive metadata repair or changes to persistent state, package lifecycle/admission, rollback/journal, IPC auth or uninstall overload. Native tests ONLY disposable rootless Podman, no host security mounts/apply.
+* Only production edit: SshVerifiedActivationAdapter.cpp, pure finite-key classifier. Locale names bounded128 ASCII bytes; four exact PATHs; XDG list≤512 bytes/4 unique system dirs, single trailing slash, no user/traversal/empty dirs. Snap desktop export confirmed from installed Ubuntu26 snapd profile. Directory existence/recursive ownership are not new inputs.
+* Default-deny loader/crypto/SSHD_OPTS/LANGUAGE/unknown keys; no values in diagnostics. Original full ManagerEnvironment remains in exact launch comparison (no normalization/filtering). Generic activator/DBus/process/runtime/ownership/REFRESH/rollback/journal/PAM/package contracts unchanged. Trusted OS/residual privileged ABA boundary retained.
+* Native mutations ONLY guarded disposable systemd Docker, no runtime host binds/ports/network. SSH-only research VM used read-only for snapd package/profile inspection during I1; no restart, config or manager environment mutations there.
 
 ## Completed / changed areas
-* Two production builders + ownership sections of DEB/RPM READMEs.
-* New static/contract CTest and focused tests/integration/package-lifecycle client runner, production-helper repackaging, native access test, reproducible runtime recipes, compact evidence/private-client-permissions.json.
-* docs/private-client-permissions-validation.md contains exact commands, results and limits.
+* SSH classifier + integrated unit positive/negative/type/bounds/diagnostic/no-normalization matrix.
+* Existing native Driver hooks test21 environment races across before-admission-proof/publication/post-restart stages; new environment scenario has3 positives +unknown-key pre-save refusal.
+* Real current-build CMake-installed daemon/fic-cli fixture (not DEB install): R1 and reported-XDG environments apply/owned journal/process/kernel listeners/-t/-T/repeat/RuntimeVerified disable/exact restore PASS.
+* Native test-only fixes: explicit systemd PID1; usr-merge-safe staging; package-equivalent root0644 PAM payloads; Debian ss diagnostic image recipe; stale Port refusal checks now assert existing multi-file wrappers; Debian fsync fault assertion separates unusable-at-return from existing subsequent durable tryGet recovery with exact prior record retained. No journal/recovery production edit.
+* Docs: adapter grammar + validation, native README, compact docs/ssh-manager-environment-validation.json. Raw evidence ignored build-ssh-i1/PROFILE/evidence; /tmp/ssh-i1-* logs.
 
 ## Validation
-* Fresh CMake configure PASS: /tmp/fic-client-permissions-check; affected CTest8/8 PASS, five static labelled. /tmp/fic-client-{configure,ctest}.log. DEB dependency and Qt bundle tests directly PASS as well.
-* Actual client DEB/RPM archives built via current production helpers:20 archives (client pairs0.1.1→0.1.2 across5 distro rows). DEB archive IDs root:root0750; native configure root:fic0750. RPM archive and installed attrs root:fic0750/bin2750.
-* Native Debian12/13, Ubuntu24.04/26.04 and ALT p11 ALL PASS install/reinstall/upgrade and independent metadata check after each client, real non-root CLI,30 Qt/Xvfb xcb/JPEG/private-Qt launches,45 outsider EACCES proofs, no group write, unchanged owner/group/mode/inode/mtime/ctime/content for persistent metadata fixtures (config/DB/journal/witness/incident/log/notify). DEB unsafe type/link/owner/writable path refusals PASS.
-* Final native-only rerun all5 exit0; raw build-package-lifecycle/client-access-<row>/{build.log,native.log,packages/,results/}. Compact tracked receipts contain source/image-independent OS/manager facts, source/package/raw-evidence hashes and results.
-* Bash syntax, Python compile, final diff check PASS. No full C++ build/CTest; no production C++/install-layout changes.
+* Five native suites all exit0: Debian12/13 each30 generic +59 adapter +24 module groups; Ubuntu24.04/26.04 each52; ALT p11 65. Unit ssh_verified_activation_tests PASS each.
+* Existing multi-file-smoke all5 exit0: apply/repeat/REFRESH/repeat/RuntimeVerified active release; exact Include files/fingerprints preserved and restored. Environment25 groups PASS; production daemon/CLI2 cases PASS.
+* Ubuntu26 full project build PASS (build-pam-i1/ubuntu2604/i1-full-build.log).
+* Corrected full CTest (Git safe.directory, drop DAC_OVERRIDE/DAC_READ_SEARCH):220 PASS,2 FAIL,4 opt-in native SKIP /226 (build-pam-i1/ubuntu2604/Testing/i1-full-ctest-corrected.log).
+* Remaining FAILs: incident_state_lifecycle_static_checks, same assertion reproduced on clean base archive (old RPM attrs string check); identity_policy_hierarchy_tests, unchanged PAM-only target expecting obsolete Recommended activation dependency. Changed SSH adapter not linked into that target. Do not fix unrelated PAM/packaging automatically.
+* SSSD I3/I4/I5 retained evidence checks PASS; SSSD I6 historical tests PASS; no SSSD native reexecution. PAM I6 current-source checker FAIL stale: accepted ddffb22f..., already-base manifest e3acc8db... differs. No replacement hashes or weakened gates.
+* Python/Bash syntax, JSON/receipt checks and git diff --check PASS. Only production adapter differs; prohibited components unchanged.
 
 ## Remaining / limits
-* No required permissions work remains. Repackaged unchanged native cached FIC ELF payloads, not current-HEAD release rebuilds. Dependency admission bypassed (dpkg --force-depends/rpm --nodeps); not a full clean-system daemon stack install or GUI/IPC functional-policy claim. GUI tests really create QWidget/event loop, not just test-x.
-* Existing main FIC root initialization is seeded in RPM fixture; main fic.postinst never used to fix clients. Native metadata fixtures are not a live daemon journal.
-* Ubuntu24 root dist old GUI lacks smoke flag; newer real cached distro artifact from dist/pam-activation/ubuntu2404 used with hashes. Missing image libraries fixed only in test images. Docker socket/old build-host SSH unavailable; official Docker Hub ALT p11 + verified HTTPS mirror used after ALT registry timeout.
-* Earlier PAM I6 evidence remains historical; do not relabel it for this packaging-source change. No native host state changed, no image/container pruning or push.
+* No unfinished I1 functional work. One requested completion commit, no push or automatic further work.
+* Full CTest is NOT all green:2 unrelated failures +4 opt-in skips explicitly retained. Full native package-manager lifecycle and authentication/session security not claimed. Historical evidence not relabelled as current native execution. Shared Docker/WSL kernel.
+* Early exploratory failures (missing ss/image CMD/staging metadata/stale native assertions/one runner edited while active) were followed by successful final reruns; final source code/scripts frozen for accepted runs. Existing source-bound PAM receipts remain stale and require a separately authorized rerun if current PAM matrix is needed.

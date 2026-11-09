@@ -104,9 +104,67 @@ int main() {
         deny([&] { d::validateLaunchProfile(launch,debianInput,false); });
     }
     launch=goodLaunch; put("FragmentPath","/etc/systemd/system/ssh.service"); deny([&] { d::validateLaunchProfile(launch,debianInput,false); });
-    for (const auto* env : {"SSHD_OPTS=-p2223", "LD_PRELOAD=/bad", "LANG=en_US.UTF-8", "UNKNOWN=yes"}) {
+    for (const auto* env : {"SSHD_OPTS=-p2223", "LD_PRELOAD=/bad", "UNKNOWN=yes"}) {
         launch=goodLaunch; launch["launch.ManagerEnvironment"] = J::array({env}).dump(); deny([&] { d::validateLaunchProfile(launch,debianInput,false); });
     }
+    const auto managerEnvironment=[&](const J& entries) {
+        auto candidate=goodLaunch;candidate["launch.ManagerEnvironment"]=entries.dump();
+        const auto original=candidate;
+        d::validateLaunchProfile(candidate,debianInput,false);
+        require(candidate==original,"environment classification must not normalize the launch contract");++checks;
+    };
+    for(const auto* key:{"LANG","LC_ALL","LC_CTYPE","LC_NUMERIC","LC_TIME","LC_COLLATE","LC_MONETARY",
+                        "LC_MESSAGES","LC_PAPER","LC_NAME","LC_ADDRESS","LC_TELEPHONE","LC_MEASUREMENT","LC_IDENTIFICATION"})
+        for(const auto* text:{"C","POSIX","C.UTF-8","C.utf8","ru_RU.UTF-8","en_US.UTF-8","de_DE.UTF-8","fr_FR.UTF-8","ru_RU.utf8","sr_RS.UTF-8@latin"})
+            managerEnvironment(J::array({std::string(key)+"="+text}));
+    for(const auto* path:{"/usr/sbin:/usr/bin:/sbin:/bin",
+                        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin",
+                        "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin"})
+        managerEnvironment(J::array({std::string("PATH=")+path}));
+    for(const auto* dirs:{"/usr/local/share/:/usr/share/","/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/",
+                         "/usr/share:/usr/local/share","/usr/share/","/usr/share:/var/lib/snapd/desktop/",
+                         "/var/lib/snapd/desktop:/var/lib/flatpak/exports/share:/usr/share:/usr/local/share"})
+        managerEnvironment(J::array({std::string("XDG_DATA_DIRS=")+dirs}));
+    J ubuntuEnvironment=J::array({"LANG=ru_RU.UTF-8","PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin",
+        "XDG_DATA_DIRS=/var/lib/flatpak/exports/share:/usr/local/share/:/usr/share/"});
+    for(const auto* key:{"LC_ADDRESS","LC_IDENTIFICATION","LC_MEASUREMENT","LC_MONETARY","LC_NAME","LC_NUMERIC","LC_PAPER","LC_TELEPHONE","LC_TIME"})
+        ubuntuEnvironment.push_back(std::string(key)+"=ru_RU.UTF-8");
+    managerEnvironment(ubuntuEnvironment);managerEnvironment(J::array());
+    const auto badEnvironment=[&](const J& entries,const std::string& expected) {
+        auto candidate=goodLaunch;candidate["launch.ManagerEnvironment"]=entries.dump();
+        bool rejected=false;
+        try{d::validateLaunchProfile(candidate,debianInput,false);}catch(const std::exception& e){
+            const std::string message=e.what();rejected=message.find(expected)!=std::string::npos;
+            require(message.find("PRIVATE_VALUE")==std::string::npos,"environment diagnostics must not disclose values");
+        }
+        require(rejected,"manager environment rejection diagnostic");++checks;
+    };
+    for(const auto* key:{"UNKNOWN","LD_PRELOAD","LD_LIBRARY_PATH","LD_AUDIT","LD_DEBUG","LOCPATH","GCONV_PATH",
+        "GLIBC_TUNABLES","SSHD_OPTS","OPENSSL_CONF","OPENSSL_CONF_INCLUDE","OPENSSL_MODULES","OPENSSL_ENGINES",
+        "LANGUAGE","LC_UNKNOWN","XDG_CONFIG_DIRS","INVOCATION_ID","USER","SYSTEMD_EXEC_PID"})
+        badEnvironment(J::array({std::string(key)+"=PRIVATE_VALUE=extra"}),"unsupported manager environment variable: "+std::string(key));
+    for(const auto* text:{"","../ru_RU","/tmp/ru_RU","ru_RU.UTF-8;LC_TIME=C","ru_RU=UTF-8","$(PRIVATE_VALUE)",
+                        "ru_RU UTF-8","ru_RU\\UTF-8","ru_RU\nPRIVATE_VALUE","ru_RU\tUTF-8","ru_RU..UTF-8","ru_RU.UTF-8@"})
+        badEnvironment(J::array({std::string("LC_ALL=")+text}),"invalid locale syntax: LC_ALL");
+    badEnvironment(J::array({"LANG="+std::string(129,'a')}),"invalid locale syntax");
+    badEnvironment(J::array({std::string("LANG=ru_RU\0PRIVATE_VALUE",24)}),"invalid locale syntax");
+    for(const auto* path:{"/tmp/custom-bin:/usr/bin",".:/usr/bin","/home/user/bin:/usr/bin","/usr/bin:","/usr/bin:/usr/sbin"})
+        badEnvironment(J::array({std::string("PATH=")+path}),"unsupported manager PATH value");
+    for(const auto* dirs:{"/home/user/share:/usr/share","/tmp/share","/usr/share/..","/usr/share/."})
+        badEnvironment(J::array({std::string("XDG_DATA_DIRS=")+dirs}),"unsupported XDG_DATA_DIRS component");
+    for(const auto* dirs:{"",":/usr/share","/usr/share:","/usr/share::/usr/local/share","usr/share","/usr//share","/usr/share//","/usr/../share"})
+        badEnvironment(J::array({std::string("XDG_DATA_DIRS=")+dirs}),"invalid XDG_DATA_DIRS");
+    badEnvironment(J::array({"XDG_DATA_DIRS=/usr/share/:/usr/share"}),"duplicate XDG_DATA_DIRS directory");
+    badEnvironment(J::array({"XDG_DATA_DIRS=/usr/share:/usr/local/share:/var/lib/flatpak/exports/share:/var/lib/snapd/desktop:/usr/share"}),"component limit");
+    badEnvironment(J::array({"XDG_DATA_DIRS="+std::string(513,'a')}),"length");
+    badEnvironment(J::array({"LANG=C","LANG=C"}),"duplicate manager environment variable: LANG");
+    badEnvironment(J::array({"LANG=C","LANG=ru_RU.UTF-8"}),"duplicate manager environment variable: LANG");
+    for(const auto* entry:{"LANG","=PRIVATE_VALUE","1BAD=PRIVATE_VALUE","BAD KEY=PRIVATE_VALUE"})
+        badEnvironment(J::array({entry}),"invalid manager environment");
+    badEnvironment(J::array({42}),"assignment type");badEnvironment(J::object(),"environment array");
+    launch=goodLaunch;launch["launch.ManagerEnvironment"]="[broken PRIVATE_VALUE";
+    deny([&]{d::validateLaunchProfile(launch,debianInput,false);});
     for(const auto& bytes:{"[Unit]\nDescription=Local SSH description\n", "[Service]\nCPUWeight=100\n"}) {
         d::validateCompatibleDropIn(bytes);++checks;
     }

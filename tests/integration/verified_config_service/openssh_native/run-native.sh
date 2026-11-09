@@ -32,7 +32,7 @@ finish() {
 trap finish EXIT
 docker run -d --name "$name" --privileged --cgroupns=private --network none \
  --tmpfs /run --tmpfs /tmp -e container=docker \
- -e FIC_OPENSSH_DISPOSABLE="$token" -e FIC_OPENSSH_HOST_MNT="$host_mnt" -e FIC_OPENSSH_HOST_ROOT="$host_root" "$image" >/dev/null
+ -e FIC_OPENSSH_DISPOSABLE="$token" -e FIC_OPENSSH_HOST_MNT="$host_mnt" -e FIC_OPENSSH_HOST_ROOT="$host_root" "$image" /sbin/init >/dev/null
 docker inspect "$name" > "$build/container-inspect.json"
 python3 - "$build/container-inspect.json" <<'PY'
 import json, sys
@@ -52,7 +52,20 @@ docker exec "$name" timeout 60 sh -ec '
 '
 docker cp "$build/openssh_native_driver" "$name:/usr/local/bin/fic-openssh-driver"
 docker cp "$repo/tests/integration/verified_config_service/openssh_native/harness.py" "$name:/usr/local/bin/fic-openssh-harness.py"
-if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == release-plan ]]; then
+if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == environment-cli ]]; then
+ [[ "$platform" == ubuntu-26.04 && -d "${FIC_SSH_INSTALL_ROOT:-}" ]] || exit 2
+ docker cp "$FIC_SSH_INSTALL_ROOT" "$name:/var/tmp/fic-current-install"
+ docker exec "$name" sh -ec 'tar -C /var/tmp/fic-current-install -cf - . | tar --keep-directory-symlink --no-same-owner -C / -xf -'
+ docker cp "$repo/packaging/deb/pam-configs" "$name:/var/tmp/fic-pam-configs"
+ docker cp "$repo/packaging/deb/pam-slots" "$name:/var/tmp/fic-pam-slots"
+ docker exec "$name" sh -ec 'install -o root -g root -m 0644 /var/tmp/fic-pam-configs/* /usr/share/pam-configs/; install -o root -g root -m 0644 /var/tmp/fic-pam-slots/* /etc/pam.d/'
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/environment_cli.py" "$name:/usr/local/bin/fic-ssh-environment-cli.py"
+ docker exec "$name" python3 /usr/local/bin/fic-ssh-environment-cli.py
+elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == environment ]]; then
+ [[ "$platform" == ubuntu-* ]] || exit 2
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/environment_cases.py" "$name:/usr/local/bin/fic-ssh-environment.py"
+ docker exec "$name" python3 /usr/local/bin/fic-ssh-environment.py
+elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == release-plan ]]; then
  docker cp "$repo/tests/integration/verified_config_service/openssh_native/release_plan_cases.py" "$name:/usr/local/bin/fic-ssh-release-plan.py"
  docker exec "$name" python3 /usr/local/bin/fic-ssh-release-plan.py "$platform"
 elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == release ]]; then

@@ -249,3 +249,87 @@ The `ownership` group additionally checks initially matching Include Port and
 no-final-LF restoration; run it on each platform alongside `multifile`.
 Raw reports stay in ignored build directories; only compact hashes and results
 are committed, without compressed report blobs.
+
+## SSH Manager.Environment I1
+
+Production classification remains in the SSH adapter, not in the generic engine.
+The supported locale/PATH/XDG grammar and trust boundary are authoritative in
+[ssh-verified-activation-adapter.md](../../../../docs/ssh-verified-activation-adapter.md#managerenvironment).
+The original full sorted manager environment remains pinned; no equality filtering
+or normalization is permitted.
+
+Two additional guarded scenarios reuse the existing driver/hooks and runner:
+
+```bash
+FIC_SSH_NATIVE_SCENARIO=environment \
+ FIC_SSH_NATIVE_BUILD_DIR="$PWD/build-ssh-i1/ubuntu-26.04" \
+ bash tests/integration/verified_config_service/openssh_native/run-native.sh \
+ fic-package-native:ubuntu2604 ubuntu-26.04
+
+FIC_SSH_NATIVE_SCENARIO=environment-cli \
+ FIC_SSH_INSTALL_ROOT="$PWD/build-pam-i1/ubuntu2604/i1-install" \
+ FIC_SSH_NATIVE_BUILD_DIR="$PWD/build-ssh-i1/ubuntu-26.04" \
+ bash tests/integration/verified_config_service/openssh_native/run-native.sh \
+ fic-package-native:ubuntu2604 ubuntu-26.04
+```
+
+`environment` checks three accepted environments, 21 full-contract mutations
+(seven changes at admission/publication/post-restart hooks), and an unknown-key
+refusal before SSH configuration/journal mutation. Only safe synthetic variables are
+injected into the disposable manager; loader negatives are pure unit fixtures.
+
+`environment-cli` uses actual current-build CMake-installed fic, fic-cli,
+fic-dick and infrastructure helper/resources. Prepare the staging root using
+`DESTDIR=/build/i1-install cmake --install /build --component COMPONENT` for
+`fic`, `fic-cli`, `fic-dick` in the same native build image with `/src` mounted.
+It runs the real daemon and `fic-cli policy apply NET ssh_use_pam` for the R1
+locale/PATH baseline and the reported Flatpak XDG combination; verifies owned
+block, durable applied record, process/listener identity, -t/-T, repeat no-op and
+RuntimeVerified disable with exact persistent restore. This is **not a DEB
+package-manager installation/lifecycle test**. Other policy statuses are disabled
+in the fixture administrative configuration; GLOBAL recovery/incident defaults
+remain. Production lifecycle admission/proofs are not bypassed. PAM payloads are
+installed root:root0644 as in packaging, independent of checkout mode bits.
+
+Runtime containers have systemd PID1 explicitly, private namespaces, no host
+binds/ports/network and the existing root/ns/marker guard. CMake payload staging
+preserves the runtime image's usr-merge directory symlinks. No operations target
+the SSH-only research VM or host policy configuration.
+
+When reusing the general native build images for Debian, add the `ss` diagnostic:
+
+```bash
+docker build -f tests/integration/verified_config_service/openssh_native/Containerfile.environment-runtime \
+ --build-arg BASE_IMAGE=fic-package-native:debian12 -t fic-ssh-i1-native:debian12 .
+# Same recipe with debian13. No host packages are installed.
+```
+
+Run the unchanged default platform suites and release/refresh/release-plan
+scenarios as applicable. The Ubuntu foreign-Include Port case now expects the
+already implemented multi-file wrapper contract, rather than the obsolete
+single-file refusal; it verifies the included ownership payload explicitly.
+New I1 receipts do not update or reinterpret historical source-bound evidence.
+
+I1 final results (2026-11-09): Debian12/13 each 30 generic +59 adapter +24
+module groups PASS; Ubuntu24.04/26.04 each52 groups PASS; ALT p11 65 groups
+PASS. Existing multi-file Port apply/repeat/REFRESH/active RuntimeVerified release
+smoke additionally PASS on all5. Environment gate25 groups and actual daemon/CLI
+2 cases PASS. Raw results: ignored build-ssh-i1/PROFILE/evidence; compact receipts:
+[ssh-manager-environment-validation.json](../../../../docs/ssh-manager-environment-validation.json).
+
+Full Ubuntu26 build PASS. Correctly configured full CTest:220 PASS,2 FAIL,4
+opt-in native SKIP (226 total). Unrelated failures remain explicit:
+incident_state_lifecycle_static_checks (same failure on clean I1 base, old RPM
+manifest string check) and identity_policy_hierarchy_tests (unchanged PAM-only
+target expects obsolete Recommended rather than Required activation dependencies).
+Initial Git trust/DAC-capability test-environment failures were resolved before
+this final full run. No unrelated PAM/package code was changed to green the suite.
+
+SSSD retained I3/I4/I5 source-bound checks and I6 historical checks PASS, without
+native reexecution. PAM I6 current-source checker rejects retained receipts: the
+manifest already differed from those receipts on the I1 base, and differs again
+after I1. No historical receipt/hash was replaced or evidence gate weakened.
+The Debian fsync fault case now asserts the failed operation and unusable-at-return
+state separately from the existing diagnostic tryGet() durable recovery, retaining
+the first exact record; it no longer asserts permanent journal poisoning after
+the injected fault has been removed. Production journal/recovery is unchanged.
