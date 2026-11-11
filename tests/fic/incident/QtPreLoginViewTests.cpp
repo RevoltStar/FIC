@@ -6,16 +6,11 @@
 #include <QMessageBox>
 #include <QAbstractButton>
 #include <QTimer>
-#include <QTime>
-#include <QEvent>
+#include <QTest>
+#include <QEnterEvent>
 #include <stdexcept>
 #include <iostream>
 using namespace fic::prelogin;
-
-static void waitMs(int ms) {
-    QTime die = QTime::currentTime().addMSecs(ms);
-    while (QTime::currentTime() < die) QApplication::processEvents();
-}
 
 void require(bool ok, const char* detail) { if (!ok) throw std::runtime_error(detail); }
 int main(int argc,char** argv){
@@ -55,30 +50,30 @@ int main(int argc,char** argv){
         require(handoff->currentBackgroundColor() == QColor("#244967"), "wrong initial bg");
         require(handoff->currentBorderColor() == QColor("#537692"), "wrong initial border");
 
-        QEvent enter(QEvent::Enter);
+        QEnterEvent enter(QPointF(10, 10), QPointF(10, 10), QPointF(10, 10));
         QApplication::sendEvent(handoff, &enter);
-        waitMs(60);
+        QTest::qWait(60);
         require(handoff->currentBackgroundColor() != QColor("#244967"), "hover did not change bg color");
         require(handoff->currentBorderColor() != QColor("#537692"), "hover did not change border color");
 
         QEvent leave(QEvent::Leave);
         QApplication::sendEvent(handoff, &leave);
-        waitMs(200);
+        QTest::qWait(200);
         require(handoff->currentBackgroundColor() == QColor("#244967"), "leave did not restore bg color");
         require(handoff->currentBorderColor() == QColor("#537692"), "leave did not restore border color");
 
         QApplication::sendEvent(handoff, &enter);
         QApplication::sendEvent(handoff, &leave);
         QApplication::sendEvent(handoff, &enter);
-        waitMs(60);
+        QTest::qWait(60);
         require(handoff->currentBackgroundColor() != QColor("#244967"), "fast re-hover did not change color");
         QApplication::sendEvent(handoff, &leave);
-        waitMs(200);
+        QTest::qWait(200);
         require(handoff->currentBackgroundColor() == QColor("#244967"), "fast leave did not restore color");
 
         handoff->setEnabled(false);
         QApplication::sendEvent(handoff, &enter);
-        waitMs(60);
+        QTest::qWait(60);
         require(handoff->currentBackgroundColor() == QColor("#244967"), "disabled button reacted to hover");
         require(handoff->currentBorderColor() == QColor("#537692"), "disabled button changed border on hover");
 
@@ -89,7 +84,7 @@ int main(int argc,char** argv){
         app.processEvents();
         auto* h2 = view2.findChild<AnimatedButton*>("handoff");
         QApplication::sendEvent(h2, &enter);
-        waitMs(60);
+        QTest::qWait(60);
         h2->click();
         require(actions == 1, "click during animation did not trigger handler");
 

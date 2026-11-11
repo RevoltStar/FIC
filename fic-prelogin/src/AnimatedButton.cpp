@@ -23,7 +23,9 @@ AnimatedButton::AnimatedButton(const QString& text, QWidget* parent)
     , currentBorder_(normalBorder_)
 {
     setCursor(Qt::PointingHandCursor);
-    setFont(QFont(font().family(), 22));
+    QFont f = font();
+    f.setPixelSize(22);
+    setFont(f);
 
     animation_.setDuration(160);
     animation_.setEasingCurve(QEasingCurve::OutCubic);
