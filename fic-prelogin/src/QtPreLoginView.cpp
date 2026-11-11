@@ -1,6 +1,6 @@
 #include "QtPreLoginView.h"
+#include "AnimatedButton.h"
 #include <QLabel>
-#include <QPushButton>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QMessageBox>
@@ -12,7 +12,9 @@
 namespace fic::prelogin {
 QtPreLoginView::QtPreLoginView(std::function<void(char)> action) : action_(std::move(action)) {
     setWindowTitle(QStringLiteral("FIC SECURITY"));
-    setStyleSheet(QStringLiteral("QWidget{background:#111b2b;color:#e7edf5;font-size:22px} QPushButton{background:#244967;border:1px solid #537692;border-radius:8px;padding:18px} QPushButton:focus{border:3px solid #8fcfff} QLabel#brand{font-size:38px;font-weight:bold;color:#8fcfff}"));
+    // Стили QPushButton убраны: AnimatedButton рисует себя сам с анимацией.
+    // Оставляем только общие правила для виджета и бренда.
+    setStyleSheet(QStringLiteral("QWidget{background:#111b2b;color:#e7edf5;font-size:22px} QLabel#brand{font-size:38px;font-weight:bold;color:#8fcfff}"));
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(48,32,48,32);
     layout->setSpacing(12);
@@ -33,20 +35,20 @@ QtPreLoginView::QtPreLoginView(std::function<void(char)> action) : action_(std::
     auto* scroll = new QScrollArea;
     scroll->setWidgetResizable(true); scroll->setWidget(summary);
     layout->addWidget(scroll, 1); // Long diagnostics scroll; actions stay visible.
-    handoff_ = new QPushButton(QStringLiteral("Перейти к системному DM")); handoff_->setObjectName("handoff");
+    handoff_ = new AnimatedButton(QStringLiteral("Перейти к системному DM")); handoff_->setObjectName("handoff");
     handoff_->setFixedHeight(64);
     handoff_->setShortcut(QKeySequence(Qt::ALT | Qt::Key_D));
-    connect(handoff_, &QPushButton::clicked, this, [this]{request('H');});
+    connect(handoff_, &AnimatedButton::clicked, this, [this]{request('H');});
     layout->addWidget(handoff_);
     auto* enter = new QShortcut(QKeySequence(Qt::Key_Return), this);
-    connect(enter, &QShortcut::activated, handoff_, &QPushButton::click);
+    connect(enter, &QShortcut::activated, handoff_, &AnimatedButton::click);
     auto* power = new QHBoxLayout;
-    reboot_ = new QPushButton(QStringLiteral("Перезагрузить")); reboot_->setObjectName("reboot");
-    poweroff_ = new QPushButton(QStringLiteral("Выключить")); poweroff_->setObjectName("poweroff");
+    reboot_ = new AnimatedButton(QStringLiteral("Перезагрузить")); reboot_->setObjectName("reboot");
+    poweroff_ = new AnimatedButton(QStringLiteral("Выключить")); poweroff_->setObjectName("poweroff");
     reboot_->setFixedHeight(60); poweroff_->setFixedHeight(60);
     power->addWidget(reboot_); power->addWidget(poweroff_); layout->addLayout(power);
-    connect(reboot_, &QPushButton::clicked, this, [this]{request('R');});
-    connect(poweroff_, &QPushButton::clicked, this, [this]{request('P');});
+    connect(reboot_, &AnimatedButton::clicked, this, [this]{request('R');});
+    connect(poweroff_, &AnimatedButton::clicked, this, [this]{request('P');});
     auto* note = new QLabel(QStringLiteral("Переход не разрешает вход: доступ независимо проверяет PAM. Recovery: Ctrl+Alt+F1."));
     note->setStyleSheet(QStringLiteral("font-size:16px"));
     note->setWordWrap(true); layout->addWidget(note);
