@@ -12,6 +12,11 @@ bool makePolicySetRequest(int argc,
                           nlohmann::json& request,
                           std::string& error);
 
+bool makePolicySeveritySetRequest(int argc,
+                                  char* argv[],
+                                  nlohmann::json& request,
+                                  std::string& error);
+
 } // namespace fic::cli
 
 #endif // FIC_CLI_POLICY_SET_COMMAND_H

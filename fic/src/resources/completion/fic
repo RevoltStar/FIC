@@ -72,7 +72,7 @@ _fic_completion()
                 policy)
                     COMPREPLY=(
                         $(compgen -W \
-                            "set enable disable isenable isdisable value apply list info" \
+                            "set enable disable isenable isdisable value severity apply list info" \
                             -- "$cur")
                     )
                     ;;
@@ -102,7 +102,8 @@ _fic_completion()
                 policy-disable|\
                 policy-isenable|\
                 policy-isdisable|\
-                policy-value)
+                policy-value|
+                policy-severity)
                     COMPREPLY=(
                         $(compgen -W "$(_fic_get_modules)" -- "$cur")
                     )
@@ -145,7 +146,8 @@ _fic_completion()
                 policy-disable|\
                 policy-isenable|\
                 policy-isdisable|\
-                policy-value)
+                policy-value|
+                policy-severity)
                     COMPREPLY=(
                         $(compgen -W \
                             "$(_fic_get_policies "${words[3]}")" \
@@ -220,6 +222,13 @@ _fic_completion()
                     COMPREPLY=(
                         $(compgen -W \
                             "$(_fic_get_policies "${words[4]}")" \
+                            -- "$cur")
+                    )
+                    ;;
+                policy-severity-set)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "NONE SOFT STANDARD HARD ISOLATE" \
                             -- "$cur")
                     )
                     ;;

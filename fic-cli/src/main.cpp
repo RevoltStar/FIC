@@ -35,6 +35,8 @@ void print_help() {
               << "  policy isenable <module> <policy>\n"
               << "  policy isdisable <module> <policy>\n"
               << "  policy value <module> <policy>\n"
+              << "  policy severity <module> <policy>\n"
+              << "  policy severity set <module> <policy> <severity>\n"
               << "  policy apply all\n"
               << "  policy apply <module> all\n"
               << "  policy apply <module> <policy>\n"
@@ -58,15 +60,30 @@ void print_help() {
               << "  status | shutdown\n";
 }
 
-// Maps the CLI's lower-case severity argument to the authoritative token the
-// daemon stores. The mapping is exhaustive here and validated again by the
-// daemon's strict parser, so an unknown value can never be invented.
-const char* severity_to_token(const std::string& severity) {
-    if (severity == "soft") return "SOFT";
-    if (severity == "standard") return "STANDARD";
-    if (severity == "hard") return "HARD";
-    if (severity == "isolate") return "ISOLATE";
-    return "SOFT";
+// Strict validation of the CLI severity argument against the five
+// authoritative tokens the daemon accepts. Returns false for unknown values.
+bool parseSeverityToken(const std::string& severity, std::string& token) {
+    if (severity == "NONE" || severity == "none") {
+        token = "NONE";
+        return true;
+    }
+    if (severity == "SOFT" || severity == "soft") {
+        token = "SOFT";
+        return true;
+    }
+    if (severity == "STANDARD" || severity == "standard") {
+        token = "STANDARD";
+        return true;
+    }
+    if (severity == "HARD" || severity == "hard") {
+        token = "HARD";
+        return true;
+    }
+    if (severity == "ISOLATE" || severity == "isolate") {
+        token = "ISOLATE";
+        return true;
+    }
+    return false;
 }
 
 int print_response(const json& response) {
@@ -214,6 +231,31 @@ int print_policy_value(const json& response) {
 
     std::cout << response.value("value", "") << std::endl;
     return 0;
+}
+
+int print_policy_severity(const json& response, const std::string& module,
+                          const std::string& policy) {
+    if (!response.value("ok", false)) {
+        return print_response(response);
+    }
+    if (!response.contains("policies") || !response["policies"].is_array()) {
+        std::cout << "policy information is unavailable" << std::endl;
+        return 1;
+    }
+    for (const auto& item : response["policies"]) {
+        if (item.value("policy", "") != policy) {
+            continue;
+        }
+        if (!item.contains("violation_severity") ||
+            !item["violation_severity"].is_string()) {
+            std::cout << "violation severity is unavailable" << std::endl;
+            return 1;
+        }
+        std::cout << item["violation_severity"].get<std::string>() << std::endl;
+        return 0;
+    }
+    std::cout << "policy not found: " << module << " " << policy << std::endl;
+    return 1;
 }
 
 fic::ipc::Client device_client()
@@ -420,6 +462,32 @@ int main(int argc, char* argv[]) {
                 action == "isenable"
             );
         }
+        if (action == "severity") {
+            const std::string subAction = arg(argc, argv, 5);
+            if (subAction.empty()) {
+                // fic-cli policy severity <module> <policy>
+                if (module.empty() || policy.empty()) {
+                    print_help();
+                    return 1;
+                }
+                return print_policy_severity(
+                    client.request({{"command", "policy_list"}, {"module", module}}),
+                    module, policy);
+            }
+            // fic-cli policy severity set <module> <policy> <severity>
+            if (subAction != "set") {
+                print_help();
+                return 1;
+            }
+            json request;
+            std::string error;
+            if (!fic::cli::makePolicySeveritySetRequest(
+                    argc, argv, request, error)) {
+                std::cerr << error << std::endl;
+                return 1;
+            }
+            return print_response(client.request(request));
+        }
         if (action == "apply") {
             if (module == "all") {
                 return print_policy_apply_response(client.request({{"command", "apply_all"}}));
@@ -563,9 +631,11 @@ int main(int argc, char* argv[]) {
             // The severity travels to the daemon as its authoritative token;
             // the daemon parses it strictly, so the CLI never has to decide
             // what a severity means.
+            std::string token;
+            parseSeverityToken(severity, token);
             return print_response(client.request({
                 {"command", "incident_raise"},
-                {"value", severity_to_token(severity)}
+                {"value", token}
             }));
         }
         std::cerr << "Unknown incident action: " << action << std::endl;

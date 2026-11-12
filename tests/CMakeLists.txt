@@ -230,6 +230,15 @@ target_include_directories(cli_policy_set_tests PRIVATE
 )
 add_test(NAME cli_policy_set_tests COMMAND cli_policy_set_tests)
 
+add_executable(cli_policy_severity_tests
+    fic-cli/PolicySeverityCommandTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-cli/src/PolicySetCommand.cpp
+)
+target_include_directories(cli_policy_severity_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-cli/src
+)
+add_test(NAME cli_policy_severity_tests COMMAND cli_policy_severity_tests)
+
 add_executable(device_id_parser_tests
     fic-cli/DeviceIdParserTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-cli/src/DeviceIdParser.cpp
