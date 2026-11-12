@@ -27,7 +27,12 @@ nlohmann::json validDescriptor()
         {"possible_values", nlohmann::json::array()},
         {"min", 0},
         {"max", 60},
-        {"text_delimiter", "\n"}
+        {"text_delimiter", "\n"},
+        {"violation_severity", "HARD"},
+        {"default_violation_severity", "STANDARD"},
+        {"violation_severity_values",
+         nlohmann::json::array({"NONE", "SOFT", "STANDARD", "HARD",
+                                "ISOLATE"})}
     };
 }
 
@@ -160,6 +165,83 @@ int main()
         nlohmann::json::array({"NONE", 42});
     assert(!parseOne(badSev, policies, error));
     assert(error.find("non-string") != std::string::npos);
+
+    // Test missing violation_severity is rejected.
+    auto missingSev = validDescriptor();
+    missingSev.erase("violation_severity");
+    assert(!parseOne(missingSev, policies, error));
+    assert(error.find("missing required field 'violation_severity'") != std::string::npos);
+
+    // Test missing default_violation_severity is rejected.
+    auto missingDefaultSev = validDescriptor();
+    missingDefaultSev.erase("default_violation_severity");
+    assert(!parseOne(missingDefaultSev, policies, error));
+    assert(error.find("missing required field 'default_violation_severity'") != std::string::npos);
+
+    // Test missing violation_severity_values is rejected.
+    auto missingSevValues = validDescriptor();
+    missingSevValues.erase("violation_severity_values");
+    assert(!parseOne(missingSevValues, policies, error));
+    assert(error.find("missing required field 'violation_severity_values'") != std::string::npos);
+
+    // Test wrong type for violation_severity is rejected.
+    auto wrongTypeSev = validDescriptor();
+    wrongTypeSev["violation_severity"] = 42;
+    assert(!parseOne(wrongTypeSev, policies, error));
+    assert(error.find("wrong type") != std::string::npos);
+
+    // Test wrong type for default_violation_severity is rejected.
+    auto wrongTypeDefault = validDescriptor();
+    wrongTypeDefault["default_violation_severity"] = 42;
+    assert(!parseOne(wrongTypeDefault, policies, error));
+    assert(error.find("wrong type") != std::string::npos);
+
+    // Test wrong type for violation_severity_values is rejected.
+    auto wrongTypeValues = validDescriptor();
+    wrongTypeValues["violation_severity_values"] = "not an array";
+    assert(!parseOne(wrongTypeValues, policies, error));
+    assert(error.find("wrong type") != std::string::npos);
+
+    // Test unknown violation_severity token is rejected.
+    auto unknownSev = validDescriptor();
+    unknownSev["violation_severity"] = "BOGUS";
+    assert(!parseOne(unknownSev, policies, error));
+    assert(error.find("unknown violation_severity") != std::string::npos);
+
+    // Test unknown default_violation_severity token is rejected.
+    // Test empty violation_severity_values list is rejected.
+    auto emptyValues = validDescriptor();
+    emptyValues["violation_severity_values"] = nlohmann::json::array();
+    assert(!parseOne(emptyValues, policies, error));
+    assert(error.find("empty violation_severity_values list") != std::string::npos);
+
+    // Test duplicate entry in violation_severity_values is rejected.
+    auto dupValues = validDescriptor();
+    dupValues["violation_severity_values"] =
+        nlohmann::json::array({"NONE", "SOFT", "SOFT", "STANDARD", "HARD", "ISOLATE"});
+    assert(!parseOne(dupValues, policies, error));
+    assert(error.find("has duplicate violation_severity_values entry") != std::string::npos);
+
+    // Test correct descriptor with NONE is accepted.
+    auto noneDescriptor = validDescriptor();
+    noneDescriptor["violation_severity"] = "NONE";
+    noneDescriptor["default_violation_severity"] = "NONE";
+    noneDescriptor["violation_severity_values"] =
+        nlohmann::json::array({"NONE", "SOFT", "STANDARD", "HARD", "ISOLATE"});
+    assert(parseOne(noneDescriptor, policies, error));
+    assert(policies.front().violationSeverity == "NONE");
+    assert(policies.front().defaultViolationSeverity == "NONE");
+
+    // Test correct descriptor with ISOLATE is accepted.
+    auto isolateDescriptor = validDescriptor();
+    isolateDescriptor["violation_severity"] = "ISOLATE";
+    isolateDescriptor["default_violation_severity"] = "ISOLATE";
+    isolateDescriptor["violation_severity_values"] =
+        nlohmann::json::array({"NONE", "SOFT", "STANDARD", "HARD", "ISOLATE"});
+    assert(parseOne(isolateDescriptor, policies, error));
+    assert(policies.front().violationSeverity == "ISOLATE");
+    assert(policies.front().defaultViolationSeverity == "ISOLATE");
+
 
     return 0;
 }

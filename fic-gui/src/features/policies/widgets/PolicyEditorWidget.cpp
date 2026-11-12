@@ -268,12 +268,7 @@ PolicyEditorWidget::PolicyEditorWidget(
             // Violation severity combo box: independent of the policy value
             // and enabled/disabled state.
             auto* severityCombo = new QComboBox;
-            const auto& severityValues =
-                policy.violationSeverityValues.empty()
-                    ? std::vector<std::string>{
-                          "NONE", "SOFT", "STANDARD", "HARD", "ISOLATE"}
-                    : policy.violationSeverityValues;
-            for (const auto& sev : severityValues) {
+            for (const auto& sev : policy.violationSeverityValues) {
                 severityCombo->addItem(QString::fromStdString(sev));
             }
             const int sevIndex =

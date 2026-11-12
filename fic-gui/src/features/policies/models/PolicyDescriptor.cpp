@@ -36,6 +36,70 @@ bool requireField(const nlohmann::json& item,
     }
     return true;
 }
+
+bool isValidSeverityToken(const std::string& token)
+{
+    return token == "NONE" || token == "SOFT" ||
+           token == "STANDARD" || token == "HARD" || token == "ISOLATE";
+}
+
+bool validateViolationSeverity(const PolicyDescriptor& policy,
+                               std::size_t index,
+                               std::string& error)
+{
+    if (!isValidSeverityToken(policy.violationSeverity)) {
+        error = "descriptor " + std::to_string(index) +
+            " has unknown violation_severity '" + policy.violationSeverity +
+            "'";
+        return false;
+    }
+    if (!isValidSeverityToken(policy.defaultViolationSeverity)) {
+        error = "descriptor " + std::to_string(index) +
+            " has unknown default_violation_severity '" +
+            policy.defaultViolationSeverity + "'";
+        return false;
+    }
+    if (policy.violationSeverityValues.empty()) {
+        error = "descriptor " + std::to_string(index) +
+            " has an empty violation_severity_values list";
+        return false;
+    }
+    for (const auto& sev : policy.violationSeverityValues) {
+        if (!isValidSeverityToken(sev)) {
+            error = "descriptor " + std::to_string(index) +
+                " has unknown violation_severity_values entry '" + sev + "'";
+            return false;
+        }
+    }
+    if (std::find(policy.violationSeverityValues.begin(),
+                  policy.violationSeverityValues.end(),
+                  policy.violationSeverity) ==
+        policy.violationSeverityValues.end()) {
+        error = "descriptor " + std::to_string(index) +
+            " violation_severity '" + policy.violationSeverity +
+            "' is not in violation_severity_values";
+        return false;
+    }
+    if (std::find(policy.violationSeverityValues.begin(),
+                  policy.violationSeverityValues.end(),
+                  policy.defaultViolationSeverity) ==
+        policy.violationSeverityValues.end()) {
+        error = "descriptor " + std::to_string(index) +
+            " default_violation_severity '" + policy.defaultViolationSeverity +
+            "' is not in violation_severity_values";
+        return false;
+    }
+    std::vector<std::string> seen;
+    for (const auto& sev : policy.violationSeverityValues) {
+        if (std::find(seen.begin(), seen.end(), sev) != seen.end()) {
+            error = "descriptor " + std::to_string(index) +
+                " has duplicate violation_severity_values entry '" + sev + "'";
+            return false;
+        }
+        seen.push_back(sev);
+    }
+    return true;
+}
 }
 
 bool parsePolicyDescriptors(
@@ -84,7 +148,10 @@ bool parsePolicyDescriptors(
                 {"value_valid", nlohmann::json::value_t::boolean},
                 {"value", nlohmann::json::value_t::string},
                 {"restriction", nlohmann::json::value_t::string},
-                {"possible_values", nlohmann::json::value_t::array}
+                {"possible_values", nlohmann::json::value_t::array},
+                {"violation_severity", nlohmann::json::value_t::string},
+                {"default_violation_severity", nlohmann::json::value_t::string},
+                {"violation_severity_values", nlohmann::json::value_t::array}
             };
             for (const auto& [field, type] : required) {
                 if (!requireField(item, field, type, index, policies, error)) {
@@ -150,29 +217,23 @@ bool parsePolicyDescriptors(
             if (item.contains("max")) {
                 policy.max = item.at("max").get<int>();
             }
-            if (item.contains("violation_severity") &&
-                item.at("violation_severity").is_string()) {
-                policy.violationSeverity =
-                    item.at("violation_severity").get<std::string>();
-            }
-            if (item.contains("default_violation_severity") &&
-                item.at("default_violation_severity").is_string()) {
-                policy.defaultViolationSeverity =
-                    item.at("default_violation_severity").get<std::string>();
-            }
-            if (item.contains("violation_severity_values") &&
-                item.at("violation_severity_values").is_array()) {
-                for (const auto& severity :
-                     item.at("violation_severity_values")) {
-                    if (!severity.is_string()) {
-                        return fail(policies, error, "descriptor " +
-                                    std::to_string(index) +
-                                    " contains a non-string "
-                                    "violation_severity_values item");
-                    }
-                    policy.violationSeverityValues.push_back(
-                        severity.get<std::string>());
+            policy.violationSeverity =
+                item.at("violation_severity").get<std::string>();
+            policy.defaultViolationSeverity =
+                item.at("default_violation_severity").get<std::string>();
+            for (const auto& severity :
+                 item.at("violation_severity_values")) {
+                if (!severity.is_string()) {
+                    return fail(policies, error, "descriptor " +
+                                std::to_string(index) +
+                                " contains a non-string "
+                                "violation_severity_values item");
                 }
+                policy.violationSeverityValues.push_back(
+                    severity.get<std::string>());
+            }
+            if (!validateViolationSeverity(policy, index, error)) {
+                return false;
             }
             if (delimiter != item.end()) {
                 policy.textDelimiter = delimiter->get<std::string>();

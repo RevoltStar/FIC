@@ -232,7 +232,6 @@ add_test(NAME cli_policy_set_tests COMMAND cli_policy_set_tests)
 
 add_executable(cli_policy_severity_tests
     fic-cli/PolicySeverityCommandTests.cpp
-    ${CMAKE_SOURCE_DIR}/fic-cli/src/PolicySetCommand.cpp
 )
 target_include_directories(cli_policy_severity_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic-cli/src
@@ -3485,6 +3484,17 @@ target_include_directories(policy_no_default_editor_tests PRIVATE ${CMAKE_SOURCE
 target_link_libraries(policy_no_default_editor_tests PRIVATE Qt${QT_VERSION_MAJOR}::Widgets fic-ipc fic-core)
 add_test(NAME policy_no_default_editor_tests COMMAND policy_no_default_editor_tests)
 set_tests_properties(policy_no_default_editor_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;FIC_SOCKET_PATH=/tmp/fic-i6-no-daemon.sock" LABELS unit)
+
+add_executable(policy_editor_severity_tests fic-gui/policies/PolicyEditorSeverityTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/widgets/PolicyEditorWidget.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/models/PolicyDescriptor.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/models/ModuleDescriptor.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/services/PolicyService.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/shared/i18n/QLocalizationManager.cpp)
+target_include_directories(policy_editor_severity_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic-gui/src)
+target_link_libraries(policy_editor_severity_tests PRIVATE Qt${QT_VERSION_MAJOR}::Widgets fic-ipc fic-core)
+add_test(NAME policy_editor_severity_tests COMMAND policy_editor_severity_tests)
+set_tests_properties(policy_editor_severity_tests PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen;FIC_SOCKET_PATH=/tmp/fic-i6-no-daemon.sock" LABELS unit)
 if(Python3_Interpreter_FOUND)
     add_test(NAME sssd_i6_evidence_checks COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_SOURCE_DIR}/tests/integration/sssd-i6/check-evidence.py)

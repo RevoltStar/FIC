@@ -183,6 +183,30 @@ fic-cli policy disable DAC sudo_timeout
 
 Команда отправляет демону `disable_policy`.
 
+### policy severity <module> <policy>
+
+Печатает критичность нарушения для политики.
+
+```bash
+fic-cli policy severity DAC sudo_timeout
+```
+
+Команда отправляет демону `policy_list` и извлекает поле
+`violation_severity` из дескриптора политики.
+
+### policy severity set <module> <policy> <severity>
+
+Устанавливает критичность нарушения для политики.
+
+```bash
+fic-cli policy severity set DAC sudo_timeout HARD
+```
+
+Команда отправляет демону `set_policy_violation_severity`. Допустимые
+значения: `NONE`, `SOFT`, `STANDARD`, `HARD`, `ISOLATE`. После
+успешного изменения демон перечитывает конфигурацию, но не запускает
+применение политик.
+
 ### policy apply all
 
 Немедленно применяет все включенные политики.

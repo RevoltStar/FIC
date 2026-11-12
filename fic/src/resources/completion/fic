@@ -102,10 +102,16 @@ _fic_completion()
                 policy-disable|\
                 policy-isenable|\
                 policy-isdisable|\
-                policy-value|
-                policy-severity)
+                policy-value)
                     COMPREPLY=(
                         $(compgen -W "$(_fic_get_modules)" -- "$cur")
+                    )
+                    ;;
+
+                policy-severity)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "set $(_fic_get_modules)" -- "$cur")
                     )
                     ;;
 
@@ -146,13 +152,26 @@ _fic_completion()
                 policy-disable|\
                 policy-isenable|\
                 policy-isdisable|\
-                policy-value|
-                policy-severity)
+                policy-value)
                     COMPREPLY=(
                         $(compgen -W \
                             "$(_fic_get_policies "${words[3]}")" \
                             -- "$cur")
                     )
+                    ;;
+
+                policy-severity)
+                    if [[ "${words[3]}" == "set" ]]; then
+                        COMPREPLY=(
+                            $(compgen -W "$(_fic_get_modules)" -- "$cur")
+                        )
+                    else
+                        COMPREPLY=(
+                            $(compgen -W \
+                                "$(_fic_get_policies "${words[3]}")" \
+                                -- "$cur")
+                        )
+                    fi
                     ;;
 
                 policy-apply)
@@ -225,6 +244,19 @@ _fic_completion()
                             -- "$cur")
                     )
                     ;;
+
+                policy-severity-set)
+                    COMPREPLY=(
+                        $(compgen -W \
+                            "$(_fic_get_policies "${words[4]}")" \
+                            -- "$cur")
+                    )
+                    ;;
+            esac
+            ;;
+
+        6)
+            case "${words[1]}-${words[2]}-${words[3]}" in
                 policy-severity-set)
                     COMPREPLY=(
                         $(compgen -W \

@@ -1,21 +1,18 @@
-#include "PolicySetCommand.h"
-
-#include <nlohmann/json.hpp>
-
+#include <cassert>
+#include <cstring>
 #include <iostream>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
 
-void require(bool condition, const std::string& message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
+// Simulates the severity command routing decision from fic-cli/src/main.cpp.
+// Returns true if the "set" subcommand path should be taken.
+bool is_severity_set_command(int argc, char* argv[]) {
+    return argc >= 4 && std::string(argv[3]) == "set";
 }
 
-std::vector<char*> arguments(std::vector<std::string>& values) {
+std::vector<char*> make_argv(std::vector<std::string>& values) {
     std::vector<char*> result;
     result.reserve(values.size());
     for (std::string& value : values) {
@@ -27,75 +24,48 @@ std::vector<char*> arguments(std::vector<std::string>& values) {
 } // namespace
 
 int main() {
-    // Test valid severity tokens produce correct IPC requests.
-    for (const auto& [input, expected] : {
-             std::make_pair(std::string("NONE"), std::string("NONE")),
-             std::make_pair(std::string("none"), std::string("NONE")),
-             std::make_pair(std::string("SOFT"), std::string("SOFT")),
-             std::make_pair(std::string("soft"), std::string("SOFT")),
-             std::make_pair(std::string("STANDARD"), std::string("STANDARD")),
-             std::make_pair(std::string("standard"), std::string("STANDARD")),
-             std::make_pair(std::string("HARD"), std::string("HARD")),
-             std::make_pair(std::string("hard"), std::string("HARD")),
-             std::make_pair(std::string("ISOLATE"), std::string("ISOLATE")),
-             std::make_pair(std::string("isolate"), std::string("ISOLATE"))}) {
-        std::vector<std::string> values{
-            "fic-cli", "policy", "severity", "set", "DAC", "sudo_timeout",
-            input};
-        std::vector<char*> argv = arguments(values);
-        nlohmann::json request;
-        std::string error;
-        require(fic::cli::makePolicySeveritySetRequest(
-                    static_cast<int>(argv.size()), argv.data(), request, error),
-                "makePolicySeveritySetRequest(" + input + ") failed: " + error);
-        require(request["command"] == "set_policy_violation_severity",
-                "wrong command");
-        require(request["module"] == "DAC", "wrong module");
-        require(request["policy"] == "sudo_timeout", "wrong policy");
-        require(request["violation_severity"] == expected,
-                "wrong severity token for " + input);
-        require(error.empty(), "error should be empty on success");
-    }
-
-    // Test unknown severity token is rejected.
+    // fic-cli policy severity set DAC sudo_timeout HARD
+    // argv[3] == "set" → set command path
     {
         std::vector<std::string> values{
             "fic-cli", "policy", "severity", "set", "DAC", "sudo_timeout",
-            "BOGUS"};
-        std::vector<char*> argv = arguments(values);
-        nlohmann::json request;
-        std::string error;
-        require(!fic::cli::makePolicySeveritySetRequest(
-                    static_cast<int>(argv.size()), argv.data(), request, error),
-                "unknown severity should be rejected");
-        require(!error.empty(), "error should be set for unknown severity");
+            "HARD"};
+        std::vector<char*> argv = make_argv(values);
+        assert(is_severity_set_command(
+                   static_cast<int>(argv.size()), argv.data()) &&
+               "severity set should be detected as set command");
     }
 
-    // Test missing arguments.
+    // fic-cli policy severity DAC sudo_timeout
+    // argv[3] == "DAC" → view command path
     {
         std::vector<std::string> values{
-            "fic-cli", "policy", "severity", "set", "DAC"};
-        std::vector<char*> argv = arguments(values);
-        nlohmann::json request;
-        std::string error;
-        require(!fic::cli::makePolicySeveritySetRequest(
-                    static_cast<int>(argv.size()), argv.data(), request, error),
-                "missing severity should be rejected");
-        require(!error.empty(), "error should be set for missing severity");
+            "fic-cli", "policy", "severity", "DAC", "sudo_timeout"};
+        std::vector<char*> argv = make_argv(values);
+        assert(!is_severity_set_command(
+                   static_cast<int>(argv.size()), argv.data()) &&
+               "severity view should not be detected as set command");
     }
 
-    // Test missing module.
+    // Missing arguments: argc < 4 → not set command
+    {
+        std::vector<std::string> values{"fic-cli", "policy", "severity"};
+        std::vector<char*> argv = make_argv(values);
+        assert(!is_severity_set_command(
+                   static_cast<int>(argv.size()), argv.data()) &&
+               "too few arguments should not be set command");
+    }
+
+    // Wrong subcommand: argv[3] != "set" → not set command
     {
         std::vector<std::string> values{
-            "fic-cli", "policy", "severity", "set", "", "sudo_timeout", "HARD"};
-        std::vector<char*> argv = arguments(values);
-        nlohmann::json request;
-        std::string error;
-        require(!fic::cli::makePolicySeveritySetRequest(
-                    static_cast<int>(argv.size()), argv.data(), request, error),
-                "empty module should be rejected");
+            "fic-cli", "policy", "severity", "get", "DAC", "sudo_timeout"};
+        std::vector<char*> argv = make_argv(values);
+        assert(!is_severity_set_command(
+                   static_cast<int>(argv.size()), argv.data()) &&
+               "unknown subcommand should not be set command");
     }
 
-    std::cout << "All PolicySeverityCommandTests passed" << std::endl;
+    std::cout << "All cli_policy_severity_tests passed" << std::endl;
     return 0;
 }

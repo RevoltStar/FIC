@@ -463,30 +463,25 @@ int main(int argc, char* argv[]) {
             );
         }
         if (action == "severity") {
-            const std::string subAction = arg(argc, argv, 5);
-            if (subAction.empty()) {
-                // fic-cli policy severity <module> <policy>
-                if (module.empty() || policy.empty()) {
-                    print_help();
+            // fic-cli policy severity set <module> <policy> <severity>
+            if (argc >= 4 && arg(argc, argv, 3) == "set") {
+                json request;
+                std::string error;
+                if (!fic::cli::makePolicySeveritySetRequest(
+                        argc, argv, request, error)) {
+                    std::cerr << error << std::endl;
                     return 1;
                 }
-                return print_policy_severity(
-                    client.request({{"command", "policy_list"}, {"module", module}}),
-                    module, policy);
+                return print_response(client.request(request));
             }
-            // fic-cli policy severity set <module> <policy> <severity>
-            if (subAction != "set") {
+            // fic-cli policy severity <module> <policy>
+            if (module.empty() || policy.empty()) {
                 print_help();
                 return 1;
             }
-            json request;
-            std::string error;
-            if (!fic::cli::makePolicySeveritySetRequest(
-                    argc, argv, request, error)) {
-                std::cerr << error << std::endl;
-                return 1;
-            }
-            return print_response(client.request(request));
+            return print_policy_severity(
+                client.request({{"command", "policy_list"}, {"module", module}}),
+                module, policy);
         }
         if (action == "apply") {
             if (module == "all") {
