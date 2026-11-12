@@ -233,6 +233,7 @@ bool parsePolicyDescriptors(
                     severity.get<std::string>());
             }
             if (!validateViolationSeverity(policy, index, error)) {
+                policies.clear();
                 return false;
             }
             if (delimiter != item.end()) {

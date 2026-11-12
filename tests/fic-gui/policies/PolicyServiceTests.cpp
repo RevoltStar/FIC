@@ -35,7 +35,7 @@ int main()
     const PolicyChange both{
         "sudo_timeout", "60", "", true, true, true, true, false};
     const PolicyChange severityOnly{
-        "sudo_timeout", "30", "HARD", false, false, false, true, true};
+        "sudo_timeout", "30", "HARD", false, false, false, false, true};
     const PolicyChange severityAndValue{
         "sudo_timeout", "60", "ISOLATE", true, true, false, true, true};
     const std::vector<PolicyChange> changes = {both, disableOnly};

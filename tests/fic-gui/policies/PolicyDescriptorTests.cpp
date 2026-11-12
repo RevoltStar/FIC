@@ -242,6 +242,19 @@ int main()
     assert(policies.front().violationSeverity == "ISOLATE");
     assert(policies.front().defaultViolationSeverity == "ISOLATE");
 
+    // Regression: two descriptors, second has unknown severity.
+    // Parser must reject the whole list and leave policies empty.
+    policies.clear();
+    error.clear();
+    auto badSevDescriptor = validDescriptor();
+    badSevDescriptor["violation_severity"] = "BOGUS";
+    nlohmann::json twoDescriptorList = {
+        {"ok", true},
+        {"message", "policies listed"},
+        {"policies", nlohmann::json::array({validDescriptor(), badSevDescriptor})}};
+    assert(!parsePolicyDescriptors(twoDescriptorList, "DAC", policies, error));
+    assert(policies.empty());
+    assert(error.find("unknown violation_severity") != std::string::npos);
 
     return 0;
 }

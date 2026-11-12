@@ -465,6 +465,10 @@ int main(int argc, char* argv[]) {
         if (action == "severity") {
             // fic-cli policy severity set <module> <policy> <severity>
             if (argc >= 4 && arg(argc, argv, 3) == "set") {
+                if (argc != 7) {
+                    print_help();
+                    return 1;
+                }
                 json request;
                 std::string error;
                 if (!fic::cli::makePolicySeveritySetRequest(
@@ -475,6 +479,10 @@ int main(int argc, char* argv[]) {
                 return print_response(client.request(request));
             }
             // fic-cli policy severity <module> <policy>
+            if (argc != 5) {
+                print_help();
+                return 1;
+            }
             if (module.empty() || policy.empty()) {
                 print_help();
                 return 1;

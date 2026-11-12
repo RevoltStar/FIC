@@ -1,24 +1,27 @@
 # Current workspace
 
 ## Current base / task
-* main; HEAD `45d6019183f56ed2c190b8e455606d4e317d26c5`.
-* Follow-up: fix violation severity CLI dispatch, GUI validation, and completion.
+* main; HEAD `85acc312b285a0a0ec717519494289d7f429c5d1`.
+* Follow-up: strengthen severity CLI and GUI regression coverage.
 
 ## Accepted architecture / invariants
 * CLI `policy severity` routing fixed: checks `argv[3] == "set"` instead of `argv[5]`.
+* Strict argument count validation: severity view needs exactly 5 args, severity set needs exactly 7 args.
 * Bash completion fixed for both `severity <module> <policy>` and `severity set <module> <policy> <severity>`.
 * GUI `PolicyDescriptor` requires `violation_severity`, `default_violation_severity`, `violation_severity_values` with strict validation (token set, non-empty, no duplicates, effective/default in list).
 * GUI `PolicyEditorWidget` no longer falls back to hardcoded severity list.
+* GUI parser clears `policies` on severity validation failure.
 * Incident Response rules unchanged.
 
 ## Completed / changed areas
-* CLI: `fic-cli/src/main.cpp` severity routing fixed.
-* CLI: `tests/fic-cli/PolicySeverityCommandTests.cpp` rewritten to test routing logic.
+* CLI: `fic-cli/src/main.cpp` strict argc checks for severity view/set.
+* CLI: `tests/fic-cli/PolicySeverityCommandTests.cpp` rewritten to test production `makePolicySeveritySetRequest()` directly, using `require()` instead of `assert()` for NDEBUG safety.
 * Completion: `fic/src/resources/completion/fic` fixed for cword 3/4/5/6.
-* GUI: `PolicyDescriptor.cpp` mandatory severity fields + validation.
+* GUI: `PolicyDescriptor.cpp` clears `policies` on `validateViolationSeverity` failure.
 * GUI: `PolicyEditorWidget.cpp` hardcoded fallback removed.
-* Tests: `PolicyDescriptorTests.cpp` extended with 15+ validation cases.
-* Tests: `PolicyEditorSeverityTests.cpp` new Qt offscreen test.
+* Tests: `PolicyDescriptorTests.cpp` extended with two-descriptor regression test (valid + unknown severity).
+* Tests: `PolicyServiceTests.cpp` `severityOnly` fixture fixed: `valueChanged=false`.
+* Tests: `PolicyEditorSeverityTests.cpp` Qt offscreen test.
 * Docs: `fic-cli/README.md`, `fic-gui/README.md` updated.
 
 ## Validation
@@ -29,4 +32,4 @@
 ## Remaining / limits
 * Daemon IPC schema tests (unknown policies, unexpected fields) not added — existing `PolicyViolationSeverityTests` cover core mutation scenarios.
 * Full CTest not re-run after CMake reconfiguration.
-* Early exploratory failures (missing ss/image CMD/staging metadata/stale native assertions/one runner edited while active) were followed by successful final reruns; final source code/scripts frozen for accepted runs. Existing source-bound PAM receipts remain stale and require a separately authorized rerun if current PAM matrix is needed.
+* GUI end-to-end test (clicking save in PolicyEditorWidget and verifying IPC) not added: `PolicyEditorWidget` constructs `PolicyService()` internally without DI, so intercepting the save call would require production constructor changes. Covered at `PolicyService` level instead.
