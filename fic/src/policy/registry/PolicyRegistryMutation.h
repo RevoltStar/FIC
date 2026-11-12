@@ -11,4 +11,10 @@ bool setPolicyValue(PolicyRegistry& registry,
                     const std::string& logicalValue,
                     std::string& error);
 
+bool setPolicyViolationSeverity(PolicyRegistry& registry,
+                                const std::string& module,
+                                const std::string& policy,
+                                const std::string& severityToken,
+                                std::string& error);
+
 #endif // POLICY_REGISTRY_MUTATION_H

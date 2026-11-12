@@ -39,6 +39,7 @@
 #include "modules/identity_access/pam/PamPlatformComposition.h"
 #include "modules/identity_access/pam/PamSlotAttachValidator.h"
 #include "policy/registry/PolicyRegistryJson.h"
+#include "policy/registry/PolicyRegistryMutation.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "service/sssd/SssdTransactionCoordinator.h"
 #include "daemon/DaemonInstanceLock.h"
@@ -775,6 +776,7 @@ json handle_request(json request,
     const std::string module = canonical_module_name(policyRegistry, requestedModule);
     const std::string policy = request.value("policy", "");
     const std::string value = request.value("value", "");
+    const std::string violationSeverity = request.value("violation_severity", "");
 
     auto regenerateDevicePolicyIfNeeded = [&](bool required) -> std::optional<json> {
         if (!required) return std::nullopt;
@@ -923,6 +925,30 @@ json handle_request(json request,
             }
             return ok ? fic::ipc::make_ok_response("policy value updated")
                       : fic::ipc::make_error_response("failed to update policy value");
+        }
+        if (command == "set_policy_violation_severity") {
+            if (module.empty() || policy.empty()) {
+                return fic::ipc::make_error_response("module and policy are required");
+            }
+            if (violationSeverity.empty()) {
+                return fic::ipc::make_error_response("violation_severity is required");
+            }
+            std::string error;
+            bool ok = setPolicyViolationSeverity(
+                policyRegistry, module, policy, violationSeverity, error);
+            if (ok) {
+                if (auto reloadError =
+                        reloadRegistryAndGlobalConfig(false, false)) {
+                    return json{{"ok", false}, {"saved", true},
+                                {"registry_reloaded", false},
+                                {"message", "violation severity was saved, but "
+                                            "registry reload failed: " +
+                                                *reloadError}};
+                }
+            }
+            return ok ? fic::ipc::make_ok_response("violation severity updated")
+                      : fic::ipc::make_error_response(
+                            "failed to update violation severity: " + error);
         }
         if (command == "enable_policy") {
             bool ok = enable(policyRegistry, module, policy);
@@ -1256,7 +1282,8 @@ json handle_request(json request,
 
 bool validate_policy_request_schema(const json& request, std::string& error) {
     for (const char* field : {
-             "module", "policy", "value", "boot_id", "cursor"}) {
+             "module", "policy", "value", "violation_severity", "boot_id",
+             "cursor"}) {
         if (request.contains(field) && !request[field].is_string()) {
             error = std::string("request.") + field + " must be a string";
             return false;
@@ -1306,6 +1333,10 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
     if (command == "set_policy_value") {
         return fic::ipc::request_has_only_fields(
             request, {"command", "module", "policy", "value"}, error);
+    }
+    if (command == "set_policy_violation_severity") {
+        return fic::ipc::request_has_only_fields(
+            request, {"command", "module", "policy", "violation_severity"}, error);
     }
     if (command == "enable_policy" || command == "disable_policy" ||
         command == "apply_policy") {

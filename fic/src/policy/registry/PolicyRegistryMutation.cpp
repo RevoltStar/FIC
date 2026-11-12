@@ -1,6 +1,9 @@
 #include "policy/registry/PolicyRegistryMutation.h"
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
+#include <fic/core/incident/IncidentSeverity.h>
+
+#include "policy/registry/PolicyRegistryJson.h"
 
 namespace {
 
@@ -54,6 +57,41 @@ bool setPolicyValue(PolicyRegistry& registry,
     }
     if (!config.setPolicyValue(policy, storageValue)) {
         error = "could not set policy value";
+        return false;
+    }
+    if (!config.saveConfig()) {
+        error = "could not save module configuration";
+        return false;
+    }
+    error.clear();
+    return true;
+}
+
+bool setPolicyViolationSeverity(PolicyRegistry& registry,
+                                const std::string& module,
+                                const std::string& policy,
+                                const std::string& severityToken,
+                                std::string& error)
+{
+    Policy* const concretePolicy = findPolicy(registry, module, policy);
+    if (concretePolicy == nullptr) {
+        error = "policy does not exist";
+        return false;
+    }
+
+    const auto severity = ::fic::core::parseViolationSeverityToken(severityToken);
+    if (!severity.has_value()) {
+        error = "unknown violation severity: " + severityToken;
+        return false;
+    }
+
+    ModuleConfigFileHandler config(module);
+    if (!config.loadConfig()) {
+        error = "could not load module configuration";
+        return false;
+    }
+    if (!config.setPolicyViolationSeverity(policy, *severity)) {
+        error = "could not set policy violation severity";
         return false;
     }
     if (!config.saveConfig()) {

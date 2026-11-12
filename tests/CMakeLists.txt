@@ -208,6 +208,19 @@ target_include_directories(policy_mutation_result_tests PRIVATE
 target_link_libraries(policy_mutation_result_tests PRIVATE fic-ipc)
 add_test(NAME policy_mutation_result_tests COMMAND policy_mutation_result_tests)
 
+add_executable(policy_violation_severity_tests
+    fic/daemon/PolicyViolationSeverityTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyDependencyGraph.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryInitialization.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryMutation.cpp
+)
+target_include_directories(policy_violation_severity_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_link_libraries(policy_violation_severity_tests PRIVATE fic-core fic-policy)
+add_test(NAME policy_violation_severity_tests COMMAND policy_violation_severity_tests)
+
 add_executable(cli_policy_set_tests
     fic-cli/PolicySetCommandTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-cli/src/PolicySetCommand.cpp
