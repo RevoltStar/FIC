@@ -150,6 +150,23 @@ bool PolicyService::saveChanges(
 {
     error.clear();
     for (const PolicyChange& change : changes) {
+        if (change.violationSeverityChanged) {
+            const auto requestResult = request({
+                {"command", "set_policy_violation_severity"},
+                {"module", module},
+                {"policy", change.policyName},
+                {"violation_severity", change.violationSeverity}
+            });
+            nlohmann::json response;
+            if (!requireResponseEnvelope(
+                    requestResult, "set_policy_violation_severity", true,
+                    response, error)) {
+                error = QString(
+                    "set_policy_violation_severity failed for %1: %2")
+                    .arg(QString::fromStdString(change.policyName), error);
+                return false;
+            }
+        }
         if (change.valueConfigurable && change.valueChanged) {
             const auto requestResult = request({
                 {"command", "set_policy_value"},

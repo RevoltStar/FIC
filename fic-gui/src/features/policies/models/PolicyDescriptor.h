@@ -17,6 +17,9 @@ struct PolicyDescriptor {
     std::string textDelimiter;
     std::string restriction;
     std::vector<std::string> possibleValues;
+    std::string violationSeverity;
+    std::string defaultViolationSeverity;
+    std::vector<std::string> violationSeverityValues;
     bool hasDefault = true;
     bool enabled = false;
     bool isSet = false;

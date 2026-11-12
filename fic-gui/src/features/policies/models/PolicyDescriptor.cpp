@@ -150,6 +150,30 @@ bool parsePolicyDescriptors(
             if (item.contains("max")) {
                 policy.max = item.at("max").get<int>();
             }
+            if (item.contains("violation_severity") &&
+                item.at("violation_severity").is_string()) {
+                policy.violationSeverity =
+                    item.at("violation_severity").get<std::string>();
+            }
+            if (item.contains("default_violation_severity") &&
+                item.at("default_violation_severity").is_string()) {
+                policy.defaultViolationSeverity =
+                    item.at("default_violation_severity").get<std::string>();
+            }
+            if (item.contains("violation_severity_values") &&
+                item.at("violation_severity_values").is_array()) {
+                for (const auto& severity :
+                     item.at("violation_severity_values")) {
+                    if (!severity.is_string()) {
+                        return fail(policies, error, "descriptor " +
+                                    std::to_string(index) +
+                                    " contains a non-string "
+                                    "violation_severity_values item");
+                    }
+                    policy.violationSeverityValues.push_back(
+                        severity.get<std::string>());
+                }
+            }
             if (delimiter != item.end()) {
                 policy.textDelimiter = delimiter->get<std::string>();
             }

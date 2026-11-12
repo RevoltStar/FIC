@@ -16,10 +16,12 @@
 struct PolicyChange {
     std::string policyName;
     std::string value;
+    std::string violationSeverity;
     bool enabled = false;
     bool valueConfigurable = false;
     bool enabledChanged = false;
     bool valueChanged = false;
+    bool violationSeverityChanged = false;
 };
 
 class PolicyService

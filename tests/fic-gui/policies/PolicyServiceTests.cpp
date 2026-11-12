@@ -24,16 +24,20 @@ int main()
 {
     QString error;
     const PolicyChange unchanged{
-        "sssd_offline_credentials_expiration", "30", false, true,
-        false, false};
+        "sssd_offline_credentials_expiration", "30", "", false, true,
+        false, false, false};
     const PolicyChange valueOnly{
-        "sudo_timeout", "60", false, true, false, true};
+        "sudo_timeout", "60", "", false, true, false, true, false};
     const PolicyChange enableOnly{
-        "sudo_timeout", "30", true, true, true, false};
+        "sudo_timeout", "30", "", true, true, true, false, false};
     const PolicyChange disableOnly{
-        "sudo_env_reset", "", false, false, true, false};
+        "sudo_env_reset", "", "", false, false, true, false, false};
     const PolicyChange both{
-        "sudo_timeout", "60", true, true, true, true};
+        "sudo_timeout", "60", "", true, true, true, true, false};
+    const PolicyChange severityOnly{
+        "sudo_timeout", "30", "HARD", false, false, false, true, true};
+    const PolicyChange severityAndValue{
+        "sudo_timeout", "60", "ISOLATE", true, true, false, true, true};
     const std::vector<PolicyChange> changes = {both, disableOnly};
 
     const nlohmann::json failedApply = {
@@ -108,6 +112,23 @@ int main()
     assert(success.saveChanges("DAC", {both}, error));
     assert((commands == std::vector<std::string>{
         "set_policy_value", "enable_policy"}));
+    assert(error.isEmpty());
+
+    commands.clear();
+    assert(success.saveChanges("DAC", {severityOnly}, error));
+    assert((commands == std::vector<std::string>{
+        "set_policy_violation_severity"}));
+    assert(error.isEmpty());
+
+    commands.clear();
+    assert(success.saveChanges("DAC", {severityAndValue}, error));
+    assert((commands == std::vector<std::string>{
+        "set_policy_violation_severity", "set_policy_value"}));
+    assert(error.isEmpty());
+
+    commands.clear();
+    assert(success.saveChanges("DAC", {unchanged}, error));
+    assert(commands.empty());
     assert(error.isEmpty());
 
     commands.clear();

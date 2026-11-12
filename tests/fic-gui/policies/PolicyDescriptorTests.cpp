@@ -141,5 +141,25 @@ int main()
     assert(error.find("protocol error") != std::string::npos);
     assert(policies.empty());
 
+    // Test violation_severity fields parsing.
+    auto sevDescriptor = validDescriptor();
+    sevDescriptor["violation_severity"] = "HARD";
+    sevDescriptor["default_violation_severity"] = "STANDARD";
+    sevDescriptor["violation_severity_values"] =
+        nlohmann::json::array({"NONE", "SOFT", "STANDARD", "HARD", "ISOLATE"});
+    assert(parseOne(sevDescriptor, policies, error));
+    assert(policies.front().violationSeverity == "HARD");
+    assert(policies.front().defaultViolationSeverity == "STANDARD");
+    assert(policies.front().violationSeverityValues.size() == 5);
+    assert(policies.front().violationSeverityValues[0] == "NONE");
+    assert(policies.front().violationSeverityValues[4] == "ISOLATE");
+
+    // Test violation_severity_values with non-string items is rejected.
+    auto badSev = validDescriptor();
+    badSev["violation_severity_values"] =
+        nlohmann::json::array({"NONE", 42});
+    assert(!parseOne(badSev, policies, error));
+    assert(error.find("non-string") != std::string::npos);
+
     return 0;
 }

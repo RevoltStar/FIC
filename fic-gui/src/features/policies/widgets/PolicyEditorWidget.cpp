@@ -162,6 +162,7 @@ PolicyEditorWidget::PolicyEditorWidget(
         QLocalizationManager::getLang("[module:all][col:is_policy_active]"),
         QLocalizationManager::getLang("[module:all][col:policy_name]"),
         QLocalizationManager::getLang("[module:all][col:policy_value]"),
+        QLocalizationManager::getLang("[module:all][col:violation_severity]"),
         QLocalizationManager::getLang("[module:all][col:policy_descr]")
     };
     for (int column = 0; column < headers.size(); ++column) {
@@ -172,9 +173,11 @@ PolicyEditorWidget::PolicyEditorWidget(
         PolicyDescriptor policy;
         QCheckBox* enabled = nullptr;
         QWidget* value = nullptr;
+        QComboBox* severityCombo = nullptr;
         EditorType type = EditorType::Unknown;
         bool originalEnabled = false;
         std::string originalValue;
+        std::string originalViolationSeverity;
     };
     auto controls = std::make_shared<std::vector<Row>>();
     std::map<std::string, std::vector<PolicyDescriptor>> bySubmodule;
@@ -189,7 +192,7 @@ PolicyEditorWidget::PolicyEditorWidget(
                 QLocalizationManager::getLang(QString::fromStdString(
                     "[module:" + moduleName + "][submodule:" + submodule + "]")),
                 content),
-            rowNumber++, 0, 1, 4);
+            rowNumber++, 0, 1, 5);
 
         for (const PolicyDescriptor& policy : submodulePolicies) {
             auto* enabled = new QCheckBox;
@@ -262,6 +265,30 @@ PolicyEditorWidget::PolicyEditorWidget(
                 break;
             }
 
+            // Violation severity combo box: independent of the policy value
+            // and enabled/disabled state.
+            auto* severityCombo = new QComboBox;
+            const auto& severityValues =
+                policy.violationSeverityValues.empty()
+                    ? std::vector<std::string>{
+                          "NONE", "SOFT", "STANDARD", "HARD", "ISOLATE"}
+                    : policy.violationSeverityValues;
+            for (const auto& sev : severityValues) {
+                severityCombo->addItem(QString::fromStdString(sev));
+            }
+            const int sevIndex =
+                severityCombo->findText(
+                    QString::fromStdString(policy.violationSeverity));
+            if (sevIndex >= 0) {
+                severityCombo->setCurrentIndex(sevIndex);
+            }
+            severityCombo->setSizePolicy(QSizePolicy::Expanding,
+                                         QSizePolicy::Fixed);
+            severityCombo->setToolTip(
+                QLocalizationManager::getLang(
+                    "[module:all][col:violation_severity]")
+                + "\n" + QString::fromStdString(policy.defaultViolationSeverity));
+
             QString description = QLocalizationManager::getLang(
                 QString::fromStdString(key + "[description]"));
             description += "\n--------------------------------\n" +
@@ -284,20 +311,25 @@ PolicyEditorWidget::PolicyEditorWidget(
             grid->addWidget(createTableCell(name, content), rowNumber, 1);
             grid->addWidget(createTableCell(valueWidget, content), rowNumber, 2);
             grid->addWidget(
-                createTableCell(descriptionWidget, content), rowNumber, 3);
+                createTableCell(severityCombo, content), rowNumber, 3);
+            grid->addWidget(
+                createTableCell(descriptionWidget, content), rowNumber, 4);
 
-            controls->push_back({policy, enabled, valueWidget, type,
-                                 enabled->isChecked(), initialValue});
+            controls->push_back({policy, enabled, valueWidget, severityCombo,
+                                 type, enabled->isChecked(), initialValue,
+                                 policy.violationSeverity});
             ++rowNumber;
         }
     }
     grid->setColumnMinimumWidth(0, 80);
     grid->setColumnMinimumWidth(1, 200);
     grid->setColumnMinimumWidth(2, 220);
+    grid->setColumnMinimumWidth(3, 120);
     grid->setColumnStretch(0, 0);
     grid->setColumnStretch(1, 1);
     grid->setColumnStretch(2, 1);
-    grid->setColumnStretch(3, 2);
+    grid->setColumnStretch(3, 0);
+    grid->setColumnStretch(4, 2);
     grid->setRowStretch(rowNumber, 1);
     scrollArea->setWidget(content);
     mainLayout->addWidget(scrollArea);
@@ -351,10 +383,16 @@ PolicyEditorWidget::PolicyEditorWidget(
                 row.enabled->isChecked() != row.originalEnabled;
             const bool valueChanged =
                 row.type != EditorType::Label && value != row.originalValue;
-            if (!enabledChanged && !valueChanged) {
+            const bool severityChanged =
+                row.severityCombo != nullptr &&
+                row.severityCombo->currentText().toStdString() !=
+                    row.originalViolationSeverity;
+            if (!enabledChanged && !valueChanged && !severityChanged) {
                 continue;
             }
-            if (valueChanged || (row.enabled->isChecked() && !row.policy.hasDefault && (!row.policy.isSet || !row.policy.valueValid))) {
+            if (valueChanged ||
+                (row.enabled->isChecked() && !row.policy.hasDefault &&
+                 (!row.policy.isSet || !row.policy.valueValid))) {
                 std::string validationError;
                 if (!validatePolicyDescriptorValue(
                         row.policy, value, validationError)) {
@@ -363,9 +401,13 @@ PolicyEditorWidget::PolicyEditorWidget(
                 }
             }
             changes.push_back({row.policy.policyName, value,
+                               row.severityCombo != nullptr
+                                   ? row.severityCombo->currentText()
+                                         .toStdString()
+                                   : row.policy.violationSeverity,
                                row.enabled->isChecked(),
                                row.type != EditorType::Label,
-                               enabledChanged, valueChanged});
+                               enabledChanged, valueChanged, severityChanged});
         }
     };
     const auto acceptCurrentState = [controls]() {
@@ -401,6 +443,10 @@ PolicyEditorWidget::PolicyEditorWidget(
                 break;
             case EditorType::Unknown:
                 break;
+            }
+            if (row.severityCombo != nullptr) {
+                row.originalViolationSeverity =
+                    row.severityCombo->currentText().toStdString();
             }
         }
     };
