@@ -23,7 +23,25 @@ int main(int argc,char** argv){
    const auto path=std::filesystem::path(shotsDir)/(name.toStdString()+".png");
    widget.grab().save(QString::fromStdString(path.string()));
  };
- // Три этапа: точное соответствие существующим состояниям контроллера.
+ // Геометрия виджета в координатах QtPreLoginView: button->geometry()
+ // задана в координатах родителя, поэтому используется mapTo.
+ const auto mappedRect=[](QWidget& view,QWidget* widget){
+   return QRect(widget->mapTo(&view,QPoint(0,0)),widget->size());
+ };
+ // Проверка одной кнопки: полностью видима, ненулевая, внутри панели и
+ // не пересекается с ранее проверенными кнопками.
+ const auto checkButton=[&](QtPreLoginView& view,QPushButton* button,
+                            const QRect& cardRect,
+                            std::vector<QRect>& placed,const char* name){
+   const QRect rect=mappedRect(view,button);
+   require(rect.width()>0&&rect.height()>0,(std::string(name)+" has empty geometry").c_str());
+   require(button->isVisible(),(std::string(name)+" is hidden").c_str());
+   require(view.rect().contains(rect),(std::string(name)+" is outside the view").c_str());
+   require(cardRect.contains(rect),(std::string(name)+" is outside the central panel").c_str());
+   for(const QRect& other:placed)
+     require(!rect.intersects(other),(std::string(name)+" overlaps another button").c_str());
+   placed.push_back(rect);
+ };
  // Состояния шагов: 0=waiting, 1=active(spinner), 2=done, 3=failed,
  // 4=warning(не подтверждено). Banner: 0=нет, 1=warning, 2=error, 3=info.
  const struct{const char* state;int steps[3];int banner;const char* shot;} stepMatrix[]={{
@@ -50,7 +68,11 @@ int main(int argc,char** argv){
   status["detail"]=std::string(4096,'x');require(view.display(status),"bounded long diagnostic rejected");
   app.processEvents();
   auto* button=view.findChild<QPushButton*>("handoff");
-  require(view.rect().contains(button->geometry()),"long diagnostic hid handoff button");
+  auto* card=view.findChild<QWidget*>("card");
+  const QRect handoffRect=mappedRect(view,button);
+  require(handoffRect.width()>0&&handoffRect.height()>0,"handoff has empty geometry");
+  require(view.rect().contains(handoffRect),"long diagnostic hid handoff button");
+  require(mappedRect(view,card).contains(handoffRect),"handoff outside the central panel");
   require(view.findChild<QLabel*>("detail")->textFormat()==Qt::PlainText,"rich text injected");
   auto* handoff=view.findChild<QPushButton*>("handoff");require(handoff->isEnabled(),"manual handoff unavailable");
   handoff->click();handoff->click();require(actions==1,"duplicate handoff action");
@@ -64,22 +86,60 @@ int main(int argc,char** argv){
   // Ни один шаг не помечен зелёным (Done=2): защита не подтверждена.
   require(view.stepState(0)!=2&&view.stepState(1)!=2&&view.stepState(2)!=2,"degraded state must not show false success");
  }
- // Разрешения: кнопки остаются доступны на малых экранах, панель не
- // растягивается на всю ширину на больших.
- for(const QSize resolution:{QSize(800,600),QSize(1024,768),QSize(1280,720),QSize(1920,1080)}){
+ // Основной сценарий STARTUP_APPLYING на всех разрешениях, включая эталонное
+ // 1536×1024. Кнопки: полностью видимы, ненулевые, внутри панели, без
+ // перекрытий. Панель: близка к ~82% ширины на эталоне, не растягивается на
+ // весь экран.
+ for(const QSize resolution:{QSize(800,600),QSize(1024,768),QSize(1280,720),QSize(1536,1024),QSize(1920,1080)}){
   QtPreLoginView view([](char){});
-  auto status=nlohmann::json{{"state","DAEMON_DEGRADED"},{"detail",std::string(3000,'z')},{"mode","ACTIVE"},{"severity","HARD"},{"startup","applying"}};
+  auto status=nlohmann::json{{"state","STARTUP_APPLYING"},{"detail","startup diagnostics"},{"mode","ACTIVE"},{"severity","ISOLATE"},{"startup","applying"}};
   require(view.display(status),"resolution status rejected");
   view.resize(resolution);view.show();app.processEvents();
+  auto* card=view.findChild<QWidget*>("card");
+  const QRect cardRect=mappedRect(view,card);
+  require(view.rect().contains(cardRect),"central panel outside the view");
+  require(cardRect.width()>=700,"central panel too narrow");
+  if(resolution.width()>=1536){
+    const int ratio=resolution.width()*100/cardRect.width();
+    require(ratio>=110&&ratio<=140,(std::string("panel width ratio off at ")+std::to_string(resolution.width())).c_str());
+  }
   auto* handoff=view.findChild<QPushButton*>("handoff");
   auto* reboot=view.findChild<QPushButton*>("reboot");
   auto* poweroff=view.findChild<QPushButton*>("poweroff");
-  require(view.rect().contains(handoff->geometry()),(std::string("handoff offscreen at ")+std::to_string(resolution.width())).c_str());
-  require(view.rect().contains(reboot->geometry()),(std::string("reboot offscreen at ")+std::to_string(resolution.width())).c_str());
-  require(view.rect().contains(poweroff->geometry()),(std::string("poweroff offscreen at ")+std::to_string(resolution.width())).c_str());
+  std::vector<QRect> placed;
+  checkButton(view,handoff,cardRect,placed,"handoff");
+  checkButton(view,reboot,cardRect,placed,"reboot");
+  checkButton(view,poweroff,cardRect,placed,"poweroff");
   require(handoff->isEnabled()&&reboot->isEnabled()&&poweroff->isEnabled(),"actions must remain available");
-  if(resolution.width()>=1280) require(handoff->width()<resolution.width()/2,"panel must not stretch over the whole width");
+  // Расположение при достаточной ширине: handoff слева, питание справа.
+  if(resolution.width()>=1024){
+    require(handoff->x()<reboot->x()&&reboot->x()<poweroff->x(),"wrong button order");
+  }
+  if(resolution==QSize(800,600)) shot(view,"resolution_800x600");
+  if(resolution==QSize(1280,720)) shot(view,"resolution_1280x720");
+  if(resolution==QSize(1536,1024)) shot(view,"resolution_1536x1024");
   if(resolution==QSize(1920,1080)) shot(view,"resolution_1920x1080");
+ }
+ // Disabled-иконка повторяет состояние кнопки: в выключенной кнопке самый
+ // тёмный пиксель зоны иконки значительно светлее, чем во включённой
+ // (серый текст disabled), тёмная иконка не сохраняется.
+ {
+  QtPreLoginView view([](char){});
+  view.resize(1024,768);view.show();app.processEvents();
+  auto* handoff=view.findChild<AnimatedButton*>("handoff");
+  const auto darkest=[](const QPixmap& pixmap){
+    const QImage image=pixmap.toImage();
+    int worst=255;
+    for(int y=6;y<image.height()-6;++y)
+      for(int x=8;x<40;++x)
+        worst=qMin(worst,qGray(image.pixel(x,y)));
+    return worst;
+  };
+  const int enabledDark=darkest(handoff->grab());
+  handoff->setEnabled(false);app.processEvents();
+  const int disabledDark=darkest(handoff->grab());
+  require(enabledDark<110,"enabled icon is not dark");
+  require(disabledDark>enabledDark+25,"disabled icon keeps dark color");
  }
  for(const bool confirm:{false,true}){
   int actions=0;QtPreLoginView view([&](char action){require(action=='R',"wrong power action");++actions;});

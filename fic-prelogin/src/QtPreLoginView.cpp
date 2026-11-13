@@ -97,7 +97,11 @@ QtPreLoginView::QtPreLoginView(std::function<void(char)> action) : action_(std::
         "QLabel#banner{font-size:15px;font-weight:bold;border-radius:10px;padding:10px 14px;}"));
 
     auto* card = new CardWidget;
-    card->setMaximumWidth(780);
+    card_ = card;
+    // Адаптивные пропорции (приближены к эталону) выставляются в
+    // resizeEvent(): ширина ~82% экрана с разумным потолком, высота —
+    // не выше доступной. Здесь заданы стартовые значения до первого resize.
+    card->setMaximumWidth(1260);
     card->setMaximumHeight(720);
     auto* cardLayout = new QVBoxLayout(card);
     cardLayout->setContentsMargins(34, 24, 34, 20);
@@ -125,10 +129,14 @@ QtPreLoginView::QtPreLoginView(std::function<void(char)> action) : action_(std::
     cardLayout->addWidget(separator);
 
     // Три этапа инициализации (существующие состояния контроллера).
+    // Блок этапов прижат к левому краю контента, как на макете.
     steps_ = new PreLoginStepsWidget;
-    cardLayout->addWidget(steps_, 0, Qt::AlignHCenter);
+    steps_->setContentsMargins(56, 4, 0, 4);
+    cardLayout->addWidget(steps_, 0, Qt::AlignLeft);
 
     // Заметное предупреждение/ошибка состояния (скрыто по умолчанию).
+    // Зазор после этапов поглощает свободную высоту панели (как на макете).
+    cardLayout->addStretch(1);
     banner_ = new QLabel;
     banner_->setObjectName(QStringLiteral("banner"));
     banner_->setWordWrap(true);
@@ -154,6 +162,8 @@ QtPreLoginView::QtPreLoginView(std::function<void(char)> action) : action_(std::
         label->setWordWrap(true);
         diagnosticsLayout->addWidget(label);
     }
+    // Компактный блок: строки прижаты кверху, свободное место — снизу.
+    diagnosticsLayout->addStretch();
     diagnostics_ = new QScrollArea;
     diagnostics_->setWidgetResizable(true);
     diagnostics_->setFrameShape(QFrame::NoFrame);
@@ -211,14 +221,16 @@ QtPreLoginView::QtPreLoginView(std::function<void(char)> action) : action_(std::
     connect(enter, &QShortcut::activated, handoff_, &AnimatedButton::click);
 
     // Центрирование панели: по горизонтали и по возможности по вертикали.
+    // Stretch-факторы растягивают панель до адаптивного максимума из
+    // resizeEvent(), оставляя поля по краям.
     auto* row = new QHBoxLayout;
     row->addStretch();
-    row->addWidget(card);
+    row->addWidget(card, 1);
     row->addStretch();
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(28, 20, 28, 20);
+    root->setContentsMargins(20, 16, 20, 16);
     root->addStretch();
-    root->addLayout(row);
+    root->addLayout(row, 1);
     root->addStretch();
     handoff_->setFocus();
 }
@@ -366,25 +378,42 @@ void QtPreLoginView::paintEvent(QPaintEvent* /*event*/) {
         QPainter painter(this);
         painter.drawPixmap(0, 0, background_);
     }
-    // Мягкая тень под центральной панелью: несколько расширяющихся
-    // полупрозрачных контуров вокруг текущей геометрии карточки.
+    // Мягкая голубовато-серая тень вокруг панели: расширяющиеся
+    // полупрозрачные контуры с растущей плотностью к панели и смещением
+    // вниз (заметна по краям и снизу). Внутренняя часть скрывается
+    // дочерней панелью, содержимое не перекрывается.
     if (auto* card = findChild<QWidget*>(QStringLiteral("card"))) {
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        const QRect base = card->geometry();
-        for (int layer = 10; layer >= 1; --layer) {
+        const QRectF base(card->geometry());
+        for (int layer = 12; layer >= 1; --layer) {
+            const qreal pad = layer * 1.7;
+            const qreal drop = layer * 2.2;
             painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(96, 130, 165, 8));
+            painter.setBrush(QColor(96, 130, 165, 15 - layer));
             painter.drawRoundedRect(
-                base.adjusted(layer * 2 + 2, layer * 2 + 6,
-                              -(layer * 2 + 2), layer * 2 + 10),
-                16 + layer, 16 + layer);
+                QRectF(base).adjusted(-pad, -pad * 0.55, pad, drop),
+                16 + pad, 16 + pad);
         }
     }
 }
 
 void QtPreLoginView::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
+    if (card_) {
+        // Пропорции центральной панели приближены к эталону: на 1536×1024
+        // панель занимает ~82% ширины; на 1920×1080 остаётся широкой
+        // центральной панелью (потолок), на малых разрешениях не опускается
+        // ниже минимума, при котором кнопки остаются читаемыми, и никогда
+        // не выходит за видимую область.
+        const int width = event->size().width();
+        const int height = event->size().height();
+        int desiredWidth = qMax(qRound(width * 0.82), 744);
+        desiredWidth = qMin(desiredWidth, width - 40);
+        desiredWidth = qMin(desiredWidth, 1400);
+        card_->setMaximumWidth(qMax(320, desiredWidth));
+        card_->setMaximumHeight(qMin(780, qMax(560, height - 36)));
+    }
     rebuildBackground();
 }
 

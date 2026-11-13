@@ -54,5 +54,6 @@ private:
     Symbol symbol_ = Symbol::None;
 
     void startAnimation(const QColor& targetBg, const QColor& targetBorder);
-    void drawSymbol(QPainter& painter, const QRect& area) const;
+    void drawSymbol(QPainter& painter, const QRectF& area,
+                    const QColor& symbolColor) const;
 };

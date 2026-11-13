@@ -89,10 +89,12 @@ void AnimatedButton::startAnimation(const QColor& targetBg, const QColor& target
     animation_.start();
 }
 
-void AnimatedButton::drawSymbol(QPainter& painter, const QRect& area) const {
+void AnimatedButton::drawSymbol(QPainter& painter, const QRectF& area,
+                                const QColor& symbolColor) const {
     painter.save();
-    // Тёмный символ согласован с текстом светлой кнопки.
-    QPen pen(QColor("#2c4258"), 1.8);
+    // Цвет символа передаётся из paintEvent и согласован с состоянием
+    // кнопки (normal/hover/disabled/pressed) и цветом текста.
+    QPen pen(symbolColor, 1.8);
     pen.setCapStyle(Qt::RoundCap);
     painter.setPen(pen);
     painter.setBrush(Qt::NoBrush);
@@ -119,7 +121,7 @@ void AnimatedButton::drawSymbol(QPainter& painter, const QRect& area) const {
             arrow.lineTo(tip.x() + 2, tip.y() - 1);
             arrow.lineTo(tip.x() - 1, tip.y() + 5);
             arrow.closeSubpath();
-            painter.setBrush(QColor("#2c4258"));
+            painter.setBrush(symbolColor);
             painter.drawPath(arrow);
             break;
         }
@@ -167,7 +169,8 @@ void AnimatedButton::paintEvent(QPaintEvent* /*event*/) {
     painter.setBrush(Qt::NoBrush);
     painter.drawRoundedRect(borderRect, radius, radius);
 
-    // Иконка слева от текста (только когда она задана).
+    // Иконка слева от текста (только когда она задана). Цвет иконки
+    // согласован с состоянием кнопки через textColor (disabled — серый).
     constexpr int symbolSize = 20;
     constexpr int symbolGap = 8;
     QRect textRect = r.adjusted(14, 6, -14, -6);
@@ -175,7 +178,7 @@ void AnimatedButton::paintEvent(QPaintEvent* /*event*/) {
         const QRect symbolRect(r.left() + 14,
                                r.center().y() - symbolSize / 2,
                                symbolSize, symbolSize);
-        drawSymbol(painter, symbolRect);
+        drawSymbol(painter, symbolRect, textColor);
         textRect.setLeft(symbolRect.right() + symbolGap);
     }
 

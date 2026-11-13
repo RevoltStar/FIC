@@ -33,6 +33,7 @@ private:
     QScrollArea* diagnostics_;
     PreLoginStepsWidget* steps_;
     AnimatedButton *handoff_, *reboot_, *poweroff_;
+    QWidget* card_ = nullptr;
     QPixmap background_;
     bool pending_ = false;
 };
