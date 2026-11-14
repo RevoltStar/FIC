@@ -1,8 +1,14 @@
 # Current workspace
 
 ## Current base / task
-* main; HEAD — follow-up `fix(prelogin): refine light UI layout and geometry checks` on top of `19b2c8e5`.
-* Visual refinement of the light prelogin UI (Model A session work remains committed earlier).
+* main; HEAD `149b7bb1` + working-tree changes.
+* Integration regression probe for fic-dick slow initial init vs `fic.postinst` `wait-daemon 30` (remove → reinstall). DEFECT REPRODUCED (XFAIL evidence in `build-package-lifecycle/native-*-…-12471`).
+
+## Slow-init probe facts
+* `tests/integration/package-lifecycle/slow_init_native.py` — new native driver; `run-deb.sh`/`README.md` updated to register it.
+* Injection: test-only LD_PRELOAD shim delays the SECOND `sqlite3_open` of `/opt/fic/db/devices.db` by 45 s (that handle belongs to the initial startup reconciliation, opened AFTER the IPC socket is created and BEFORE the request loop). Delivered via a systemd drop-in for fic-device.service inside the disposable container only; no production code/units/timeouts changed; udevadm untouched (its 15 s executor timeout would change the scenario).
+* Result (real DEBs, Debian 12, real dpkg): fresh install OK; remove → REMOVED with config+journal+witness retained; reinstall `dpkg -i` fails after ~33 s with `device daemon did not become ready: send failed: Transport endpoint is not connected` while fic-device.service stays active/running, the device socket accepts connections, and `status` gets no reply; after the 45 s injection elapses the SAME daemon answers IPC, and `dpkg --configure -a` completes with INSTALLED.
+* Minimal fix proposal (NOT implemented): answer `status` from a readiness thread before the blocking reconciliation, or perform the initial reconciliation asynchronously (it already has a retry path) so the socket loop starts immediately after socket creation.
 
 ## Accepted architecture / invariants
 * `fic-prelogin` frontend remains Qt6 Widgets + EGLFS/KMS; no QML/WebEngine/OpenGL widgets.

@@ -3,7 +3,7 @@
 set -euo pipefail
 [[ $# -ge 2 && $# -le 4 ]] || { echo 'usage: run-deb.sh IMAGE PACKAGE_DIRECTORY [DRIVER [OPTIONAL_OWNER_FIXTURE]]' >&2; exit 2; }
 driver=${3:-deb_native.py}
-case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py) ;; *) exit 2 ;; esac
+case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py|slow_init_native.py) ;; *) exit 2 ;; esac
 extra=()
 if [[ $# == 4 ]]; then
     [[ "$driver" == minimal_runtime_native.py && -f "$4" ]] || exit 2

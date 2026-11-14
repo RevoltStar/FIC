@@ -31,6 +31,7 @@ bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/lifecycle-packag
 bash tests/integration/package-lifecycle/run-rpm.sh ALT_IMAGE BUILD/lifecycle-packages
 bash tests/integration/package-lifecycle/run-restricted.sh IMAGE BUILD/fic/fic
 bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/lifecycle-packages purge_failure_native.py
+bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/lifecycle-packages slow_init_native.py
 bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/followup-packages detach_retry_native.py
 ```
 
