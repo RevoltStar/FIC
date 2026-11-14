@@ -1,13 +1,14 @@
 # Current workspace
 
 ## Current base / task
-* main; HEAD `149b7bb1` + working-tree changes.
-* Integration regression probe for fic-dick slow initial init vs `fic.postinst` `wait-daemon 30` (remove → reinstall). DEFECT REPRODUCED (XFAIL evidence in `build-package-lifecycle/native-*-…-12471`).
+* main; HEAD — `test(lifecycle): harden slow fic-dick reinstall regression probe` on top of `6ef14d22`.
+* The slow-init reinstall regression probe is hardened and green: verdict `XFAIL-DEFECT-REPRODUCED` (the fic-dick slow-init defect remains unfixed, as intended).
 
 ## Slow-init probe facts
-* `tests/integration/package-lifecycle/slow_init_native.py` — new native driver; `run-deb.sh`/`README.md` updated to register it.
+* `tests/integration/package-lifecycle/slow_init_native.py` — native driver; `run-deb.sh`/`README.md` register it. Host-runnable pure-logic checks: `python3 slow_init_native.py --self-check` (version parsing, production wait_for_daemon() classification incl. real version/schema mismatch, injection evidence classification).
 * Injection: test-only LD_PRELOAD shim delays the SECOND `sqlite3_open` of `/opt/fic/db/devices.db` by 45 s (that handle belongs to the initial startup reconciliation, opened AFTER the IPC socket is created and BEFORE the request loop). Delivered via a systemd drop-in for fic-device.service inside the disposable container only; no production code/units/timeouts changed; udevadm untouched (its 15 s executor timeout would change the scenario).
-* Result (real DEBs, Debian 12, real dpkg): fresh install OK; remove → REMOVED with config+journal+witness retained; reinstall `dpkg -i` fails after ~33 s with `device daemon did not become ready: send failed: Transport endpoint is not connected` while fic-device.service stays active/running, the device socket accepts connections, and `status` gets no reply; after the 45 s injection elapses the SAME daemon answers IPC, and `dpkg --configure -a` completes with INSTALLED.
+* Verdict discipline: `XFAIL-DEFECT-REPRODUCED` (exit 0) is published ONLY after: injection provably activated after socket creation (`started_at` vs socket mtime), postinst failed on the wait-daemon window, `status` unanswered, SAME `MainPID` before/after recovery, injected sleep completed with the requested duration, and `dpkg --configure -a` completed with INSTALLED + retained config/journal. `INCONCLUSIVE` exits non-zero; `NOT-REPRODUCED` requires a provably active injection plus a successful reinstall.
+* Latest native run (Debian 12, real DEBs): dpkg exit 1 after 33.0 s, PID 1009 → 1009, sleep 45/45 s, full timeline incl. recovery; evidence in `build-package-lifecycle/native-…` (not committed).
 * Minimal fix proposal (NOT implemented): answer `status` from a readiness thread before the blocking reconciliation, or perform the initial reconciliation asynchronously (it already has a retry path) so the socket loop starts immediately after socket creation.
 
 ## Accepted architecture / invariants

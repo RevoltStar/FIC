@@ -19,26 +19,29 @@ disposable container through a systemd drop-in for fic-device.service only;
 no production file, unit or timeout is modified.
 
 Verdicts (result.json):
-- XFAIL-DEFECT-REPRODUCED: reinstall failed with the wait-daemon timeout
-  while fic-dick was alive, initializing and reachable on the IPC socket.
-- NOT-REPRODUCED: reinstall succeeded (diagnostics explain why).
-- INCONCLUSIVE: a different failure mode (daemon crash, DB/schema mismatch,
-  unrelated postinst step).
+- XFAIL-DEFECT-REPRODUCED (exit 0): published ONLY after every mandatory
+  check: the injection provably activated in the startup-reconciliation
+  phase (after the IPC socket existed), postinst failed on the wait-daemon
+  timeout, the daemon stayed alive with the SAME PID, IPC recovered after
+  the injected delay, and `dpkg --configure -a` completed successfully.
+- NOT-REPRODUCED (exit 0): reinstall succeeded while the injection provably
+  activated; diagnostics explain why the timeout window was not hit.
+- INCONCLUSIVE (exit != 0): injection did not activate or fired in the
+  wrong phase, the daemon crashed/restarted, a version/schema mismatch was
+  answered, the recovery configure failed, or an unexpected probe error.
 """
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import struct
 import subprocess
+import sys
 import time
 
-assert os.environ.get('FIC_PACKAGE_LIFECYCLE_NATIVE') == '1'
-assert Path('/proc/1/comm').read_text().strip() == 'systemd'
-assert os.stat('/proc/self/ns/mnt').st_ino != int(os.environ['FIC_HOST_MNT_INODE'])
 results = Path('/var/tmp/fic-package-results')
-results.mkdir()
 events = []
 
 DEVICE_DB = '/opt/fic/db/devices.db'
@@ -64,10 +67,33 @@ def save_events():
     (results/'commands.json').write_text(json.dumps(events, indent=2))
 
 
+def parse_version_tokens(output):
+    """Parse `fic-dick --version` output:
+    'fic-dick <product_version> ipc-api=<N> db-schema=<M>'."""
+    tokens = output.split()
+    fields = dict(part.split('=', 1) for part in tokens[2:] if '=' in part)
+    fields['product_version'] = tokens[1] if len(tokens) > 1 else ''
+    return fields
+
+
 def version_fields():
-    out = subprocess.run(['/opt/fic/bin/fic-dick', '--version'], text=True,
-                         stdout=subprocess.PIPE).stdout.split()
-    return dict(part.split('=', 1) for part in out[1:] if '=' in part)
+    return parse_version_tokens(subprocess.run(
+        ['/opt/fic/bin/fic-dick', '--version'], text=True,
+        stdout=subprocess.PIPE).stdout)
+
+
+def classify_status_reply(reply, expected):
+    """Mirror the production wait_for_daemon() readiness contract exactly:
+    `ok` plus `product_version` and `database_schema_version` equal to the
+    values the local fic-dick ELF reports via --version. The status reply
+    carries no ipc_api_version field, so it is never compared.
+    """
+    if reply.get('ok') and (
+            reply.get('product_version') != expected.get('product_version') or
+            str(reply.get('database_schema_version')) !=
+            str(expected.get('db-schema'))):
+        reply['mismatch'] = True
+    return reply
 
 
 def device_request(timeout_seconds=3):
@@ -93,12 +119,7 @@ def device_request(timeout_seconds=3):
                 assert magic == 0x00464943 and offset == len(body) and len(frame) == length+16
                 body += frame[16:]
                 if len(body) == total:
-                    reply = json.loads(body)
-                    expected = version_fields()
-                    if (reply.get('ok') and
-                            (str(reply.get('ipc_api_version', '')) != str(expected.get('ipc-api', '')) or
-                             str(reply.get('database_schema_version', '')) != str(expected.get('db-schema', '')))):
-                        reply['mismatch'] = True
+                    reply = classify_status_reply(json.loads(body), version_fields())
                     return reply
     except (FileNotFoundError, ConnectionRefusedError) as absent:
         return dict(ok=False, connect_error=str(absent))
@@ -145,14 +166,95 @@ def package(name):
     return str(found[0])
 
 
-def finish(analysis, timeline):
+def write_result(analysis, timeline, complete):
     events.append(dict(analysis=analysis, timeline=timeline,
                        journal_facts=journal_facts(), lifecycle=lifecycle_status()))
     (results/'result.json').write_text(json.dumps(
-        dict(status=analysis['verdict'], **analysis, timeline=timeline), indent=2))
+        dict(status=analysis['verdict'], **analysis, timeline=timeline,
+             complete=complete, journal_facts=journal_facts(),
+             lifecycle=lifecycle_status()), indent=2))
     save_events()
     print('VERDICT:', analysis['verdict'], flush=True)
-    print('PASS: slow-init reinstall probe completed with a verdict', flush=True)
+
+
+def inconclusive(reason, timeline, extra=None):
+    """Publish an INCONCLUSIVE verdict and fail the gate (exit != 0)."""
+    diagnose_failure()
+    analysis = dict(verdict='INCONCLUSIVE', reason=reason, **(extra or {}))
+    write_result(analysis, timeline, complete=False)
+    sys.exit(1)
+
+
+def injection_facts(log_text, socket_mtime):
+    """Prove the injection actually activated and started AFTER the IPC
+    socket was created (i.e. inside the post-socket startup reconciliation,
+    not the pre-socket daemon init). The sleep may still be running at
+    probe time, so `finished_at` is optional here; the full duration is
+    re-checked after IPC recovery (see injection_completion)."""
+    if not log_text:
+        return dict(activated=False, reason='injection log is missing')
+    started = re.search(r'started_at=(\d+)', log_text)
+    if not started:
+        return dict(activated=False, reason='injection log lacks started_at',
+                    log_text=log_text)
+    started_at = int(started.group(1))
+    facts = dict(activated=True, started_at=started_at,
+                 requested_seconds=INJECTION_SLEEP_SECONDS,
+                 socket_mtime=int(socket_mtime),
+                 after_socket_creation=started_at > socket_mtime - 2)
+    return facts
+
+
+def injection_completion(log_text, facts):
+    """After IPC recovery: verify the injected sleep actually finished and
+    lasted the requested duration (>= requested - 1 s of wall-clock)."""
+    if not log_text:
+        return dict(completed=False, reason='injection log is missing')
+    finished = re.search(r'finished_at=(\d+)', log_text)
+    started = re.search(r'started_at=(\d+)', log_text)
+    if not finished or not started:
+        return dict(completed=False, reason='injection log lacks finished_at',
+                    log_text=log_text)
+    duration = int(finished.group(1)) - int(started.group(1))
+    return dict(completed=True, duration_seconds=duration,
+                requested_seconds=INJECTION_SLEEP_SECONDS,
+                duration_ok=duration >= INJECTION_SLEEP_SECONDS - 1)
+
+
+def self_check():
+    """Host-runnable pure-logic checks (no container, no 45 s cycle):
+    version parsing and the production wait_for_daemon() classification
+    incl. genuine version/schema mismatch detection."""
+    tokens = parse_version_tokens('fic-dick 0.1.0 ipc-api=1 db-schema=2')
+    assert tokens == {'ipc-api': '1', 'db-schema': '2', 'product_version': '0.1.0'}, tokens
+    good = classify_status_reply(dict(ok=True, message='m', product_version='0.1.0',
+                                      database_schema_version=2), tokens)
+    assert good.get('ok') and 'mismatch' not in good, good
+    wrong_version = classify_status_reply(dict(good, product_version='9.9.9'), tokens)
+    assert wrong_version.get('mismatch'), wrong_version
+    wrong_schema = classify_status_reply(dict(good, database_schema_version=99), tokens)
+    assert wrong_schema.get('mismatch'), wrong_schema
+    missing_fields = classify_status_reply(dict(ok=True, message='m'), tokens)
+    assert missing_fields.get('mismatch'), missing_fields
+    # Injection evidence classification without any container:
+    # a missing log or a missing timestamp must never be classified as a
+    # provably activated injection.
+    missing_injection = injection_facts(None, 0)
+    assert missing_injection['activated'] is False, missing_injection
+    no_timestamps = injection_facts('slow-init injection: opening x', 0)
+    assert no_timestamps['activated'] is False, no_timestamps
+    before_socket = injection_facts('started_at=100', 500)
+    assert before_socket['activated'] and not before_socket['after_socket_creation'], \
+        before_socket
+    after_socket = injection_facts('started_at=1000', 500)
+    assert after_socket['after_socket_creation'], after_socket
+    unfinished = injection_completion('started_at=1000', {})
+    assert unfinished['completed'] is False, unfinished
+    finished = injection_completion('started_at=1000; finished_at=1046', {})
+    assert finished['completed'] and finished['duration_ok'], finished
+    too_short = injection_completion('started_at=1000; finished_at=1030', {})
+    assert too_short['completed'] and not too_short['duration_ok'], too_short
+    print('slow_init_native self-check PASS')
 
 
 def diagnose_failure():
@@ -205,14 +307,16 @@ static void intercept(const char* path) {
             FILE* log = fopen("/var/tmp/fic-slow-init.log", "a");
             if (log) {
                 fprintf(log, "slow-init injection: opening %s (open #%d); "
-                             "sleeping %ds before returning\n", path, g_opens, g_seconds);
+                             "sleeping %ds before returning; started_at=%ld\n",
+                       path, g_opens, g_seconds, (long)time(NULL));
                 fclose(log);
             }
             struct timespec req = {g_seconds, 0};
             nanosleep(&req, NULL);
             log = fopen("/var/tmp/fic-slow-init.log", "a");
             if (log) {
-                fprintf(log, "slow-init injection: sleep finished\n");
+                fprintf(log, "slow-init injection: sleep finished; finished_at=%ld\n",
+                        (long)time(NULL));
                 fclose(log);
             }
         }
@@ -273,9 +377,21 @@ def wait_for_device_ipc(poll_timeout, per_attempt=2):
 
 
 def main():
+    if '--self-check' in sys.argv:
+        self_check()
+        return
     timeline = []
+    analysis = None
     try:
-        # Disposable PID1 systemd container, no host binds, no network.
+        # Disposable PID1 systemd container preflight (no host mounts, no
+        # network, no reuse of the host mount namespace).
+        assert os.environ.get('FIC_PACKAGE_LIFECYCLE_NATIVE') == '1', \
+            'FIC_PACKAGE_LIFECYCLE_NATIVE=1 required'
+        assert Path('/proc/1/comm').read_text().strip() == 'systemd', \
+            'PID 1 must be systemd'
+        assert os.stat('/proc/self/ns/mnt').st_ino != \
+            int(os.environ['FIC_HOST_MNT_INODE']), 'must run in a new mount ns'
+        results.mkdir()
         run(['mount', '--rbind', '/sys', '/sys'])
         run(['mount', '-o', 'remount,bind,ro', '/sys'])
         run(['systemctl', 'stop', 'ssh.service', 'ssh.socket'], success=False)
@@ -332,92 +448,136 @@ def main():
                              socket_present=socket_present, status_probe=status_probe,
                              injection_log=injection_log))
         versions = version_fields()
+        socket_mtime = Path(DEVICE_SOCKET).stat().st_mtime if socket_present else None
+        facts = injection_facts(injection_log, socket_mtime or 0)
+        timeline.append(dict(step='injection-evidence', **facts))
         if reinstalled.returncode == 0:
+            # NOT-REPRODUCED is admissible only with a provably activated
+            # injection in the right phase and a successful reinstall.
+            if not facts.get('activated') or not facts.get('after_socket_creation'):
+                inconclusive('reinstall succeeded but the injection was not '
+                             'provably active in the startup-reconciliation phase',
+                             timeline, dict(injection=facts, expected_versions=versions))
             diagnose_failure()
-            finish(dict(verdict='NOT-REPRODUCED',
-                        reason='reinstall succeeded despite a >30 s initial '
-                               'initialization; see timeline and logs',
-                        expected_versions=versions), timeline)
+            write_result(dict(verdict='NOT-REPRODUCED',
+                              reason='reinstall succeeded despite a provably active '
+                                     '>30 s initialization; see timeline and logs',
+                              expected_versions=versions), timeline, complete=True)
             return
         # Case 1: the daemon itself died -> different defect class.
-        assert device['active'] == 'active' and device['main_pid'] not in ('', '0'), \
-            dict(case='daemon died (case 1), not the initialization window',
-                 device_service=device)
+        if device['active'] != 'active' or device['main_pid'] in ('', '0'):
+            inconclusive('device daemon is not running after the failed reinstall '
+                         '(case 1: daemon failure, not the initialization window)',
+                         timeline, dict(device_service=device, injection=facts))
         # Case 3: the daemon answers but with mismatched versions.
         if isinstance(status_probe, dict) and status_probe.get('mismatch'):
-            finish(dict(verdict='INCONCLUSIVE',
-                        reason='daemon answered status with version/schema mismatch '
-                               '(case 3), not the initialization window',
-                        status_probe=status_probe, expected_versions=versions), timeline)
-            return
+            inconclusive('daemon answered status with a version/schema mismatch '
+                         '(case 3), not the initialization window',
+                         timeline, dict(status_probe=status_probe,
+                                        expected_versions=versions))
         # The interesting case 2: daemon alive, IPC socket accepting
         # connections, but the status request is not answered while the
         # injected initial reconciliation is still running.
         postinst_output = reinstalled.stdout
-        assert ('did not become ready' in postinst_output or
-                'wait-daemon' in postinst_output), dict(
-            case='reinstall failed for an unrelated postinst step',
-            output=postinst_output)
-        assert status_probe is None, dict(
-            case='status probe did not hang; case 2 not confirmed',
-            status_probe=status_probe)
-        analysis = dict(verdict='XFAIL-DEFECT-REPRODUCED',
-                    reason='reinstall failed on `fic-dick wait-daemon 30` while '
-                           'fic-dick was alive (service active, IPC socket accepting '
-                           'connections, status unanswered during the >30 s initial '
-                           'reconciliation). Case 2: healthy daemon still '
-                           'initializing, not answering IPC.',
-                    dpkg_exit=reinstalled.returncode,
-                    reinstall_seconds=reinstall_seconds,
-                    expected_versions=versions)
-        finish(analysis, timeline)
+        if 'did not become ready' not in postinst_output and \
+                'wait-daemon' not in postinst_output:
+            inconclusive('reinstall failed for an unrelated postinst step',
+                         timeline, dict(postinst_output=postinst_output[-1500:]))
+        if status_probe is not None:
+            inconclusive('status probe was answered during the wait window; '
+                         'case 2 (initializing, not answering IPC) not confirmed',
+                         timeline, dict(status_probe=status_probe))
+        if not facts.get('activated') or not facts.get('after_socket_creation'):
+            inconclusive('injection was not provably active in the '
+                         'post-socket startup reconciliation phase',
+                         timeline, dict(injection=facts,
+                                        postinst_output=postinst_output[-1500:]))
+
+        # Mandatory continuity check: remember the daemon PID right after the
+        # failed install; the XFAIL verdict requires the SAME process to
+        # answer IPC after the injected delay (Restart=on-failure untouched).
+        pid_after_failure = device['main_pid']
 
         # 5. After the injected delay the very same daemon answers IPC,
         # proving it was only still initializing (case 2, not a crash).
         answered_after = wait_for_device_ipc(120)
-        assert answered_after is not None, \
-            'daemon never answered IPC after the injected delay elapsed'
+        if answered_after is None:
+            inconclusive('daemon never answered IPC after the injected delay '
+                         'elapsed', timeline)
         still_active = service_state('fic-device.service')
+        # The injected sleep must have provably completed with the requested
+        # duration by the time IPC answers again.
+        completion = injection_completion(
+            Path('/var/tmp/fic-slow-init.log').read_text()
+            if Path('/var/tmp/fic-slow-init.log').exists() else None, facts)
         timeline.append(dict(step='ipc-after-delay',
                              seconds_till_reply=round(answered_after, 1),
-                             device_service=still_active))
-        assert still_active['active'] == 'active', still_active
+                             device_service=still_active,
+                             injection_completion=completion))
+        if not completion.get('completed') or not completion.get('duration_ok'):
+            inconclusive('the injected initialization delay did not provably '
+                         'run for the requested duration', timeline,
+                         dict(injection_completion=completion))
+        if still_active['active'] != 'active' or \
+                still_active['main_pid'] != pid_after_failure:
+            inconclusive('device daemon restarted or changed state after the '
+                         'delay; XFAIL continuity not proven',
+                         timeline, dict(pid_after_failure=pid_after_failure,
+                                        device_service=still_active))
 
         # 6. Environment restored: the real configure must complete now,
         # proving the earlier failure came from the wait-daemon window only.
         remove_injection(dropin)
         run(['systemctl', 'restart', 'fic-device.service'])
         run(['/opt/fic/bin/fic-dick', 'wait-daemon', '10'])
-        run(['dpkg', '--configure', '-a'], timeout=300)
-        assert lifecycle_status() == 'INSTALLED', lifecycle_status()
-        assert config_snapshot() == saved_config, 'reinstall changed saved policy config'
+        configured = run(['dpkg', '--configure', '-a'], success=False, timeout=300)
+        if configured.returncode != 0:
+            inconclusive('dpkg --configure -a failed after the injection was '
+                         'removed', timeline,
+                         dict(configure_output=configured.stdout[-1500:]))
+        if lifecycle_status() != 'INSTALLED':
+            inconclusive('lifecycle state is not INSTALLED after configure',
+                         timeline, dict(lifecycle=lifecycle_status()))
+        if config_snapshot() != saved_config:
+            inconclusive('reinstall/recovery changed the saved policy config',
+                         timeline)
         # The journal is retained and structurally consistent; note that the
         # real postinst configure (initialize-journal/prepare-install) may
         # legitimately rewrite journal bookkeeping, so content hashes are
         # recorded in the timeline but not pinned here.
         final_journal = journal_facts()
-        assert final_journal['journal_exists'] and final_journal['witness_exists'], \
-            final_journal
-        if final_journal['journal_exists']:
-            json.loads(Path('/opt/fic/db/mutation-journal.json').read_text())
+        if not final_journal['journal_exists'] or not final_journal['witness_exists']:
+            inconclusive('journal/witness did not survive the reinstall',
+                         timeline, dict(journal=final_journal))
+        json.loads(Path('/opt/fic/db/mutation-journal.json').read_text())
         run(['/opt/fic/bin/fic-cli', 'status'])
         timeline.append(dict(step='configure-after-recovery',
                              lifecycle=lifecycle_status(),
-                             config_matches=saved_config == config_snapshot()))
-        # Final evidence supersedes the interim XFAIL record with the full
-        # timeline including the recovery steps.
-        (results/'result.json').write_text(json.dumps(
-            dict(status=analysis['verdict'], **analysis, timeline=timeline,
-                 complete=True, journal_facts=journal_facts(),
-                 lifecycle=lifecycle_status()), indent=2))
-        save_events()
-    except BaseException:
+                             config_matches=saved_config == config_snapshot(),
+                             journal=final_journal))
+
+        # Every mandatory check passed: only now is the XFAIL verdict
+        # published, with the complete timeline including the recovery.
+        write_result(dict(verdict='XFAIL-DEFECT-REPRODUCED',
+                          reason='reinstall failed on `fic-dick wait-daemon 30` while '
+                                 'fic-dick was alive with an unchanged PID (service '
+                                 'active, IPC socket accepting connections, status '
+                                 'unanswered during the >30 s initial reconciliation '
+                                 'started after socket creation). Case 2: healthy '
+                                 'daemon still initializing, not answering IPC.',
+                          dpkg_exit=reinstalled.returncode,
+                          reinstall_seconds=reinstall_seconds,
+                          injection=facts,
+                          pid_continuity=dict(pid_after_failure=pid_after_failure,
+                                              pid_after_recovery=still_active['main_pid']),
+                          expected_versions=versions), timeline, complete=True)
+        print('PASS: slow-init reinstall probe completed with a verdict', flush=True)
+    except BaseException as probe_error:
         diagnose_failure()
-        events.append(dict(analysis=dict(verdict='INCONCLUSIVE',
-                                         reason='unexpected probe exception')))
-        (results/'result.json').write_text(json.dumps(
-            dict(status='INCONCLUSIVE', timeline=timeline), indent=2))
-        save_events()
+        write_result(dict(verdict='INCONCLUSIVE',
+                          reason='unexpected probe exception: '
+                                 + type(probe_error).__name__ + ': '
+                                 + str(probe_error)[:500]), timeline, complete=False)
         raise
 
 
