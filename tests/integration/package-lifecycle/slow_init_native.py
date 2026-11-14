@@ -19,16 +19,16 @@ disposable container through a systemd drop-in for fic-device.service only;
 no production file, unit or timeout is modified.
 
 Verdicts (result.json):
-- XFAIL-DEFECT-REPRODUCED (exit 0): published ONLY after every mandatory
-  check: the injection provably activated in the startup-reconciliation
-  phase (after the IPC socket existed), postinst failed on the wait-daemon
-  timeout, the daemon stayed alive with the SAME PID, IPC recovered after
-  the injected delay, and `dpkg --configure -a` completed successfully.
-- NOT-REPRODUCED (exit 0): reinstall succeeded while the injection provably
-  activated; diagnostics explain why the timeout window was not hit.
+- PASS-FIXED (exit 0): the fix is proven. Real reinstall succeeded (exit 0)
+  while the injection provably activated strictly after the IPC socket
+  creation (Type=notify READY=1 is sent before the startup reconciliation),
+  the injected delay ran for the requested 45 s, the SAME daemon process
+  started answering IPC after the delay, and `dpkg --configure -a`
+  completed with the retained config/journal.
 - INCONCLUSIVE (exit != 0): injection did not activate or fired in the
   wrong phase, the daemon crashed/restarted, a version/schema mismatch was
-  answered, the recovery configure failed, or an unexpected probe error.
+  answered, reinstall still fails, recovery configure failed, or an
+  unexpected probe error.
 """
 import hashlib
 import json
@@ -491,6 +491,33 @@ def main():
         timeline.append(dict(step='fresh-install', lifecycle=lifecycle_status(),
                              journal=saved_journal))
 
+        # Negative readiness check: a mandatory initialization failure (here:
+        # a corrupted device database) must fail the Type=notify start job
+        # and never publish READY=1. The database is restored immediately.
+        run(['systemctl', 'stop', 'fic-device.service'])
+        device_db = Path(DEVICE_DB)
+        device_db_backup = device_db.with_name('devices.db.probe-backup')
+        device_db.rename(device_db_backup)
+        device_db.write_text('not a sqlite database\n')
+        run(['systemctl', 'start', 'fic-device.service'], success=False)
+        time.sleep(2)
+        broken_state = service_state('fic-device.service')
+        broken_active = broken_state['active']
+        device_db.write_bytes(device_db_backup.read_bytes())
+        device_db_backup.unlink()
+        run(['systemctl', 'stop', 'fic-device.service'], success=False)
+        run(['systemctl', 'reset-failed', 'fic-device.service'], success=False)
+        run(['systemctl', 'start', 'fic-device.service'])
+        run(['/opt/fic/bin/fic-dick', 'wait-daemon', '5'])
+        timeline.append(dict(step='negative-readiness',
+                             broken_active_state=broken_active,
+                             corrupted_db_rejected=broken_active != 'active'))
+        if broken_active == 'active':
+            inconclusive('device service became active with a corrupted device '
+                         'database: READY=1 was published despite mandatory '
+                         'initialization failure', timeline,
+                         dict(device_service=broken_state))
+
         # 2. Real remove (NOT purge): config must survive; the journal stays
         # present and consistent (a legitimate ownership rollback during
         # remove may rewrite record statuses, so the journal is pinned to
@@ -528,101 +555,72 @@ def main():
             if socket_present else None
         facts = injection_facts(injection_log, socket_mtime_ns)
         timeline.append(dict(step='injection-evidence', **facts))
-        if reinstalled.returncode == 0:
-            # NOT-REPRODUCED is admissible only with a provably activated
-            # injection in the right phase, a completed requested delay and
-            # a successful reinstall. Waiting for the completion must not
-            # turn a healthy install into an XFAIL.
-            if not facts.get('activated') or not facts.get('after_socket_creation'):
-                inconclusive('reinstall succeeded but the injection was not '
-                             'provably active in the startup-reconciliation phase',
-                             timeline, dict(injection=facts, expected_versions=versions))
-            completion = wait_for_injection_completion(120)
-            if not completion.get('completed') or not completion.get('duration_ok'):
-                inconclusive('reinstall succeeded but the injected delay was not '
-                             'provably completed with the requested duration',
-                             timeline, dict(injection=facts,
-                                            injection_completion=completion))
-            diagnose_failure()
-            write_result(dict(verdict='NOT-REPRODUCED',
-                              reason='reinstall succeeded despite a provably active '
-                                     'and completed >30 s initialization; see timeline '
-                                     'and logs',
-                              expected_versions=versions), timeline, complete=True)
-            return
-        # Case 1: the daemon itself died -> different defect class.
-        if device['active'] != 'active' or device['main_pid'] in ('', '0'):
-            inconclusive('device daemon is not running after the failed reinstall '
-                         '(case 1: daemon failure, not the initialization window)',
-                         timeline, dict(device_service=device, injection=facts))
-        # Case 3: the daemon answers but with mismatched versions.
-        if isinstance(status_probe, dict) and status_probe.get('mismatch'):
-            inconclusive('daemon answered status with a version/schema mismatch '
-                         '(case 3), not the initialization window',
-                         timeline, dict(status_probe=status_probe,
-                                        expected_versions=versions))
-        # The interesting case 2: daemon alive, IPC socket accepting
-        # connections, but the status request is not answered while the
-        # injected initial reconciliation is still running.
-        postinst_output = reinstalled.stdout
-        if 'did not become ready' not in postinst_output and \
-                'wait-daemon' not in postinst_output:
-            inconclusive('reinstall failed for an unrelated postinst step',
-                         timeline, dict(postinst_output=postinst_output[-1500:]))
-        if status_probe is not None:
-            inconclusive('status probe was answered during the wait window; '
-                         'case 2 (initializing, not answering IPC) not confirmed',
-                         timeline, dict(status_probe=status_probe))
         if not facts.get('activated') or not facts.get('after_socket_creation'):
-            inconclusive('injection was not provably active in the '
-                         'post-socket startup reconciliation phase',
-                         timeline, dict(injection=facts,
-                                        postinst_output=postinst_output[-1500:]))
+            inconclusive('the injection was not provably active in the '
+                         'startup-reconciliation phase (started strictly after '
+                         'the IPC socket creation)', timeline,
+                         dict(injection=facts, expected_versions=versions))
 
-        # Mandatory continuity check: remember the daemon PID right after the
-        # failed install; the XFAIL verdict requires the SAME process to
-        # answer IPC after the injected delay (Restart=on-failure untouched).
-        pid_after_failure = device['main_pid']
+        # The fixed production contract: `systemctl start` returns after
+        # READY=1 (device policy activated), so the real reinstall must
+        # SUCCEED even while the injected 45 s startup reconciliation is
+        # still running.
+        dpkg_returned_at = time.time()
+        if reinstalled.returncode != 0:
+            inconclusive('reinstall still fails after the Type=notify fix; '
+                         'the readiness contract is not implemented as expected',
+                         timeline, dict(dpkg_exit=reinstalled.returncode,
+                                        postinst_output=reinstalled.stdout[-1500:]))
+        # The start job completed while the injected reconciliation was still
+        # running: prove the sleep had not finished when dpkg returned.
+        pending = injection_completion(injection_log, facts)
+        if pending.get('completed'):
+            inconclusive('the injected reconciliation had already finished '
+                         'before dpkg returned; the slow-start window was not '
+                         'exercised', timeline,
+                         dict(injection_completion=pending))
+        if device['active'] != 'active' or device['main_pid'] in ('', '0'):
+            inconclusive('device service is not active right after the '
+                         'successful reinstall', timeline,
+                         dict(device_service=device))
+        pid_after_install = device['main_pid']
+        timeline.append(dict(step='service-ready-during-reconciliation',
+                             dpkg_returned_at=dpkg_returned_at,
+                             device_service=device,
+                             reconciliation_completed=pending.get('completed'),
+                             pid_after_install=pid_after_install))
 
-        # 5. After the injected delay the very same daemon answers IPC,
-        # proving it was only still initializing (case 2, not a crash).
+        # 5. The injected delay must provably run for the requested duration
+        # and then the VERY SAME daemon process must answer IPC (no
+        # unexpected restarts; Restart=on-failure stays untouched).
+        completion = wait_for_injection_completion(120)
+        if not completion.get('completed') or not completion.get('duration_ok'):
+            inconclusive('the injected initialization delay did not provably '
+                         'run for the requested duration', timeline,
+                         dict(injection_completion=completion))
         answered_after = wait_for_device_ipc(120)
         if answered_after is None:
             inconclusive('daemon never answered IPC after the injected delay '
                          'elapsed', timeline)
         still_active = service_state('fic-device.service')
-        # The injected sleep must have provably completed with the requested
-        # duration by the time IPC answers again.
-        completion = injection_completion(
-            Path('/var/tmp/fic-slow-init.log').read_text()
-            if Path('/var/tmp/fic-slow-init.log').exists() else None, facts)
         timeline.append(dict(step='ipc-after-delay',
                              seconds_till_reply=round(answered_after, 1),
                              device_service=still_active,
                              injection_completion=completion))
-        if not completion.get('completed') or not completion.get('duration_ok'):
-            inconclusive('the injected initialization delay did not provably '
-                         'run for the requested duration', timeline,
-                         dict(injection_completion=completion))
         if still_active['active'] != 'active' or \
-                still_active['main_pid'] != pid_after_failure:
+                still_active['main_pid'] != pid_after_install:
             inconclusive('device daemon restarted or changed state after the '
-                         'delay; XFAIL continuity not proven',
-                         timeline, dict(pid_after_failure=pid_after_failure,
-                                        device_service=still_active))
+                         'delay', timeline,
+                         dict(pid_after_install=pid_after_install,
+                              device_service=still_active))
 
-        # 6. Environment restored: the real configure must complete now,
-        # proving the earlier failure came from the wait-daemon window only.
+        # 6. Environment restored: verify the retained data and lifecycle.
         remove_injection(dropin)
         run(['systemctl', 'restart', 'fic-device.service'])
         run(['/opt/fic/bin/fic-dick', 'wait-daemon', '10'])
-        configured = run(['dpkg', '--configure', '-a'], success=False, timeout=300)
-        if configured.returncode != 0:
-            inconclusive('dpkg --configure -a failed after the injection was '
-                         'removed', timeline,
-                         dict(configure_output=configured.stdout[-1500:]))
+        run(['dpkg', '--configure', '-a'], timeout=300)
         if lifecycle_status() != 'INSTALLED':
-            inconclusive('lifecycle state is not INSTALLED after configure',
+            inconclusive('lifecycle state is not INSTALLED after recovery',
                          timeline, dict(lifecycle=lifecycle_status()))
         if config_snapshot() != saved_config:
             inconclusive('reinstall/recovery changed the saved policy config',
@@ -642,19 +640,19 @@ def main():
                              config_matches=saved_config == config_snapshot(),
                              journal=final_journal))
 
-        # Every mandatory check passed: only now is the XFAIL verdict
-        # published, with the complete timeline including the recovery.
-        write_result(dict(verdict='XFAIL-DEFECT-REPRODUCED',
-                          reason='reinstall failed on `fic-dick wait-daemon 30` while '
-                                 'fic-dick was alive with an unchanged PID (service '
-                                 'active, IPC socket accepting connections, status '
-                                 'unanswered during the >30 s initial reconciliation '
-                                 'started after socket creation). Case 2: healthy '
-                                 'daemon still initializing, not answering IPC.',
+        # Every mandatory check passed: the fix is proven with the complete
+        # timeline including the post-delay IPC recovery.
+        write_result(dict(verdict='PASS-FIXED',
+                          reason='reinstall succeeded (dpkg exit 0) while the '
+                                 'injected 45 s startup reconciliation was still '
+                                 'running: READY=1 was sent after device policy '
+                                 'activation and socket creation, before the '
+                                 'reconciliation; the same daemon process answered '
+                                 'IPC after the delay; no unexpected restarts',
                           dpkg_exit=reinstalled.returncode,
                           reinstall_seconds=reinstall_seconds,
                           injection=facts,
-                          pid_continuity=dict(pid_after_failure=pid_after_failure,
+                          pid_continuity=dict(pid_after_install=pid_after_install,
                                               pid_after_recovery=still_active['main_pid']),
                           expected_versions=versions), timeline, complete=True)
         print('PASS: slow-init reinstall probe completed with a verdict', flush=True)
