@@ -50,6 +50,8 @@ systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf
 systemctl daemon-reload
 systemctl enable fic.service fic-device.service fic-notify.service
 systemctl start fic.service fic-device.service fic-notify.service
+# fic-device.service is Type=notify: the start job waits for READY=1, which
+# proves the device policy is activated; the initial device reconciliation
+# may still be running and is not part of the package readiness contract.
 /opt/fic/bin/fic --maintenance wait-daemon 30
-/opt/fic/bin/fic-dick wait-daemon 30
 echo 'FIC: installation infrastructure verified; policy apply results are available in the daemon journal'

@@ -36,6 +36,8 @@ file(GLOB_RECURSE HDR_FILES
 list(FILTER SRC_FILES EXCLUDE REGEX "[/\\\\][^/\\\\]*[Tt]est[^/\\\\]*\\.cpp$")
 find_package(SQLite3 REQUIRED)
 find_package(OpenSSL REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(FIC_DICK_LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 
 # Создаем исполняемый файл
 add_executable(fic-dick ${SRC_FILES} ${HDR_FILES})
@@ -51,6 +53,7 @@ target_link_libraries(fic-dick PRIVATE
     fic-core
     fic-device-db
     fic-ipc
+    PkgConfig::FIC_DICK_LIBSYSTEMD
 )
 target_compile_definitions(fic-dick PRIVATE
     FIC_PRIVATE_BINDIR="${FIC_PRIVATE_BINDIR}"

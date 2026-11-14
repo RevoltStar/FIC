@@ -41,6 +41,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <systemd/sd-daemon.h>
+
 #include <fic/core/logging/Logger.h>
 #include <fic/core/logging/SecurityAudit.h>
 #include <fic/core/process/ProcessExecutor.h>
@@ -2008,6 +2010,17 @@ int run_daemon(const std::string& socketPathArg) {
 
     log_device("fic-dick device daemon started on " + socketPath +
                ", event_socket=" + eventSocketPath, logLevel::INFO);
+    // Service readiness contract (systemd Type=notify, same model as the
+    // main fic daemon): by this point the device database is initialized,
+    // regenerate_device_policy() has compiled and activated the udev policy
+    // (including enforcement checks for already-connected devices), and both
+    // mandatory IPC sockets exist. READY=1 therefore proves "service ready",
+    // not "administrative IPC responsive" during the synchronous startup
+    // reconciliation below, and never "reconciliation completed/succeeded".
+    // Reconciliation keeps its existing synchronous execution and retry path.
+    (void)::sd_notify(0,
+        "READY=1\n"
+        "STATUS=Device policy activated; startup reconciliation pending");
     if (!run_device_reconciliation("daemon startup")) {
         eventQueue.requestReconciliation();
     }

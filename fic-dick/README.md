@@ -42,6 +42,17 @@ fic-dick [--daemon|udev|enforce|reconcile|check-permanent|wait-daemon|cpu_board_
 fic-dick --daemon
 ```
 
+`fic-device.service` использует `Type=notify` (`NotifyAccess=main`): демон
+отправляет `READY=1` строго после инициализации `devices.db`, успешной
+компиляции и активации device policy udev-правил (включая проверку DENY
+enforcement для уже подключённых устройств) и создания обоих обязательных
+IPC-сокетов, но **до** начальной reconciliation. Успешная установка пакета
+опирается именно на этот контракт; начальная reconciliation может
+продолжаться после `READY=1`, её завершение/успех обозначаются только в логах
+и существующем retry-механизме и не являются условием успешности пакетной
+операции. Режим `wait-daemon` остаётся для компонентов, которым требуется
+именно отвечающий IPC (например, `fic-udevadm-trigger`).
+
 Daemon слушает Unix-сокет:
 
 ```text

@@ -4,8 +4,10 @@ After=fic.service
 Requires=fic.service
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=main
 ExecStart=@FIC_PRIVATE_BINDIR@/fic-dick --daemon
+TimeoutStartSec=600s
 Restart=on-failure
 UMask=0027
 
