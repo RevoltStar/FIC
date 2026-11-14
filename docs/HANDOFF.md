@@ -1,14 +1,14 @@
 # Current workspace
 
 ## Current base / task
-* main; HEAD — `test(lifecycle): harden slow fic-dick reinstall regression probe` on top of `6ef14d22`.
-* The slow-init reinstall regression probe is hardened and green: verdict `XFAIL-DEFECT-REPRODUCED` (the fic-dick slow-init defect remains unfixed, as intended).
+* main; HEAD — `test(lifecycle): finalize slow-init probe verdict checks` on top of `2c900c8f`.
+* The slow-init reinstall regression probe is finalized and green: verdict `XFAIL-DEFECT-REPRODUCED` (the fic-dick slow-init defect remains unfixed, as intended).
 
 ## Slow-init probe facts
-* `tests/integration/package-lifecycle/slow_init_native.py` — native driver; `run-deb.sh`/`README.md` register it. Host-runnable pure-logic checks: `python3 slow_init_native.py --self-check` (version parsing, production wait_for_daemon() classification incl. real version/schema mismatch, injection evidence classification).
+* `tests/integration/package-lifecycle/slow_init_native.py` — native driver; `run-deb.sh`/`README.md` register it. Host-runnable pure-logic checks: `python3 slow_init_native.py --self-check` (version parsing, production wait_for_daemon() classification incl. real version/schema mismatch, strict ns injection-phase evidence (before/after/equal/absent-socket), completed/short sleep, and the inconclusive-SystemExit branch of the main() verdict pattern).
 * Injection: test-only LD_PRELOAD shim delays the SECOND `sqlite3_open` of `/opt/fic/db/devices.db` by 45 s (that handle belongs to the initial startup reconciliation, opened AFTER the IPC socket is created and BEFORE the request loop). Delivered via a systemd drop-in for fic-device.service inside the disposable container only; no production code/units/timeouts changed; udevadm untouched (its 15 s executor timeout would change the scenario).
-* Verdict discipline: `XFAIL-DEFECT-REPRODUCED` (exit 0) is published ONLY after: injection provably activated after socket creation (`started_at` vs socket mtime), postinst failed on the wait-daemon window, `status` unanswered, SAME `MainPID` before/after recovery, injected sleep completed with the requested duration, and `dpkg --configure -a` completed with INSTALLED + retained config/journal. `INCONCLUSIVE` exits non-zero; `NOT-REPRODUCED` requires a provably active injection plus a successful reinstall.
-* Latest native run (Debian 12, real DEBs): dpkg exit 1 after 33.0 s, PID 1009 → 1009, sleep 45/45 s, full timeline incl. recovery; evidence in `build-package-lifecycle/native-…` (not committed).
+* Verdict discipline: `XFAIL-DEFECT-REPRODUCED` (exit 0) is published ONLY after: injection provably activated STRICTLY after socket creation (CLOCK_REALTIME ns from the shim vs the socket file's `st_mtime_ns`, no tolerance; equality/absent socket = not proven), postinst failed on the wait-daemon window, `status` unanswered, SAME `MainPID` before/after recovery, injected sleep completed with the requested duration, and `dpkg --configure -a` completed with INSTALLED + retained config/journal. `INCONCLUSIVE` exits non-zero and keeps its specific reason (main catches `Exception`, not `BaseException`, so `SystemExit` never overwrites result.json); `NOT-REPRODUCED` additionally requires the provably completed 45 s delay.
+* Latest native run (Debian 12, real DEBs): dpkg exit 1 after 32.7 s, PID 1008 → 1008, sleep 44.997/45 s, ns order proven (injection ~114 ms after bind), full timeline incl. recovery; evidence in `build-package-lifecycle/native-…` (not committed).
 * Minimal fix proposal (NOT implemented): answer `status` from a readiness thread before the blocking reconciliation, or perform the initial reconciliation asynchronously (it already has a retry path) so the socket loop starts immediately after socket creation.
 
 ## Accepted architecture / invariants

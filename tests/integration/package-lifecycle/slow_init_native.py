@@ -185,23 +185,40 @@ def inconclusive(reason, timeline, extra=None):
     sys.exit(1)
 
 
-def injection_facts(log_text, socket_mtime):
-    """Prove the injection actually activated and started AFTER the IPC
-    socket was created (i.e. inside the post-socket startup reconciliation,
-    not the pre-socket daemon init). The sleep may still be running at
-    probe time, so `finished_at` is optional here; the full duration is
-    re-checked after IPC recovery (see injection_completion)."""
+def injection_facts(log_text, socket_mtime_ns):
+    """Prove the injection actually activated and started strictly AFTER the
+    IPC socket was created (i.e. inside the post-socket startup
+    reconciliation, not the pre-socket daemon init).
+
+    Timestamp semantics: started_at_ns is CLOCK_REALTIME sampled by the shim
+    at the delayed second devices.db open; socket_mtime_ns is the unix
+    socket file mtime, which is stamped by bind() when the daemon creates
+    the listening IPC socket (before the startup reconciliation). Both are
+    CLOCK_REALTIME nanoseconds, so they are directly comparable and no
+    tolerance is used: equality is treated as insufficient proof.
+
+    The sleep may still be running at probe time, so finished_at_ns is
+    optional here; the full duration is re-checked after IPC recovery
+    (see injection_completion)."""
     if not log_text:
         return dict(activated=False, reason='injection log is missing')
-    started = re.search(r'started_at=(\d+)', log_text)
+    started = re.search(r'started_at_ns=(\d+)', log_text)
     if not started:
-        return dict(activated=False, reason='injection log lacks started_at',
+        return dict(activated=False, reason='injection log lacks started_at_ns',
                     log_text=log_text)
-    started_at = int(started.group(1))
-    facts = dict(activated=True, started_at=started_at,
+    started_at_ns = int(started.group(1))
+    facts = dict(activated=True, started_at_ns=started_at_ns,
                  requested_seconds=INJECTION_SLEEP_SECONDS,
-                 socket_mtime=int(socket_mtime),
-                 after_socket_creation=started_at > socket_mtime - 2)
+                 socket_mtime_ns=socket_mtime_ns)
+    if socket_mtime_ns is None:
+        # The IPC socket file is absent: the order cannot be proven.
+        facts['after_socket_creation'] = False
+        facts['order_reason'] = 'IPC socket is absent'
+        return facts
+    facts['after_socket_creation'] = started_at_ns > socket_mtime_ns
+    if not facts['after_socket_creation']:
+        facts['order_reason'] = ('injection did not start strictly after the '
+                                 'IPC socket creation')
     return facts
 
 
@@ -210,15 +227,16 @@ def injection_completion(log_text, facts):
     lasted the requested duration (>= requested - 1 s of wall-clock)."""
     if not log_text:
         return dict(completed=False, reason='injection log is missing')
-    finished = re.search(r'finished_at=(\d+)', log_text)
-    started = re.search(r'started_at=(\d+)', log_text)
+    finished = re.search(r'finished_at_ns=(\d+)', log_text)
+    started = re.search(r'started_at_ns=(\d+)', log_text)
     if not finished or not started:
-        return dict(completed=False, reason='injection log lacks finished_at',
+        return dict(completed=False, reason='injection log lacks finished_at_ns',
                     log_text=log_text)
-    duration = int(finished.group(1)) - int(started.group(1))
-    return dict(completed=True, duration_seconds=duration,
+    duration_ns = int(finished.group(1)) - int(started.group(1))
+    duration_seconds = duration_ns / 1e9
+    return dict(completed=True, duration_seconds=round(duration_seconds, 3),
                 requested_seconds=INJECTION_SLEEP_SECONDS,
-                duration_ok=duration >= INJECTION_SLEEP_SECONDS - 1)
+                duration_ok=duration_seconds >= INJECTION_SLEEP_SECONDS - 1)
 
 
 def self_check():
@@ -243,17 +261,54 @@ def self_check():
     assert missing_injection['activated'] is False, missing_injection
     no_timestamps = injection_facts('slow-init injection: opening x', 0)
     assert no_timestamps['activated'] is False, no_timestamps
-    before_socket = injection_facts('started_at=100', 500)
-    assert before_socket['activated'] and not before_socket['after_socket_creation'], \
-        before_socket
-    after_socket = injection_facts('started_at=1000', 500)
-    assert after_socket['after_socket_creation'], after_socket
-    unfinished = injection_completion('started_at=1000', {})
+    # Strict ns ordering: strictly-after only; equality ('simultaneous') and
+    # 'before' are insufficient, and an absent socket proves nothing.
+    before = injection_facts('started_at_ns=300', 500)
+    assert before['activated'] and not before['after_socket_creation'], before
+    after = injection_facts('started_at_ns=700', 500)
+    assert after['activated'] and after['after_socket_creation'], after
+    simultaneous = injection_facts('started_at_ns=500', 500)
+    assert simultaneous['activated'] and not simultaneous['after_socket_creation'], \
+        simultaneous
+    absent_socket = injection_facts('started_at_ns=700', None)
+    assert absent_socket['activated'] and not absent_socket['after_socket_creation'], \
+        absent_socket
+    unfinished = injection_completion('started_at_ns=1000', {})
     assert unfinished['completed'] is False, unfinished
-    finished = injection_completion('started_at=1000; finished_at=1046', {})
+    finished = injection_completion(
+        'started_at_ns=1000000000; finished_at_ns=47000000000', {})
     assert finished['completed'] and finished['duration_ok'], finished
-    too_short = injection_completion('started_at=1000; finished_at=1030', {})
+    too_short = injection_completion(
+        'started_at_ns=1000000000; finished_at_ns=31000000000', {})
     assert too_short['completed'] and not too_short['duration_ok'], too_short
+    # The inconclusive verdict branch: SystemExit must NOT be intercepted by
+    # the main() exception handler, so result.json keeps the specific reason
+    # and the driver exits non-zero. Verified with a throwaway process.
+    import tempfile
+    with tempfile.TemporaryDirectory() as scratch:
+        # Reproduce the exact main() verdict pattern: a verdict issued via
+        # sys.exit(1) inside the try must pass through the handler below
+        # (except Exception) without rewriting result.json.
+        snippet = (
+            "import sys; from pathlib import Path\n"
+            "sys.path.insert(0, "
+            + repr(str(Path(__file__).resolve().parent)) + ")\n"
+            "import slow_init_native as probe\n"
+            "probe.results = Path(" + repr(scratch) + ") / 'results'\n"
+            "probe.results.mkdir()\n"
+            "probe.diagnose_failure = lambda: None\n"
+            "try:\n"
+            "    probe.inconclusive('specific inconclusive reason', [], {})\n"
+            "except Exception:\n"
+            "    probe.write_result(dict(verdict='INCONCLUSIVE',\n"
+            "        reason='unexpected probe exception: SystemExit'), [],\n"
+            "        complete=False)\n")
+        outcome = subprocess.run([sys.executable, '-c', snippet], text=True,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        assert outcome.returncode == 1, outcome
+        written = json.loads((Path(scratch) / 'results' / 'result.json').read_text())
+        assert written['status'] == 'INCONCLUSIVE', written
+        assert written['reason'] == 'specific inconclusive reason', written
     print('slow_init_native self-check PASS')
 
 
@@ -304,19 +359,26 @@ static void intercept(const char* path) {
         ++g_opens;
         if (g_opens == 2 && !g_delayed) {
             g_delayed = 1;
+            struct timespec now;
+            clock_gettime(CLOCK_REALTIME, &now);
+            long long started_ns =
+                (long long)now.tv_sec * 1000000000LL + (long long)now.tv_nsec;
             FILE* log = fopen("/var/tmp/fic-slow-init.log", "a");
             if (log) {
                 fprintf(log, "slow-init injection: opening %s (open #%d); "
-                             "sleeping %ds before returning; started_at=%ld\n",
-                       path, g_opens, g_seconds, (long)time(NULL));
+                             "sleeping %ds before returning; started_at_ns=%lld\n",
+                       path, g_opens, g_seconds, started_ns);
                 fclose(log);
             }
             struct timespec req = {g_seconds, 0};
             nanosleep(&req, NULL);
+            clock_gettime(CLOCK_REALTIME, &now);
+            long long finished_ns =
+                (long long)now.tv_sec * 1000000000LL + (long long)now.tv_nsec;
             log = fopen("/var/tmp/fic-slow-init.log", "a");
             if (log) {
-                fprintf(log, "slow-init injection: sleep finished; finished_at=%ld\n",
-                        (long)time(NULL));
+                fprintf(log, "slow-init injection: sleep finished; finished_at_ns=%lld\n",
+                        finished_ns);
                 fclose(log);
             }
         }
@@ -374,6 +436,20 @@ def wait_for_device_ipc(poll_timeout, per_attempt=2):
             return time.time() - started
         time.sleep(3)
     return None
+
+
+def wait_for_injection_completion(poll_timeout):
+    """Poll the injection log until the injected sleep provably finished."""
+    deadline = time.time() + poll_timeout
+    log_path = Path('/var/tmp/fic-slow-init.log')
+    while time.time() < deadline:
+        log_text = log_path.read_text() if log_path.exists() else None
+        completion = injection_completion(log_text, {})
+        if completion.get('completed'):
+            return completion
+        time.sleep(2)
+    return injection_completion(
+        log_path.read_text() if log_path.exists() else None, {})
 
 
 def main():
@@ -448,20 +524,30 @@ def main():
                              socket_present=socket_present, status_probe=status_probe,
                              injection_log=injection_log))
         versions = version_fields()
-        socket_mtime = Path(DEVICE_SOCKET).stat().st_mtime if socket_present else None
-        facts = injection_facts(injection_log, socket_mtime or 0)
+        socket_mtime_ns = Path(DEVICE_SOCKET).stat().st_mtime_ns \
+            if socket_present else None
+        facts = injection_facts(injection_log, socket_mtime_ns)
         timeline.append(dict(step='injection-evidence', **facts))
         if reinstalled.returncode == 0:
             # NOT-REPRODUCED is admissible only with a provably activated
-            # injection in the right phase and a successful reinstall.
+            # injection in the right phase, a completed requested delay and
+            # a successful reinstall. Waiting for the completion must not
+            # turn a healthy install into an XFAIL.
             if not facts.get('activated') or not facts.get('after_socket_creation'):
                 inconclusive('reinstall succeeded but the injection was not '
                              'provably active in the startup-reconciliation phase',
                              timeline, dict(injection=facts, expected_versions=versions))
+            completion = wait_for_injection_completion(120)
+            if not completion.get('completed') or not completion.get('duration_ok'):
+                inconclusive('reinstall succeeded but the injected delay was not '
+                             'provably completed with the requested duration',
+                             timeline, dict(injection=facts,
+                                            injection_completion=completion))
             diagnose_failure()
             write_result(dict(verdict='NOT-REPRODUCED',
                               reason='reinstall succeeded despite a provably active '
-                                     '>30 s initialization; see timeline and logs',
+                                     'and completed >30 s initialization; see timeline '
+                                     'and logs',
                               expected_versions=versions), timeline, complete=True)
             return
         # Case 1: the daemon itself died -> different defect class.
@@ -572,7 +658,10 @@ def main():
                                               pid_after_recovery=still_active['main_pid']),
                           expected_versions=versions), timeline, complete=True)
         print('PASS: slow-init reinstall probe completed with a verdict', flush=True)
-    except BaseException as probe_error:
+    except Exception as probe_error:
+        # SystemExit (INCONCLUSIVE/NOT-REPRODUCED verdicts) passes through
+        # unchanged: result.json keeps its original specific reason and the
+        # exit code stays non-zero for INCONCLUSIVE.
         diagnose_failure()
         write_result(dict(verdict='INCONCLUSIVE',
                           reason='unexpected probe exception: '
