@@ -499,10 +499,14 @@ def main():
         device_db_backup = device_db.with_name('devices.db.probe-backup')
         device_db.rename(device_db_backup)
         device_db.write_text('not a sqlite database\n')
-        run(['systemctl', 'start', 'fic-device.service'], success=False)
+        started_broken = run(['systemctl', 'start', 'fic-device.service'],
+                             success=False)
         time.sleep(2)
         broken_state = service_state('fic-device.service')
         broken_active = broken_state['active']
+        # Restore the original database and normal service state BEFORE any
+        # early verdict: the test environment must never remain with a
+        # corrupted device DB.
         device_db.write_bytes(device_db_backup.read_bytes())
         device_db_backup.unlink()
         run(['systemctl', 'stop', 'fic-device.service'], success=False)
@@ -510,8 +514,19 @@ def main():
         run(['systemctl', 'start', 'fic-device.service'])
         run(['/opt/fic/bin/fic-dick', 'wait-daemon', '5'])
         timeline.append(dict(step='negative-readiness',
+                             start_exit_code=started_broken.returncode,
+                             start_output=started_broken.stdout[-600:],
                              broken_active_state=broken_active,
                              corrupted_db_rejected=broken_active != 'active'))
+        # Type=notify contract: a mandatory initialization failure must fail
+        # the systemd start job itself (non-zero exit code), proving READY=1
+        # was never published for a broken database.
+        if started_broken.returncode == 0:
+            inconclusive('systemd reported a successful start of '
+                         'fic-device.service despite the corrupted device '
+                         'database', timeline,
+                         dict(start_exit_code=started_broken.returncode,
+                              device_service=broken_state))
         if broken_active == 'active':
             inconclusive('device service became active with a corrupted device '
                          'database: READY=1 was published despite mandatory '
