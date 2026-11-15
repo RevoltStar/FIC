@@ -48,7 +48,9 @@ fail/retry and a compatible status still correctly admits policy synchronization
 After the budget expires, the existing nonfatal startup model is preserved:
 independent policies and FIREWALL reconciliation still run. The existing planner's
 own-executor callback returns Failed for enabled device-dependent DC policies,
-without calling their IPC writes. Disabled guards, dependency processing, Required
+with `ExecutionInfrastructureFailure` and `ownApplyAttempted=false`, without
+calling their IPC writes. Their existing violation severity still applies through
+PolicyIncidentReporter. Disabled guards, dependency processing, Required
 failures, caching, the real PolicyApplySummary and PolicyIncidentReporter remain
 in the same execution engine. The local detector-severity setting is independent
 and still applies. No ownership, config statuses or rollback contracts change.

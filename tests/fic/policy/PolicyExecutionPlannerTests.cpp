@@ -1332,17 +1332,25 @@ void testBatchOwnExecutorPropagation(const std::filesystem::path& root) {
         [&](const PolicyRef& identity,Policy&)->std::optional<PolicyApplyResult> {
             if(identity.moduleName!="DC")return std::nullopt;
             ++callbacks;
-            return PolicyApplyResult{identity.moduleName,identity.submoduleName,identity.policyName,
+            PolicyApplyResult blocked{identity.moduleName,identity.submoduleName,identity.policyName,
                 PolicyApplyStatus::Failed,"startup resource unavailable"};
+            blocked.failureOrigin=PolicyFailureOrigin::ExecutionInfrastructureFailure;
+            blocked.ownApplyAttempted=false;
+            return blocked;
         });
     require(callbacks==1 && category.calls==0 && disabled.calls==0 && excluded.calls==0,
             "batch own-executor failed to preserve disabled/excluded guards or executed refused policy");
     require(independent.calls==1 && dependent.calls==0,
             "batch own-executor suppressed independent work or bypassed Required dependency");
     require(result(summary,ref("category","DC")).status==PolicyApplyStatus::Failed &&
+            result(summary,ref("category","DC")).failureOrigin==PolicyFailureOrigin::ExecutionInfrastructureFailure &&
+            !result(summary,ref("category","DC")).ownApplyAttempted &&
+            result(summary,ref("category","DC")).message=="startup resource unavailable" &&
             result(summary,ref("disabled","DC")).status==PolicyApplyStatus::Disabled &&
             result(summary,ref("dependent")).failureOrigin==PolicyFailureOrigin::RequiredDependencyBlocked,
             "batch own-executor changed summary/dependency outcomes");
+    require(result(summary,ref("category","DC")).activatesIncident(),
+            "infrastructure failure must not suppress policy incident activation");
 }
 
 int main() {

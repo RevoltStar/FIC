@@ -604,8 +604,11 @@ bool run_daemon_apply_all_pass(
         startupAdmission = [&](const PolicyRef& ref, Policy&) -> std::optional<PolicyApplyResult> {
             if (ref.moduleName != "DC" || ref.policyName == "permanent_device_missing_severity")
                 return std::nullopt;
-            return PolicyApplyResult{ref.moduleName, ref.submoduleName, ref.policyName,
+            PolicyApplyResult result{ref.moduleName, ref.submoduleName, ref.policyName,
                 PolicyApplyStatus::Failed, startupDevice->diagnostic};
+            result.failureOrigin = PolicyFailureOrigin::ExecutionInfrastructureFailure;
+            result.ownApplyAttempted = false;
+            return result;
         };
     }
     const PolicyApplySummary summary = applyAllPoliciesExceptModule(

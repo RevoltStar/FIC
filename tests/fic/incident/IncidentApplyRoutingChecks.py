@@ -14,3 +14,28 @@ for command in ("apply_all", "apply_module", "apply_policy"):
 start = main.index('bool run_daemon_apply_all_pass(')
 end = main.index('return ok;', start)
 assert 'PolicyIncidentReporter(incidentController()).report(' in main[start:end]
+
+# Guard the actual production callback, not a duplicate fixture implementation.
+# The planner test separately checks forwarding, disabled/Required guards and
+# independent application. Pin this small callback so a missing classification
+# or an accidental backend call cannot pass merely because the fixture is correct.
+startup_pass = main[start:end]
+callback = re.search(
+    r'if \(startupDevice && !startupDevice->ready\(\)\) \{\s*'
+    r'startupAdmission = \[&\]\(const PolicyRef& ref, Policy&\) -> std::optional<PolicyApplyResult> \{'
+    r'(?P<body>.*?)\n\s*\};', startup_pass, re.S)
+assert callback, 'missing production startup device admission callback'
+expected = '''
+    if (ref.moduleName != "DC" || ref.policyName == "permanent_device_missing_severity")
+        return std::nullopt;
+    PolicyApplyResult result{ref.moduleName, ref.submoduleName, ref.policyName,
+        PolicyApplyStatus::Failed, startupDevice->diagnostic};
+    result.failureOrigin = PolicyFailureOrigin::ExecutionInfrastructureFailure;
+    result.ownApplyAttempted = false;
+    return result;
+'''
+assert re.sub(r'\s+', '', callback['body']) == re.sub(r'\s+', '', expected), \
+    'startup-blocked DC must be an infrastructure failure without own apply'
+assert re.search(
+    r'applyAllPoliciesExceptModule\(\s*policyRegistry, "FIREWALL", std::move\(startupAdmission\)\)',
+    startup_pass), 'startup admission callback must reach the production planner'
