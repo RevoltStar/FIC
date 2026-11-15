@@ -55,5 +55,7 @@ public:
     static ActivationResult activate(const ActivationRequest& request);
 };
 const char* activationStatusName(ActivationStatus status);
+// Preserve the primary diagnostic while exposing every cleanup failure to callers.
+std::string activationDiagnostic(const ActivationResult& result);
 
 } // namespace fic::service

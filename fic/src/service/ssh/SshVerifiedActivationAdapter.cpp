@@ -510,6 +510,12 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
         result.status=result.activationAttempted?SshActivationStatus::ActivationFailed:SshActivationStatus::Refused;
         result.diagnostic = "Unknown: SSH proof unavailable";
     }
+    if (result.activation.status == ActivationStatus::CleanupFailed) {
+        const auto additional = result.diagnostic;
+        result.diagnostic = activationDiagnostic(result.activation);
+        if (!additional.empty() && additional != result.activation.diagnostic)
+            result.diagnostic += "; SSH diagnostic=" + additional;
+    }
     if(!result.success()) runtimeReceipt={};
     return result;
 }
@@ -809,7 +815,7 @@ SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePl
         else
 #endif
         result.snapshot=d::validateSnapshotWithProof(snapshot,proof).snapshot;
-        if(!result.snapshot.success()){result.diagnostic=result.snapshot.diagnostic;return result;}
+        if(!result.snapshot.success()){result.diagnostic=activationDiagnostic(result.snapshot);return result;}
         if(detail::persistentProof(observed,[&]{return capture(request.reference,false,true);},
             [&](const Capture& current){validateCaptured(request,current);})!=ProofState::Proven)
             throw d::Failure(ActivationStatus::InterferenceDetected,"baseline persistent inputs changed during planned validation");
@@ -839,7 +845,11 @@ SshVerifiedActivationResult SshVerifiedActivationAdapter::releaseConfiguration(
         try {
             if(!admission.unitReferences)unsupported("release unit reference lifetime absent");
             d::verifySshUnitReferences(*admission.unitReferences,std::chrono::steady_clock::now()+std::chrono::seconds(5));
-        } catch(const std::exception& error) {result.status=SshActivationStatus::ActivationFailed;result.diagnostic=error.what();}
+        } catch(const std::exception& error) {
+            result.status=SshActivationStatus::ActivationFailed;result.diagnostic=error.what();
+            if (result.activation.status == ActivationStatus::CleanupFailed)
+                result.diagnostic += "; " + activationDiagnostic(result.activation);
+        }
         return result;
     }
     SshVerifiedActivationResult result;

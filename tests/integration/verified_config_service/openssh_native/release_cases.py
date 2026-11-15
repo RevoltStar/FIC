@@ -104,6 +104,8 @@ try:
             if fault!='main-cas':
                 assert owner(row)['status']=='prepared' and rows[2]['main_unchanged'] and rows[2]['journal_unchanged']
             if fault=='release-cleanup':
+                assert 'primaryStatus=Success status=CleanupFailed' in row['release_message'],row
+                assert 'stage=umount2' in row['release_message'] and 'errno=16 (' in row['release_message'],row
                 assert owner(row)['undo']['transition']['runtime_facts']['readiness']=='true';h.drive('cleanup',request([]))
         for fault in ('disable-save','registry-rebuild'):
             reset();rows=case('interrupted-disable-resume-'+fault,[dict(policy='ssh_root_login',value='no'),release(fault=fault),release(keep_policy_config=True)],[True,False,True])

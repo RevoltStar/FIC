@@ -54,6 +54,22 @@ SHA-256 — 64 lowercase hex-символа. `FileManifest` — упорядоч
 Например, успешный restart с неудачным unmount возвращает `CleanupFailed`,
 `primaryStatus=Success`, `readinessConfirmed=true`, а не успешную операцию.
 
+Ошибки `cleanupErrors` содержат `target`, `stage` и причину. Этапы:
+`open_parent`, `open_target`, `verify_identity`, `umount2`, `verify_unmounted`,
+`remove_workspace`. Ошибка syscall включает сохранённый непосредственно после
+отказа числовой `errno` и его текст; логическое несовпадение identity не получает
+выдуманный errno. Все ошибки сохраняются в прежнем порядке reverse cleanup.
+
+`activationDiagnostic(result)` формирует сообщение с `primaryStatus`, итоговым
+`status`, исходным `primaryDiagnostic` и всеми `cleanupErrors`; сами поля исходного
+результата не изменяются. Для успешной операции возвращается прежняя диагностика.
+SSH использует это сообщение при activation, snapshot validation и release,
+включая дополнительные ошибки после cleanup. Обычный policy apply передаёт его
+в существующий ERROR Logger и stdout/journald, без отдельного logging path.
+Это улучшение диагностики: residual mounts, обычный `umount2(..., 0)`, ownership,
+propagation, статусы и правила сохранения Prepared не меняются. Причина конкретного
+инцидента на рабочем компьютере этим изменением не установлена и не исправляется.
+
 ## Поддерживаемая конфигурация и preflight
 
 Первая версия намеренно ограничена следующими условиями:

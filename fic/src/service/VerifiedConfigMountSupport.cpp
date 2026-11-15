@@ -31,6 +31,9 @@ thread_local XattrTestHooks xattrTests;
 [[noreturn]] void fail(ActivationStatus s, const std::string& text) {
     throw Failure(s, text + ": " + std::strerror(errno));
 }
+[[noreturn]] void fail(ActivationStatus s, const std::string& text, int error) {
+    throw Failure(s, text + " errno=" + std::to_string(error) + " (" + std::strerror(error) + ")");
+}
 std::string decode(const std::string& text) {
     std::string out;
     for (std::size_t i = 0; i < text.size(); ++i) {
@@ -224,7 +227,10 @@ std::vector<MountRecord> parseMountInfo(const std::string& text) {
 }
 std::vector<MountRecord> readMountInfo() {
     std::ifstream input("/proc/self/mountinfo");
-    if (!input) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot read mountinfo");
+    if (!input) {
+        const int error = errno;
+        fail(ActivationStatus::UnsupportedConfiguration, "cannot read mountinfo", error);
+    }
     return parseMountInfo({std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()});
 }
 bool supportsPublicationPropagation(const MountRecord& mount, PublicationPropagationPolicy policy) {
@@ -291,9 +297,16 @@ void validateRequest(const ActivationRequest& r) {
 }
 Identity identity(int fd) {
     struct stat st{}; struct statx sx{};
-    if (::fstat(fd, &st) || ::syscall(SYS_statx, fd, "", AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW,
-                                    STATX_MNT_ID, &sx) || !(sx.stx_mask & STATX_MNT_ID))
-        fail(ActivationStatus::UnsupportedConfiguration, "statx mount identity unavailable");
+    if (::fstat(fd, &st)) {
+        const int error = errno;
+        fail(ActivationStatus::UnsupportedConfiguration, "fstat mount identity unavailable", error);
+    }
+    if (::syscall(SYS_statx, fd, "", AT_EMPTY_PATH|AT_SYMLINK_NOFOLLOW, STATX_MNT_ID, &sx)) {
+        const int error = errno;
+        fail(ActivationStatus::UnsupportedConfiguration, "statx mount identity unavailable", error);
+    }
+    if (!(sx.stx_mask & STATX_MNT_ID))
+        throw Failure(ActivationStatus::UnsupportedConfiguration, "statx mount identity unavailable");
     return {sx.stx_mnt_id, std::uint64_t(st.st_ino), st.st_dev, st.st_mode, st.st_uid, st.st_gid};
 }
 bool sameObject(const Identity& a, const Identity& b) {
@@ -301,6 +314,10 @@ bool sameObject(const Identity& a, const Identity& b) {
 }
 Fd openAbsolute(const std::filesystem::path& path, int flags, bool trustedParents) {
     Fd current(::open("/", O_PATH|O_DIRECTORY|O_CLOEXEC));
+    if (!current) {
+        const int error = errno;
+        fail(ActivationStatus::UnsupportedConfiguration, "open controlled-path root", error);
+    }
     const auto rel = path.relative_path();
     for (auto it = rel.begin(); it != rel.end(); ++it) {
         const auto st = identity(current.get());
@@ -308,15 +325,21 @@ Fd openAbsolute(const std::filesystem::path& path, int flags, bool trustedParent
             throw Failure(ActivationStatus::UnsupportedConfiguration, "untrusted controlled-path parent");
         auto next = it; ++next;
         Fd child(::openat(current.get(), it->c_str(), (next == rel.end() ? flags : O_PATH|O_DIRECTORY)|O_NOFOLLOW|O_CLOEXEC|O_NONBLOCK));
-        if (!child) fail(errno == ENOENT ? ActivationStatus::ChecksumMismatch : ActivationStatus::UnsupportedConfiguration,
-                         "open controlled path " + path.string());
+        if (!child) {
+            const int error = errno;
+            fail(error == ENOENT ? ActivationStatus::ChecksumMismatch : ActivationStatus::UnsupportedConfiguration,
+                 "open controlled path " + path.string(), error);
+        }
         current = std::move(child);
     }
     return current;
 }
 std::string namespaceIdentity(pid_t pid) {
     struct stat st{}; const auto p = "/proc/" + std::to_string(pid) + "/ns/mnt";
-    if (::stat(p.c_str(), &st)) fail(ActivationStatus::UnsupportedConfiguration, "read mount namespace");
+    if (::stat(p.c_str(), &st)) {
+        const int error = errno;
+        fail(ActivationStatus::UnsupportedConfiguration, "read mount namespace", error);
+    }
     return std::to_string(st.st_dev) + ":" + std::to_string(st.st_ino);
 }
 Tree readTree(int root, ControlledPathKind kind, std::uint64_t& budget) {

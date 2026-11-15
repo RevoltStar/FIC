@@ -1,50 +1,53 @@
 # Current workspace
 
 ## Current base / task
-* Branch `main`; base `ebce360f76dde65df3dbd44048dc6b9b40979ef4`.
-* Follow-up: classify startup-gate-blocked DC as ExecutionInfrastructureFailure.
-  Requested commit: `fix(startup): classify blocked device policies as infrastructure failures`.
-  No push.
+* Branch `main`; base `bcf13593ce883123fea183b580703af12f75e4b4`.
+* Cleanup diagnostics complete. Requested single commit:
+  `fix(service): expose verified activation cleanup failure details`. No push.
 
 ## Accepted architecture / invariants
-* A2 remains unchanged: parallel notify units; compatible root device status gate
-  after early ACTIVE SSH/crash IR, before startup apply; 60 s deadline, nonfatal
-  failure with independent protection, real final DC obligation on success.
-* Blocked enabled DC has Failed / ExecutionInfrastructureFailure /
-  ownApplyAttempted=false and the gate diagnostic. Existing violation severity
-  still activates; PolicyIncidentReporter and escalation are unchanged.
-* No changes to wait helper, units, IPC, PreLogin, lifecycle, ownership or rollback.
+* Diagnostic-only change. Existing reverse cleanup, namespace/identity/source/type
+  checks, ordinary umount2(..., 0), propagation, residual handling, success predicate,
+  SSH proof/status and Prepared/release contracts remain.
+* No retry, lazy/forced unmount, adoption, journal/schema change, recovery or attempt
+  to repair/inspect the working computer's residual mounts. Incident cause unknown.
+* cleanupErrors include target/stage/reason and immediately saved errno/strerror
+  for syscall failures; logical mismatches have no fabricated errno.
+* activationDiagnostic preserves primary result/diagnostic and all cleanup errors.
+  SSH activation/snapshot/release forwards it through existing Ssh/ERROR Logger;
+  later diagnostic failures cannot overwrite already-known cleanup details.
 
 ## Completed / changed areas
-* `fic/src/main.cpp`: production startup callback explicitly sets origin and
-  ownApplyAttempted; message and status unchanged.
-* `PolicyExecutionPlannerTests.cpp`: forwarding preserves classification/message,
-  no backend call, independent work, Required/Disabled guards and incident activation.
-* `IncidentApplyRoutingChecks.py`: checks actual production callback body and wiring
-  to planner, complementing dynamic tests instead of trusting a duplicate lambda.
-* `docs/startup-readiness.md`: documents the explicit classification.
+* VerifiedConfigServiceActivator h/cpp; mount-support diagnostics; SSH adapter.
+* Generic unit/native regressions (EBUSY, foreign identity, multiple faults,
+  primary+cleanup error, successful cleanup); existing SSH native suites strengthened.
+* Focused `openssh_native/cleanup_diagnostics.py` exercises actual policy→Logger→
+  journald, success, verified release and read-only snapshot cleanup failure.
+* Authoritative contract/results: `docs/verified-config-service-activator.md`,
+  `docs/verified-config-cleanup-validation.md`; native README reproduction.
 
 ## Validation
-* Production callback static check PASS. Temporary-copy mutation checks reject
-  missing/wrong origin, attempted=true, wrong status and an added backend call;
-  unchanged production source PASS. No mutations applied to repository source.
-* Clean local configure and build PASS:
-  `cmake -S . -B build-startup-classification -DFIC_TARGET_PLATFORM=ubuntu-26.04`
-  (real extracted development headers/system libpam; flags in CMakeCache).
-  `cmake --build build-startup-classification --target fic policy_execution_planner_tests device_startup_readiness_tests policy_incident_reporter_tests -j4`.
-* Targeted CTest: 3 PASS / 1 SKIP / 0 FAIL. Planner, reporter and production routing
-  static checks PASS; device wait test SKIP (UID1000/root fixtures unavailable).
-* New production regression also rejects the original base callback, not just
-  synthetic mutations. Python syntax and `git diff --check` PASS.
-* Logs: `/tmp/fic-startup-classification/{configure,build,ctest}.log`.
+* Local affected production `fic` and unit target build PASS (`build-startup-classification`).
+  No PAM stubs; real local libraries. Generic and SSH unit CTest 2/2 PASS with
+  read-only netlink access; initial sandbox-address-enumeration failure not a regression.
+* Debian12 real systemd generic native suite: 208 PASS / 0 SKIP, including real
+  held-descriptor EBUSY, foreign mount preserved, all error targets and primary status.
+* Focused SSH native: 4/4 PASS. Exact captured FIC ERROR also exists in journald;
+  Prepared retained; successful apply has no cleanup errors; active release and
+  read-only snapshot errors fully exposed. OpenSSH 1:9.2p1-2+deb12u10, systemd 252.39.
+* Existing release-plan suite plus snapshot-cleanup case: 9/9 PASS, active/offline
+  and syntax guards preserved. SSH unit suite also PASS in native build container.
+* Runtime isolation inspected: private namespaces/cgroups, network none, no host
+  binds/ports/volumes; sysfs/proc-sys RO before PID1. Docker now available via
+  `/mnt/wsl/docker-desktop/cli-tools/usr/bin/docker`; no user resources cleaned.
+* Python/shell syntax and git diff --check PASS. Logs `/tmp/fic-cleanup-diagnostics/`;
+  exact reports in `build-cleanup-native/evidence/`, paths documented in validation.
+* Initial fixture-only snapshot failures fixed without relaxing production admission:
+  unsupported expectation removed; residual case observes service without re-admission.
 
 ## Remaining / limits
-* Docker is absent. Local clean Ubuntu26 build uses real PAM/udev headers extracted
-  from downloaded development packages in `/tmp/fic-startup-classification/deps`
-  and real system libpam; no stubs or host package installation.
-* Device root-peer fixtures need UID 0 and an unmapped different UID. Current user
-  is UID1000; sudo needs interactive authentication. No root fixture PASS claim.
-* Full package native matrix intentionally not repeated; A2 sequencing/protocol
-  did not change. Prior A2 results remain historical in startup validation docs.
-* Known unrelated root full-CTest failures and runtime mutual-RPC/audit limitations
-  from A2 remain outside scope. No broader cleanup is authorized by this follow-up.
+* No unfinished implementation. No new full platform/package/PAM matrix or full
+  project CTest. No real-machine SSH apply or original incident-mount investigation.
+* Underlying shared-cleanup cause remains unknown and is intentionally not fixed.
+* Existing mount-ID check→umount residual race and local-only shared cleanup boundary
+  remain; no propagation/namespace/topology or global cleanup guarantee added.

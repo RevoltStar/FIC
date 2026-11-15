@@ -9,6 +9,7 @@
 #include "daemon/PolicyDisableFlow.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
 #include <fic/core/config/ModuleConfigFileHandler.h>
+#include <fic/core/logging/Logger.h>
 #include "service/ssh/SshVerifiedActivationTestAccess.h"
 #include "service/ssh/SshListenerProof.h"
 // Test-only real OpenSSH adapter. Never installed or linked into FIC.
@@ -78,8 +79,9 @@ template<class T> struct ModulePolicy : T {
 };
 int main(int argc, char** argv) {
     J output;
+    bool guarded = false;
     try {
-        guard(); check(argc >= 3, "action and request required");
+        guard(); guarded = true; check(argc >= 3, "action and request required");
         std::string error;
         auto paths = fic::core::FicProductPaths::production();
         paths.configDir = work + "/config"; paths.logDir = work + "/logs";
@@ -287,6 +289,7 @@ int main(int argc, char** argv) {
                 const auto mainBefore=text(mainPath);
                 const auto journalBefore=text(work+"/module-state/journal.json");
                 auto* const operationJournal=journalOwner.tryGet(error);
+                Logger::ScopedCapture logCapture;
                 bool applied;
                 bool staleApplied=false,staleUnchanged=true;
                 std::string releaseMessage;
@@ -312,6 +315,10 @@ int main(int argc, char** argv) {
                         staleApplied=policy->apply();staleUnchanged=main==text(mainPath)&&journal==text(work+"/module-state/journal.json")&&invocation==observe().at("InvocationID");
                     }
                 } else applied=policy->apply();
+                const auto captured = logCapture.finish();
+                J logs=J::array();
+                for(const auto& record:captured.records)
+                    logs.push_back({{"level",Logger::level_to_string(record.level)},{"message",record.message}});
                 const bool journalUnusableAtReturn=!operationJournal||!operationJournal->usable();
                 AtomicFileWriter::setDirectoryFsyncHookForTests({});
                 AtomicFileWriter::setPreInstallHookForTests({});
@@ -321,7 +328,7 @@ int main(int argc, char** argv) {
                 auto* journal=journalOwner.tryGet(error);check(journal||journalFault,error);
                 J records=J::array();
                 if(journal) for(const auto& record:journal->records())records.push_back({{"policy",record.policy.policyName},{"status",int(record.status)}});
-                output["module"].push_back({{"policy",id},{"applied",applied},{"release_message",releaseMessage},
+                output["module"].push_back({{"policy",id},{"applied",applied},{"release_message",releaseMessage},{"logs",logs},
                     {"policy_config",text(paths.configDir.string()+"/NET.conf")},{"stale_applied",staleApplied},{"stale_unchanged",staleUnchanged},
                     {"duration_ms",std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-operationStarted).count()},
                     {"main_before",mainBefore},{"main_after",text(mainPath)},{"fragments_before",fragmentsBefore},{"fragments_after",fragments()},
@@ -352,10 +359,21 @@ int main(int argc, char** argv) {
             auto reference=Adapter::captureReference(input.at("policies").get<std::map<std::string,std::string>>(),
                 fic::core::ContentDigest::sha256Hex(before),Intent::ConfigurationRelease);
             const auto admitted=Adapter::releaseAdmission(reference);
+            const auto beforeService=d::SystemdActivation(serviceUnit,std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,activationProfile).current().properties;
+            fic::service::ssh::detail::AdapterTestHooks cleanupHooks;
+            cleanupHooks.activation.fault=[](const std::string& action,std::size_t){return action=="umount"?EBUSY:0;};
+            if(input.value("cleanup_fault",false))fic::service::ssh::detail::setPolicyAdapterHooksForTests(&cleanupHooks);
             const auto result=Adapter::validateReleasePlan(reference,admitted,input.at("planned_main").get<std::string>());
-            const auto after=Adapter::releaseAdmission(reference);
+            fic::service::ssh::detail::setPolicyAdapterHooksForTests(nullptr);
+            // A residual published snapshot deliberately blocks new input admission.
+            // Observe the service directly instead of hiding the failed cleanup
+            // behind that expected secondary refusal in this test driver.
+            const auto afterService=d::SystemdActivation(serviceUnit,std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,activationProfile).current().properties;
+            bool serviceUnchanged=beforeService==afterService;
+            if(result.snapshot.status!=ActivationStatus::CleanupFailed)
+                serviceUnchanged=serviceUnchanged && admitted.service==Adapter::releaseAdmission(reference).service;
             output={{"validated",result.success()},{"offline",admitted.offline},
-                {"main_unchanged",text(mainPath)==before},{"service_unchanged",admitted.service==after.service},
+                {"main_unchanged",text(mainPath)==before},{"service_unchanged",serviceUnchanged},
                 {"readinessConfirmed",result.snapshot.readinessConfirmed},
                 {"status",activationStatusName(result.snapshot.status)},{"diagnostic",result.diagnostic}};
         } else if(action=="capture-reference") {
@@ -623,6 +641,7 @@ int main(int argc, char** argv) {
         }
     } catch (const d::Failure& e) { output["status"] = activationStatusName(e.status); output["diagnostic"] = e.what(); }
       catch (const std::exception& e) { output["harness_error"] = e.what(); }
+    if (guarded) write(work + "/last-output.json", output.dump()); // Also readable with stdout→journald.
     std::cout << output.dump() << std::endl;
     return output.contains("harness_error") ? 1 : 0;
 }

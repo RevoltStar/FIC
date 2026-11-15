@@ -35,6 +35,11 @@ struct Hooks {
 [[noreturn]] void osFailure(ActivationStatus status, const std::string& message) {
     throw Failure(status, message + ": " + std::strerror(errno));
 }
+[[noreturn]] void cleanupOsFailure(const char* message) {
+    const int error = errno;
+    throw Failure(ActivationStatus::CleanupFailed,
+        std::string(message) + " errno=" + std::to_string(error) + " (" + std::strerror(error) + ")");
+}
 Fd ensureDirectory(const std::filesystem::path& path, mode_t mode) {
     if (path == path.root_path()) return openAbsolute(path, O_RDONLY|O_DIRECTORY);
     auto parent = ensureDirectory(path.parent_path(), 0750);
@@ -109,33 +114,40 @@ struct Operation {
         if (cleaned) return;
         cleaned = true;
         for (auto it = mounts.rbegin(); it != mounts.rend(); ++it) if (it->mounted) {
+            const char* stage = "verify_identity";
             try {
                 if (namespaceIdentity(::getpid()) != ns) throw std::runtime_error("cleanup namespace changed");
+                stage = "open_parent";
                 auto parent = openAbsolute(std::filesystem::path(it->path).parent_path(), O_PATH|O_DIRECTORY);
                 const auto leaf = std::filesystem::path(it->path).filename().string();
                 const auto pinned = fdPath(parent.get()) + "/" + leaf;
                 {
+                    stage = "open_target";
                     Fd target(::openat(parent.get(), leaf.c_str(), O_PATH|O_NOFOLLOW|O_CLOEXEC));
-                    if (!target) throw std::runtime_error("cleanup target disappeared");
+                    if (!target) cleanupOsFailure("open cleanup target");
+                    stage = "verify_identity";
                     const auto now = identity(target.get());
                     bool listed = false;
                     for (const auto& m : readMountInfo()) if (m.id == now.mount && m.target == it->path && m.source == source && m.type == "tmpfs") listed = true;
                     if (!it->expected.mount || now.mount != it->expected.mount || !sameObject(now, it->expected) || !listed)
                         throw std::runtime_error("cleanup refuses foreign/replaced mount");
                 } // Close mount reference BEFORE ordinary umount; no lazy detach.
+                stage = "umount2";
                 const int injected = hooks.fault("umount", std::distance(mounts.rbegin(), it));
                 if (injected) errno = injected;
-                if (injected || ::umount2(pinned.c_str(), 0)) osFailure(ActivationStatus::CleanupFailed, "ordinary umount");
+                if (injected || ::umount2(pinned.c_str(), 0)) cleanupOsFailure("ordinary umount");
                 it->mounted = false;
+                stage = "verify_unmounted";
                 for (const auto& m : readMountInfo()) if (m.id == it->expected.mount)
                     throw std::runtime_error("owned mount still listed after umount");
             } catch (const std::exception& e) {
-                result.cleanupErrors.push_back(it->path + ": " + e.what());
+                result.cleanupErrors.push_back("cleanup target=" + it->path + " stage=" + stage + " reason=" + e.what());
                 result.residualPaths.push_back(it->path);
             }
         }
         if (!name.empty() && result.cleanupErrors.empty() && ::unlinkat(base.get(), name.c_str(), AT_REMOVEDIR)) {
-            result.cleanupErrors.push_back(directory + ": cannot remove operation directory: " + std::strerror(errno));
+            const int error = errno;
+            result.cleanupErrors.push_back("cleanup target=" + directory + " stage=remove_workspace reason=cannot remove operation directory errno=" + std::to_string(error) + " (" + std::strerror(error) + ")");
             result.residualPaths.push_back(directory);
         }
         if (!result.cleanupErrors.empty()) result.status = ActivationStatus::CleanupFailed;
@@ -416,5 +428,13 @@ const char* activationStatusName(ActivationStatus s) {
 #undef FIC_STATUS
     }
     return "Unknown";
+}
+std::string activationDiagnostic(const ActivationResult& result) {
+    if (result.status != ActivationStatus::CleanupFailed) return result.diagnostic;
+    std::string text = std::string("Verified activation failed: primaryStatus=") +
+        activationStatusName(result.primaryStatus) + " status=" + activationStatusName(result.status);
+    if (!result.diagnostic.empty()) text += "; primaryDiagnostic=" + result.diagnostic;
+    for (const auto& error : result.cleanupErrors) text += "; " + error;
+    return text;
 }
 } // namespace fic::service

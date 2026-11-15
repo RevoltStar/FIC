@@ -52,7 +52,10 @@ docker exec "$name" timeout 60 sh -ec '
 '
 docker cp "$build/openssh_native_driver" "$name:/usr/local/bin/fic-openssh-driver"
 docker cp "$repo/tests/integration/verified_config_service/openssh_native/harness.py" "$name:/usr/local/bin/fic-openssh-harness.py"
-if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == shared ]]; then
+if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == cleanup-diagnostics ]]; then
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/cleanup_diagnostics.py" "$name:/usr/local/bin/fic-cleanup-diagnostics.py"
+ docker exec "$name" python3 /usr/local/bin/fic-cleanup-diagnostics.py "$platform"
+elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == shared ]]; then
  docker cp "$repo/tests/integration/verified_config_service/openssh_native/shared_publication.py" "$name:/usr/local/bin/fic-shared-publication.py"
  docker exec "$name" python3 /usr/local/bin/fic-shared-publication.py "$platform"
 elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == environment-cli ]]; then

@@ -329,6 +329,9 @@ try:
             if fault=='cleanup':
                 assert owner['undo']['transition']['runtime_facts']['status']=='CleanupFailed'
                 assert owner['undo']['transition']['runtime_facts']['readiness']=='true'
+                errors=[r['message'] for r in failed['logs'] if r['level']=='ERROR' and 'status=CleanupFailed' in r['message']]
+                assert len(errors)==1,(fault,failed)
+                assert 'primaryStatus=Success' in errors[0] and 'stage=umount2' in errors[0] and 'errno=16 (' in errors[0],failed
                 h.drive('cleanup',request([])) # explicit fixture administrator, not recovery
         for fault in ('before-save-crash','after-save-crash','runtime-crash'):
             reset();case('crash-setup-'+fault,selected())

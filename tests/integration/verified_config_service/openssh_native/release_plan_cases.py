@@ -21,15 +21,21 @@ h.MAIN.write_text(base);h.MAIN.chmod(0o600 if alt else 0o644)
 h.ENV.write_text('EXTRAOPTIONS=\n' if alt else 'SSHD_OPTS=\n');h.ENV.chmod(0o644)
 ctl('enable','ssh.socket' if ubuntu else unit);ctl('daemon-reload');ctl('start','ssh.socket' if ubuntu else unit)
 report={'platform':platform,'cases':[]}
-def case(name,planned,policies,expected=True):
+def case(name,planned,policies,expected=True,cleanup_fault=False):
     req=h.request();req.update(planned_main=planned,policies=policies)
+    req['cleanup_fault']=cleanup_fault
     data=h.drive('plan-release',req)
     report['cases'].append({'name':name,'result':data});(h.OUT/'release-plan-results.json').write_text(json.dumps(report,indent=2))
     assert data['validated']==expected,(name,data)
     assert data['main_unchanged'] and data['service_unchanged'] and not data['readinessConfirmed'],(name,data)
+    if cleanup_fault:
+        assert data['status']=='CleanupFailed' and 'primaryStatus=Success status=CleanupFailed' in data['diagnostic'],data
+        assert 'stage=umount2' in data['diagnostic'] and 'errno=16 (' in data['diagnostic'],data
+        h.drive('cleanup',{'paths':[]})
 relaxed=base.replace('PermitRootLogin no','PermitRootLogin yes')
 case('last-selection-released',relaxed,{})
 case('remaining-selection-preserved',relaxed,{'ssh_max_auth_tries':'3'})
+case('snapshot-cleanup-diagnostic',base,{},False,True)
 case('remaining-selection-violation',relaxed.replace('MaxAuthTries 3','MaxAuthTries 4'),{'ssh_max_auth_tries':'3'},False)
 case('invalid-resulting-syntax',relaxed+'FicInvalidDirective yes\n',{},False)
 case('unsupported-resulting-include',relaxed+'Include /opt/foreign.conf\n',{},False)

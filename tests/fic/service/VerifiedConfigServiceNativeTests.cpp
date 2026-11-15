@@ -1062,13 +1062,35 @@ void cleanupCases() {
     };
     auto result = activate(request(), hook);
     require(result.status == ActivationStatus::CleanupFailed && result.primaryStatus == ActivationStatus::Success && !result.cleanupErrors.empty(), "busy cleanup converted to Success");
+    const auto busyError = std::find_if(result.cleanupErrors.begin(), result.cleanupErrors.end(), [&](const auto& error) {
+        return error.find("cleanup target=" + root + "/one.conf stage=umount2") != std::string::npos;
+    });
+    require(busyError != result.cleanupErrors.end() && busyError->find("errno=" + std::to_string(EBUSY)) != std::string::npos &&
+            busyError->find(std::strerror(EBUSY)) != std::string::npos, "real EBUSY target/stage/errno missing");
+    std::cout << activationDiagnostic(result) << std::endl;
     const auto count = leftovers().size(); require(count > 0, "busy mount did not remain");
     require(activate(request()).status == ActivationStatus::ResidualMounts && leftovers().size() == count, "residual mounts adopted or altered");
     pass("real EBUSY cleanup error visible; primary preserved; residual repeat refused"); busy = d::Fd(); manualCleanup(); clean(before);
+    d::TestHooks multiple;
+    multiple.fault = [](const std::string& action, std::size_t) { return action == "umount" ? EBUSY : 0; };
+    result = activate(request({one(), directory()}), multiple);
+    require(result.status == ActivationStatus::CleanupFailed && result.primaryStatus == ActivationStatus::Success &&
+            result.cleanupErrors.size() >= 3, "multiple cleanup errors not preserved");
+    const auto details = activationDiagnostic(result);
+    for (const auto& path : {root + "/one.conf", root + "/dropins"})
+        require(details.find("cleanup target=" + path + " stage=umount2") != std::string::npos,
+                "multiple-error diagnostic omitted a controlled target");
+    for (const auto& error : result.cleanupErrors)
+        require(details.find(error) != std::string::npos && error.find("stage=umount2") != std::string::npos &&
+                error.find("errno=" + std::to_string(EBUSY)) != std::string::npos, "missing aggregate cleanup detail");
+    manualCleanup(); clean(before); pass("all injected cleanup errors exposed with primary success");
     d::TestHooks both;
     both.fault = [](const std::string& action, std::size_t index) { return action == "bind" && index == 1 ? EIO : action == "umount" ? EBUSY : 0; };
     result = activate(request({one(), directory()}), both);
     require(result.status == ActivationStatus::CleanupFailed && result.primaryStatus == ActivationStatus::MountFailed && !result.cleanupErrors.empty(), "cleanup hid primary mount failure");
+    require(activationDiagnostic(result).find("primaryStatus=MountFailed status=CleanupFailed") != std::string::npos &&
+            activationDiagnostic(result).find(std::string("primaryDiagnostic=publish snapshot bind: ") + std::strerror(EIO)) != std::string::npos,
+            "primary publication error lost behind cleanup failure");
     manualCleanup(); clean(before); pass("primary and cleanup failures both preserved");
     d::TestHooks foreign;
     foreign.checkpoint = [&](d::TestPhase phase, const std::string&) {
@@ -1076,6 +1098,11 @@ void cleanupCases() {
     };
     result = activate(request(), foreign);
     require(result.status == ActivationStatus::CleanupFailed && read(root + "/one.conf") == "foreign\n", "component unmounted foreign overlay");
+    const auto identityError = std::find_if(result.cleanupErrors.begin(), result.cleanupErrors.end(), [&](const auto& error) {
+        return error.find("cleanup target=" + root + "/one.conf stage=verify_identity") != std::string::npos;
+    });
+    require(identityError != result.cleanupErrors.end() && identityError->find("foreign/replaced mount") != std::string::npos &&
+            identityError->find("errno=") == std::string::npos, "identity mismatch missing or carries invented errno");
     require(::umount2((root + "/one.conf").c_str(), 0) == 0, "test admin remove foreign"); manualCleanup(); clean(before); pass("cleanup refuses foreign mount identity");
     const pid_t child = ::fork(); require(child >= 0, "fork crash actor");
     if (!child) {

@@ -333,3 +333,17 @@ The Debian fsync fault case now asserts the failed operation and unusable-at-ret
 state separately from the existing diagnostic tryGet() durable recovery, retaining
 the first exact record; it no longer asserts permanent journal poisoning after
 the injected fault has been removed. Production journal/recovery is unchanged.
+
+### Focused cleanup diagnostics
+
+`FIC_SSH_NATIVE_SCENARIO=cleanup-diagnostics run-native.sh IMAGE debian-12`
+checks a real initial policy apply with cleanup fault, its single ERROR message
+through Logger capture and a transient systemd unit's journal, successful apply
+without cleanup errors, active verified release and read-only planned snapshot
+validation. Use an image that makes `/sys` and `/proc/sys` read-only before PID1;
+the focused fixture asserts this in addition to the existing disposable guards.
+The generic `verified_config_service_native_tests` cleanup cases separately cover
+real EBUSY, foreign identity without invented errno, all injected cleanup errors
+and primary publication failure plus cleanup failure. Administrator fixture
+cleanup happens only after product result assertions, inside the disposable
+container. This gate does not diagnose or repair mounts on the working host.

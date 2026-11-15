@@ -161,5 +161,30 @@ int main() {
     ActivationResult result; result.primaryStatus = ActivationStatus::RestartFailed;
     result.status = ActivationStatus::CleanupFailed; result.cleanupErrors.push_back("umount busy");
     require(!result.success() && result.primaryStatus == ActivationStatus::RestartFailed, "cleanup hid primary failure");
+    result.diagnostic = "restart job failed";
+    result.cleanupErrors = {"cleanup target=/etc/default/ssh stage=umount2 reason=ordinary umount errno=16 (Device or resource busy)",
+                            "cleanup target=/etc/ssh/key stage=verify_identity reason=cleanup refuses foreign/replaced mount"};
+    const auto failure = activationDiagnostic(result);
+    require(failure.find("primaryStatus=RestartFailed status=CleanupFailed") != std::string::npos &&
+            failure.find("primaryDiagnostic=restart job failed") != std::string::npos,
+            "formatted cleanup failure lost primary status/diagnostic");
+    for (const auto& error : result.cleanupErrors)
+        require(failure.find(error) != std::string::npos, "formatted cleanup failure lost an error");
+    require(result.diagnostic == "restart job failed", "formatting overwrote primary diagnostic");
+    result.primaryStatus = ActivationStatus::Success; result.diagnostic = "service ready";
+    require(activationDiagnostic(result).find("primaryStatus=Success status=CleanupFailed") != std::string::npos,
+            "ready message masked cleanup failure");
+    result.status = ActivationStatus::Success; result.cleanupErrors.clear();
+    require(activationDiagnostic(result) == "service ready", "success diagnostic changed");
+    try {
+        errno = EBUSY; // Must not leak into the descriptor syscall failure.
+        (void)detail::identity(-1);
+        require(false, "invalid identity descriptor accepted");
+    } catch (const detail::Failure& error) {
+        const std::string text = error.what();
+        require(text.find("errno=" + std::to_string(EBADF)) != std::string::npos &&
+                text.find(std::strerror(EBADF)) != std::string::npos,
+                "descriptor failure lost numeric errno/strerror");
+    }
     std::cout << "Verified config API/preflight/mountinfo unit contracts PASS\n";
 }

@@ -507,6 +507,10 @@ def main():
             run(['systemctl','enable','ssh.service'])
         adapter_reset(); data = adapter_case('cleanup-EBUSY', action='adapter-busy', restarted=True)
         assert data['status'] == 'CleanupFailed' and data['primaryStatus'] == 'Success'
+        assert 'primaryStatus=Success status=CleanupFailed' in data['adapter_diagnostic'],data
+        for error in data['cleanupErrors']:
+            assert error in data['adapter_diagnostic'],data
+        assert 'stage=umount2' in data['adapter_diagnostic'] and 'errno=16 (' in data['adapter_diagnostic'],data
         drive('cleanup', request())
         adapter_reset(); bad = request(); bad['paths'][0]['sha256'] = '0'*64
         adapter_case('wrong-trusted-reference', req=bad, restarted=False)
