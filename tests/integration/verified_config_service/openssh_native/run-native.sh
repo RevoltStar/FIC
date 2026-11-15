@@ -52,7 +52,10 @@ docker exec "$name" timeout 60 sh -ec '
 '
 docker cp "$build/openssh_native_driver" "$name:/usr/local/bin/fic-openssh-driver"
 docker cp "$repo/tests/integration/verified_config_service/openssh_native/harness.py" "$name:/usr/local/bin/fic-openssh-harness.py"
-if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == environment-cli ]]; then
+if [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == shared ]]; then
+ docker cp "$repo/tests/integration/verified_config_service/openssh_native/shared_publication.py" "$name:/usr/local/bin/fic-shared-publication.py"
+ docker exec "$name" python3 /usr/local/bin/fic-shared-publication.py "$platform"
+elif [[ "${FIC_SSH_NATIVE_SCENARIO:-}" == environment-cli ]]; then
  [[ "$platform" == ubuntu-26.04 && -d "${FIC_SSH_INSTALL_ROOT:-}" ]] || exit 2
  docker cp "$FIC_SSH_INSTALL_ROOT" "$name:/var/tmp/fic-current-install"
  docker exec "$name" sh -ec 'tar -C /var/tmp/fic-current-install -cf - . | tar --keep-directory-symlink --no-same-owner -C / -xf -'

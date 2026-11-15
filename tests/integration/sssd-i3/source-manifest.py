@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[3]
 def manifest():
  paths=set((ROOT/'fic/src/service').glob('VerifiedConfig*.cpp'))|set((ROOT/'fic/src/service').glob('VerifiedConfig*.h'))|set((ROOT/'fic/src/service/sssd').glob('*'))
- paths|={ROOT/'tests/integration'/p for p in ('sssd-i3/Driver.cpp','sssd-i3/CMakeLists.txt','sssd-i3/native.py','sssd-i3/run-native.sh','sssd-i3/source-manifest.py','sssd-research/common.py','sssd-research/r2_auth.py','sssd-research/pam-probe.py')}
+ paths|={ROOT/'tests/integration'/p for p in ('sssd-i3/Driver.cpp','sssd-i3/CMakeLists.txt','sssd-i3/native.py','sssd-i3/shared_boundary.py','sssd-i3/run-native.sh','sssd-i3/source-manifest.py','sssd-research/common.py','sssd-research/r2_auth.py','sssd-research/pam-probe.py')}
  return {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(paths) if p.is_file()}
 if __name__=='__main__':
  current=manifest()

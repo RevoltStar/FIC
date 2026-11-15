@@ -1087,6 +1087,8 @@ void cleanupCases() {
     require(!leftovers().empty() && activate(request()).status == ActivationStatus::ResidualMounts, "SIGKILL mounts not detected");
     manualCleanup(); clean(before); pass("SIGKILL leaves detectable mounts; no automatic adoption/release");
 }
+#include "SharedPublicationCases.h"
+
 int main(int argc, char** argv) {
     try {
         const bool container = fs::exists("/.dockerenv") || fs::exists("/run/.containerenv");
@@ -1125,7 +1127,7 @@ int main(int argc, char** argv) {
                     "unsupported distro SSH adapter attempted activation");
             pass("SSH adapter unadmitted profile/fixture negative before capture/mount/restart");
         }
-        unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); xattrCases(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases();
+        unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); xattrCases(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases(); sharedPublicationCases();
         mustCtl({"stop", unit});
         std::cout << "NATIVE verified-config: " << checks << " PASS, " << skips << " SKIP\n";
         return 0;

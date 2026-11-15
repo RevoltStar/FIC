@@ -414,6 +414,7 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
         if(alt)detail::listener::effectiveEndpoints(runtime,request.allowReleasedPortSet);
         semantics();
         d::ActivationProof proof;
+        proof.propagation = d::PublicationPropagationPolicy::AllowKnownShared;
         proof.profile=activationProfile();
         if(alt)proof.altSshReadiness=[&](const auto& state,auto limit) {return alt->readyCandidate(state,limit);};
         if(socket)proof.sshSocketActivation=[&](auto) {socket->activate(runtime,service,launch);};
@@ -600,7 +601,7 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     // source is refused; discovery is never authority to bless later bytes.
     const auto observed=capture(out.reference);
     detail::requireStableMetadata(initial,observed);validateCaptured(out,observed);
-    d::validatePublicationEnvironment(out.reference);
+    d::validatePublicationEnvironment(out.reference, nullptr, d::PublicationPropagationPolicy::AllowKnownShared);
     out.observedMetadata=metadataIdentities(observed);
     return out;
 }
@@ -783,7 +784,7 @@ SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePl
             bounded.clearEnvironment=true;bounded.environment={{"LANG","C"},{"LC_ALL","C"}};bounded.maxOutputBytes=1024*1024;
             return VerifiedProcessExecutor::execute(path,args,bounded);
         });
-        d::SnapshotValidationProof proof;proof.profile=activationProfile();
+        d::SnapshotValidationProof proof;proof.propagation=d::PublicationPropagationPolicy::AllowKnownShared;proof.profile=activationProfile();
         proof.expectedConfiguration=expected.service;
         for(auto it=proof.expectedConfiguration.begin();it!=proof.expectedConfiguration.end();)
             if(it->first.rfind("socket:",0)==0||it->first=="alt:keygen"||it->first=="alt:listeners")

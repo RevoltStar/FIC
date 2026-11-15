@@ -24,11 +24,14 @@ public:
     int get() const { return fd_; }
     explicit operator bool() const { return fd_ >= 0; }
 };
+// Internal admission only; public activation and non-SSH adapters stay strict.
+enum class PublicationPropagationPolicy { RequireNonShared, AllowKnownShared };
 struct MountRecord {
     std::uint64_t id = 0, parent = 0;
     std::string device, root, target, options, type, source, superOptions;
     bool shared = false, slave = false, unbindable = false, unknownOptional = false;
 };
+bool supportsPublicationPropagation(const MountRecord&, PublicationPropagationPolicy);
 std::vector<MountRecord> parseMountInfo(const std::string& text);
 std::vector<MountRecord> readMountInfo();
 bool mountOption(const std::string& options, const std::string& flag);
@@ -36,7 +39,8 @@ bool below(const std::string& path, const std::string& parent);
 // Check the effective mount of the destination's parent, not a textual prefix.
 // Missing workspace ancestors are allowed only during the initial preflight.
 void requireSafePublicationParent(const std::filesystem::path& target, bool missingParents,
-                                  ActivationStatus failure);
+                                  ActivationStatus failure,
+                                  PublicationPropagationPolicy = PublicationPropagationPolicy::RequireNonShared);
 void validateRequest(const ActivationRequest& request);
 struct Identity {
     std::uint64_t mount = 0, inode = 0;
@@ -75,5 +79,6 @@ public:
     bool changed(int timeoutMs = 0);
 };
 void requireReadOnly(const std::string& path, const Identity& expected,
-                     const std::string& type, const std::string& source);
+                     const std::string& type, const std::string& source,
+                     PublicationPropagationPolicy = PublicationPropagationPolicy::RequireNonShared);
 } // namespace fic::service::detail

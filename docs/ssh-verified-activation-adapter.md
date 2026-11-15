@@ -51,8 +51,11 @@ ALT использует закрытый AltSshSimple profile в том же en
 sshd-owned listeners и local protocol readiness; [точный ALT contract](alt-p11-ssh-verified-activation.md).
 Следующие Debian-specific paths/argv не переносятся на ALT. Active release использует
 тот же platform engine; доказанный offline release не заявляет runtime activation.
-Подготовка private boundaries не входит в adapter. На shared publication parent
-без безопасной границы generic engine продолжает отказывать.
+Доверенные SSH paths явно передают внутренний `AllowKnownShared` на всех этапах:
+captureReference preflight, activation и snapshot validation (включая offline release).
+Известные shared/shared-slave parents поддерживаются без private boundaries;
+unknown optional metadata остаётся unsupported. Public/generic API и SSSD сохраняют
+строгий default. Подробный [propagation contract](verified-config-service-activator.md#propagation-строгий-default-и-доверенный-ssh-path).
 
 Используются `SystemdActivation::preflight()` и существующий typed D-Bus
 `readLaunchContract`, включая canonical identity, triggers, namespace/sandbox,
@@ -419,8 +422,11 @@ real Debian gate проверяет фактический adapter/sshd, а не
 Это моментные доказательства с повторными проверками, а не непрерывный enforcement
 или атомарная защита от произвольного privileged ABA. Readiness означает READY
 ожидаемого процесса на проверенном snapshot; PAM login и будущие соединения после
-cleanup требуют собственных гарантий. Подготовка private mount boundaries на
-shared-root хосте остаётся deployment-задачей, adapter их не создаёт.
+cleanup требуют собственных гарантий. SSH больше не требует private mount boundaries на shared-root хосте.
+Config/runtime A/C/P и listener proofs относятся к проверенной целевой службе.
+Cleanup proof локален: downstream nested mounts могут сохранить propagated RO
+copies после локального `Success`; другие consumers не аттестованы. Обнаруженная
+локальная ошибка cleanup по-прежнему исключает общий успех.
 
 Финальный native gate Debian12/13: на каждом по 30 generic experiments,
 59 adapter cases и 24 module case groups. Реальные five-policy apply/listener,
@@ -561,8 +567,9 @@ Native evidence этого этапа отделяет backend fixture, реал
 Итоговая воспроизводимая матрица release и package/SSH administration:
 [санитизированные результаты](../tests/integration/verified_config_service/openssh_native/evidence/release-lifecycle.json),
 [команды и границы test environment](../tests/integration/verified_config_service/openssh_native/README.md#verified-release-and-real-packagessh-administration).
-Пять userlands используют общий Docker/WSL kernel. Private mount boundaries в
-fixture не означают их автоматической подготовки на обычном shared-root хосте.
+Пять userlands используют общий Docker/WSL kernel. Private mount boundaries в исторических fixtures не означали их автоматической
+подготовки. I2 добавляет отдельные production SSH shared-root/run gates; исторические
+результаты не являются результатами новой реализации.
 Сохранение существующего loopback SSH connection на stock units измерено отдельно
 от listener proof и не гарантируется для произвольной сети/custom KillMode.
 

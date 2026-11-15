@@ -28,7 +28,12 @@ docker cp "$build/sssd_i3_probe" "$container:/usr/local/bin/sssd-i3-probe"
 docker cp "$repo/tests/integration/sssd-research/common.py" "$container:/usr/local/bin/common.py"
 docker cp "$repo/tests/integration/sssd-research/r2_auth.py" "$container:/usr/local/bin/r2_auth.py"
 docker cp "$repo/tests/integration/sssd-research/pam-probe.py" "$container:/usr/local/bin/pam-probe.py"
-docker cp "$repo/tests/integration/sssd-i3/native.py" "$container:/usr/local/bin/native.py"
+case "${FIC_SSSD_I3_SCENARIO:-}" in
+ shared-boundary) native_script=shared_boundary.py ;;
+ '') native_script=native.py ;;
+ *) echo 'unknown SSSD I3 native scenario' >&2; exit 2 ;;
+esac
+docker cp "$repo/tests/integration/sssd-i3/$native_script" "$container:/usr/local/bin/native.py"
 docker exec "$container" python3 /usr/local/bin/native.py "$platform"
 
 python3 "$repo/tests/integration/sssd-i3/source-manifest.py" check "$build/source-manifest.json"

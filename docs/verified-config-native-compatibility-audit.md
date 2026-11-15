@@ -4,7 +4,7 @@
 `7e91772c0790f958cea6fc4aab23c9b878b053c7` (`main`), включая историю
 `1782cc6` → `7e91772`. Это исследование, не SSH-интеграция.
 
-**Ни одна из пяти штатных конфигураций не проходит текущий preflight.**
+**В исследованном историческом commit ни одна из пяти штатных конфигураций не проходит preflight.**
 Подготовка private boundaries сама по себе этого не исправит: все пять units
 используют запрещённый EnvironmentFile; Ubuntu дополнительно использует socket
 activation, ALT — службу без notify, Debian 12 — symlink в FragmentPath.
@@ -15,6 +15,19 @@ reader снимает именно Debian12 `/lib` provenance blocker. Исхо�
 результаты: [verified-config-service-activator.md](verified-config-service-activator.md#trusted-usr-merge-для-unit-source).
 Это не объявляет штатный SSH поддерживаемым: coverage/external inputs, socket
 activation и notify по-прежнему проверяются отдельно.
+
+## Текущий propagation contract (I2)
+
+Таблицы ниже — исторический audit, а не ограничения актуального SSH adapter.
+Доверенные SSH paths теперь явно допускают известные shared/shared-slave parents,
+включая shared root/run, без ручных private boundaries. Generic/public API и SSSD
+остаются строгими; неизвестная metadata запрещена. `Success` включает локальный
+cleanup в namespace FIC/PID1/службы, но не отсутствие downstream copies: вложенный
+mount в slave/shared-slave способен сохранить RO snapshot после local umount.
+Config/runtime proof не аттестует этих внешних consumers. Актуальные гарантии:
+[activator](verified-config-service-activator.md#propagation-строгий-default-и-доверенный-ssh-path),
+[SSH adapter](ssh-verified-activation-adapter.md). Результаты I2 отдельно от этого audit:
+[SSH shared validation](ssh-shared-publication-validation.md).
 
 ## 1. Среды и уровень доказательств
 

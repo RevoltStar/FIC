@@ -96,11 +96,12 @@ void requireSameSnapshot(const std::map<std::string, struct stat>& expected,
 struct OwnedMount { std::string path; Identity expected; bool mounted = false; };
 struct Operation {
     const Hooks& hooks;
+    const PublicationPropagationPolicy propagation;
     Fd base, lock;
     std::string name, directory, source, ns;
     std::vector<OwnedMount> mounts;
     bool cleaned = false;
-    explicit Operation(const Hooks& h) : hooks(h) {}
+    Operation(const Hooks& h, PublicationPropagationPolicy p) : hooks(h), propagation(p) {}
     ~Operation() {
         if (!cleaned) { ActivationResult ignored; try { cleanup(ignored); } catch (...) {} }
     }
@@ -163,7 +164,7 @@ struct Operation {
         name.clear(); throw Failure(ActivationStatus::SnapshotFailed, "operation name collisions");
     }
     void mountTmpfs(std::uint64_t size) {
-        requireSafePublicationParent(directory, false, ActivationStatus::InterferenceDetected);
+        requireSafePublicationParent(directory, false, ActivationStatus::InterferenceDetected, propagation);
         auto target = openAbsolute(directory, O_RDONLY|O_DIRECTORY);
         const std::string options = "mode=0700,size=" + std::to_string(size) + ",nr_inodes=8192";
         const int injected = hooks.fault("tmpfs", 0); if (injected) errno = injected;
@@ -176,7 +177,7 @@ struct Operation {
         if (!own) throw Failure(ActivationStatus::InterferenceDetected, "new tmpfs identity unproven");
     }
     void publish(const ControlledPath& path, const std::string& snapshot, const Identity& original, std::size_t i) {
-        requireSafePublicationParent(path.path, false, ActivationStatus::InterferenceDetected);
+        requireSafePublicationParent(path.path, false, ActivationStatus::InterferenceDetected, propagation);
         auto target = openAbsolute(path.path, O_RDONLY);
         if (!sameObject(identity(target.get()), original) || identity(target.get()).mount != original.mount)
             throw Failure(ActivationStatus::InterferenceDetected, "controlled target changed before bind");
@@ -201,11 +202,12 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
     } catch (const Failure& e) {
         result.status = result.primaryStatus = e.status; result.diagnostic = e.what(); return result;
     }
-    Operation operation(hooks);
+    const auto propagation = proof ? proof->propagation : PublicationPropagationPolicy::RequireNonShared;
+    Operation operation(hooks, propagation);
     std::unique_ptr<SystemdActivation> service;
     try {
         operation.ns = namespaceIdentity(::getpid());
-        detail::validatePublicationEnvironment(request, &result.residualPaths);
+        detail::validatePublicationEnvironment(request, &result.residualPaths, propagation);
         const auto deadline = std::chrono::steady_clock::now() + request.timeout;
         const auto workspace = fic::core::FicRuntimePaths::get().runtimeDir / "verified-config-activator";
 
@@ -227,7 +229,7 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         std::vector<Fd> sources; std::vector<Identity> original; std::vector<Tree> trees;
         auto budget = request.maxSnapshotBytes;
         for (const auto& p : request.paths) {
-            requireSafePublicationParent(p.path, false, ActivationStatus::UnsupportedConfiguration);
+            requireSafePublicationParent(p.path, false, ActivationStatus::UnsupportedConfiguration, propagation);
             try {
                 auto source = openAbsolute(p.path, O_RDONLY);
                 verifyTree(source.get(), p, request.maxSnapshotBytes);
@@ -269,7 +271,7 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
             if (injected || ::mount(nullptr, fdPath(root.get()).c_str(), nullptr, MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC, nullptr))
                 osFailure(ActivationStatus::SnapshotFailed, "remount tmpfs superblock read-only");
         }
-        requireReadOnly(operation.directory, operation.mounts.front().expected, "tmpfs", operation.source);
+        requireReadOnly(operation.directory, operation.mounts.front().expected, "tmpfs", operation.source, propagation);
         auto snapshotFd = openAbsolute(operation.directory, O_RDONLY|O_DIRECTORY);
         // Whole snapshot also includes empty controlled roots (not inferable
         // from an empty file manifest), so pin its exact attributes directly.
@@ -297,13 +299,13 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
         const auto verifyPublished = [&] {
             service->remaining();
             if (namespaceIdentity(::getpid()) != operation.ns) throw Failure(ActivationStatus::InterferenceDetected, "activator namespace changed");
-            requireReadOnly(operation.directory, operation.mounts.front().expected, "tmpfs", operation.source);
+            requireReadOnly(operation.directory, operation.mounts.front().expected, "tmpfs", operation.source, propagation);
             auto root = openAbsolute(operation.directory, O_RDONLY|O_DIRECTORY);
             auto remainingBytes = request.maxSnapshotBytes;
             requireSameSnapshot(pinnedAttributes, readTree(root.get(), ControlledPathKind::Directory, remainingBytes).attributes);
             for (std::size_t i = 0; i < request.paths.size(); ++i) {
                 const auto& p = request.paths[i];
-                requireReadOnly(p.path, operation.mounts[i+1].expected, "tmpfs", operation.source);
+                requireReadOnly(p.path, operation.mounts[i+1].expected, "tmpfs", operation.source, propagation);
                 auto fd = openAbsolute(p.path, O_RDONLY); verifyTree(fd.get(), p, request.maxSnapshotBytes);
                 requireWritableDenied(p.path, p.kind, operation.mounts[i+1].expected);
             }
@@ -358,7 +360,7 @@ ActivationResult perform(const ActivationRequest& request, const Hooks& hooks, c
     return result;
 }
 }
-void detail::validatePublicationEnvironment(const ActivationRequest& request, std::vector<std::string>* residualPaths) {
+void detail::validatePublicationEnvironment(const ActivationRequest& request, std::vector<std::string>* residualPaths, PublicationPropagationPolicy propagation) {
     validateRequest(request);
     if (!capable()) throw Failure(ActivationStatus::UnsupportedConfiguration, "root and effective CAP_SYS_ADMIN required");
     std::ifstream selinux("/sys/fs/selinux/enforce"); char enforcing = '0'; selinux >> enforcing;
@@ -370,9 +372,9 @@ void detail::validatePublicationEnvironment(const ActivationRequest& request, st
     for (const auto& m : mounts) if (m.source.rfind("fic-vcsa.", 0) == 0) residual.push_back(m.target);
     if (residualPaths) *residualPaths = residual;
     if (!residual.empty()) throw Failure(ActivationStatus::ResidualMounts, "previous activation mounts require manual inspection; not adopted or unmounted");
-    requireSafePublicationParent(workspace / "prospective-operation", true, ActivationStatus::UnsupportedConfiguration);
+    requireSafePublicationParent(workspace / "prospective-operation", true, ActivationStatus::UnsupportedConfiguration, propagation);
     for (const auto& p : request.paths) {
-        requireSafePublicationParent(p.path, false, ActivationStatus::UnsupportedConfiguration);
+        requireSafePublicationParent(p.path, false, ActivationStatus::UnsupportedConfiguration, propagation);
         if (p.path == workspace || below(p.path, workspace) || below(workspace, p.path))
             throw Failure(ActivationStatus::UnsupportedConfiguration, "controlled path overlaps workspace");
         for (const auto& m : mounts) if (m.target == p.path || (p.kind == ControlledPathKind::Directory && below(m.target, p.path)))
@@ -385,7 +387,7 @@ ActivationResult detail::activateWithProof(const ActivationRequest& request, con
 }
 namespace {
 ActivationProof validationProof(const SnapshotValidationProof& input) {
-    ActivationProof proof;proof.profile=input.profile;proof.expectedConfiguration=input.expectedConfiguration;
+    ActivationProof proof;proof.propagation=input.propagation;proof.profile=input.profile;proof.expectedConfiguration=input.expectedConfiguration;
     proof.sourceRoots=input.sourceRoots;proof.sourceAttributes=input.sourceAttributes;proof.published=input.validate;
     return proof;
 }

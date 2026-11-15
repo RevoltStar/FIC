@@ -8,6 +8,7 @@ namespace fic::service::detail {
 // fixed activation actions; none can substitute snapshot/observation/cleanup.
 // Exceptions fail the operation with ordinary cleanup. No policy-config writes.
 struct ActivationProof {
+    PublicationPropagationPolicy propagation = PublicationPropagationPolicy::RequireNonShared;
     ActivationProfile profile = ActivationProfile::ActiveNotifyService;
     // Closed Ubuntu SSH profile only. Runs under the SAME published snapshot;
     // no permission to replace copy/mount/observation/cleanup machinery.
@@ -25,11 +26,13 @@ struct ActivationProof {
 // Read-only preflight shared with callers that must reject known unsupported
 // publication environments before making persistent configuration changes.
 // Performs no mkdir/mount/restart and grants no later activation authority.
-void validatePublicationEnvironment(const ActivationRequest&, std::vector<std::string>* residualPaths = nullptr);
+void validatePublicationEnvironment(const ActivationRequest&, std::vector<std::string>* residualPaths = nullptr,
+                                    PublicationPropagationPolicy = PublicationPropagationPolicy::RequireNonShared);
 ActivationResult activateWithProof(const ActivationRequest&, const ActivationProof&);
 // Separate internal result/entrypoint; SUCCESS here proves validation under
 // pinned CURRENT inputs and clean cleanup, never readiness or activation.
 struct SnapshotValidationProof {
+    PublicationPropagationPolicy propagation = PublicationPropagationPolicy::RequireNonShared;
     ActivationProfile profile=ActivationProfile::ActiveNotifyService;
     LaunchContract expectedConfiguration;
     std::map<std::string,Identity> sourceRoots;

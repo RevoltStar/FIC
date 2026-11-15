@@ -155,8 +155,8 @@ contract сохраняет все дубликаты, порядок и flags �
 optional-absent. Требуются существующий regular file, нормализованный literal
 absolute path без symlink на любом уровне, wildcard/glob, неразрешённых `%`
 specifiers и неоднозначных компонентов. Запрещены special permission bits,
-xattrs/ACL/security labels, foreign/nested mounts и shared publication parents
-по прежним правилам snapshots. Отсутствующий, непокрытый или неподтверждённый
+xattrs/ACL/security labels и foreign/nested mounts. Propagation проверяется
+по внутреннему режиму publisher, описанному ниже. Отсутствующий, непокрытый или неподтверждённый
 EnvironmentFile даёт `UnsupportedConfiguration` до первого собственного mount.
 Эталон и доверенность всех targets проверяются до создания tmpfs; envfile
 повторно проверяется по SHA перед bind, identity CAS остаётся прежним.
@@ -191,47 +191,46 @@ notify-семантике службы, а также полнота request о�
 кода. Новые свойства будущих systemd требуют отдельного анализа; проверка известных
 полей не является обещанием покрыть любой будущий способ запуска.
 
-## Propagation и подготовленные границы
+## Propagation: строгий default и доверенный SSH path
 
-Компонент **не создаёт постоянные private mount-границы**, не меняет propagation
-`/`, `/etc`, `/run` или других существующих mount, не меняет systemd units и
-не переводит службу в другой namespace. Подготовка подходящих границ на реальном
-хосте — **будущая задача развёртывания**, не функция активатора.
+Компонент не создаёт постоянные private mount-границы и не меняет propagation
+системных mounts. Внутренний `PublicationPropagationPolicy` имеет строгий default
+`RequireNonShared`: public `activate()`, generic validation и SSSD по-прежнему
+допускают private/unbindable/non-shared slave и отвергают shared/shared-slave.
+Для этих callers подготовка non-shared родителей остаётся задачей deployment.
 
-Перед первым собственным mount определяется effective mount родителя каждой
-цели через descriptor/statx mount ID и mountinfo. Аналогично проверяется будущий
-каталог tmpfs в runtime workspace (по ближайшему существующему предку, если
-каталоги ещё не созданы). Допустимы private/unbindable и non-shared slave parents;
-shared, shared-slave и неизвестная propagation metadata дают
-`UnsupportedConfiguration` до первого изменения mount namespace. Перед каждым
-mount проверка повторяется, а финальный RO proof также отвергает shared mount.
+Только доверенные SSH activation/reference-capture/snapshot-validation paths явно
+передают `AllowKnownShared`. Это позволяет публикацию на известных shared и
+shared-slave parents, включая обычные shared `/` и `/run`, без подготовки границ.
+`ActiveNotifyService` сам по себе не включает режим; публичного переключателя нет.
+Неизвестная mountinfo optional metadata запрещена в обоих режимах.
 
-Граница нужна **на родительском каталоге**, не на самом конфигурационном файле
-или контролируемом каталоге. Уже существующий mount на самой цели по-прежнему
-отвергается. Поэтому обычный AtomicFileWriter с созданием temporary sibling и
-rename файла внутри подготовленного parent продолжает работать до/после активации.
-Native-тест также выполняет atomic rename неконтролируемого sibling во время
-активации. Защищённые объекты остаются временно перекрыты RO-снимком по основному
-контракту.
+Одинаковый режим применяется при initial preflight, проверке workspace, перед
+каждой публикацией и в повторном RO proof. Effective parent определяется через
+descriptor/statx mount ID. Сохраняются exact target/ID/object/source/type,
+mount-level и superblock-level RO, metadata/manifest и EROFS proofs. Существующие
+mounts на targets и неподдерживаемые nested mounts по-прежнему отвергаются.
+AtomicFileWriter с temporary sibling и rename работает до/после активации.
 
-Shared `/` совместим с компонентом при наличии ниже него необходимых подготовленных
-non-shared границ для всех publication parents, включая runtime workspace.
-Одна private-граница только вокруг `/run/fic` не изолирует bind в shared `/etc`.
-Non-shared slave не передаёт наши mount наружу, но может получить событие upstream;
-обнаруженное событие по-прежнему означает отказ активации.
+Для SSH shared publication распространение snapshot в связанные namespaces
+разрешено. `Success` подтверждает config/runtime proof целевой службы и **локальный**
+cleanup: собственные mounts сняты обычным umount в общем namespace FIC/PID1/службы,
+persistent view восстановлена, обнаруженных локальных ошибок нет. Это не proof
+отсутствия propagated copies в других namespaces и не proof конфигурации их consumers.
 
-Detached mount сам по себе не решает публикацию под shared parent. Проверка
-`open_tree(OPEN_TREE_CLONE)` и `fsmount` с предварительным `mount_setattr(MS_PRIVATE)`
-показала: присоединение через `move_mount` распространяется по shared destination.
-Поздний MS_PRIVATE не отменяет первоначального появления mount в peers.
-Новый Mount API в production не добавлен: он не устраняет данную проблему.
+В частности, downstream slave/shared-slave может создать вложенный mount внутри
+snapshot каталога. Тогда local umount успешен, а downstream RO snapshot сохраняется
+(T2/T3). Возможны также независимо клонированные/private copies. FIC не ищет эти
+namespaces и не снимает их mounts. `residualPaths` и `cleanupErrors` относятся к
+локальному namespace; локальная ошибка cleanup исключает общий `Success`, даже
+при `primaryStatus=Success`. Reverse order, identity checks и обычный `umount2(...,0)`
+сохранены; forced/lazy cleanup, adoption и global recovery отсутствуют.
 
-Topology должна сохраняться администратором на время операции. Последняя проверка
-parent и последующий mount не атомарны; против CAP_SYS_ADMIN, меняющего topology
-между ними, гарантии отсутствия propagation нет. Обнаруженный позднее отказ не
-следует трактовать как доказательство отсутствия первоначальных peer-эффектов.
-Безопасность этой версии относится к проверенной стабильной подготовленной
-топологии, не к произвольному привилегированному противнику.
+Topology должна сохраняться администратором на время операции. Parent check и
+mount, как и identity check и umount, не атомарны против CAP_SYS_ADMIN. Detached
+mount с `move_mount` тоже распространяется под shared parent: новый Mount API
+не добавлен. При строгом режиме поздний отказ не доказывает отсутствие peer effects;
+при SSH режиме распространение разрешено, но внешняя актуальность не гарантируется.
 
 ## Жизненный цикл
 
@@ -249,7 +248,7 @@ parent и последующий mount не атомарны; против CAP_S
    содержимое и отказ writable open/create с `EROFS`. Закрепить атрибуты всего
    снимка, включая inode, size, ownership, permissions, mtime и ctime.
 5. Через descriptor-based bind опубликовать каждый файл или **целый каталог**.
-   Повторно доказать identity/RO/manifest. Корень tmpfs остаётся private.
+   Повторно доказать identity/RO/manifest и допустимость propagation выбранному режиму.
 6. После собственных mount открыть `/proc/self/mountinfo`. Начальный полный
    контроль опубликованных объектов выполняется уже при включённом observer;
    restart до этого не выполняется. Контрольный интервал начинается открытием
@@ -403,7 +402,7 @@ EnvironmentFile regressions дополнительно проверяют:
   config directory + отдельный envfile, ExecCondition/StartPre/StartPost;
 * отсутствие покрытия, directory-only, mandatory/optional absence, symlink/
   dangling symlink, glob, directory/FIFO, wrong SHA, special bits/xattr,
-  shared parent и чужой mount — UnsupportedConfiguration **без mount syscall**;
+  shared parent в строгом default и чужой mount — UnsupportedConfiguration **без mount syscall**;
 * missing/wrong `a(sb)` schema, malformed entries, relative/non-normalized и
   unresolved specifier paths — unit classifier negatives. Systemd может сам
   нормализовать/отбросить такие unit entries; raw-invalid schema не выдумывается
@@ -424,7 +423,7 @@ capabilities; enforcing SELinux по-прежнему не проверен.
 Содержимое envfiles не выводится; fixture сообщает только synthetic whitelist.
 
 Hardening native-набор дополнительно проверяет shared parent и shared-slave
-refusal без mount syscall, private/non-shared slave границы под shared ancestor,
+refusal строгого default без mount syscall, private/non-shared slave границы под shared ancestor,
 неизменную таблицу mount отдельного peer namespace при подготовке tmpfs,
 публикации, фактическом чтении и cleanup. Положительные file/directory/combined
 сценарии требуют совпадения SHA и mount IDs; fixture удерживает реальные FD до

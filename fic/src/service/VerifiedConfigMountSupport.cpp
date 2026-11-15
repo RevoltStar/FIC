@@ -227,8 +227,16 @@ std::vector<MountRecord> readMountInfo() {
     if (!input) throw Failure(ActivationStatus::UnsupportedConfiguration, "cannot read mountinfo");
     return parseMountInfo({std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()});
 }
+bool supportsPublicationPropagation(const MountRecord& mount, PublicationPropagationPolicy policy) {
+    if (mount.unknownOptional) return false;
+    switch (policy) {
+    case PublicationPropagationPolicy::RequireNonShared: return !mount.shared;
+    case PublicationPropagationPolicy::AllowKnownShared: return true;
+    }
+    return false;
+}
 void requireSafePublicationParent(const std::filesystem::path& target, bool missingParents,
-                                  ActivationStatus failure) {
+                                  ActivationStatus failure, PublicationPropagationPolicy propagation) {
     auto parent = target.parent_path();
     if (missingParents) {
         std::error_code error;
@@ -243,9 +251,9 @@ void requireSafePublicationParent(const std::filesystem::path& target, bool miss
     auto fd = openAbsolute(parent, O_PATH|O_DIRECTORY);
     const auto id = identity(fd.get()).mount;
     for (const auto& mount : readMountInfo()) if (mount.id == id) {
-        if (mount.shared || mount.unknownOptional)
+        if (!supportsPublicationPropagation(mount, propagation))
             throw Failure(failure, "publication parent is shared or has unknown propagation: " + parent.string());
-        return; // Private/unbindable or non-shared slave: no outward propagation.
+        return; // Shared is allowed only by the trusted internal caller.
     }
     throw Failure(failure, "publication parent mount identity unavailable");
 }
@@ -378,7 +386,7 @@ bool MountObserver::changed(int timeoutMs) {
     return changed_;
 }
 void requireReadOnly(const std::string& path, const Identity& expected,
-                     const std::string& type, const std::string& source) {
+                     const std::string& type, const std::string& source, PublicationPropagationPolicy propagation) {
     auto fd = openAbsolute(path, O_RDONLY);
     const auto observed = identity(fd.get());
     if (!sameObject(observed, expected) || observed.mount != expected.mount)
@@ -386,7 +394,7 @@ void requireReadOnly(const std::string& path, const Identity& expected,
     bool found = false;
     for (const auto& r : readMountInfo()) if (r.id == observed.mount) {
         found = r.target == path && r.type == type && r.source == source &&
-                !r.shared && !r.unknownOptional &&
+                supportsPublicationPropagation(r, propagation) &&
                 mountOption(r.options, "ro") && mountOption(r.superOptions, "ro");
     }
     if (!found) throw Failure(ActivationStatus::InterferenceDetected, "mount/superblock read-only proof failed");

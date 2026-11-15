@@ -1,6 +1,7 @@
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/VerifiedConfigMountSupport.h"
 #include "service/VerifiedConfigLaunchContract.h"
+#include "service/VerifiedConfigActivationProof.h"
 #include <fic/core/integrity/ContentDigest.h>
 #include <iostream>
 #include <locale>
@@ -105,6 +106,14 @@ int main() {
     require(!slave[0].shared && slave[0].slave, "non-shared slave confused with shared");
     const auto unknown = detail::parseMountInfo("14 1 0:2 / /safe rw future:3 - tmpfs test rw\n");
     require(unknown[0].unknownOptional, "future propagation metadata silently ignored");
+    using P=detail::PublicationPropagationPolicy;
+    require(detail::ActivationProof{}.propagation==P::RequireNonShared && detail::SnapshotValidationProof{}.propagation==P::RequireNonShared,"proof authority defaults changed");
+    for(const auto policy:{P::RequireNonShared,P::AllowKnownShared}) {
+        require(!detail::supportsPublicationPropagation(unknown[0],policy),"unknown metadata admitted");
+        require(detail::supportsPublicationPropagation(slave[0],policy),"non-shared slave refused");
+        require(detail::supportsPublicationPropagation(shared[0],policy)==(policy==P::AllowKnownShared),"shared-slave authority mismatch");
+    }
+    require(!detail::supportsPublicationPropagation(slave[0],static_cast<P>(99)),"unknown propagation policy admitted");
     bool missing = false;
     try { detail::validateLaunchContract({}); } catch (const detail::Failure& e) { missing = e.status == ActivationStatus::UnsupportedConfiguration; }
     require(missing, "absent required launch properties accepted");
