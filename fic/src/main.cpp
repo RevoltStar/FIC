@@ -1,4 +1,5 @@
 #include "modules/dc/DC.h"
+#include "daemon/DeviceStartupReadiness.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -572,7 +573,8 @@ bool run_daemon_apply_all_pass(
     const fic::platform::PlatformProfile& platform,
     const fic::platform::PlatformExecutableResolver& executables,
     const std::string& reason,
-    bool* registryReloadFailed = nullptr
+    bool* registryReloadFailed = nullptr,
+    const fic::daemon::DeviceStartupReadiness* startupDevice = nullptr
 ) {
     fic::incident::DaemonReadiness::ScopedApplying applying(daemonReadiness());
     if (registryReloadFailed != nullptr) {
@@ -597,8 +599,17 @@ bool run_daemon_apply_all_pass(
         write_audit_log(event);
         return false;
     }
+    PolicyExecutionPlanner::OwnExecutor startupAdmission;
+    if (startupDevice && !startupDevice->ready()) {
+        startupAdmission = [&](const PolicyRef& ref, Policy&) -> std::optional<PolicyApplyResult> {
+            if (ref.moduleName != "DC" || ref.policyName == "permanent_device_missing_severity")
+                return std::nullopt;
+            return PolicyApplyResult{ref.moduleName, ref.submoduleName, ref.policyName,
+                PolicyApplyStatus::Failed, startupDevice->diagnostic};
+        };
+    }
     const PolicyApplySummary summary = applyAllPoliciesExceptModule(
-        policyRegistry, "FIREWALL");
+        policyRegistry, "FIREWALL", std::move(startupAdmission));
     const auto policyOk = [&](const std::string& name) {
         for (const auto& result : summary.getResults())
             if (result.moduleName == "OSS" && result.policyName == name)
@@ -621,8 +632,9 @@ bool run_daemon_apply_all_pass(
     std::string firewallError;
     const bool firewallOk = fic::firewall::reconcileFirewall(
         executables, firewallError);
-    std::string deviceError;
-    const bool deviceOk = DC::reconcile(deviceError);
+    std::string deviceError = startupDevice && !startupDevice->ready() ? startupDevice->diagnostic : "";
+    const bool deviceAttempted = !startupDevice || startupDevice->ready();
+    const bool deviceOk = deviceAttempted && DC::reconcile(deviceError);
     const bool ok = isPolicyApplySuccessful(summary, "all", "") &&
         desktopGlobalConfigOk && dmOk && firewallOk && deviceOk;
     json result = {
@@ -645,6 +657,11 @@ bool run_daemon_apply_all_pass(
     if (globalReport && !globalReport->successful())
         result["desktop_global_configuration_error"] = globalReport->diagnostic();
     if (!deviceError.empty()) result["device_error"] = deviceError;
+    if (startupDevice) {
+        result["startup_device_ipc_ready"] = startupDevice->ready();
+        result["startup_device_wait_ms"] = startupDevice->elapsed.count();
+        result["device_reconciliation_attempted"] = deviceAttempted;
+    }
     if (!firewallError.empty()) {
         result["firewall_error"] = firewallError;
     }
@@ -2344,15 +2361,24 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    (void)::sd_notify(0, "STATUS=Applying startup policies");
     startupLifecycle().started = true;
+    fic::daemon::DeviceStartupReadiness startupDevice;
+    if (!uninstallMode) {
+        (void)::sd_notify(0, "STATUS=Waiting for device administrative IPC");
+        startupDevice = fic::daemon::waitForDeviceStartup([] { return g_stop.load(); });
+        if (startupDevice.state == fic::daemon::DeviceStartupState::Stopped || g_stop.load()) return 0;
+        if (!startupDevice.ready()) std::cerr << startupDevice.diagnostic << std::endl;
+    }
+    (void)::sd_notify(0, "STATUS=Applying startup policies");
     bool startupRegistryReloadFailed = false;
     const bool startupApplyOk = !uninstallMode && run_daemon_apply_all_pass(
         policyRegistry, desktopGlobalConfig, platform, executables, "startup",
-        &startupRegistryReloadFailed);
+        &startupRegistryReloadFailed, &startupDevice);
     startupLifecycle().completed = true;
     startupLifecycle().applyOk = startupApplyOk;
     startupLifecycle().diagnostic = startupApplyOk ? "" : "Startup policy apply completed with errors";
+    if (!uninstallMode && !startupDevice.ready())
+        startupLifecycle().diagnostic += ": " + startupDevice.diagnostic;
     if (startupRegistryReloadFailed) {
         std::cerr << "fic daemon startup aborted because PolicyRegistry reload failed"
                   << std::endl;

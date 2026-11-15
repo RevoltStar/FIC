@@ -1,5 +1,6 @@
 [Unit]
 Description=FIC policy daemon
+Wants=fic-device.service
 
 [Service]
 Type=notify

@@ -3,7 +3,7 @@
 set -euo pipefail
 [[ $# -ge 2 && $# -le 4 ]] || { echo 'usage: run-deb.sh IMAGE PACKAGE_DIRECTORY [DRIVER [OPTIONAL_OWNER_FIXTURE]]' >&2; exit 2; }
 driver=${3:-deb_native.py}
-case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py|slow_init_native.py) ;; *) exit 2 ;; esac
+case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py|slow_init_native.py|startup_readiness_native.py) ;; *) exit 2 ;; esac
 extra=()
 if [[ $# == 4 ]]; then
     [[ "$driver" == minimal_runtime_native.py && -f "$4" ]] || exit 2
@@ -37,4 +37,9 @@ docker exec "$name" mkdir -p /var/tmp/fic-packages
 docker cp "$packages/." "$name:/var/tmp/fic-packages/"
 docker cp "$repo/tests/integration/package-lifecycle/$driver" "$name:/usr/local/bin/deb-native.py"
 if [[ $# == 4 ]]; then docker cp "$4" "$name:/usr/local/bin/optional-owner-fixture"; fi
-docker exec "$name" python3 /usr/local/bin/deb-native.py "${extra[@]}"
+if [[ "$driver" == startup_readiness_native.py ]]; then
+    [[ -f "${FIC_STARTUP_TEST_BINARY:-}" ]] || { echo 'FIC_STARTUP_TEST_BINARY required' >&2; exit 2; }
+    docker cp "$FIC_STARTUP_TEST_BINARY" "$name:/usr/local/bin/startup-readiness-tests"
+    docker cp "$repo/tests/integration/package-lifecycle/slow_init_native.py" "$name:/var/tmp/slow_init_native.py"
+fi
+docker exec -e FIC_A2_TEST_GROUP="${FIC_STARTUP_TEST_GROUP:-all}" "$name" python3 /usr/local/bin/deb-native.py "${extra[@]}"

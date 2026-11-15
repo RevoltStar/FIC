@@ -187,6 +187,15 @@ retains persistent state; RPM has no native dpkg-style purge action.
 Fresh install and compatible new-to-new upgrade perform configuration, journal,
 PAM/incident and device DB proofs, explicitly publish Installed, then start normal
 services after releasing daemon.lock. Upgrade performs no ownership rollback.
+Main/device startup is parallel: main Wants device, device Requires main, with
+no cross-unit After edge. The main daemon waits for compatible responding device
+IPC only after early IR protection. A 60-second readiness failure is a nonfatal,
+explicit failed startup-policy outcome: independent protection and administrative
+IPC remain available; package READY still does not claim policy success.
+UNINSTALLING bypasses this wait and apply, even if the device dependency refuses
+writer admission. Explicit writer stop/census proofs remain mandatory. See
+[the startup contract](startup-readiness.md).
+
 Abort hooks never cancel Uninstalling or unconditionally restart/apply. Individual
 policy apply errors may be reported by the running daemon without claiming that
 persistent/infrastructure validation failed. Broken persistent state is fatal.

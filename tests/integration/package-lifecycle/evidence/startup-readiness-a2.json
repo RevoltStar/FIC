@@ -1,0 +1,1086 @@
+{
+  "base_commit": "62aa6022a2147dfc6080565584eb388e56a76d47",
+  "date": "2026-11-15",
+  "scope": "A2 working-tree build; actual Debian12 startup and Debian12/ALT package lifecycle; not evidence for later HEADs",
+  "startup_receipts": [
+    {
+      "path": "/tmp/fic-a2/first-startup-evidence/startup-results.json",
+      "sha256": "6ecb685e4225cb83f8ecb694e5c5c727d66b78b2b2ab1dfb1877955de904b5eb",
+      "result": "FIRST_FOUR_CASES_PASS_ONLY; later harness assertion failed",
+      "cases": [
+        {
+          "name": "cold-both-all-block-disabled",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service",
+              "fic-device.service"
+            ],
+            "exit": 0,
+            "seconds": 2.661,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 584,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 2198
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 106,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:00:05.398 +0000"
+          }
+        },
+        {
+          "name": "main-only",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service"
+            ],
+            "exit": 0,
+            "seconds": 2.475,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 630,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 2043
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 106,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:00:07.955 +0000"
+          }
+        },
+        {
+          "name": "device-only",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic-device.service"
+            ],
+            "exit": 0,
+            "seconds": 0.229,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 675,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 2300
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 106,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:00:10.749 +0000"
+          }
+        },
+        {
+          "name": "slow45-enabled-DC",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service",
+              "fic-device.service"
+            ],
+            "exit": 0,
+            "seconds": 47.756,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 740,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 47174
+            },
+            "summary": {
+              "applied": 5,
+              "disabled": 105,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:00:58.856 +0000"
+          }
+        }
+      ]
+    },
+    {
+      "path": "/home/admsys/FIC/build-package-lifecycle/native-fic-a2-runtime:debian12-20261115T110314Z-79620/startup-results.json",
+      "sha256": "844b113b3f13fe274f53dc8d35f7979e72d05b6a6874c26bc7baa47fbdc99824",
+      "result": "PASS",
+      "cases": [
+        {
+          "name": "incompatible-device-nonfatal",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service"
+            ],
+            "exit": 0,
+            "seconds": 60.285,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 603,
+            "daemon_state": "READY",
+            "diagnostic": "Startup policy apply completed with errors: startup device IPC deadline exceeded: device status is unsuccessful, malformed or version/schema incompatible",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": false,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": false,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_error": "startup device IPC deadline exceeded: device status is unsuccessful, malformed or version/schema incompatible",
+              "device_reconciliation": false,
+              "device_reconciliation_attempted": false,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": false,
+              "registry_reload": true,
+              "startup_device_ipc_ready": false,
+              "startup_device_wait_ms": 59999
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 105,
+              "failed": 1,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:04:36.234 +0000"
+          }
+        },
+        {
+          "name": "missing-device-nonfatal",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service"
+            ],
+            "exit": 0,
+            "seconds": 60.309,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 725,
+            "daemon_state": "READY",
+            "diagnostic": "Startup policy apply completed with errors: startup device IPC deadline exceeded: trusted device status response unavailable (transport/API/peer check failed)",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": false,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": false,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_error": "startup device IPC deadline exceeded: trusted device status response unavailable (transport/API/peer check failed)",
+              "device_reconciliation": false,
+              "device_reconciliation_attempted": false,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": false,
+              "registry_reload": true,
+              "startup_device_ipc_ready": false,
+              "startup_device_wait_ms": 59999
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 105,
+              "failed": 1,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:05:41.179 +0000"
+          }
+        },
+        {
+          "name": "device-init-failure-nonfatal",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service"
+            ],
+            "exit": 0,
+            "seconds": 60.308,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 799,
+            "daemon_state": "READY",
+            "diagnostic": "Startup policy apply completed with errors: startup device IPC deadline exceeded: trusted device status response unavailable (transport/API/peer check failed)",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": false,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": false,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_error": "startup device IPC deadline exceeded: trusted device status response unavailable (transport/API/peer check failed)",
+              "device_reconciliation": false,
+              "device_reconciliation_attempted": false,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": false,
+              "registry_reload": true,
+              "startup_device_ipc_ready": false,
+              "startup_device_wait_ms": 59999
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 105,
+              "failed": 1,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:06:41.918 +0000"
+          }
+        },
+        {
+          "name": "device-policy-activation-failure-nonfatal",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service"
+            ],
+            "exit": 0,
+            "seconds": 60.266,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 863,
+            "daemon_state": "READY",
+            "diagnostic": "Startup policy apply completed with errors: startup device IPC deadline exceeded: trusted device status response unavailable (transport/API/peer check failed)",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": false,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": false,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_error": "startup device IPC deadline exceeded: trusted device status response unavailable (transport/API/peer check failed)",
+              "device_reconciliation": false,
+              "device_reconciliation_attempted": false,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": false,
+              "registry_reload": true,
+              "startup_device_ipc_ready": false,
+              "startup_device_wait_ms": 59999
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 105,
+              "failed": 1,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:07:42.318 +0000"
+          }
+        },
+        {
+          "name": "missing-permanent-startup",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service",
+              "fic-device.service"
+            ],
+            "exit": 0,
+            "seconds": 5.704,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 928,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 5212
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 106,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:07:48.140 +0000"
+          }
+        },
+        {
+          "name": "main-after-restart",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service",
+              "fic-device.service"
+            ],
+            "exit": 0,
+            "seconds": 7.139,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 1018,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "STANDARD",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "STANDARD",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 6687
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 106,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:07:58.940 +0000"
+          }
+        },
+        {
+          "name": "recovery-passive",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service",
+              "fic-device.service"
+            ],
+            "exit": 0,
+            "seconds": 7.167,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 1257,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "ISOLATE",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "ISOLATE",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 6375
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 106,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:08:13.080 +0000"
+          }
+        }
+      ],
+      "permanent_ack": {
+        "api_version": 1,
+        "incident_effective_severity": "STANDARD",
+        "incident_escalated": true,
+        "incident_ignored": false,
+        "incident_mode": "PASSIVE",
+        "incident_requested_severity": "STANDARD",
+        "message": "missing permanent device; incident reported",
+        "missing": [
+          {
+            "device_id": 67,
+            "devpath": "/devices/fic-a2-absent",
+            "source": "placement:67",
+            "source_device_id": 67
+          }
+        ],
+        "ok": true,
+        "retry_required": false
+      },
+      "active_early_protection_and_SIGTERM": {
+        "main": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "TimeoutStartUSec": "10min",
+          "MainPID": "1180",
+          "StatusText": "Waiting for device administrative IPC",
+          "Requires": "sysinit.target system.slice",
+          "Wants": "fic-device.service",
+          "After": "system.slice systemd-journald.socket basic.target sysinit.target",
+          "ActiveState": "activating",
+          "SubState": "start",
+          "InvocationID": "606f82f4c6e64b5c88910697bbd551af"
+        },
+        "ssh": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "TimeoutStartUSec": "1min 30s",
+          "MainPID": "0",
+          "StatusText": "",
+          "Requires": "sysinit.target system.slice",
+          "Wants": "",
+          "After": "basic.target systemd-journald.socket system.slice -.mount auditd.service network.target sysinit.target",
+          "ActiveState": "inactive",
+          "SubState": "dead",
+          "InvocationID": "0679870e04c44ca69b482adfe08c6827"
+        },
+        "lockstatus": "ISOLATE\n",
+        "ruleset": {
+          "nftables": [
+            {
+              "metainfo": {
+                "version": "1.0.6",
+                "release_name": "Lester Gooch #5",
+                "json_schema_version": 1
+              }
+            },
+            {
+              "table": {
+                "family": "inet",
+                "name": "fic_incident_quarantine",
+                "handle": 2
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "fic_incident_quarantine",
+                "name": "forward",
+                "handle": 1,
+                "type": "filter",
+                "hook": "forward",
+                "prio": 0,
+                "policy": "drop"
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "fic_incident_quarantine",
+                "name": "input",
+                "handle": 2,
+                "type": "filter",
+                "hook": "input",
+                "prio": 0,
+                "policy": "drop"
+              }
+            },
+            {
+              "chain": {
+                "family": "inet",
+                "table": "fic_incident_quarantine",
+                "name": "output",
+                "handle": 3,
+                "type": "filter",
+                "hook": "output",
+                "prio": 0,
+                "policy": "drop"
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "fic_incident_quarantine",
+                "chain": "input",
+                "handle": 4,
+                "comment": "fic:quarantine:loopback:input:owner:a79e2164c122941d988f9f380820912b",
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "iifname"
+                        }
+                      },
+                      "right": "lo"
+                    }
+                  },
+                  {
+                    "accept": null
+                  }
+                ]
+              }
+            },
+            {
+              "rule": {
+                "family": "inet",
+                "table": "fic_incident_quarantine",
+                "chain": "output",
+                "handle": 5,
+                "comment": "fic:quarantine:loopback:output:owner:a79e2164c122941d988f9f380820912b",
+                "expr": [
+                  {
+                    "match": {
+                      "op": "==",
+                      "left": {
+                        "meta": {
+                          "key": "oifname"
+                        }
+                      },
+                      "right": "lo"
+                    }
+                  },
+                  {
+                    "accept": null
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "stop_seconds": 0.11355899199770647
+      },
+      "uninstall_mode": {
+        "main": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "TimeoutStartUSec": "10min",
+          "MainPID": "1509",
+          "StatusText": "UNINSTALLING; policy mutations disabled",
+          "Requires": "system.slice sysinit.target",
+          "Wants": "fic-device.service",
+          "After": "sysinit.target basic.target systemd-journald.socket system.slice",
+          "ActiveState": "active",
+          "SubState": "running",
+          "InvocationID": "16cf2c3880c444b4b1e4490f9102cb63"
+        },
+        "device": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "TimeoutStartUSec": "10min",
+          "MainPID": "0",
+          "StatusText": "",
+          "Requires": "sysinit.target system.slice fic.service",
+          "Wants": "",
+          "After": "systemd-journald.socket system.slice sysinit.target basic.target",
+          "ActiveState": "activating",
+          "SubState": "auto-restart",
+          "InvocationID": "428fcd877578443f97543ad5d2b63cff"
+        }
+      }
+    },
+    {
+      "path": "/home/admsys/FIC/build-package-lifecycle/native-fic-a2-runtime:debian12-20261115T111140Z-81815/startup-results.json",
+      "sha256": "d0f3b19d8ae332e3b4be091f90f3d22fe8f3135b914bb980360c0063ff67b31f",
+      "result": "PASS",
+      "cases": [
+        {
+          "name": "restart-group-initial",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service",
+              "fic-device.service"
+            ],
+            "exit": 0,
+            "seconds": 3.462,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 587,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 3064
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 106,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:12:04.107 +0000"
+          }
+        },
+        {
+          "name": "explicit-main-restart",
+          "start": {
+            "argv": [
+              "systemctl",
+              "start",
+              "fic.service"
+            ],
+            "exit": 0,
+            "seconds": 0.007,
+            "stdout": "",
+            "stderr": ""
+          },
+          "status": {
+            "api_version": 1,
+            "boot_id": "37a55baf-5358-4854-82c3-013e86a2efaf",
+            "daemon_pid": 633,
+            "daemon_state": "READY",
+            "diagnostic": "",
+            "message": "prelogin status",
+            "ok": true,
+            "ordinary_login_allowed": true,
+            "persistent_provenance": "PROVEN",
+            "persistent_state_proven": true,
+            "response_mode": "PASSIVE",
+            "response_mode_proven": true,
+            "severity": "UNLOCKED",
+            "startup_apply_completed": true,
+            "startup_apply_ok": true,
+            "startup_apply_started": true,
+            "startup_lifecycle_completed": true
+          },
+          "auto_handoff": true,
+          "event": {
+            "component": "fic",
+            "event": "policy_apply_pass",
+            "reason": "startup",
+            "result": {
+              "desktop_global_configuration": true,
+              "desktop_policy_application": true,
+              "device_reconciliation": true,
+              "device_reconciliation_attempted": true,
+              "display_manager_configuration": true,
+              "display_manager_live_runtime": "NOT_VERIFIED",
+              "firewall_reconciliation": true,
+              "incident_severity": "UNLOCKED",
+              "ok": true,
+              "registry_reload": true,
+              "startup_device_ipc_ready": true,
+              "startup_device_wait_ms": 3623
+            },
+            "summary": {
+              "applied": 4,
+              "disabled": 106,
+              "failed": 0,
+              "not_found": 0,
+              "total": 110
+            },
+            "timestamp": "2026-11-15 11:12:08.182 +0000"
+          },
+          "restart": {
+            "argv": [
+              "systemctl",
+              "restart",
+              "fic.service"
+            ],
+            "exit": 0,
+            "seconds": 4.019,
+            "stdout": "",
+            "stderr": ""
+          }
+        }
+      ],
+      "stopped_writers": {
+        "main": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "TimeoutStartUSec": "10min",
+          "MainPID": "0",
+          "StatusText": "Stopping",
+          "Requires": "system.slice sysinit.target",
+          "Wants": "fic-device.service",
+          "After": "systemd-journald.socket system.slice basic.target sysinit.target",
+          "ActiveState": "inactive",
+          "SubState": "dead",
+          "InvocationID": "a784335af778427c86992645b657adb1"
+        },
+        "device": {
+          "Type": "notify",
+          "NotifyAccess": "main",
+          "TimeoutStartUSec": "10min",
+          "MainPID": "0",
+          "StatusText": "Device policy activated; startup reconciliation pending",
+          "Requires": "fic.service sysinit.target system.slice",
+          "Wants": "",
+          "After": "systemd-journald.socket basic.target sysinit.target system.slice",
+          "ActiveState": "inactive",
+          "SubState": "dead",
+          "InvocationID": "7f744057a95341339e0926430fee21d5"
+        }
+      }
+    }
+  ],
+  "package_receipts": [
+    {
+      "path": "/home/admsys/FIC/build-package-lifecycle/native-fic-a2-runtime:debian12-20261115T111144Z-81953",
+      "result": {
+        "status": "PASS",
+        "compatible_upgrade_tested": true,
+        "scope": "real FIC dpkg fresh/shared-apply/partial-rollback/remove/reinstall/late-purge/direct-purge/emergency-broken-ELF/PAM-refusal",
+        "limits": [
+          "no physical device mutation",
+          "no PAM authentication or graphical boot proof"
+        ]
+      },
+      "sha256": {
+        "result.json": "205b09083e3078546d420b1b5a67e4b485dba5222eb20d652de09aea67510aa7",
+        "commands.json": "5d94aa26a0ead2fdaaa761b57a624b9108d4a367b3a8b2651391c12d939ace2f",
+        "container.json": "676cd3ab8f6ed3b203f06214ed9f65decbba3b83ae05af18d9e42929c903b4b3"
+      }
+    },
+    {
+      "path": "/home/admsys/FIC/build-package-lifecycle/native-fic-a2-runtime:alt-p11-20261115T112509Z-85733",
+      "result": {
+        "status": "PASS",
+        "compatible_upgrade_tested": true,
+        "scope": "actual ALT FIC RPM install/shared-apply/partial-rollback/erase/reinstall/emergency/config-preservation",
+        "limits": [
+          "no physical-device, real PAM login or graphical boot validation"
+        ]
+      },
+      "sha256": {
+        "result.json": "bdb242397da1306efbcdb01dc3b33a7a9203e49861238e476d5e27236e50c565",
+        "commands.json": "46c0f11b7660250155892fe45a533991aa4c6d796883bd941f038dfdc93c7273",
+        "container.json": "f6a0532d3b44dfb8f252e82294af1daddbe7c0285e19b1a55d2b0d35dcfdda94"
+      }
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 #define FIC_POLICY_APPLICATION_H
 
 #include "policy/registry/PolicyRegistry.h"
+#include "policy/execution/PolicyExecutionPlanner.h"
 
 #include <fic/policy/PolicyApplyResult.h>
 
@@ -19,7 +20,8 @@ PolicyApplySummary applySubmodulePolicies(PolicyRegistry&, const std::string& mo
 PolicyApplySummary applyAllPolicies(PolicyRegistry& policyRegistry);
 PolicyApplySummary applyAllPoliciesExceptModule(
     PolicyRegistry& policyRegistry,
-    const std::string& excludedModule);
+    const std::string& excludedModule,
+    PolicyExecutionPlanner::OwnExecutor executor = {});
 bool isPolicyApplySuccessful(
     const PolicyApplySummary& summary,
     const std::string& module,

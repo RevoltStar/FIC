@@ -877,7 +877,6 @@ def main():
         "--maintenance complete-install",
         "systemctl start fic.service",
         "--maintenance wait-daemon 30",
-        "fic-dick wait-daemon 30",
     )
     for builder_name, builder in (
         ("Debian-family", deb_builder),
@@ -898,6 +897,8 @@ def main():
         )
         lifecycle = (root / ("packaging/deb/lifecycle/fic.postinst" if builder_name == "Debian-family"
                              else "packaging/rpm/lifecycle/fic.post")).read_text()
+        require("fic-dick wait-daemon 30" not in lifecycle,
+                "package must retain device notify contract without waiting for full inventory")
         cursor = 0
         for step in bootstrap_steps:
             position = lifecycle.find(step, cursor)

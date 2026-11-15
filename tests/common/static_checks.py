@@ -120,18 +120,20 @@ if "Type=notify" not in fic_service or "Type=simple" in fic_service:
     errors.append("fic.service must use Type=notify")
 if "TimeoutStartSec=600s" not in fic_service or "TimeoutStartSec=infinity" in fic_service:
     errors.append("fic.service must have a finite 600 second startup timeout")
-if "Type=simple" not in device_service or "Type=notify" in device_service:
-    errors.append("fic-device.service must remain Type=simple")
-for dependency in ("After=fic.service", "Requires=fic.service"):
-    if dependency not in device_service:
-        errors.append(f"fic-device.service lost its readiness dependency: {dependency}")
-if "fic-device.service" in fic_service:
-    errors.append("fic.service introduces a dependency cycle with fic-device.service")
+for directive in ("Type=notify", "NotifyAccess=main", "TimeoutStartSec=600s", "Requires=fic.service"):
+    if directive not in device_service:
+        errors.append(f"fic-device.service lost readiness/lifecycle directive: {directive}")
+if "After=fic.service" in device_service or "After=fic-device.service" in fic_service:
+    errors.append("main/device startup must not order the other daemon before early protection")
+if "Wants=fic-device.service" not in fic_service or "ExecStartPre=" in fic_service:
+    errors.append("main must pull in device without delaying early protection in ExecStartPre")
 
 daemon_startup = fic_main[fic_main.index("int main(int argc, char* argv[])"):]
 startup_markers = (
     'STATUS=Validating startup configuration',
     'STATUS=Initializing policy registry',
+    'STATUS=Waiting for device administrative IPC',
+    'waitForDeviceStartup(',
     'STATUS=Applying startup policies',
     'run_daemon_apply_all_pass(',
     'STATUS=Creating administrative socket',

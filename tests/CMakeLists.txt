@@ -3528,3 +3528,12 @@ target_link_libraries(pam_dependency_contract_tests PRIVATE ${pam_dependency_lib
 
 add_test(NAME pam_dependency_contract_tests COMMAND pam_dependency_contract_tests --test ${CMAKE_BINARY_DIR}/pam-i3-contracts.json)
 set_tests_properties(pam_dependency_contract_tests PROPERTIES LABELS "unit;integration")
+
+add_executable(device_startup_readiness_tests
+    fic/daemon/DeviceStartupReadinessTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DeviceStartupReadiness.cpp)
+target_include_directories(device_startup_readiness_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src)
+target_link_libraries(device_startup_readiness_tests PRIVATE fic-ipc Threads::Threads)
+add_test(NAME device_startup_readiness_tests COMMAND device_startup_readiness_tests)
+set_tests_properties(device_startup_readiness_tests PROPERTIES LABELS "unit;root" SKIP_RETURN_CODE 77 TIMEOUT 20)

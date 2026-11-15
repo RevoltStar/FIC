@@ -153,3 +153,21 @@ strict active rollback without kernel writes; it is verified unchanged and
 restored afterwards. This is an isolated test precondition, not production
 recovery. SSH/SUDO mixed releases and valid container deletion are additionally
 covered by the production rollback/final-inspection unit suites.
+
+### A2 main/device startup
+
+Use the ordinary `run-deb.sh` isolation wrapper and real packages:
+
+```sh
+FIC_STARTUP_TEST_BINARY="$PWD/build-i2-full/tests/device_startup_readiness_tests" \
+  bash tests/integration/package-lifecycle/run-deb.sh \
+  IMAGE PACKAGE_DIRECTORY startup_readiness_native.py
+```
+
+The test binary must match the built shared readiness contract. The default
+`FIC_STARTUP_TEST_GROUP=all` exercises cold starts, the real device's 45-second
+post-socket delay, enabled/disabled DC, bounded failures, ACTIVE early containment,
+SIGTERM and UNINSTALLING. `remaining` resumes after the successful slow case;
+`restart` runs explicit main restart/stop. This test-only selection does not
+change production behavior. It exercises actual status and PreLogin parser, not
+GUI rendering. Evidence and exact limits: [A2 validation](../../../docs/startup-readiness-validation.md).

@@ -340,3 +340,33 @@ Real-user PAM authentication, graphical boot, physical devices and a physical VM
 reboot remain untested here. Arbitrary old development scriptlets are unsupported:
 there is no migration, adoption or guarantee that new scripts prevent an old
 scriptlet from running. No separate runtime/finalizer/retry protocol was restored.
+
+## A2 startup orchestration follow-up — 2026-11-15
+
+A2 base `62aa6022a2147dfc6080565584eb388e56a76d47`; local real package
+versions `0.0.0-alpha` → `0.0.1-alpha`. The existing actual-package lifecycle
+gates were rerun with the new parallel notify graph, not dummy package probes:
+
+* Debian 12 apt/dpkg: install, upgrade, reinstall, partial release/retry,
+  remove/late purge/direct purge, emergency broken-ELF and PAM-reference refusal:
+  **PASS**. Raw result:
+  `build-package-lifecycle/native-fic-a2-runtime:debian12-20261115T111144Z-81953/`.
+* ALT p11 RPM: install (including device-only install/erase), upgrade, reinstall,
+  partial release/retry, erase, emergency and retained configuration/provenance:
+  **PASS**. Raw result:
+  `build-package-lifecycle/native-fic-a2-runtime:alt-p11-20261115T112509Z-85733/`.
+  The harness now resolves actual package names with `rpm -qp` instead of assuming
+  version 0.1.0 and enables the current Required password-quality activation
+  before applying passwdqc. The initial attempt failed on that obsolete test
+  assumption, not on package/device readiness. No PAM implementation changed.
+
+The scripts' expected failure rows remain failures with retained protection;
+PASS means the gate asserted those refusals. Runtime sysfs/proc-sys are read-only,
+network is isolated and no host mounts are bound. No reboot or physical-device
+claim is made. New native package runtime on Debian 13/Ubuntu 24.04/26.04 was not
+rerun for A2; their production compile-time profiles build successfully.
+
+Compact observed results and hashes of raw receipts:
+[startup-readiness-a2.json](../tests/integration/package-lifecycle/evidence/startup-readiness-a2.json).
+Startup scenarios, ACTIVE/PreLogin scope and full CTest limitations:
+[startup-readiness-validation.md](startup-readiness-validation.md).

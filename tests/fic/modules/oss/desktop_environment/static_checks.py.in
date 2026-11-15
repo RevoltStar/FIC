@@ -35,9 +35,11 @@ en_lang = (root / "fic/src/resources/lang/en.lang").read_text()
 assert "Type=notify" in unit
 assert "NotifyAccess=main" in unit
 assert "TimeoutStartSec=600s" in unit
-assert "Type=notify" not in device_unit
-assert "After=fic.service" in device_unit and "Requires=fic.service" in device_unit
-assert "fic-device.service" not in unit
+assert "Type=notify" in device_unit
+assert "NotifyAccess=main" in device_unit
+assert "After=fic.service" not in device_unit and "Requires=fic.service" in device_unit
+assert "Wants=fic-device.service" in unit
+assert "After=fic-device.service" not in unit
 assert main.index("STATUS=Applying startup policies") < main.index("STATUS=Creating administrative socket")
 assert main.index("STATUS=Creating administrative socket") < main.index("STATUS=Creating session event socket")
 assert main.index("STATUS=Creating session event socket") < main.index("READY=1")

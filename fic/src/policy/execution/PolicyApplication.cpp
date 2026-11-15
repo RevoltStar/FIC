@@ -1,6 +1,7 @@
 #include "policy/execution/PolicyApplication.h"
 
 #include "policy/execution/PolicyExecutionPlanner.h"
+#include <utility>
 
 PolicyApplySummary applyPolicy(
     PolicyRegistry& policyRegistry,
@@ -89,7 +90,8 @@ PolicyApplySummary applyAllPolicies(PolicyRegistry& policyRegistry) {
 
 PolicyApplySummary applyAllPoliciesExceptModule(
     PolicyRegistry& policyRegistry,
-    const std::string& excludedModule) {
+    const std::string& excludedModule,
+    PolicyExecutionPlanner::OwnExecutor executor) {
     PolicyExecutionRequest request;
     request.excludedModules.insert(excludedModule);
     for (const auto& [moduleName, policyModule] : policyRegistry) {
@@ -105,7 +107,7 @@ PolicyApplySummary applyAllPoliciesExceptModule(
             }
         }
     }
-    return PolicyExecutionPlanner(policyRegistry).execute(request);
+    return PolicyExecutionPlanner(policyRegistry, std::move(executor)).execute(request);
 }
 
 bool isPolicyApplySuccessful(

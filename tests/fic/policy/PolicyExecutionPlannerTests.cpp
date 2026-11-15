@@ -1313,6 +1313,38 @@ void testIncidentModeDependency(const std::filesystem::path& root) {
     scenario("ENABLE", "ACTIVE", false, true);
 }
 
+void testBatchOwnExecutorPropagation(const std::filesystem::path& root) {
+    writeModuleConfig(root,"DC",{{"category",true},{"disabled",false}});
+    writeModuleConfig(root,"AUDIT",{{"independent",true},{"dependent",true}});
+    writeModuleConfig(root,"FIREWALL",{{"excluded",true}});
+    PolicyBehavior category, disabled, independent, dependent, excluded;
+    std::vector<std::string> order;
+    PolicyList policies;
+    policies.push_back(std::make_unique<TestPolicy>(ref("category","DC"),category,order));
+    policies.push_back(std::make_unique<TestPolicy>(ref("disabled","DC"),disabled,order));
+    policies.push_back(std::make_unique<TestPolicy>(ref("independent"),independent,order));
+    policies.push_back(std::make_unique<TestPolicy>(ref("dependent"),dependent,order,
+        std::vector<PolicyDependency>{required(ref("category","DC"))}));
+    policies.push_back(std::make_unique<TestPolicy>(ref("excluded","FIREWALL"),excluded,order));
+    auto registry=buildRegistry(std::move(policies));
+    int callbacks=0;
+    auto summary=applyAllPoliciesExceptModule(registry,"FIREWALL",
+        [&](const PolicyRef& identity,Policy&)->std::optional<PolicyApplyResult> {
+            if(identity.moduleName!="DC")return std::nullopt;
+            ++callbacks;
+            return PolicyApplyResult{identity.moduleName,identity.submoduleName,identity.policyName,
+                PolicyApplyStatus::Failed,"startup resource unavailable"};
+        });
+    require(callbacks==1 && category.calls==0 && disabled.calls==0 && excluded.calls==0,
+            "batch own-executor failed to preserve disabled/excluded guards or executed refused policy");
+    require(independent.calls==1 && dependent.calls==0,
+            "batch own-executor suppressed independent work or bypassed Required dependency");
+    require(result(summary,ref("category","DC")).status==PolicyApplyStatus::Failed &&
+            result(summary,ref("disabled","DC")).status==PolicyApplyStatus::Disabled &&
+            result(summary,ref("dependent")).failureOrigin==PolicyFailureOrigin::RequiredDependencyBlocked,
+            "batch own-executor changed summary/dependency outcomes");
+}
+
 int main() {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() /
@@ -1339,6 +1371,7 @@ int main() {
         testSharedDependencyAndBatchRoots(root);
         testDeterministicRootsAndFrozenMetadata(root);
         testExcludedModule(root);
+        testBatchOwnExecutorPropagation(root);
         testGraphValidation(root);
         testEnabledRequiredDependentsGuard(root);
         testSudoDependencyGraphShape(root);

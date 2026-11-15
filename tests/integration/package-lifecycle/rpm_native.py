@@ -84,7 +84,8 @@ try:
     run(['visudo','-c'])
     packages=[]
     for name in ('fic-dick','fic','fic-cli'):
-        found=list(Path('/var/tmp/fic-packages').glob(name+'-0.1.0-*.rpm'))
+        found=[p for p in Path('/var/tmp/fic-packages').glob(name+'-*.rpm')
+               if run(['rpm','-qp','--qf','%{NAME}',str(p)]).stdout.strip()==name]
         assert len(found)==1,found
         packages.append(str(found[0]))
         run(['rpm','-qp','--qf','%{NAME} %{VERSION}-%{RELEASE}\\n',str(found[0])])
@@ -100,8 +101,8 @@ try:
     for policy in ('sudo_disable_scoped_defaults','sudo_exempt_group_disable','sudo_env_reset','sudo_timeout'):
         run(['/opt/fic/bin/fic-cli','policy','enable','DAC',policy])
         run(['/opt/fic/bin/fic-cli','policy','apply','DAC',policy])
-    # ALT passwdqc is StaticVerifyOnly and has no topology activation policy.
-    for policy in ('enable_authentication_lockout','enable_password_history'):
+    # Current Required dependency contracts also require password-quality activation.
+    for policy in ('enable_authentication_lockout','enable_password_quality','enable_password_history'):
         run(['/opt/fic/bin/fic-cli','policy','enable','IDENTITY_ACCESS',policy])
         run(['/opt/fic/bin/fic-cli','policy','apply','IDENTITY_ACCESS',policy])
     run(['/opt/fic/bin/fic-cli','policy','enable','IDENTITY_ACCESS','passwdqc_retry_count'])
