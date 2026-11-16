@@ -1,5 +1,6 @@
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
+#include "../../../platform/SddmTestProfiles.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -464,6 +465,30 @@ void testSddmRootExclusionWithAuthsucc(const fs::path& root) {
             "non-exact SDDM pam_succeed_if rule was trusted");
 }
 
+void testNativeSddmProfiles(const fs::path& root) {
+    writeFile(root/"pam.d/common-session","session required pam_unix.so\n");
+    writeFile(root/"pam.d/common-password","password required pam_unix.so\n");
+    writeFile(root/"pam.d/common-auth",kDebianAuthsucc);
+    writeFile(root/"pam.d/common-account","account required pam_unix.so\n");
+    writeFile(root/"security/faillock.conf","even_deny_root\n");
+    for(auto profile:sddmTestProfiles()) {
+        auto platform=makeSddmPlatform(root);
+        platform.trustedAuthenticationExclusions=profile.pam.trustedAuthenticationExclusions;
+        require(platform.trustedAuthenticationExclusions.size()==1,profile.id+": missing exclusion");
+        platform.trustedAuthenticationExclusions.front().source=root/"pam.d/sddm";
+        auto content=nativeSddmFixture();writeFile(root/"pam.d/sddm",content);
+        auto analysis=analyzeService(platform,"sddm");
+        std::string detail;for(const auto& violation:analysis.violations)detail+=formatPamFlowViolation(violation)+"; ";
+        require(!analysis.effective&&hasViolation(analysis,PamFlowViolationKind::PrematureSuccessAccounting),
+            profile.id+": required gate hid premature success accounting: "+detail);
+        const auto offset=content.find("required        pam_succeed_if.so");
+        require(offset!=std::string::npos,"missing native gate");content.replace(offset,8,"requisite");
+        writeFile(root/"pam.d/sddm",content);analysis=analyzeService(platform,"sddm");
+        require(analysis.effective,profile.id+": requisite gate failed structural proof");
+    }
+    std::cout<<"Native Debian12/13 Ubuntu24.04/26.04 required/requisite CFG PASS\n";
+}
+
 void testAuthsuccDenialBypassDetected(const fs::path& root) {
     auto platform = makePlatform(root);
 
@@ -822,6 +847,7 @@ int main() {
         testAltSshAuthsuccBeforeOuterNologinIsPremature(root);
         testAltLocalOnlyFaillockAcrossSssRouter(root);
         testSddmRootExclusionWithAuthsucc(root);
+        testNativeSddmProfiles(root);
         testAuthsuccDenialBypassDetected(root);
         testProviderUnreachableAfterAuthfail(root);
         testConditionalPasswordRequirements(root);

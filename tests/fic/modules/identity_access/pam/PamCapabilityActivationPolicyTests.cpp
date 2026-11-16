@@ -6,6 +6,8 @@
 #include "modules/identity_access/pam/PamProviderCatalog.h"
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
 #include "rollback/DaemonMutationJournal.h"
+#include "modules/identity_access/pam/policies/PamDisableRootSddmLoginPolicy.h"
+#include "../../../platform/SddmTestProfiles.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
@@ -632,6 +634,114 @@ void testJournalBoundPreparedPartialRecovery(
                         records.front().id},
             "Prepared partial recovery did not neutralize then create fresh "
             "physical provenance");
+}
+
+// Actual slot manager + journal + Structural verifier; only the native
+// pam-auth-update process is replaced by the existing selection-state fixture.
+void testNativeSddmPreparedRecovery(const std::filesystem::path& root) {
+    using namespace fic::identity::pam;
+    using namespace fic::platform;
+    for(auto profile:sddmTestProfiles()) {
+        const auto tree=root/("sddm-"+profile.id);
+        auto platform=profile.pam;
+        platform.configDirectories={tree/"pam.d"};
+        platform.moduleDirectories={tree/"security"};
+        platform.scopes={{PamScope::EffectiveAuthenticationStack,{"sddm"}}};
+        require(platform.trustedAuthenticationExclusions.size()==1,profile.id+": missing contract");
+        platform.trustedAuthenticationExclusions.front().source=tree/"pam.d/sddm";
+        auto& capability=*std::find_if(platform.capabilities.begin(),platform.capabilities.end(),
+            [](const auto& value){return value.capability==PamCapability::AuthenticationLockout;});
+        capability.configPath=tree/"security/faillock.conf";
+        // Relocate both the managed path and its typed native-default metadata;
+        // canonical slots omit conf=. Keep ProviderConfigFile verification.
+        capability.configTopology=pamProviderDescriptor(PamProviderKind::PamFaillock).defaultConfigTopology;
+        capability.configTopology->primaryPath=capability.configPath;
+        writeFile(capability.configPath,"even_deny_root\n");
+        writeFile(tree/"pam.d/sddm",nativeSddmFixture());
+        writeFile(tree/"pam.d/common-session","session required pam_unix.so\n");
+        writeFile(tree/"pam.d/common-password","password required pam_unix.so\n");
+        writeFile(tree/"pam.d/common-auth",
+            "auth include fic-faillock-preauth\n"
+            "auth [success=2 default=ignore] pam_unix.so nullok try_first_pass\n"
+            "auth include fic-faillock-authfail\n"
+            "auth requisite pam_deny.so\n"
+            "auth required pam_permit.so\n"
+            "auth include fic-faillock-authsucc\n");
+        writeFile(tree/"pam.d/common-account","account include fic-faillock-account\naccount required pam_unix.so\n");
+        for(const auto* slot:{"preauth","authfail","authsucc","account"})
+            writeFile(tree/"pam.d"/(std::string("fic-faillock-")+slot),
+                "#@FIC_PAM_SLOT_NEUTRAL version=1 capability=enable_authentication_lockout slot="+
+                std::string(slot)+"\n"+(std::string(slot)=="account"?"account":"auth")+" optional pam_deny.so\n");
+        for(const auto* module:{"pam_faillock.so","pam_unix.so","pam_deny.so","pam_permit.so"}) {
+            writeFile(tree/"security"/module,"fixture\n");
+            require(::chmod((tree/"security"/module).c_str(),0555)==0,"module chmod");
+        }
+        std::filesystem::create_directories(tree/"data");
+        const auto journalPath=tree/"data/journal.json";
+        fic::rollback::DaemonMutationJournal::instance().setOverridePath(journalPath);
+        std::string error;
+        auto* journal=fic::rollback::DaemonMutationJournal::instance().tryGet(error);require(journal!=nullptr,error);
+        const PolicyRef ref{"IDENTITY_ACCESS","PAM","enable_authentication_lockout"};
+        fic::rollback::UndoDisablePamCapability undo;
+        undo.capability=ref.policyName;undo.topology=fic::rollback::PamTopologyKind::PamAuthUpdate;
+        undo.targetStrategy="authsucc";
+        for(const auto& activation:capability.strategyActivations)
+            for(const auto& id:activation.activationIdentifiers)
+                if(std::find(undo.activationIdentifiers.begin(),undo.activationIdentifiers.end(),id)==undo.activationIdentifiers.end())
+                    undo.activationIdentifiers.push_back(id);
+        fic::rollback::MutationRecord record;record.policy=ref;record.resource="capability/"+ref.policyName;
+        record.undo={fic::rollback::MutationBackend::Pam,undo};fic::rollback::MutationId id=0;
+        require(journal->prepareMutation(record,id,error),error);
+        int nativeCalls=0;
+        PamAuthUpdateTopologyManagerOptions managerOptions;
+        managerOptions.configDirectory=tree/"pam.d";managerOptions.stateDirectory=tree/"state";
+        managerOptions.runner=[&](const auto&,const auto& arguments,const auto&) {
+            ++nativeCalls;std::string selected;
+            for(const auto& argument:arguments)if(argument.rfind("fic-",0)==0)selected+="Module: "+argument+"\n";
+            writeFile(tree/"state/auth",selected);writeFile(tree/"state/account",selected);
+            ProcessResult result;result.started=true;result.exitCode=0;return result;
+        };
+        const auto executable=tree/"bin/pam-auth-update";
+        writeFile(executable,"#!/bin/sh\nexit 99\n");
+        require(::chmod(executable.c_str(),0555)==0,"executable chmod");
+        PlatformExecutables executables;
+        executables.entries={{ExecutableId::PamAuthUpdate,{executable}}};
+        PlatformExecutableResolverOptions resolverOptions;
+        resolverOptions.enforceTrustedOwnership=false; // disposable /tmp fixture, never production execution
+        PlatformExecutableResolver resolver(executables,resolverOptions);
+        PamAuthUpdateTopologyManager manager(platform,capability,{"sddm"},resolver,managerOptions);
+        const bool bound=manager.bindJournalMutationId(id,error);
+        require(bound,profile.id+": bind fixture: "+error);
+        const bool enabled=manager.enableStrategy(PamFaillockStrategy::Authsucc,error);
+        require(enabled,profile.id+": prepare managed AFTER fixture: "+error);
+        const auto owned=readFile(tree/"pam.d/fic-faillock-authsucc");
+        writeFile(root/"config/IDENTITY_ACCESS.conf",
+            "enable_authentication_lockout.status=ENABLE\nenable_authentication_lockout.value=authsucc\n"
+            "disable_root_sddm_login.status=ENABLE\ndisable_root_sddm_login.value=ENABLE\n");
+        PamCapabilityActivationPolicyOptions options;
+        options.managerFactory=[&](const auto& config,const auto& services,std::string&) {
+            return std::make_unique<PamAuthUpdateTopologyManager>(platform,config,services,resolver,managerOptions);
+        };
+        PamCapabilityActivationPolicy policy(platform,PamCapability::AuthenticationLockout,options);
+        PamConfiguration before(platform);PamCapabilityVerification proof;
+        const bool verified=PamCapabilityVerifier::verify(before,platform,{"sddm"},PamCapability::AuthenticationLockout,
+            PamProviderKind::PamFaillock,proof,PamCapabilityVerificationMode::Structural);
+        require(!verified&&
+            std::any_of(proof.violations.begin(),proof.violations.end(),[](const auto& violation){
+                return violation.kind==PamFlowViolationKind::PrematureSuccessAccounting;}),
+            profile.id+": unsafe required gate proof: "+formatPamCapabilityVerification(proof));
+        const auto prepared=readFile(journalPath);
+        require(!policy.apply()&&readFile(journalPath)==prepared&&nativeCalls==1,
+            profile.id+": unsafe Prepared recovery did not remain fail-closed");
+        PamDisableRootSddmLoginPolicy exclusion(platform);
+        require(exclusion.apply()&&exclusion.apply(),profile.id+": root exclusion apply failed");
+        require(policy.apply()&&policy.apply(),profile.id+": safe Prepared recovery failed");
+        const auto records=journal->activeRecords(ref);
+        require(records.size()==1&&records.front().id==id&&records.front().status==fic::rollback::MutationStatus::Applied&&
+            nativeCalls==1&&readFile(tree/"pam.d/fic-faillock-authsucc")==owned,
+            profile.id+": recovery rewrote/re-adopted slot provenance");
+        std::cout<<profile.id<<" native SDDM required rejected / requisite StructuralEffective / Prepared same-id recovery PASS\n";
+    }
 }
 
 // I1: exercise the real permanent-slot manager AND Structural verifier.
@@ -1726,6 +1836,7 @@ int main() {
         testStaticPasswdqcStructural(root);
         testForeignManagedSlotFaillock(root);
         testExternalPwquality(root);
+        testNativeSddmPreparedRecovery(root);
     } catch (const std::exception& exception) {
         std::cerr << "PamCapabilityActivationPolicyTests failed: "
                   << exception.what() << '\n';

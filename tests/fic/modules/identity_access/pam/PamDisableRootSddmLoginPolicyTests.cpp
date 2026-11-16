@@ -1,5 +1,6 @@
 #include "modules/identity_access/pam/policies/PamDisableRootSddmLoginPolicy.h"
 
+#include "../../../platform/SddmTestProfiles.h"
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
 
@@ -114,6 +115,19 @@ void runTests() {
     Tree tree;
     initializeRuntime(tree.root);
 
+    for (auto profile : sddmTestProfiles()) {
+        require(profile.pam.trustedAuthenticationExclusions.size()==1, profile.id+": policy unavailable");
+        profile.pam.trustedAuthenticationExclusions.front().source=tree.sddm;
+        PamDisableRootSddmLoginPolicy nativePolicy(profile.pam);
+        const auto original=nativeSddmFixture();
+        auto expected=original;
+        const std::string native="auth    required        pam_succeed_if.so user != root quiet_success";
+        const auto offset=expected.find(native);require(offset!=std::string::npos,"native fixture changed");
+        expected.replace(offset,native.size(),"auth requisite pam_succeed_if.so user != root quiet_success");
+        writeFile(tree.sddm,original);
+        require(nativePolicy.apply()&&readFile(tree.sddm)==expected,profile.id+": native rule not upgraded exactly");
+        require(nativePolicy.apply()&&readFile(tree.sddm)==expected,profile.id+": native apply not idempotent");
+    }
     writeFile(tree.sddm, kManaged);
     PamDisableRootSddmLoginPolicy policy(tree.platform);
     require(policy.apply() && policy.apply() && readFile(tree.sddm) == kManaged,
@@ -138,6 +152,16 @@ void runTests() {
     writeFile(tree.sddm, conflict);
     require(!policy.apply() && readFile(tree.sddm) == conflict,
             "conflicting SDDM root exclusion was mutated");
+
+    for(const auto& rejected : std::vector<std::string>{
+        "@include common-auth\nauth required pam_succeed_if.so user != root quiet_success\n",
+        "auth required pam_succeed_if.so user != root quiet\n@include common-auth\n",
+        "auth sufficient pam_succeed_if.so user != root quiet_success\n@include common-auth\n",
+        "auth required pam_succeed_if.so user != root quiet_success\n"+kNative,
+        "auth required pam_unix.so\n"}) {
+        writeFile(tree.sddm,rejected);
+        require(!policy.apply()&&readFile(tree.sddm)==rejected,"unknown/conflicting topology changed");
+    }
 
     writeFile(tree.sddm, kBase);
     auto failingWriter = [](const std::string&,

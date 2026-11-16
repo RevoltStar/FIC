@@ -65,6 +65,88 @@ must reconcile it with the installed version first. The guard is repeated
 after stopping the old daemon; if that race check refuses the upgrade, services
 that were active before preinst are restarted.
 
+## SDDM root exclusion: Debian and Ubuntu
+
+Official-package research (2026-11-16, amd64, disposable official Docker images;
+no systemd/desktop started, no host PAM writes):
+
+| Property | Ubuntu 24.04 | Ubuntu 26.04 |
+|---|---|---|
+| SDDM version | 0.20.0-2ubuntu4.2 | 0.21.0+git20250502.4fe234b-2ubuntu3 |
+| Archive | archive.ubuntu.com/ubuntu noble-updates/universe | archive.ubuntu.com/ubuntu resolute/universe |
+| Package path | /etc/pam.d/sddm | /etc/pam.d/sddm |
+| Root exclusion | user != root quiet_success, line 5 | identical |
+| Control | required | required |
+| common-auth / common-account | lines 8 / 13 | lines 8 / 13 |
+| Debian contract | exact match | exact match |
+| Existing FIC policy applicable | yes, after declaring platform contract | yes, after declaring platform contract |
+
+Both Ubuntu PAM files are byte-identical to the files extracted from official
+Debian12 sddm 0.19.0-5 (bookworm/main) and Debian13 sddm
+0.21.0+git20250502.4fe234b-2 (trixie/main). No additional active root exclusion
+exists in the service file; the nopasswdlogin rule is commented out. The complete
+40-line original is retained at
+`tests/fic/modules/identity_access/pam/fixtures/ubuntu-sddm.pam`; inspect with `nl -ba`.
+PAM file SHA256: `7d77ea3afc28bb9585adf4a79170a24b1bb422fe090bc01f3559a63c3950e360`.
+Ubuntu package SHA256 respectively:
+`a161eb751cb1ab1cfbb21f8682f6591251651e155b8c97e8743a9423f359d0a1`,
+`7c0c8a0db3b9789a50dff116e5b675eaddce472ac2bb0db74edbd16e2ffb2c3d`.
+Research: `docker run --rm --network host ubuntu:<24.04|26.04>`, inspect
+`/etc/os-release`, `dpkg --print-architecture`, apt sources, then `apt-get update`,
+`apt-cache policy sddm`, `apt-get download sddm`, `dpkg-deb -f/-c/-x`.
+Normal container networking could not reach the archive; host networking worked.
+Package extraction was sufficient; no package installation was needed.
+
+History: b70b406f introduced exact Debian12/13 exclusions, CFG subject modelling
+and the shared policy; 46e841c3 reinforced the existing policy. Ubuntu omitted the
+platform declaration. Package evidence shows no configuration difference that
+would require an Ubuntu-specific policy; no explicit Ubuntu exclusion rationale
+was found in the inspected history.
+
+Linux-PAM specifies that [required continues after failure whereas requisite
+returns immediately](https://github.com/linux-pam/linux-pam/blob/master/doc/man/pam.conf-syntax.xml).
+[pam_succeed_if](https://github.com/linux-pam/linux-pam/blob/master/modules/pam_succeed_if/pam_succeed_if.8.xml)
+returns PAM_AUTH_ERR when user != root is false; quiet_success affects logging.
+[pam_faillock](https://github.com/linux-pam/linux-pam/blob/master/modules/pam_faillock/pam_faillock.8.xml)
+preauth checks lock state, authfail records failure, authsucc clears prior failures
+after successful credentials; even_deny_root enables root tally enforcement.
+Thus required can let an excluded root reach authsucc and clear a tally even
+though the overall service rejects login. Upgrading only this exact gate to
+requisite rejects root before common-auth. Ordinary users retain the same gate
+success path and unchanged authentication rules.
+
+Supported declaration scope: Debian12/13 and Ubuntu24.04/26.04. Registration of
+`disable_root_sddm_login` does **not** enable/apply it. Default remains DISABLE;
+no new required dependency and no faillock strategy change. With the policy left
+DISABLE, required + authsucc + even_deny_root must still be rejected as
+premature_success_accounting. `policy apply IDENTITY_ACCESS all` alone is not a
+guaranteed repair without enabling the exclusion policy first.
+
+Validation (Docker, 2026-11-16): full project build exit0; focused platform,
+policy, CFG, topology, activation/Prepared, registration, defaults, rollback and
+packaging checks **10 PASS /0 FAIL /0 SKIP** (CTest exit0). New profile/policy/CFG
+regressions gave RED **0 PASS /3 FAIL /0 SKIP**, exit8, before the two declarations.
+Full CTest: **225 PASS /2 pre-existing FAIL /4 SKIP**, exit8; unrelated failures
+are incident_state_lifecycle_static_checks (RPM manifest) and
+identity_policy_hierarchy_tests (activation recommendation expectation).
+Detailed commands/log paths are in docs/HANDOFF.md.
+
+Tests compile the actual four distribution factories, use the full extracted
+SDDM file, verify required→requisite byte preservation/idempotence and conflict
+refusal, and exercise the real production registry factory (ALT negative control,
+DISABLE defaults). Structural tests reject required + authsucc + even_deny_root
+and accept requisite, retaining ordinary-user authentication paths.
+The Prepared test uses real MutationJournal, physical managed slots, slot manager
+and full ProviderConfigFile Structural verifier: root/config/module paths and
+native-default configTopology metadata are relocated into a disposable tree;
+only the native pam-auth-update invocation is replaced by the existing selection
+fixture. Failed recovery keeps the exact Prepared journal; exclusion policy apply
+allows same-id Applied recovery without rewriting authsucc or rerunning the native
+writer. This proves the recovery logic, not a native Ubuntu graphical login or
+real crash/reboot/pam-auth-update execution. Ubuntu package research ran in native
+Ubuntu containers; FIC tests/build ran with the Debian12 test toolchain and real
+Ubuntu profile factories. No production host or 192.168.1.50 was used.
+
 ## Package lifecycle invariants (removal and reinstallation)
 
 > Package removal first stops all FIC PAM writers and only then detaches

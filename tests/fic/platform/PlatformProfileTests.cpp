@@ -1,6 +1,7 @@
 #include "platform/PlatformCompatibility.h"
 #include "platform/PlatformExecutableResolver.h"
 #include "platform/PlatformProfile.h"
+#include "SddmTestProfiles.h"
 
 #include <cstdlib>
 #include <algorithm>
@@ -1954,6 +1955,23 @@ void testModeAndOwnerCatalogValidation() {
             "logical object without system profile was accepted");
 }
 
+void testSddmContracts() {
+    for (const auto& profile : sddmTestProfiles()) {
+        const auto& rules = profile.pam.trustedAuthenticationExclusions;
+        require(rules.size()==1, profile.id+": missing SDDM contract");
+        const auto& rule=rules.front();
+        require(rule.service=="sddm" && rule.module=="pam_succeed_if.so" &&
+            rule.reason==fic::platform::PamTrustedAuthenticationExclusionReason::ExplicitSubjectExclusion &&
+            rule.excludedUser=="root" && rule.control=="required" &&
+            rule.arguments==std::vector<std::string>{"user","!=","root","quiet_success"} &&
+            rule.source==std::filesystem::path("/etc/pam.d/sddm") &&
+            rule.insertBeforeIncludeTarget=="common-auth" && rule.enforcedControl=="requisite",
+            profile.id+": incorrect SDDM contract");
+    }
+    require(fic::platform::makeAltP11SddmTestProfile().pam.trustedAuthenticationExclusions.empty(),
+        "unsupported ALT acquired SDDM contract");
+}
+
 void testNativeModuleAliasValidation() {
     auto profile=fic::platform::makeBuildPlatformProfile();std::string error;
     if(profile.id=="alt-p11")require(profile.pam.trustedModuleAliases.at("pam_unix.so")=="pam_tcb.so",
@@ -1973,6 +1991,7 @@ void testNativeModuleAliasValidation() {
 
 int main() {
     try {
+        testSddmContracts();
         testSelectedProfile();
         testCompatibilityIsFailClosed();
         testPamCompositionIsMechanismDriven();

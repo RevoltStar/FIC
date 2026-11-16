@@ -40,6 +40,7 @@ const Option options[]={
 const char* support(PamPolicySupport s){switch(s){case PamPolicySupport::Unsupported:return "Unsupported";case PamPolicySupport::Supported:return "Supported";case PamPolicySupport::ReadOnly:return "ReadOnly";case PamPolicySupport::RequiresTopologyActivation:return "RequiresTopologyActivation";}return "unknown";}
 const char* topology(PamTopologyStrategyKind s){switch(s){case PamTopologyStrategyKind::StaticVerifyOnly:return "StaticVerifyOnly";case PamTopologyStrategyKind::PamAuthUpdate:return "PamAuthUpdate";case PamTopologyStrategyKind::AltTcbManaged:return "AltTcbManaged";}return "unknown";}
 #include "Contracts.h"
+#include "../../fic/platform/SddmTestProfiles.h"
 #include "AltControlI5.h"
 #include "FunctionalI6.h"
 int main(int argc,char** argv){
@@ -68,6 +69,17 @@ int main(int argc,char** argv){
    result["functional"]=functionalI6(profile,executables);
   } else if(std::string(argv[1])=="--test") {
    result["contracts"] = contracts(profile, root);
+   auto profiles=sddmTestProfiles();profiles.push_back(makeAltP11SddmTestProfile());
+   result["sddm_registration"]=json::array();
+   for(const auto& candidate:profiles) {
+    PlatformExecutableResolver resolver(candidate.executables);PolicyRegistry registry;
+    need(initPolicyRegistry(candidate,resolver,registry,error),candidate.id+": "+error);
+    const bool registered=registry.findPolicy({"IDENTITY_ACCESS","PAM","disable_root_sddm_login"})!=nullptr;
+    need(registered==(candidate.id!="alt-p11"),candidate.id+": incorrect SDDM policy registration");
+    if(registered)need(!registry.findPolicy({"IDENTITY_ACCESS","PAM","disable_root_sddm_login"})->isEnabled(),
+        candidate.id+": SDDM policy default unexpectedly enabled");
+    result["sddm_registration"].push_back({{"platform",candidate.id},{"registered",registered}});
+   }
   } else if(std::string(argv[1])=="--audit") {
    PolicyRegistry registry;need(initPolicyRegistry(profile,executables,registry,error),error);need(validatePolicyDependencyGraph(registry,error),error);
    const auto rollbackDeps=fic::rollback::productionRollbackDeps(profile,executables,&registry);

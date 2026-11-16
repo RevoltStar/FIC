@@ -3561,3 +3561,21 @@ target_include_directories(device_startup_readiness_tests PRIVATE
 target_link_libraries(device_startup_readiness_tests PRIVATE fic-ipc Threads::Threads)
 add_test(NAME device_startup_readiness_tests COMMAND device_startup_readiness_tests)
 set_tests_properties(device_startup_readiness_tests PROPERTIES LABELS "unit;root" SKIP_RETURN_CODE 77 TIMEOUT 20)
+
+# Compile the actual distribution factories under test-only names. This keeps
+# SDDM regressions independent of the host/selected build platform.
+foreach(profile Debian12 Debian13 Ubuntu2404 Ubuntu2604 AltP11)
+    add_library(sddm_test_profile_${profile} STATIC
+        ${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/${profile}Profile.cpp)
+    target_include_directories(sddm_test_profile_${profile} PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+    target_link_libraries(sddm_test_profile_${profile} PUBLIC fic-platform)
+    target_compile_definitions(sddm_test_profile_${profile} PRIVATE
+        makeBuildPlatformProfile=make${profile}SddmTestProfile)
+    foreach(consumer platform_profile_tests pam_disable_root_sddm_login_policy_tests
+                     pam_control_flow_analyzer_tests pam_capability_activation_policy_tests
+                     pam_dependency_contract_tests)
+        target_link_libraries(${consumer} PRIVATE sddm_test_profile_${profile})
+    endforeach()
+endforeach()
+target_sources(pam_capability_activation_policy_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamDisableRootSddmLoginPolicy.cpp)

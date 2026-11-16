@@ -1,63 +1,74 @@
 # Current workspace
 
 ## Current base / task
-* Branch main; follow-up base `3e28cc1279ac79fb30b72ae1f198dd3f4f0e8269`.
-* Current task complete: distinguish confirmed systemd service failure and persist
-  D-Bus observation diagnostics. One follow-up commit (HEAD); no push.
+* Branch main; base `6d4b40375a6db5663f1ce5fde42dea3e9f9f7818`.
+* SDDM PAM Ubuntu24.04/26.04 support complete; one fix commit is HEAD, no push.
 
 ## Accepted invariants / completed
-* Successful systemd observation ActiveState=failed without verified IPC selects
-  ServiceFailed / DAEMON_SERVICE_FAILED. Qt first step Failed/red error banner,
-  remaining steps Waiting. Does not assert apply failure.
-* Verified IPC retains priority: STARTUP_FAILED is first-apply failure (second step
-  Failed); DAEMON_DEGRADED stays distinct. DAEMON_UNAVAILABLE is missing/incomplete
-  observation, Warning first step/banner. See fic-prelogin/README.md.
-* Broker records SystemdStatus.error via stderr (unit StandardError=journal).
-  PreLoginObservationLog suppresses identical current errors; changed reason logs
-  immediately; successful observation clears suppression. Missing IPC alone never
-  generates a D-Bus record. Existing sanitized <=1024-byte diagnostics unchanged.
-  Console keeps full TTY diagnostics; during D-Bus failure stdout emits only state
-  to avoid duplicate journal diagnostics. Qt does not log observation errors.
-* No changes to prelogin_status IPC, sd-bus algorithm/250ms timeout/poll interval,
-  boot/PID/peer validation, mayAutoHandoff, login/access/renderer proofs, full 5s
-  countdown, manual/power/recovery/resource cleanup/cgroup proof. Verified fresh
-  IPC remains necessary for auto-handoff; missing proof resets countdown.
+* Official Ubuntu Docker package extraction, before production edits, confirmed
+  identical /etc/pam.d/sddm on Ubuntu24.04 sddm0.20.0-2ubuntu4.2
+  (noble-updates/universe) and Ubuntu26.04
+  sddm0.21.0+git20250502.4fe234b-2ubuntu3 (resolute/universe), amd64.
+  Exact byte match with Debian12 0.19.0-5 and Debian13
+  0.21.0+git20250502.4fe234b-2. PAM SHA256/DEB hashes, provenance, line positions,
+  Linux-PAM references and semantics: docs/pam-owned-faillock-slots.md.
+* Production change ONLY Ubuntu2404Profile.cpp and Ubuntu2604Profile.cpp:
+  declare the existing exact SDDM root exclusion contract, required→requisite.
+  Existing shared policy/conditional registry registration reused unchanged.
+* Policy stays DISABLE by default; no automatic application, dependency or strategy
+  changes; CFG remains fail-closed on required/authsucc/even_deny_root.
+* Tests use complete package PAM fixture and actual profile factories under
+  test-only names. Production registry: Debian12/13, Ubuntu24.04/26.04 registered
+  and DISABLE; ALT not registered. No changes to PAM algorithms/ownership/lifecycle.
+* Prepared test: actual journal + manager + physical slots + full Structural
+  verifier; only pam-auth-update process replaced by existing fixture runner.
+  Required rejected, journal unchanged; exclusion apply then same-id Applied
+  recovery without native re-run or authsucc rewrite. Config/module paths and
+  native-default configTopology metadata relocated to disposable tree.
 
 ## Changed areas
-* fic-prelogin/src/PreLoginController.*, PreLoginObservationLog.h, main.cpp,
-  QtPreLoginView.cpp; fic-prelogin/README.md; three incident prelogin test files.
+* Two Ubuntu profiles; tests/CMakeLists.txt (test factories only); platform,
+  SDDM policy, CFG, activation tests; existing PAM dependency integration driver;
+  test-only SddmTestProfiles.h and full ubuntu-sddm.pam fixture; PAM docs.
 
-## Validation (Docker, actually executed)
-* Docker CLI -H unix:///run/user/678421280/podman/podman.sock, image
-  fic-gui-dependency-tests:debian12. run --rm --network none --cap-drop ALL
-  --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add KILL
-  --security-opt no-new-privileges; repository mounted /src:ro, existing
-  build-gui-dependencies mounted /build:rw; workdir /src.
-* RED: cmake --build /build --target prelogin_controller_tests prelogin_qt_view_tests
-  -j2 (exit0); ctest --test-dir /build -R
-  '^(prelogin_controller_tests|prelogin_qt_view_tests)$' --output-on-failure
-  (exit8; 0 PASS /2 FAIL /0 SKIP). Controller classification and Qt token fail.
-* GREEN: cmake --build /build --target fic-prelogin fic-prelogin-frontend
-  fic-prelogin-integration prelogin_daemon_fixture prelogin_controller_tests
-  prelogin_qt_view_tests prelogin_frontend_process_tests daemon_readiness_tests
-  device_startup_readiness_tests incident_access_client_tests -j2 (exit0).
-* ctest --test-dir /build -R
-  '^(prelogin_controller_tests|prelogin_qt_view_tests|prelogin_frontend_process_tests|prelogin_package_lifecycle_tests|daemon_readiness_tests|device_startup_readiness_tests|incident_access_client_tests)$'
-  --output-on-failure: exit0, **7 PASS /0 FAIL /0 SKIP**, 13.84s final run.
-  Qt uses CTest property QT_QPA_PLATFORM=offscreen.
-* Evidence: build-gui-dependencies/prelogin-followup-{red,green}-{build,tests}.log;
-  Testing/Temporary/LastTest.log includes actual journal-channel regression PASS.
-* Coverage: failed/unavailable/apply-failed/degraded distinction, Qt actual steps
-  and banner colors, broker packet, IPC priority, countdown reset/restart,
-  manual/power availability, channel write/flush counts and exact payload,
-  changed cause/recovery, real private sd-bus errors and missing-IPC progress.
-* Final diff review and git diff --check PASS.
+## Validation (actually executed in Docker)
+* Research: docker -H unix:///run/user/678421280/podman/podman.sock run --rm
+  --network host ubuntu:24.04 / ubuntu:26.04 (also debian:12 / debian:13).
+  /etc/os-release, dpkg --print-architecture, sources, apt-get update,
+  apt-cache policy sddm, apt-get download sddm, dpkg-deb -f/-c/-x, sha256sum,
+  nl -ba, cmp; all four research runs exit0. No package/desktop install required.
+  Initial normal container network could not reach archive; host networking worked.
+  Evidence: /tmp/fic-sddm-research/<24.04|26.04|debian12|debian13>/research.log.
+* Build/test wrapper: Docker CLI same socket, image fic-gui-dependency-tests:debian12;
+  --rm --network none --cap-drop ALL --cap-add CHOWN --cap-add FOWNER
+  --cap-add SETUID --cap-add SETGID --cap-add KILL --security-opt no-new-privileges;
+  repo /src:ro; build-gui-dependencies /build:rw; -w /src.
+* RED: cmake --build /build --target platform_profile_tests
+  pam_disable_root_sddm_login_policy_tests pam_control_flow_analyzer_tests -j2
+  exit0; ctest --test-dir /build -R
+  '^(platform_profile_tests|pam_disable_root_sddm_login_policy_tests|pam_control_flow_analyzer_tests)$'
+  --output-on-failure: exit8, 0 PASS /3 FAIL /0 SKIP (missing Ubuntu contract).
+* Targeted build fic, platform_profile_tests, pam_disable_root_sddm_login_policy_tests,
+  pam_control_flow_analyzer_tests, pam_capability_activation_policy_tests,
+  pam_auth_update_topology_tests, pam_dependency_contract_tests -j2: exit0.
+  Final full cmake --build /build -j2: exit0.
+* Focused ctest --test-dir /build -R
+  '^(platform_profile_tests|platform_profile_static_checks|pam_policy_defaults_tests|pam_disable_root_sddm_login_policy_tests|pam_control_flow_analyzer_tests|pam_capability_activation_policy_tests|pam_auth_update_topology_tests|pam_dependency_contract_tests|pam_packaging_static_checks|pam_provider_rollback_tests)$'
+  --output-on-failure: exit0, **10 PASS /0 FAIL /0 SKIP**, 3.76s.
+* Full ctest --test-dir /build --output-on-failure: exit8,
+  **225 PASS /2 FAIL /4 SKIP**, 89.56s. The two known unrelated failures persist:
+  incident_state_lifecycle_static_checks (RPM manifest security-parent assertion),
+  identity_policy_hierarchy_tests (PAM activation recommendation expectation).
+* Logs: build-gui-dependencies/sddm-{red,green}-{build,tests}.log,
+  sddm-full-{build,tests}.log, sddm-prepared-{build,tests}.log;
+  pam-i3-contracts.json has actual sddm_registration results;
+  Testing/Temporary/LastTest.log has four-platform Prepared recovery PASS.
+* Diff review and git diff --check PASS.
 
 ## Remaining / limits
-* No production computers or 192.168.1.50. No host policy apply, native systemd
-  journal persistence/reboot, VT/DRM/DM E2E: container lacks systemd manager.
-  Tested actual logging output channel plus existing unit stderr=journal wiring.
-* Original transient D-Bus incident cause remains unknown; timeout not established
-  as its cause. Full CTest not repeated for focused follow-up. Prior unrelated
-  broad failures remain incident_state_lifecycle_static_checks and
-  identity_policy_hierarchy_tests (previous225 PASS /4 SKIP /2 FAIL).
+* No host apply, production computers or 192.168.1.50. No native Ubuntu whole-daemon
+  startup, real SDDM authentication, graphical E2E, real process crash/reboot or
+  native pam-auth-update execution in the Prepared fixture. Tests use real FIC
+  algorithms with relocated data and mocked native process invocation.
+* Whole-suite green is blocked by the two pre-existing unrelated failures above;
+  native/systemd tests skipped in this container. Do not expand this task to fix them.
