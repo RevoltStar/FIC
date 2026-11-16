@@ -1,53 +1,55 @@
 # Current workspace
 
 ## Current base / task
-* Branch `main`; base `bcf13593ce883123fea183b580703af12f75e4b4`.
-* Cleanup diagnostics complete. Requested single commit:
-  `fix(service): expose verified activation cleanup failure details`. No push.
+* Branch `main`; base `50a60c3d6a7717a11ad0f4c21cbf373ec43b0ce9`.
+* Bounded verified cleanup retry complete. One requested commit:
+  `fix(service): retry transient EBUSY during verified cleanup`. No push.
 
 ## Accepted architecture / invariants
-* Diagnostic-only change. Existing reverse cleanup, namespace/identity/source/type
-  checks, ordinary umount2(..., 0), propagation, residual handling, success predicate,
-  SSH proof/status and Prepared/release contracts remain.
-* No retry, lazy/forced unmount, adoption, journal/schema change, recovery or attempt
-  to repair/inspect the working computer's residual mounts. Incident cause unknown.
-* cleanupErrors include target/stage/reason and immediately saved errno/strerror
-  for syscall failures; logical mismatches have no fabricated errno.
-* activationDiagnostic preserves primary result/diagnostic and all cleanup errors.
-  SSH activation/snapshot/release forwards it through existing Ssh/ERROR Logger;
-  later diagnostic failures cannot overwrite already-known cleanup details.
+* Production changes only `VerifiedConfigServiceActivator.cpp`, inside cleanup
+  plus `<thread>`. Direct shared publication and existing proofs remain.
+* One independent steady-clock5s cleanup grace, even after activation timeout;
+  not5s per mount. Initial reverse pass for all, then reverse rounds only for
+  syscall EBUSY. Sleeps20/40/60/80/100ms capped by remaining time.
+* Before every ordinary umount2(...,0), original namespace/object/mount/source/type
+  checks run again and target FD closes. No adoption, force/lazy or recovery.
+* Transient EBUSY is not a final error. Persistent EBUSY yields one error per
+  target with errno/deadline/attempt count/elapsed; mixed errors retain reverse
+  order. Primary status/diagnostic retained; unfinished cleanup fails closed.
+* `cleaned` prevents RAII from starting another budget. Journal, ownership/CAS,
+  success predicate, service ordering and logging implementation unchanged.
 
 ## Completed / changed areas
-* VerifiedConfigServiceActivator h/cpp; mount-support diagnostics; SSH adapter.
-* Generic unit/native regressions (EBUSY, foreign identity, multiple faults,
-  primary+cleanup error, successful cleanup); existing SSH native suites strengthened.
-* Focused `openssh_native/cleanup_diagnostics.py` exercises actual policy→Logger→
-  journald, success, verified release and read-only snapshot cleanup failure.
-* Authoritative contract/results: `docs/verified-config-service-activator.md`,
-  `docs/verified-config-cleanup-validation.md`; native README reproduction.
+* Local cleanup round algorithm; no new public settings/contracts/types.
+* Existing generic native target includes `CleanupRetryCases.h`: actual child FD
+  holders with barriers, multiple/transient/persistent, expired activation grace,
+  between-pass replacement, non-EBUSY and no-delay cases.
+* Existing SSH driver/gate adds transient faults for apply/snapshot/release and
+  asserts successful commit/release without ERROR; permanent faults retain Prepared.
+* Contract and current validation: `docs/verified-config-service-activator.md`,
+  `docs/verified-config-cleanup-validation.md` (T1–T9 details and exact observations).
 
 ## Validation
-* Local affected production `fic` and unit target build PASS (`build-startup-classification`).
-  No PAM stubs; real local libraries. Generic and SSH unit CTest 2/2 PASS with
-  read-only netlink access; initial sandbox-address-enumeration failure not a regression.
-* Debian12 real systemd generic native suite: 208 PASS / 0 SKIP, including real
-  held-descriptor EBUSY, foreign mount preserved, all error targets and primary status.
-* Focused SSH native: 4/4 PASS. Exact captured FIC ERROR also exists in journald;
-  Prepared retained; successful apply has no cleanup errors; active release and
-  read-only snapshot errors fully exposed. OpenSSH 1:9.2p1-2+deb12u10, systemd 252.39.
-* Existing release-plan suite plus snapshot-cleanup case: 9/9 PASS, active/offline
-  and syntax guards preserved. SSH unit suite also PASS in native build container.
-* Runtime isolation inspected: private namespaces/cgroups, network none, no host
-  binds/ports/volumes; sysfs/proc-sys RO before PID1. Docker now available via
-  `/mnt/wsl/docker-desktop/cli-tools/usr/bin/docker`; no user resources cleaned.
-* Python/shell syntax and git diff --check PASS. Logs `/tmp/fic-cleanup-diagnostics/`;
-  exact reports in `build-cleanup-native/evidence/`, paths documented in validation.
-* Initial fixture-only snapshot failures fixed without relaxing production admission:
-  unsupported expectation removed; residual case observes service without re-admission.
+* `cmake --build build-startup-classification --target fic verified_config_service_tests ssh_verified_activation_tests -j2` PASS.
+* Targeted CTest generic/SSH unit2/2 PASS. Initial sandbox-only address enumeration
+  failed; final read-only netlink-enabled run PASS.
+* Docker Debian12/systemd generic native **220 PASS /0 SKIP**. Final real-FD
+  transient7 calls/406ms; multiple5+7 calls/410ms; persistent52 calls/~5002ms;
+  expired activation timeout with transient/persistent grace verified.
+* Focused Docker SSH cleanup gate **7/7 PASS**; its SSH unit1/1 PASS.
+  Existing release-plan native gate **9/9 PASS** (and unit1/1).
+* Runtime containers: privileged but private PID/mount/cgroup, network none,
+  no host binds/ports/socket; /sys and /proc/sys RO. Final generic mountinfo:
+  zero fic-vcsa mounts; actor/service stopped and own container removed.
+* Python syntax, diff review and git diff --check PASS.
+* Evidence: `build-cleanup-retry-native/evidence/` native log/summary/inspect;
+  `build-cleanup-native/evidence/` SSH7-case/release-plan JSON; execution logs
+  `/tmp/fic-cleanup-retry/`. Initial SSH fixture assumed one release cleanup;
+  corrected per-cleanup fault reset/counting; final tests PASS without proof changes.
 
 ## Remaining / limits
-* No unfinished implementation. No new full platform/package/PAM matrix or full
-  project CTest. No real-machine SSH apply or original incident-mount investigation.
-* Underlying shared-cleanup cause remains unknown and is intentionally not fixed.
-* Existing mount-ID check→umount residual race and local-only shared cleanup boundary
-  remain; no propagation/namespace/topology or global cleanup guarantee added.
+* No unfinished implementation. No remote VM/real KESL accessed for this patch.
+  Owner will test rebuilt FIC with KESL separately; no guarantee arbitrary refs
+  release within5s, no automatic old Prepared recovery.
+* No full cross-distro/package/project CTest matrix. Existing privileged
+  identity-check→umount race and local-only shared cleanup boundary remain.

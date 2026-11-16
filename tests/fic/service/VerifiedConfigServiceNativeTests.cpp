@@ -1072,10 +1072,13 @@ void cleanupCases() {
     require(activate(request()).status == ActivationStatus::ResidualMounts && leftovers().size() == count, "residual mounts adopted or altered");
     pass("real EBUSY cleanup error visible; primary preserved; residual repeat refused"); busy = d::Fd(); manualCleanup(); clean(before);
     d::TestHooks multiple;
+    std::chrono::steady_clock::time_point multiStart;
+    multiple.checkpoint = [&](d::TestPhase phase,const std::string&) {if(phase==d::TestPhase::BeforeCleanup)multiStart=std::chrono::steady_clock::now();};
     multiple.fault = [](const std::string& action, std::size_t) { return action == "umount" ? EBUSY : 0; };
     result = activate(request({one(), directory()}), multiple);
     require(result.status == ActivationStatus::CleanupFailed && result.primaryStatus == ActivationStatus::Success &&
             result.cleanupErrors.size() >= 3, "multiple cleanup errors not preserved");
+    require(std::chrono::steady_clock::now()-multiStart < std::chrono::seconds(7), "per-mount instead of aggregate cleanup budget");
     const auto details = activationDiagnostic(result);
     for (const auto& path : {root + "/one.conf", root + "/dropins"})
         require(details.find("cleanup target=" + path + " stage=umount2") != std::string::npos,
@@ -1115,6 +1118,7 @@ void cleanupCases() {
     manualCleanup(); clean(before); pass("SIGKILL leaves detectable mounts; no automatic adoption/release");
 }
 #include "SharedPublicationCases.h"
+#include "CleanupRetryCases.h"
 
 int main(int argc, char** argv) {
     try {
@@ -1154,7 +1158,7 @@ int main(int argc, char** argv) {
                     "unsupported distro SSH adapter attempted activation");
             pass("SSH adapter unadmitted profile/fixture negative before capture/mount/restart");
         }
-        unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); xattrCases(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases(); sharedPublicationCases();
+        unitSourceCases(); stockUnitSourceCase(); active(); vendorFixtureCase(); xattrCases(); basicCases(); originalReadNegativeCase(); launchCases(); environmentFileCases(); namespaceRaces(); crossNamespaceCases(); topologyCases(); cleanupCases(); cleanupRetryCases(); sharedPublicationCases();
         mustCtl({"stop", unit});
         std::cout << "NATIVE verified-config: " << checks << " PASS, " << skips << " SKIP\n";
         return 0;

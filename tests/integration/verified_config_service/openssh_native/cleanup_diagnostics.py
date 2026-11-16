@@ -51,6 +51,28 @@ reset()
 r=h.drive('module',req([dict(policy='ssh_use_pam',value='yes')]))
 assert r['module'][0]['applied'] and not any('status=CleanupFailed' in x['message'] for x in r['module'][0]['logs']),r
 report['cases'].append({'name':'success-no-cleanup-errors','result':r});save()
+# Transient injected EBUSY must disappear from policy ERROR and allow commit.
+reset()
+r=h.drive('module',req([dict(policy='ssh_use_pam',value='yes',fault='cleanup-transient')]))
+row=r['module'][0]
+assert row['applied'] and all(x['status']=='applied' for x in row['journal_after']['records']),r
+assert not any(x['level']=='ERROR' for x in row['logs']),r
+assert row['cleanup_umount_calls'] and all(n>=2 and n%2==0 for _,n in row['cleanup_umount_calls']),r
+report['cases'].append({'name':'transient-policy-cleanup-commits-without-error','result':r});save()
+r=h.request();r.update(planned_main=h.MAIN.read_text(),policies={},cleanup_transient=True)
+r=h.drive('plan-release',r)
+assert r['validated'] and r['status']=='Success' and r['main_unchanged'] and r['service_unchanged'],r
+assert r['cleanup_umount_calls'] and all(n==2 for _,n in r['cleanup_umount_calls']),r
+report['cases'].append({'name':'transient-readonly-snapshot-cleanup','result':r});save()
+r=h.drive('module',req([dict(policy='ssh_use_pam',value='yes',rollback=True,fault='release-cleanup-transient')]))
+row=r['module'][0]
+assert row['applied'] and not any(x['level']=='ERROR' for x in row['logs']),r
+assert row['cleanup_umount_calls'] and all(n>=2 and n%2==0 for _,n in row['cleanup_umount_calls']),r
+assert all(x['status']=='rolled_back' for x in row['journal_after']['records']),r
+report['cases'].append({'name':'transient-verified-release-cleanup','result':r});save()
+reset()
+r=h.drive('module',req([dict(policy='ssh_use_pam',value='yes')]))
+assert r['module'][0]['applied'],r
 r=h.drive('module',req([dict(policy='ssh_use_pam',value='yes',rollback=True,fault='release-cleanup')]))
 row=r['module'][0];assert not row['applied'],r
 assert 'primaryStatus=Success status=CleanupFailed' in row['release_message'] and 'stage=umount2' in row['release_message'] and 'errno=16 (' in row['release_message'],r
@@ -62,4 +84,4 @@ assert r.get('validated') is False and r['status']=='CleanupFailed' and r['main_
 assert 'primaryStatus=Success status=CleanupFailed' in r['diagnostic'] and 'stage=umount2' in r['diagnostic'] and 'errno=16 (' in r['diagnostic'],r
 report['cases'].append({'name':'snapshot-validation-cleanup-detail','result':r});save()
 h.drive('cleanup',{'paths':[]});ctl('stop','ssh.service')
-report['status']='PASS';save();print('PASS real SSH cleanup diagnostics, ERROR journald, active release and snapshot')
+report['status']='PASS';save();print('PASS real SSH cleanup retry/diagnostics, ERROR journald, active release and snapshot')

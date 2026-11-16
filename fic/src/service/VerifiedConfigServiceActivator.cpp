@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <fstream>
 #include <memory>
+#include <thread>
 #include <sys/file.h>
 #include <sys/mount.h>
 #include <sys/random.h>
@@ -113,37 +114,77 @@ struct Operation {
     void cleanup(ActivationResult& result) {
         if (cleaned) return;
         cleaned = true;
-        for (auto it = mounts.rbegin(); it != mounts.rend(); ++it) if (it->mounted) {
-            const char* stage = "verify_identity";
-            try {
-                if (namespaceIdentity(::getpid()) != ns) throw std::runtime_error("cleanup namespace changed");
-                stage = "open_parent";
-                auto parent = openAbsolute(std::filesystem::path(it->path).parent_path(), O_PATH|O_DIRECTORY);
-                const auto leaf = std::filesystem::path(it->path).filename().string();
-                const auto pinned = fdPath(parent.get()) + "/" + leaf;
-                {
-                    stage = "open_target";
-                    Fd target(::openat(parent.get(), leaf.c_str(), O_PATH|O_NOFOLLOW|O_CLOEXEC));
-                    if (!target) cleanupOsFailure("open cleanup target");
-                    stage = "verify_identity";
-                    const auto now = identity(target.get());
-                    bool listed = false;
-                    for (const auto& m : readMountInfo()) if (m.id == now.mount && m.target == it->path && m.source == source && m.type == "tmpfs") listed = true;
-                    if (!it->expected.mount || now.mount != it->expected.mount || !sameObject(now, it->expected) || !listed)
-                        throw std::runtime_error("cleanup refuses foreign/replaced mount");
-                } // Close mount reference BEFORE ordinary umount; no lazy detach.
-                stage = "umount2";
-                const int injected = hooks.fault("umount", std::distance(mounts.rbegin(), it));
-                if (injected) errno = injected;
-                if (injected || ::umount2(pinned.c_str(), 0)) cleanupOsFailure("ordinary umount");
-                it->mounted = false;
-                stage = "verify_unmounted";
-                for (const auto& m : readMountInfo()) if (m.id == it->expected.mount)
-                    throw std::runtime_error("owned mount still listed after umount");
-            } catch (const std::exception& e) {
-                result.cleanupErrors.push_back("cleanup target=" + it->path + " stage=" + stage + " reason=" + e.what());
-                result.residualPaths.push_back(it->path);
+        const auto start = std::chrono::steady_clock::now();
+        const auto deadline = start + std::chrono::seconds(5); // One independent cleanup grace period.
+        std::vector<bool> busy(mounts.size(), false);
+        std::vector<unsigned> attempts(mounts.size(), 0);
+        std::vector<std::string> errors(mounts.size());
+        auto pause = std::chrono::milliseconds(20);
+        bool first = true;
+        do {
+            // Always give every mounted target its first attempt, even if another
+            // target is busy. Subsequent rounds include only syscall EBUSY.
+            for (auto it = mounts.rbegin(); it != mounts.rend(); ++it) {
+                const auto index = static_cast<std::size_t>(std::distance(mounts.rbegin(), it));
+                if (!it->mounted || (!first && !busy[index])) continue;
+                if (!first && std::chrono::steady_clock::now() >= deadline) break;
+                const char* stage = "verify_identity";
+                try {
+                    if (namespaceIdentity(::getpid()) != ns) throw std::runtime_error("cleanup namespace changed");
+                    stage = "open_parent";
+                    auto parent = openAbsolute(std::filesystem::path(it->path).parent_path(), O_PATH|O_DIRECTORY);
+                    const auto leaf = std::filesystem::path(it->path).filename().string();
+                    const auto pinned = fdPath(parent.get()) + "/" + leaf;
+                    {
+                        stage = "open_target";
+                        Fd target(::openat(parent.get(), leaf.c_str(), O_PATH|O_NOFOLLOW|O_CLOEXEC));
+                        if (!target) cleanupOsFailure("open cleanup target");
+                        stage = "verify_identity";
+                        const auto now = identity(target.get());
+                        bool listed = false;
+                        for (const auto& m : readMountInfo()) if (m.id == now.mount && m.target == it->path && m.source == source && m.type == "tmpfs") listed = true;
+                        if (!it->expected.mount || now.mount != it->expected.mount || !sameObject(now, it->expected) || !listed)
+                            throw std::runtime_error("cleanup refuses foreign/replaced mount");
+                    } // Close mount reference BEFORE ordinary umount; no lazy detach.
+                    stage = "umount2";
+                    const int injected = hooks.fault("umount", std::distance(mounts.rbegin(), it));
+                    // A slow identity check must not authorize a retry after the budget.
+                    if (attempts[index] && std::chrono::steady_clock::now() >= deadline) continue;
+                    ++attempts[index];
+                    const int rc = injected ? -1 : ::umount2(pinned.c_str(), 0);
+                    const int error = rc ? (injected ? injected : errno) : 0; // Save immediately.
+                    if (rc && error == EBUSY) { busy[index] = true; continue; }
+                    busy[index] = false;
+                    if (rc) { errno = error; cleanupOsFailure("ordinary umount"); }
+                    it->mounted = false;
+                    stage = "verify_unmounted";
+                    for (const auto& m : readMountInfo()) if (m.id == it->expected.mount)
+                        throw std::runtime_error("owned mount still listed after umount");
+                } catch (const std::exception& e) {
+                    busy[index] = false;
+                    errors[index] = "cleanup target=" + it->path + " stage=" + stage + " reason=" + e.what();
+                }
             }
+            first = false;
+            if (std::none_of(busy.begin(), busy.end(), [](bool b) { return b; })) break;
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) break;
+            std::this_thread::sleep_until(std::min(deadline, now + pause));
+            pause = std::min(std::chrono::milliseconds(100), pause + std::chrono::milliseconds(20));
+        } while (std::chrono::steady_clock::now() < deadline);
+        for (std::size_t index = 0; index < busy.size(); ++index) if (busy[index]) {
+            const auto& mount = mounts[mounts.size() - 1 - index];
+            errors[index] = "cleanup target=" + mount.path +
+                " stage=umount2 reason=ordinary umount errno=" + std::to_string(EBUSY) +
+                " (" + std::strerror(EBUSY) + "); retry deadline exhausted; attempts=" +
+                std::to_string(attempts[index]) + " elapsed_ms=" + std::to_string(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+        }
+        // Preserve reverse cleanup diagnostic order, independently of the round
+        // in which a target failed. Transient EBUSY never becomes a final error.
+        for (std::size_t index = 0; index < errors.size(); ++index) if (!errors[index].empty()) {
+            result.cleanupErrors.push_back(errors[index]);
+            result.residualPaths.push_back(mounts[mounts.size() - 1 - index].path);
         }
         if (!name.empty() && result.cleanupErrors.empty() && ::unlinkat(base.get(), name.c_str(), AT_REMOVEDIR)) {
             const int error = errno;

@@ -254,14 +254,23 @@ int main(int argc, char** argv) {
                 check(bool(policy),"unknown fixture policy");
                 fic::service::ssh::detail::AdapterTestHooks policyHooks;
                 bool restartQueued=false;
+                std::map<std::size_t,unsigned> cleanupCalls, cleanupRoundCalls;
                 if(fault=="cleanup")policyHooks.activation.fault=[](const std::string& action,std::size_t){return action=="umount"?EBUSY:0;};
+                if(fault=="cleanup-transient" || fault=="release-cleanup-transient") {
+                    policyHooks.activation.checkpoint=[&](d::TestPhase phase,const std::string&){if(phase==d::TestPhase::RestartQueued)restartQueued=true;if(phase==d::TestPhase::BeforeCleanup)cleanupRoundCalls.clear();};
+                    policyHooks.activation.fault=[&](const std::string& action,std::size_t index){
+                        if(action!="umount" || (fault!="cleanup-transient" && !restartQueued))return 0;
+                        ++cleanupCalls[index];
+                        return ++cleanupRoundCalls[index]==1 ? EBUSY : 0;
+                    };
+                }
                 if(fault=="release-cleanup") {
                     policyHooks.activation.checkpoint=[&](d::TestPhase phase,const std::string&){if(phase==d::TestPhase::RestartQueued)restartQueued=true;};
                     policyHooks.activation.fault=[&](const std::string& action,std::size_t){return action=="umount"&&restartQueued?EBUSY:0;};
                 }
                 if(fault=="runtime-crash")policyHooks.beforeFinalConfirmation=[] {::kill(::getpid(),SIGKILL);};
                 fic::service::ssh::detail::setPolicyAdapterHooksForTests(
-                    fault=="cleanup"||fault=="release-cleanup"||fault=="runtime-crash"?&policyHooks:nullptr);
+                    fault=="cleanup"||fault=="cleanup-transient"||fault=="release-cleanup-transient"||fault=="release-cleanup"||fault=="runtime-crash"?&policyHooks:nullptr);
                 setSshSaveOutcomeHookForTests([&](FileHandler::FileSaveOutcome& saved) {
                     if(fault=="after-save-crash")::kill(::getpid(),SIGKILL);
                     if(fault=="after-save-fragment")write(adminFragment,text(adminFragment)+"\n# foreign CAS race");
@@ -328,7 +337,7 @@ int main(int argc, char** argv) {
                 auto* journal=journalOwner.tryGet(error);check(journal||journalFault,error);
                 J records=J::array();
                 if(journal) for(const auto& record:journal->records())records.push_back({{"policy",record.policy.policyName},{"status",int(record.status)}});
-                output["module"].push_back({{"policy",id},{"applied",applied},{"release_message",releaseMessage},{"logs",logs},
+                output["module"].push_back({{"policy",id},{"applied",applied},{"release_message",releaseMessage},{"logs",logs},{"cleanup_umount_calls",cleanupCalls},
                     {"policy_config",text(paths.configDir.string()+"/NET.conf")},{"stale_applied",staleApplied},{"stale_unchanged",staleUnchanged},
                     {"duration_ms",std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-operationStarted).count()},
                     {"main_before",mainBefore},{"main_after",text(mainPath)},{"fragments_before",fragmentsBefore},{"fragments_after",fragments()},
@@ -361,8 +370,9 @@ int main(int argc, char** argv) {
             const auto admitted=Adapter::releaseAdmission(reference);
             const auto beforeService=d::SystemdActivation(serviceUnit,std::chrono::steady_clock::now()+std::chrono::seconds(10),r.paths,activationProfile).current().properties;
             fic::service::ssh::detail::AdapterTestHooks cleanupHooks;
-            cleanupHooks.activation.fault=[](const std::string& action,std::size_t){return action=="umount"?EBUSY:0;};
-            if(input.value("cleanup_fault",false))fic::service::ssh::detail::setPolicyAdapterHooksForTests(&cleanupHooks);
+            std::map<std::size_t,unsigned> cleanupCalls;
+            cleanupHooks.activation.fault=[&](const std::string& action,std::size_t index){return action=="umount" && (!input.value("cleanup_transient",false) || ++cleanupCalls[index]==1)?EBUSY:0;};
+            if(input.value("cleanup_fault",false)||input.value("cleanup_transient",false))fic::service::ssh::detail::setPolicyAdapterHooksForTests(&cleanupHooks);
             const auto result=Adapter::validateReleasePlan(reference,admitted,input.at("planned_main").get<std::string>());
             fic::service::ssh::detail::setPolicyAdapterHooksForTests(nullptr);
             // A residual published snapshot deliberately blocks new input admission.
@@ -372,7 +382,7 @@ int main(int argc, char** argv) {
             bool serviceUnchanged=beforeService==afterService;
             if(result.snapshot.status!=ActivationStatus::CleanupFailed)
                 serviceUnchanged=serviceUnchanged && admitted.service==Adapter::releaseAdmission(reference).service;
-            output={{"validated",result.success()},{"offline",admitted.offline},
+            output={{"validated",result.success()},{"cleanup_umount_calls",cleanupCalls},{"offline",admitted.offline},
                 {"main_unchanged",text(mainPath)==before},{"service_unchanged",serviceUnchanged},
                 {"readinessConfirmed",result.snapshot.readinessConfirmed},
                 {"status",activationStatusName(result.snapshot.status)},{"diagnostic",result.diagnostic}};
