@@ -1025,6 +1025,21 @@ target_link_libraries(incident_access_gate_core_tests PRIVATE
     fic-core fic-ipc fic-platform)
 add_test(NAME incident_access_gate_core_tests COMMAND incident_access_gate_core_tests)
 
+add_executable(udev_access_readiness_tests
+    fic/incident/UdevAccessReadinessTests.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/UdevAccessReadiness.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentAccessGateCore.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentAccessClient.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentRecoveryConfigReader.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp
+    ${PROJECT_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp)
+target_include_directories(udev_access_readiness_tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/fic/src)
+target_link_libraries(udev_access_readiness_tests PRIVATE
+    fic-core fic-ipc fic-platform)
+add_test(NAME udev_access_readiness_tests COMMAND udev_access_readiness_tests)
+set_tests_properties(udev_access_readiness_tests PROPERTIES LABELS "unit" TIMEOUT 15)
+
 add_executable(incident_response_mode_tests
     fic/incident/IncidentResponseModeTests.cpp
     ${PROJECT_SOURCE_DIR}/fic/src/incident/IncidentResponseMode.cpp)

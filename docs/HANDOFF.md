@@ -1,74 +1,62 @@
 # Current workspace
 
 ## Current base / task
-* Branch main; base `6d4b40375a6db5663f1ce5fde42dea3e9f9f7818`.
-* SDDM PAM Ubuntu24.04/26.04 support complete; one fix commit is HEAD, no push.
+* Branch main; base `eb6a87f60a23faefdefe34a907700fd1068a0278`.
+* ACTIVE login udev control responsiveness check complete; one thematic commit,
+  no push. Authoritative contract/results: docs/startup-readiness.md.
 
-## Accepted invariants / completed
-* Official Ubuntu Docker package extraction, before production edits, confirmed
-  identical /etc/pam.d/sddm on Ubuntu24.04 sddm0.20.0-2ubuntu4.2
-  (noble-updates/universe) and Ubuntu26.04
-  sddm0.21.0+git20250502.4fe234b-2ubuntu3 (resolute/universe), amd64.
-  Exact byte match with Debian12 0.19.0-5 and Debian13
-  0.21.0+git20250502.4fe234b-2. PAM SHA256/DEB hashes, provenance, line positions,
-  Linux-PAM references and semantics: docs/pam-owned-faillock-slots.md.
-* Production change ONLY Ubuntu2404Profile.cpp and Ubuntu2604Profile.cpp:
-  declare the existing exact SDDM root exclusion contract, required→requisite.
-  Existing shared policy/conditional registry registration reused unchanged.
-* Policy stays DISABLE by default; no automatic application, dependency or strategy
-  changes; CFG remains fail-closed on required/authsucc/even_deny_root.
-* Tests use complete package PAM fixture and actual profile factories under
-  test-only names. Production registry: Debian12/13, Ubuntu24.04/26.04 registered
-  and DISABLE; ALT not registered. No changes to PAM algorithms/ownership/lifecycle.
-* Prepared test: actual journal + manager + physical slots + full Structural
-  verifier; only pam-auth-update process replaced by existing fixture runner.
-  Required rejected, journal unchanged; exclusion apply then same-id Applied
-  recovery without native re-run or authsucc rewrite. Config/module paths and
-  native-default configTopology metadata relocated to disposable tree.
+## Accepted architecture / invariants
+* Daemon-only UdevAccessReadiness overlay in currentAccessStatus, shared by
+  access_gate_status and prelogin_status. ACTIVE failure projects READY→DEGRADED
+  before computedLoginAllowed; never changes underlying DaemonReadiness,
+  persistent incident state, severity, containment, sessions or policy configuration.
+* Recompute/ScopedApplying READY cannot bypass the per-response overlay. Fresh
+  successful ping removes only its own denial; other prerequisites still apply.
+* Existing PlatformExecutableResolver Udevadm + VerifiedProcessExecutor, exact
+  control --ping --timeout=1, cleared C environment,4KiB output,1250ms child bound.
+  No automatic trust enrollment. Cache positive/negative age<2s from probe start;
+  expired positive denied, non-ACTIVE status queries invalidate cache. No background thread.
+* OFF/PASSIVE and existing autonomous PAM/local-root/fic-group recovery unchanged;
+  exemptions happen before daemon RPC. IPC access10/prelogin17 fields unchanged.
+* Ping proves only control reply, not workers/rules/queue/device enforcement.
+  Socket activation allowed. No trigger/settle/uevents or Device Control changes.
 
-## Changed areas
-* Two Ubuntu profiles; tests/CMakeLists.txt (test factories only); platform,
-  SDDM policy, CFG, activation tests; existing PAM dependency integration driver;
-  test-only SddmTestProfiles.h and full ubuntu-sddm.pam fixture; PAM docs.
+## Completed / changed areas
+* fic/src/main.cpp, incident/UdevAccessReadiness.{h,cpp}.
+* New focused test target registered in tests/CMakeLists.txt, including existing
+  access gate core to verify recovery ordering with a udev-denied response.
+* tests/integration/udev-access/run-native.sh: disposable real systemd-udevd
+  stopped/healthy/SIGSTOP/SIGCONT/control-socket activation checks.
+* docs/startup-readiness.md documents timing/cache/guarantee limits and results.
 
-## Validation (actually executed in Docker)
-* Research: docker -H unix:///run/user/678421280/podman/podman.sock run --rm
-  --network host ubuntu:24.04 / ubuntu:26.04 (also debian:12 / debian:13).
-  /etc/os-release, dpkg --print-architecture, sources, apt-get update,
-  apt-cache policy sddm, apt-get download sddm, dpkg-deb -f/-c/-x, sha256sum,
-  nl -ba, cmp; all four research runs exit0. No package/desktop install required.
-  Initial normal container network could not reach archive; host networking worked.
-  Evidence: /tmp/fic-sddm-research/<24.04|26.04|debian12|debian13>/research.log.
-* Build/test wrapper: Docker CLI same socket, image fic-gui-dependency-tests:debian12;
-  --rm --network none --cap-drop ALL --cap-add CHOWN --cap-add FOWNER
-  --cap-add SETUID --cap-add SETGID --cap-add KILL --security-opt no-new-privileges;
-  repo /src:ro; build-gui-dependencies /build:rw; -w /src.
-* RED: cmake --build /build --target platform_profile_tests
-  pam_disable_root_sddm_login_policy_tests pam_control_flow_analyzer_tests -j2
-  exit0; ctest --test-dir /build -R
-  '^(platform_profile_tests|pam_disable_root_sddm_login_policy_tests|pam_control_flow_analyzer_tests)$'
-  --output-on-failure: exit8, 0 PASS /3 FAIL /0 SKIP (missing Ubuntu contract).
-* Targeted build fic, platform_profile_tests, pam_disable_root_sddm_login_policy_tests,
-  pam_control_flow_analyzer_tests, pam_capability_activation_policy_tests,
-  pam_auth_update_topology_tests, pam_dependency_contract_tests -j2: exit0.
-  Final full cmake --build /build -j2: exit0.
-* Focused ctest --test-dir /build -R
-  '^(platform_profile_tests|platform_profile_static_checks|pam_policy_defaults_tests|pam_disable_root_sddm_login_policy_tests|pam_control_flow_analyzer_tests|pam_capability_activation_policy_tests|pam_auth_update_topology_tests|pam_dependency_contract_tests|pam_packaging_static_checks|pam_provider_rollback_tests)$'
-  --output-on-failure: exit0, **10 PASS /0 FAIL /0 SKIP**, 3.76s.
-* Full ctest --test-dir /build --output-on-failure: exit8,
-  **225 PASS /2 FAIL /4 SKIP**, 89.56s. The two known unrelated failures persist:
-  incident_state_lifecycle_static_checks (RPM manifest security-parent assertion),
-  identity_policy_hierarchy_tests (PAM activation recommendation expectation).
-* Logs: build-gui-dependencies/sddm-{red,green}-{build,tests}.log,
-  sddm-full-{build,tests}.log, sddm-prepared-{build,tests}.log;
-  pam-i3-contracts.json has actual sddm_registration results;
-  Testing/Temporary/LastTest.log has four-platform Prepared recovery PASS.
-* Diff review and git diff --check PASS.
+## Validation (actually executed)
+* Docker image fic-udev-access:debian12 based on existing cleanup image, adding
+  glib-dev,Qt6 and udev. Explicit QT_DIR selects Qt6 to avoid mixed cached Qt5/6.
+* Docker configure: cmake -S /src -B /build -DFIC_TARGET_PLATFORM=debian-12
+  -DBUILD_TESTING=ON -DQT_DIR=/usr/lib/x86_64-linux-gnu/cmake/Qt6.
+* Targeted build fic, udev_access_readiness_tests, incident_access_gate_core_tests,
+  daemon_readiness_tests, incident_access_client_tests, prelogin_controller_tests
+  -j2 PASS. Build path build-udev-access.
+* CTest regex of five above test targets (excluding fic) **5 PASS/0 FAIL/0 SKIP**;
+  tests ran Docker --network none --cap-drop ALL --no-new-privileges, source RO.
+* Native runner fic-udev-access:debian12 build-udev-access: **5/5 PASS**.
+  Stopped denied24ms; healthy allowed23ms; SIGSTOP denied1090ms;
+  SIGCONT allowed23ms; socket activation allowed84ms. This negative control
+  excludes success-without-ping chroot behavior on tested image.
+* Native runtime privileged but private mount/PID/cgroup/network; no host binds,
+  ports/socket, sysfs/proc-sys RO. Container-only service/socket conditions reset
+  for RO sysfs. Initial socket fixture missed socket conditions and failed;
+  corrected fixture passes without weakening production checks. Container removed.
+* Unit covers exit/timeout/start failure/missing executable/overflow/exception,
+  cache expiry/1000 polls/recovery/READY reprojection/other denials/OFF/PASSIVE,
+  root/fic recovery and wire/prelogin consistency. No host udev actions or VMs.
+* Logs /tmp/fic-udev-access/{image,build,tests,native-final}.log.
+* bash syntax, diff review and git diff --check PASS.
 
 ## Remaining / limits
-* No host apply, production computers or 192.168.1.50. No native Ubuntu whole-daemon
-  startup, real SDDM authentication, graphical E2E, real process crash/reboot or
-  native pam-auth-update execution in the Prepared fixture. Tests use real FIC
-  algorithms with relocated data and mocked native process invocation.
-* Whole-suite green is blocked by the two pre-existing unrelated failures above;
-  native/systemd tests skipped in this container. Do not expand this task to fix them.
+* No unfinished implementation. No full project build/CTest or cross-distro native
+  matrix. No real PAM authentication or full daemon startup E2E. Native uses actual
+  production checker/executor plus real udev, each invocation a fresh instance;
+  same-instance cache/recovery is unit-tested. Hung workers not tested/promised.
+* First status request after cache expiry may incur up to1250ms process budget
+  plus normal verification/scheduling; existing2s IPC timeout unchanged.

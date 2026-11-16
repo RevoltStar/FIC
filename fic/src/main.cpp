@@ -83,6 +83,7 @@
 #include "incident/SshAccessContainmentBackend.h"
 #include "incident/AltIncidentAccessGateTopology.h"
 #include "incident/DaemonReadiness.h"
+#include "incident/UdevAccessReadiness.h"
 #include "incident/IncidentNotificationLevel.h"
 #include "incident/IncidentStateStore.h"
 #include "incident/PolicyIncidentReporter.h"
@@ -401,7 +402,12 @@ fic::ipc::PreLoginStatus& startupLifecycle() {
     }();
     return status;
 }
-fic::ipc::AccessGateStatus currentAccessStatus() {
+fic::incident::UdevAccessReadiness& udevAccessReadiness() {
+    static fic::incident::UdevAccessReadiness check;
+    return check;
+}
+fic::ipc::AccessGateStatus currentAccessStatus(
+    const fic::platform::PlatformExecutableResolver& executables) {
     const auto status = incidentController().status();
     fic::ipc::AccessGateStatus value;
     value.state = fic::incident::daemonReadinessToken(daemonReadiness().state());
@@ -410,7 +416,15 @@ fic::ipc::AccessGateStatus currentAccessStatus() {
     value.severity = fic::core::incidentSeverityToken(status.severity);
     value.stateProven = status.stateProven;
     value.provenance = fic::incident::incidentProvenanceToken(status.provenance);
-    value.loginAllowed = fic::ipc::computedLoginAllowed(value);
+    value = udevAccessReadiness().apply(std::move(value), executables);
+    static std::string lastUdevFailure;
+    const auto& failure = udevAccessReadiness().diagnostic();
+    if (failure != lastUdevFailure) {
+        if (!failure.empty()) std::cerr << "ACTIVE access degraded: " << failure << std::endl;
+        else if (!lastUdevFailure.empty()) std::cerr << "udev access prerequisite "
+            << (value.mode == "ACTIVE" ? "recovered" : "inactive outside ACTIVE") << std::endl;
+        lastUdevFailure = failure;
+    }
     return value;
 }
 
@@ -1158,12 +1172,16 @@ json handle_request(json request,
             };
         }
         if (command == "access_gate_status")
-            return fic::ipc::serializeAccessGateStatus(currentAccessStatus());
+            return fic::ipc::serializeAccessGateStatus(currentAccessStatus(executables));
         if (command == "prelogin_status") {
             auto status = startupLifecycle();
-            status.access = currentAccessStatus();
+            status.access = currentAccessStatus(executables);
             if (status.access.state == "DEGRADED")
                 status.diagnostic = "Incident prerequisites or containment are unproven";
+            if (!udevAccessReadiness().diagnostic().empty()) {
+                if (!status.diagnostic.empty()) status.diagnostic += "; ";
+                status.diagnostic += udevAccessReadiness().diagnostic();
+            }
             return fic::ipc::serializePreLoginStatus(status);
         }
         if (command == "incident_raise") {
