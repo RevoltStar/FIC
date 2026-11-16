@@ -6,7 +6,18 @@
 
 #include <nlohmann/json_fwd.hpp>
 
+struct PolicyDependencyDescriptor {
+    std::string moduleName;
+    std::string submoduleName;
+    std::string policyName;
+    std::string strength;
+    std::string condition;
+    std::string value;
+    bool active = false;
+};
+
 struct PolicyDescriptor {
+    std::vector<PolicyDependencyDescriptor> dependencies;
     std::string moduleName;
     std::string submoduleName;
     std::string policyName;

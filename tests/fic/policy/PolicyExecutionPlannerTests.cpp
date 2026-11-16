@@ -333,12 +333,21 @@ void testBackendCapabilityDependencies(const std::filesystem::path& root) {
     policies.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
     policies.push_back(std::make_unique<TestPolicy>(ref("scoped"), scoped, order));
     auto registry = buildRegistry(std::move(policies));
+    const auto metadata = policyToJson("AUDIT", "test", "a", *activeOwner);
+    require(metadata.at("dependencies").size() == 2 &&
+            metadata.at("dependencies")[0].at("condition") == "backend_requires_capability" &&
+            metadata.at("dependencies")[0].at("active") == true &&
+            metadata.at("dependencies")[1].at("strength") == "recommended",
+            "declared dependency metadata lost backend or recommended edge");
     auto classic = PolicyExecutionPlanner(registry).execute({{ref("a")}, {}});
     require(!classic.requestedRootsApplied() && a.calls == 0,
             "classic required capability was bypassed");
     require(enabledRequiredDependents(registry, ref("b")) == std::vector<PolicyRef>{ref("a")},
             "classic disable guard lost its required dependent");
     activeOwner->backendRequires = false;
+    require(policyToJson("AUDIT", "test", "a", *activeOwner)
+                .at("dependencies")[0].at("active") == false,
+            "backend applicability metadata was not refreshed");
     auto rust = PolicyExecutionPlanner(registry).execute({{ref("a")}, {}});
     require(rust.requestedRootsApplied() && a.calls == 1 && !hasResult(rust, ref("b")),
             "provider construction still requires the irrelevant blocker");

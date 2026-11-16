@@ -3097,6 +3097,30 @@ target_link_libraries(display_manager_transaction_tests PRIVATE fic-core fic-pol
 add_test(NAME display_manager_transaction_tests COMMAND display_manager_transaction_tests)
 set_tests_properties(display_manager_transaction_tests PROPERTIES LABELS "unit;root")
 
+# Real graphical policy declarations/JSON/planner with only own OS apply stubbed.
+get_target_property(POLICY_SAVE_DM_SOURCES display_manager_transaction_tests SOURCES)
+get_target_property(POLICY_SAVE_DE_SOURCES controlled_desktop_environments_tests SOURCES)
+set(POLICY_SAVE_SOURCES ${POLICY_SAVE_DM_SOURCES} ${POLICY_SAVE_DE_SOURCES})
+list(FILTER POLICY_SAVE_SOURCES EXCLUDE REGEX "Tests\\.cpp$")
+list(REMOVE_DUPLICATES POLICY_SAVE_SOURCES)
+add_executable(policy_save_dependency_tests
+    fic-gui/policies/PolicySaveDependencyTests.cpp
+    fic-gui/policies/PolicySaveDaemonFixture.cpp
+    ${POLICY_SAVE_SOURCES}
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/OSS_absence_of_uncontrolled_desktop_environments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/services/PolicyService.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/models/PolicyDescriptor.cpp
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/models/ModuleDescriptor.cpp
+)
+target_include_directories(policy_save_dependency_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src ${CMAKE_SOURCE_DIR}/fic-gui/src)
+target_link_libraries(policy_save_dependency_tests PRIVATE
+    fic-core fic-policy fic-platform fic-ipc PkgConfig::FIC_DM_GLIB Qt${QT_VERSION_MAJOR}::Core)
+add_test(NAME policy_save_dependency_tests COMMAND policy_save_dependency_tests)
+set_tests_properties(policy_save_dependency_tests PROPERTIES LABELS "unit")
+
+
 # Explicit root disposable-container native probe; never ordinary host CTest.
 add_executable(display_manager_native_probe
     integration/desktop/dm-journal-native-driver.cpp

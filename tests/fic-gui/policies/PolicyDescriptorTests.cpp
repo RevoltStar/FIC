@@ -13,6 +13,7 @@ namespace {
 nlohmann::json validDescriptor()
 {
     return {
+        {"dependencies", nlohmann::json::array()},
         {"module", "DAC"},
         {"submodule", "Sudo"},
         {"policy", "sudo_timeout"},
@@ -59,6 +60,27 @@ int main()
     assert(policies.front().min == 0);
     assert(policies.front().max == 60);
     assert(policies.front().validator == "integer_range");
+
+    auto withDependency = validDescriptor();
+    withDependency["dependencies"] = {{{"module", "DAC"}, {"submodule", "Sudo"},
+        {"policy", "sudo_env_reset"}, {"strength", "recommended"},
+        {"condition", "owner_value_equals"}, {"value", "20"}, {"active", false}}};
+    assert(parseOne(withDependency, policies, error));
+    assert(policies.front().dependencies.size() == 1);
+    assert(policies.front().dependencies.front().value == "20");
+    assert(!policies.front().dependencies.front().active);
+    for (const char* field : {"module", "submodule", "policy", "strength", "condition", "value", "active"}) {
+        auto malformed = withDependency;
+        malformed["dependencies"][0].erase(field);
+        assert(!parseOne(malformed, policies, error));
+        assert(policies.empty());
+    }
+    for (const char* field : {"strength", "condition"}) {
+        auto malformed = withDependency;
+        malformed["dependencies"][0][field] = "unknown";
+        assert(!parseOne(malformed, policies, error));
+    }
+    assert(parseOne(validDescriptor(), policies, error));
 
     assert(validatePolicyDescriptorValue(policies.front(), "10", error));
     assert(!validatePolicyDescriptorValue(policies.front(), "invalid", error));

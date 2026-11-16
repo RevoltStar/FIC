@@ -84,19 +84,33 @@ nlohmann::json policyToJson(const std::string& module,
     item["violation_severity_values"] = std::move(violationSeverities);
 
     nlohmann::json required = nlohmann::json::array();
-    if (policyClass.isEnabled()) {
-        for (const auto& dependency : policyClass.dependencies()) {
-            if (dependency.strength == PolicyDependencyStrength::Required &&
-                dependencyConditionMatches(policyClass, dependency.condition)) {
-                required.push_back({
-                    {"module", dependency.policy.moduleName},
-                    {"submodule", dependency.policy.submoduleName},
-                    {"policy", dependency.policy.policyName}
-                });
-            }
-        }
+    nlohmann::json dependencies = nlohmann::json::array();
+    // Declared edges also describe disabled owners. Backend applicability is
+    // resolved here; clients only evaluate OwnerValueEquals against edits.
+    for (const auto& dependency : policyClass.dependencies()) {
+        const bool active = dependencyConditionMatches(policyClass, dependency.condition);
+        const auto type = dependency.condition.type;
+        nlohmann::json identity = {
+            {"module", dependency.policy.moduleName},
+            {"submodule", dependency.policy.submoduleName},
+            {"policy", dependency.policy.policyName}
+        };
+        if (policyClass.isEnabled() && active &&
+            dependency.strength == PolicyDependencyStrength::Required)
+            required.push_back(identity);
+        identity.update({
+            {"strength", dependency.strength == PolicyDependencyStrength::Required
+                ? "required" : "recommended"},
+            {"condition", type == PolicyDependencyConditionType::Always ? "always"
+                : type == PolicyDependencyConditionType::OwnerValueEquals
+                    ? "owner_value_equals" : "backend_requires_capability"},
+            {"value", dependency.condition.value},
+            {"active", active}
+        });
+        dependencies.push_back(std::move(identity));
     }
     item["required_dependencies"] = std::move(required);
+    item["dependencies"] = std::move(dependencies);
 
     if (editorSpec.min.has_value()) {
         item["min"] = *editorSpec.min;

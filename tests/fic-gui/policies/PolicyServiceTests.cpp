@@ -14,6 +14,26 @@ PolicyService::RequestResult completed(nlohmann::json response)
     return {true, std::move(response), {}};
 }
 
+nlohmann::json listResponse()
+{
+    nlohmann::json policies = nlohmann::json::array();
+    for (const char* name : {"sudo_timeout", "sudo_env_reset",
+                              "sssd_offline_credentials_expiration"}) {
+        policies.push_back({
+            {"module", "DAC"}, {"submodule", "Sudo"}, {"policy", name},
+            {"editor", "lineedit"}, {"validator", "none"}, {"enabled", false},
+            {"set", true}, {"value_valid", true}, {"value", "30"},
+            {"default_value", "30"}, {"restriction", ""},
+            {"possible_values", nlohmann::json::array()},
+            {"dependencies", nlohmann::json::array()},
+            {"violation_severity", "STANDARD"},
+            {"default_violation_severity", "STANDARD"},
+            {"violation_severity_values", {"STANDARD", "HARD", "ISOLATE"}}
+        });
+    }
+    return {{"ok", true}, {"message", "listed"}, {"policies", policies}};
+}
+
 PolicyService::RequestResult serviceError(std::string error)
 {
     return {false, {}, std::move(error)};
@@ -87,6 +107,7 @@ int main()
 
     std::vector<std::string> commands;
     PolicyService success([&commands](const nlohmann::json& request) {
+        if (request.at("command") == "policy_list") return completed(listResponse());
         commands.push_back(request.at("command").get<std::string>());
         return completed({{"ok", true}, {"message", "accepted"}});
     });
@@ -137,11 +158,12 @@ int main()
     assert(applyResult.response["ok"] == true);
     assert(applyResult.error.isEmpty());
     assert((commands == std::vector<std::string>{
-        "set_policy_value", "enable_policy", "disable_policy", "apply_module"}));
+        "disable_policy", "set_policy_value", "enable_policy", "apply_module"}));
     assert(error.isEmpty());
 
     commands.clear();
     PolicyService valueFailure([&commands](const nlohmann::json& request) {
+        if (request.at("command") == "policy_list") return completed(listResponse());
         const std::string command = request.at("command").get<std::string>();
         commands.push_back(command);
         if (command == "set_policy_value") {
@@ -157,6 +179,7 @@ int main()
 
     commands.clear();
     PolicyService stateFailure([&commands](const nlohmann::json& request) {
+        if (request.at("command") == "policy_list") return completed(listResponse());
         const std::string command = request.at("command").get<std::string>();
         commands.push_back(command);
         if (command == "enable_policy") {
@@ -173,6 +196,7 @@ int main()
 
     commands.clear();
     PolicyService disableFailure([&commands](const nlohmann::json& request) {
+        if (request.at("command") == "policy_list") return completed(listResponse());
         const std::string command = request.at("command").get<std::string>();
         commands.push_back(command);
         if (command == "disable_policy") {
@@ -188,6 +212,7 @@ int main()
 
     commands.clear();
     PolicyService applyFailure([&commands](const nlohmann::json& request) {
+        if (request.at("command") == "policy_list") return completed(listResponse());
         const std::string command = request.at("command").get<std::string>();
         commands.push_back(command);
         if (command == "apply_module") {
@@ -200,7 +225,17 @@ int main()
     assert(applyResult.error.isEmpty());
     assert(applyResult.response["ok"] == false);
     assert((commands == std::vector<std::string>{
-        "set_policy_value", "enable_policy", "disable_policy", "apply_module"}));
+        "disable_policy", "set_policy_value", "enable_policy", "apply_module"}));
+
+    commands.clear();
+    PolicyService metadataFailure([&commands](const nlohmann::json& request) {
+        commands.push_back(request.at("command").get<std::string>());
+        return completed({{"ok", false}, {"message", "registry unavailable"}});
+    });
+    applyResult = metadataFailure.saveAndApplyChanges("DAC", {both});
+    assert(applyResult.status == PolicyService::ApplyStatus::SaveFailed);
+    assert(applyResult.error == "registry unavailable");
+    assert((commands == std::vector<std::string>{"policy_list"}));
 
     return 0;
 }

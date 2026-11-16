@@ -149,6 +149,7 @@ bool parsePolicyDescriptors(
                 {"value", nlohmann::json::value_t::string},
                 {"restriction", nlohmann::json::value_t::string},
                 {"possible_values", nlohmann::json::value_t::array},
+                {"dependencies", nlohmann::json::value_t::array},
                 {"violation_severity", nlohmann::json::value_t::string},
                 {"default_violation_severity", nlohmann::json::value_t::string},
                 {"violation_severity_values", nlohmann::json::value_t::array}
@@ -183,6 +184,31 @@ bool parsePolicyDescriptors(
             }
 
             PolicyDescriptor policy;
+            for (const auto& edge : item.at("dependencies")) {
+                for (const char* field : {"module", "submodule", "policy",
+                                           "strength", "condition", "value"}) {
+                    if (!edge.is_object() || !edge.contains(field) ||
+                        !edge.at(field).is_string()) {
+                        return fail(policies, error, "invalid dependency field");
+                    }
+                }
+                if (!edge.contains("active") || !edge.at("active").is_boolean()) {
+                    return fail(policies, error, "invalid dependency applicability");
+                }
+                PolicyDependencyDescriptor dependency{
+                    edge.at("module"), edge.at("submodule"), edge.at("policy"),
+                    edge.at("strength"), edge.at("condition"), edge.at("value"),
+                    edge.at("active")};
+                if (dependency.moduleName.empty() || dependency.submoduleName.empty() ||
+                    dependency.policyName.empty() ||
+                    (dependency.strength != "required" && dependency.strength != "recommended") ||
+                    (dependency.condition != "always" &&
+                     dependency.condition != "owner_value_equals" &&
+                     dependency.condition != "backend_requires_capability")) {
+                    return fail(policies, error, "invalid dependency descriptor");
+                }
+                policy.dependencies.push_back(std::move(dependency));
+            }
             policy.moduleName = item.at("module").get<std::string>();
             policy.submoduleName = item.at("submodule").get<std::string>();
             policy.policyName = item.at("policy").get<std::string>();
