@@ -13,6 +13,18 @@ std::map<std::string, std::string> properties(const std::string& text) {
     }
     return p;
 }
+// list-unit-files includes templates; only concrete instances have runtime
+// properties. Keep malformed lookalikes on the ordinary fail-closed path.
+bool uninstantiatedServiceTemplate(const std::string& unit) {
+    const auto at = unit.find('@');
+    if (at == std::string::npos || at == 0 || unit.size() > 255 ||
+        unit.substr(at) != "@.service") return false;
+    return std::all_of(unit.begin(), unit.begin() + at, [](unsigned char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == ':' || c == '-' ||
+            c == '_' || c == '.' || c == '\\';
+    });
+}
 bool active(const std::string& s) { return s == "active" || s == "activating" || s == "reloading"; }
 }
 SystemDisplayManagerInventory::SystemDisplayManagerInventory(
@@ -79,6 +91,7 @@ bool SystemDisplayManagerInventory::inspect(DisplayManagerSnapshot& result, std:
         std::istringstream row(line); std::string unit, state; row >> unit >> state;
         if (unit.empty()) continue;
         if (unit.find('/') != std::string::npos || unit.front() == '-' || unit.size() > 256) { error = "invalid service identity"; return false; }
+        if (uninstantiatedServiceTemplate(unit)) continue;
         units.insert(unit);
         auto dm = canonicalName(unit);
         if (!dm.empty() && (state == "enabled" || state == "enabled-runtime")) result.managers[dm].selected = true;

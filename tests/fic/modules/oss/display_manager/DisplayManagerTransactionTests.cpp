@@ -6,6 +6,7 @@
 #include "policy/execution/PolicyDependencyGraph.h"
 #include "policy/registry/PolicyRegistryMutation.h"
 #include <fic/core/runtime/FicRuntimePaths.h>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -266,6 +267,112 @@ void inventoryProof(){
     SystemDisplayManagerInventory incomplete([](ExecutableId,const std::vector<std::string>&){return ProcessResult{};},f.config);
     require(!incomplete.inspect(snapshot,error)&&!snapshot.complete,"inventory failure accepted headless");
 }
+void inventoryTemplateProof(){
+    Fixture f("inventory-templates");std::string error;
+    std::string files,loaded,packages="sddm\tinstalled\nlightdm\tinstalled\n";
+    std::map<std::string,std::string> overrides;
+    std::string refusedUnit;
+    std::vector<std::string> shown;
+    auto runner=[&](ExecutableId id,const std::vector<std::string>& args){
+        ProcessResult r;r.started=true;r.exitCode=0;
+        if(id==ExecutableId::PackageQuery){r.standardOutput=packages;return r;}
+        if(id==ExecutableId::Loginctl)return r;
+        require(id==ExecutableId::Systemctl,"unexpected inventory executable");
+        if(args.front()=="list-unit-files"){r.standardOutput=files;return r;}
+        if(args.front()=="list-units"){r.standardOutput=loaded;return r;}
+        require(args.front()=="show"&&args.size()==4&&args[2]=="--no-pager"&&
+            args[3]=="--property=Id,Names,LoadState,ActiveState,Description,ExecStart,UnitFileState",
+            "concrete service property query changed");
+        const auto& unit=args[1];shown.push_back(unit);
+        if(unit=="alsa-card-wait@.service"||unit=="getty@.service"||unit==refusedUnit){
+            r.exitCode=1;r.standardError="injected systemctl show refusal: "+unit;return r;
+        }
+        auto found=overrides.find(unit);
+        if(found!=overrides.end()){r.standardOutput=found->second;return r;}
+        r.standardOutput="Id="+unit+"\nNames="+unit+"\nLoadState=loaded\nActiveState=inactive\nDescription=ordinary service\nExecStart={ path=/usr/bin/true ; }\n";
+        if(unit=="sddm.service")r.standardOutput="Id=sddm.service\nNames=sddm.service\nLoadState=loaded\nActiveState=inactive\nExecStart={ path=/usr/bin/sddm ; }\n";
+        if(unit=="lightdm.service")r.standardOutput="Id=lightdm.service\nNames=lightdm.service\nLoadState=loaded\nActiveState=inactive\nExecStart={ path=/usr/sbin/lightdm ; }\n";
+        return r;
+    };
+    SystemDisplayManagerInventory inventory(runner,f.config);DisplayManagerSnapshot snapshot;
+    const auto saw=[&](const std::string& unit){return std::find(shown.begin(),shown.end(),unit)!=shown.end();};
+    const auto noTemplates=[&]{require(!saw("alsa-card-wait@.service")&&!saw("getty@.service"),
+        "uninstantiated template was queried");};
+
+    // A: the original failure, with both normal DM services still inspected.
+    files="sddm.service enabled\nalsa-card-wait@.service static\ngetty@.service disabled\nlightdm.service disabled\n";
+    const bool templateInventoryOk=inventory.inspect(snapshot,error);
+    require(templateInventoryOk,"template unit regression: "+error);
+    require(snapshot.complete&&error.empty(),"template inventory incomplete");noTemplates();
+    require(saw("sddm.service")&&saw("lightdm.service"),"ordinary service skipped with templates");
+    require(snapshot.managers.at("SDDM").installed&&snapshot.managers.at("SDDM").selected&&
+        snapshot.managers.at("LIGHTDM").installed&&!snapshot.managers.at("LIGHTDM").selected,
+        "template filtering lost SDDM/LightDM inventory");
+
+    // B: instances from either source, including union/deduplication.
+    for(int source=0;source<3;++source){
+        shown.clear();files="getty@.service disabled\n";
+        if(source!=0)files+="getty@tty1.service enabled\n";
+        loaded=source==1?"":"getty@tty1.service loaded active running Getty\n";
+        require(inventory.inspect(snapshot,error)&&snapshot.complete,error);noTemplates();
+        require(shown==std::vector<std::string>{"getty@tty1.service"},"instance lost or queried twice");
+    }
+    overrides["getty@tty1.service"]="LoadState=loaded\n";shown.clear();
+    require(!inventory.inspect(snapshot,error)&&!snapshot.complete&&saw("getty@tty1.service")&&
+        error.find("incomplete service inventory: getty@tty1.service")!=std::string::npos,
+        "instance properties were not validated");
+    overrides.clear();
+
+    // C/E: known DM executable behind a nonstandard instance; unknown active DM.
+    files="custom-dm@.service static\n";
+    loaded="custom-dm@seat0.service loaded active running Custom\nodd@seat1.service loaded active running Weird\n";
+    overrides["custom-dm@seat0.service"]="Id=custom-dm@seat0.service\nNames=custom-dm@seat0.service display-manager.service\nLoadState=loaded\nActiveState=active\nExecStart={ path=/usr/bin/sddm ; }\n";
+    overrides["odd@seat1.service"]="Id=odd@seat1.service\nNames=odd@seat1.service\nLoadState=loaded\nActiveState=active\nDescription=Weird Display Manager\nExecStart={ path=/usr/bin/weird ; }\n";
+    shown.clear();require(inventory.inspect(snapshot,error)&&snapshot.complete,error);
+    require(!saw("custom-dm@.service")&&saw("custom-dm@seat0.service")&&saw("odd@seat1.service"),
+        "custom DM instance skipped");
+    require(snapshot.managers.at("SDDM").installed&&snapshot.managers.at("SDDM").running&&
+        snapshot.managers.at("SDDM").selected,"custom instance identity/alias lost");
+    require(snapshot.unknownSelectedOrRunning==std::vector<std::string>{"odd@seat1.service"},
+        "unknown active instance DM missed");
+    overrides["custom-dm@seat0.service"]="Id=custom-dm@seat0.service\nNames=custom-dm@seat0.service\nLoadState=loaded\nActiveState=active\nExecStart={ path=/usr/bin/sddm ; argv[]=/usr/bin/sddm --config /tmp/custom ; }\n";
+    require(inventory.inspect(snapshot,error)&&snapshot.complete&&
+        !snapshot.managers.at("SDDM").configurationSupported&&
+        std::find(snapshot.unknownSelectedOrRunning.begin(),snapshot.unknownSelectedOrRunning.end(),
+            "custom-dm@seat0.service")!=snapshot.unknownSelectedOrRunning.end(),
+        "custom instance executable/configuration checks bypassed");
+    overrides.clear();
+
+    // D: ordinary/instance show failures still invalidate the entire snapshot.
+    for(const std::string unit:{"ordinary.service","getty@tty1.service"}){
+        refusedUnit=unit;files="getty@.service disabled\n";
+        loaded=unit+" loaded active running Fixture\n";shown.clear();
+        require(!inventory.inspect(snapshot,error)&&!snapshot.complete&&saw(unit)&&
+            error.find("injected systemctl show refusal: "+unit)!=std::string::npos,
+            "concrete service failure was ignored");noTemplates();
+    }
+
+    // F: templates alone cannot invent a DM (escaped valid prefixes included).
+    refusedUnit.clear();packages.clear();loaded.clear();shown.clear();
+    files="alsa-card-wait@.service static\ngetty@.service disabled\nexample@.service static\nescaped\\x2dname@.service static\n";
+    require(inventory.inspect(snapshot,error)&&snapshot.complete&&shown.empty(),"template-only headless inventory failed");
+    require(snapshot.unknownSelectedOrRunning.empty(),"template invented an unknown DM");
+    for(const auto& [name,state]:snapshot.managers)
+        require(!state.installed&&!state.selected&&!state.running,"template invented DM presence: "+name);
+
+    // Invalid lookalikes must not hide behind the template exception. Existing
+    // identity guard rejects unsafe names; other malformed names reach show.
+    for(const auto& unit:std::vector<std::string>{"/tmp/bad@.service","-bad@.service",
+        std::string(248,'a')+"@.service","@.service","bad@@.service","bad?@.service",
+        std::string(247,'a')+"@.service"}){
+        files=unit+" static\n";refusedUnit=unit;shown.clear();
+        require(!inventory.inspect(snapshot,error)&&!snapshot.complete,
+            "malformed template lookalike was silently skipped");
+        const bool guarded=unit.front()=='/'||unit.front()=='-'||unit.size()>256;
+        require(guarded?shown.empty():saw(unit),"service identity validation/filter ordering changed");
+    }
+    std::cout<<"PASS: DM template inventory regressions A-F and malformed identities\n";
+}
 void scopeLifecycle(){
     Fixture f("scope");std::string error;
     auto paths=fic::core::FicProductPaths::production();paths.configDir=f.root/"config";paths.defaultConfigDir=f.root/"defaults";paths.logDir=f.root/"log";
@@ -323,6 +430,6 @@ int main(){try{
     require(type.validate("")&&type.postProcessingValue("")=="[]","empty typed scope invalid");
     require(type.postProcessingValue("sddm,GDM,lightdm")=="[\"GDM\",\"LIGHTDM\",\"SDDM\"]","canonical list invalid");
     require(!type.validate("SDDM,SDDM")&&!type.validate("GDM3")&&!type.validate("weird")&&!type.validate("SDDM,"),"invalid tokens accepted");
-    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();scopeLifecycle();
+    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();inventoryTemplateProof();scopeLifecycle();
     std::cout<<"PASS: DM transaction, ownership, native failure, crash recovery, scope and inventory contracts\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
