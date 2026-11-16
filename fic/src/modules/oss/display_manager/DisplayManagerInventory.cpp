@@ -158,10 +158,11 @@ bool SystemDisplayManagerInventory::inspect(DisplayManagerSnapshot& result, std:
     while (std::getline(sessions,line)) { std::istringstream row(line); std::string id; row >> id; if (!id.empty()) ids.push_back(id); }
     for (const auto& id : ids) {
         if (id.find('/') != std::string::npos || id.front()=='-') { error="invalid session identity"; return false; }
-        if (!query(ExecutableId::Loginctl, {"show-session",id,"--property=Class,Service", "--no-pager"},output)) return false;
+        if (!query(ExecutableId::Loginctl, {"show-session",id,"--property=Class", "--property=Service", "--no-pager"},output)) return false;
         const auto p=properties(output);
-        if (!p.count("Class") || !p.count("Service")) { error="incomplete greeter inventory"; return false; }
+        if (!p.count("Class") || p.at("Class").empty()) { error="incomplete greeter inventory: missing Class"; return false; }
         if (p.at("Class") != "greeter") continue;
+        if (!p.count("Service") || p.at("Service").empty()) { error="incomplete greeter inventory: missing Service"; return false; }
         auto dm = canonicalName(p.at("Service"));
         if (p.at("Service") == "sddm-greeter") dm="SDDM";
         if (p.at("Service") == "gdm-launch-environment") dm="GDM";

@@ -373,6 +373,54 @@ void inventoryTemplateProof(){
     }
     std::cout<<"PASS: DM template inventory regressions A-F and malformed identities\n";
 }
+void inventoryLogindProof(){
+    Fixture f("inventory-logind");std::string error;
+    std::string sessions="3 1000 user seat0\n",reply="Class=user\nService=sddm\n";
+    bool refuse=false;int showCalls=0;
+    SystemDisplayManagerInventory inventory([&](ExecutableId id,const std::vector<std::string>& args){
+        ProcessResult r;r.started=true;r.exitCode=0;
+        if(id!=ExecutableId::Loginctl)return r;
+        if(args==std::vector<std::string>{"list-sessions","--no-legend","--no-pager"}){
+            r.standardOutput=sessions;return r;
+        }
+        require(args==std::vector<std::string>{"show-session","3","--property=Class",
+            "--property=Service","--no-pager"},"logind requires separate Class and Service property arguments");
+        ++showCalls;
+        if(refuse){r.exitCode=1;r.standardError="injected loginctl failure";return r;}
+        r.standardOutput=reply;return r;
+    },f.config);
+    DisplayManagerSnapshot snapshot;
+    for(const std::string userReply:{"Class=user\nService=sddm\n","Class=user\n","Class=user\nService=\n"}){
+        reply=userReply;
+        require(inventory.inspect(snapshot,error)&&snapshot.complete,"ordinary logind session rejected");
+        require(snapshot.unknownSelectedOrRunning.empty()&&!snapshot.managers.at("SDDM").installed,
+            "ordinary session classified as a greeter");
+    }
+    for(const auto& [service,manager]:std::vector<std::pair<std::string,std::string>>{
+        {"sddm-greeter","SDDM"},{"gdm-launch-environment","GDM"},{"lightdm-greeter","LIGHTDM"}}){
+        reply="Class=greeter\nService="+service+"\n";
+        require(inventory.inspect(snapshot,error)&&snapshot.complete&&
+            snapshot.managers.at(manager).installed&&snapshot.managers.at(manager).running&&
+            snapshot.unknownSelectedOrRunning.empty(),"known logind greeter missed: "+service);
+    }
+    reply="Class=greeter\nService=unknown-greeter\n";
+    require(inventory.inspect(snapshot,error)&&snapshot.complete&&snapshot.unknownSelectedOrRunning==
+        std::vector<std::string>{"greeter 3: unknown-greeter"},"unknown logind greeter lost");
+    for(const std::string incomplete:{"","Service=sddm\n","Class=\nService=sddm\n",
+        "Class=greeter\n","Class=greeter\nService=\n"}){
+        reply=incomplete;
+        require(!inventory.inspect(snapshot,error)&&!snapshot.complete&&
+            error.find("incomplete greeter inventory")!=std::string::npos,
+            "incomplete logind class/greeter service accepted");
+    }
+    refuse=true;
+    require(!inventory.inspect(snapshot,error)&&!snapshot.complete&&
+        error.find("injected loginctl failure")!=std::string::npos,"loginctl command failure lost");
+    refuse=false;sessions.clear();const int previousCalls=showCalls;
+    require(inventory.inspect(snapshot,error)&&snapshot.complete&&showCalls==previousCalls&&
+        snapshot.unknownSelectedOrRunning.empty(),"empty session inventory changed");
+    std::cout<<"PASS: logind inventory A-H, empty values and exact property arguments\n";
+}
 void scopeLifecycle(){
     Fixture f("scope");std::string error;
     auto paths=fic::core::FicProductPaths::production();paths.configDir=f.root/"config";paths.defaultConfigDir=f.root/"defaults";paths.logDir=f.root/"log";
@@ -430,6 +478,6 @@ int main(){try{
     require(type.validate("")&&type.postProcessingValue("")=="[]","empty typed scope invalid");
     require(type.postProcessingValue("sddm,GDM,lightdm")=="[\"GDM\",\"LIGHTDM\",\"SDDM\"]","canonical list invalid");
     require(!type.validate("SDDM,SDDM")&&!type.validate("GDM3")&&!type.validate("weird")&&!type.validate("SDDM,"),"invalid tokens accepted");
-    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();inventoryTemplateProof();scopeLifecycle();
+    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();inventoryTemplateProof();inventoryLogindProof();scopeLifecycle();
     std::cout<<"PASS: DM transaction, ownership, native failure, crash recovery, scope and inventory contracts\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
