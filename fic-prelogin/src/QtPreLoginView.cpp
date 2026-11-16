@@ -245,6 +245,7 @@ bool QtPreLoginView::display(const nlohmann::json& value) {
             {"DAEMON_STARTING",QStringLiteral("Демон FIC запускается")},
             {"STARTUP_APPLYING",QStringLiteral("Первичное применение политик")},
             {"STARTUP_SUCCEEDED",QStringLiteral("Первичное применение завершено успешно")},
+            {"DAEMON_SERVICE_FAILED",QStringLiteral("Отказ службы fic.service подтверждён systemd")},
             {"STARTUP_FAILED",QStringLiteral("Ошибка первичного применения политик")},
             {"DAEMON_DEGRADED",QStringLiteral("Защита не подтверждена (DEGRADED)")},
             {"DAEMON_UNAVAILABLE",QStringLiteral("Не удалось получить состояние демона FIC")},
@@ -275,6 +276,12 @@ bool QtPreLoginView::display(const nlohmann::json& value) {
             steps[0] = S::Done;
             steps[1] = S::Done;
             // Третий этап ожидает передачи управления системному DM.
+        } else if (state == "DAEMON_SERVICE_FAILED") {
+            steps[0] = S::Failed;
+            bannerText = QStringLiteral(
+                "systemd подтвердил отказ fic.service. Результат первичного применения политик "
+                "не подтверждён. Recovery: Ctrl+Alt+F1.");
+            bannerKind = Banner::Error;
         } else if (state == "STARTUP_FAILED") {
             steps[0] = S::Done;
             steps[1] = S::Failed;

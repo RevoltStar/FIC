@@ -7,6 +7,7 @@ const char* uiStateToken(UiState state) {
         case UiState::Starting: return "DAEMON_STARTING";
         case UiState::Applying: return "STARTUP_APPLYING";
         case UiState::Succeeded: return "STARTUP_SUCCEEDED";
+        case UiState::ServiceFailed: return "DAEMON_SERVICE_FAILED";
         case UiState::Failed: return "STARTUP_FAILED";
         case UiState::Degraded: return "DAEMON_DEGRADED";
         case UiState::Unavailable: return "DAEMON_UNAVAILABLE";
@@ -40,6 +41,7 @@ void PreLoginController::poll() {
         const auto& s = observation_.systemd;
         if (s.active == "inactive") state_ = UiState::Waiting;
         else if (s.active == "activating") state_ = s.text == "Applying startup policies" ? UiState::Applying : UiState::Starting;
+        else if (s.active == "failed") state_ = UiState::ServiceFailed;
         // active/READY=1/StatusText never grant automatic handoff.
     }
     if (!autoEligible) {

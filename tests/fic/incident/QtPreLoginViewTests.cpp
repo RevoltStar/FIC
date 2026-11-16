@@ -50,6 +50,7 @@ int main(int argc,char** argv){
    "STARTUP_APPLYING",{2,1,0},0,"startup_applying"},{
    "STARTUP_SUCCEEDED",{2,2,0},0,"startup_succeeded"},{
    "STARTUP_FAILED",{2,3,0},2,"startup_failed"},{
+   "DAEMON_SERVICE_FAILED",{3,0,0},2,"service_failed"},{
    "DAEMON_DEGRADED",{0,4,0},1,"daemon_degraded"},{
    "DAEMON_UNAVAILABLE",{4,0,0},1,"daemon_unavailable"},{
    "HANDOFF",{2,2,1},0,"handoff"},{
@@ -69,6 +70,10 @@ int main(int argc,char** argv){
     require(view.warningBannerText().contains("текущее состояние"),"unavailability must explain missing current observation");
     require(view.findChild<QLabel*>("banner")->styleSheet().contains("#fff4dd"),"unavailability uses red failure banner");
   }
+  if(expected.banner==2) require(view.findChild<QLabel*>("banner")->styleSheet().contains("#fdecec"),"missing red error banner");
+  if(std::string(expected.state)=="DAEMON_SERVICE_FAILED")
+    require(view.warningBannerText().contains("systemd")&&view.warningBannerText().contains("fic.service"),"service failure attribution missing");
+  require(view.findChild<QPushButton*>("reboot")->isEnabled()&&view.findChild<QPushButton*>("poweroff")->isEnabled(),"power actions unavailable in state");
   shot(view,expected.shot);
   status["detail"]=std::string(4096,'x');require(view.display(status),"bounded long diagnostic rejected");
   app.processEvents();

@@ -1,61 +1,63 @@
 # Current workspace
 
 ## Current base / task
-* Branch main; task base `3eab56df5aa8391cbd6641b5e160658fc25c2d2f`.
-* Two sequential fixes complete. Commit1:
-  `41a9e0c77732e284699fcbcfe7be67b261a79b0d`
-  (`fix(oss): correct logind session property inventory`).
-* Commit2 is HEAD: prelogin observation diagnostics / warning semantics. No push.
+* Branch main; follow-up base `3e28cc1279ac79fb30b72ae1f198dd3f4f0e8269`.
+* Current task complete: distinguish confirmed systemd service failure and persist
+  D-Bus observation diagnostics. One follow-up commit (HEAD); no push.
 
 ## Accepted invariants / completed
-* DM show-session uses separate --property=Class and --property=Service.
-  Nonempty Class is always required; nonempty Service is required only for greeter.
-  Unknown greeters and command errors remain fail-closed. Template handling unchanged.
-* Prelogin systemd observer reports operation/property/negative errno-style code,
-  strerror and sd_bus_error name/message. Diagnostic <=1024 bytes, UTF-8 safe;
-  no partial properties on failure. Provider preserves it ahead of missing-IPC error.
-* One explicit bus-opening fixture seam; production endpoint/system bus unchanged.
-  Tests use a private socketpair and actual sd-bus methods/errors, no host bus.
-* DAEMON_UNAVAILABLE first step and banner are Warning: current startup/apply result
-  unconfirmed. STARTUP_FAILED remains red; DEGRADED remains distinct. Authoritative
-  semantics in fic-prelogin/README.md.
-* No change to controller algorithm, mayAutoHandoff, boot/PID/IPC peer validation,
-  completion/apply/access-gate/login requirements, renderer readiness,5s countdown,
-  manual/power/recovery/cleanup/cgroup proof. Timeout250ms unchanged; no retries.
-* sd-bus error and timeout APIs checked against official systemd documentation.
+* Successful systemd observation ActiveState=failed without verified IPC selects
+  ServiceFailed / DAEMON_SERVICE_FAILED. Qt first step Failed/red error banner,
+  remaining steps Waiting. Does not assert apply failure.
+* Verified IPC retains priority: STARTUP_FAILED is first-apply failure (second step
+  Failed); DAEMON_DEGRADED stays distinct. DAEMON_UNAVAILABLE is missing/incomplete
+  observation, Warning first step/banner. See fic-prelogin/README.md.
+* Broker records SystemdStatus.error via stderr (unit StandardError=journal).
+  PreLoginObservationLog suppresses identical current errors; changed reason logs
+  immediately; successful observation clears suppression. Missing IPC alone never
+  generates a D-Bus record. Existing sanitized <=1024-byte diagnostics unchanged.
+  Console keeps full TTY diagnostics; during D-Bus failure stdout emits only state
+  to avoid duplicate journal diagnostics. Qt does not log observation errors.
+* No changes to prelogin_status IPC, sd-bus algorithm/250ms timeout/poll interval,
+  boot/PID/peer validation, mayAutoHandoff, login/access/renderer proofs, full 5s
+  countdown, manual/power/recovery/resource cleanup/cgroup proof. Verified fresh
+  IPC remains necessary for auto-handoff; missing proof resets countdown.
+
+## Changed areas
+* fic-prelogin/src/PreLoginController.*, PreLoginObservationLog.h, main.cpp,
+  QtPreLoginView.cpp; fic-prelogin/README.md; three incident prelogin test files.
 
 ## Validation (Docker, actually executed)
-* Docker CLI -H unix:///run/user/678421280/podman/podman.sock (rootless Podman API),
-  image fic-gui-dependency-tests:debian12. /src RO, /build RW, network none,
-  no-new-privileges; cap-drop ALL + CHOWN/FOWNER/SETUID/SETGID/KILL for fixtures.
-* Commit1 RED build display_manager_transaction_tests exit0; CTest exit8 rejects old
-  combined --property=Class,Service. GREEN build fic, display_manager_transaction_tests,
-  policy_save_dependency_tests -j2 exit0. CTest **5 PASS /0 FAIL /0 SKIP**, exit0:
-  display_manager_transaction_tests, policy_save_dependency_tests,
-  policy_execution_planner_tests, desktop_package_release_checks,
-  desktop_environment_architecture_static_checks. Evidence:
-  build-gui-dependencies/logind-{red,green}-{build,tests}.log.
-* Commit2 build fic-prelogin, fic-prelogin-frontend, prelogin_controller_tests,
-  prelogin_qt_view_tests, prelogin_frontend_process_tests, daemon_readiness_tests,
-  device_startup_readiness_tests, incident_access_client_tests -j2 exit0.
-  Separate build fic-prelogin-integration and prelogin_daemon_fixture -j2 exit0.
-* Commit2 CTest **7 PASS /0 FAIL /0 SKIP**, exit0: prelogin_controller_tests,
-  prelogin_qt_view_tests (offscreen), prelogin_frontend_process_tests,
-  prelogin_package_lifecycle_tests, daemon_readiness_tests,
-  device_startup_readiness_tests, incident_access_client_tests. Evidence:
-  build-gui-dependencies/prelogin-fix-{build,tests,consumers-build}.log.
-* Regression coverage: logind A-H/exact arguments; D-Bus open/GetUnit/all4 properties/
-  malformed reply/errno/text bounds/UTF-8; provider->Observation and broker packet;
-  same-view Applying/Unavailable/Applying/Succeeded/Failed transitions; actual step
-  states and warning/error banner; countdown reset/restart, boot/PID/peer checks,
-  renderer barrier/manual actions and cleanup. Test stdout in Testing/Temporary/LastTest.log.
+* Docker CLI -H unix:///run/user/678421280/podman/podman.sock, image
+  fic-gui-dependency-tests:debian12. run --rm --network none --cap-drop ALL
+  --cap-add CHOWN --cap-add FOWNER --cap-add SETUID --cap-add SETGID --cap-add KILL
+  --security-opt no-new-privileges; repository mounted /src:ro, existing
+  build-gui-dependencies mounted /build:rw; workdir /src.
+* RED: cmake --build /build --target prelogin_controller_tests prelogin_qt_view_tests
+  -j2 (exit0); ctest --test-dir /build -R
+  '^(prelogin_controller_tests|prelogin_qt_view_tests)$' --output-on-failure
+  (exit8; 0 PASS /2 FAIL /0 SKIP). Controller classification and Qt token fail.
+* GREEN: cmake --build /build --target fic-prelogin fic-prelogin-frontend
+  fic-prelogin-integration prelogin_daemon_fixture prelogin_controller_tests
+  prelogin_qt_view_tests prelogin_frontend_process_tests daemon_readiness_tests
+  device_startup_readiness_tests incident_access_client_tests -j2 (exit0).
+* ctest --test-dir /build -R
+  '^(prelogin_controller_tests|prelogin_qt_view_tests|prelogin_frontend_process_tests|prelogin_package_lifecycle_tests|daemon_readiness_tests|device_startup_readiness_tests|incident_access_client_tests)$'
+  --output-on-failure: exit0, **7 PASS /0 FAIL /0 SKIP**, 13.84s final run.
+  Qt uses CTest property QT_QPA_PLATFORM=offscreen.
+* Evidence: build-gui-dependencies/prelogin-followup-{red,green}-{build,tests}.log;
+  Testing/Temporary/LastTest.log includes actual journal-channel regression PASS.
+* Coverage: failed/unavailable/apply-failed/degraded distinction, Qt actual steps
+  and banner colors, broker packet, IPC priority, countdown reset/restart,
+  manual/power availability, channel write/flush counts and exact payload,
+  changed cause/recovery, real private sd-bus errors and missing-IPC progress.
 * Final diff review and git diff --check PASS.
 
 ## Remaining / limits
-* No real host apply all, boot-timeout diagnosis, native logind/systemd/DRM/DM E2E.
-  Test image lacks systemd manager. Original transient D-Bus failure cause still
-  requires real-system evidence; do not claim timeout250ms was proven insufficient.
-* No production computers /192.168.1.50 used. Full CTest not repeated: focused tests
-  and all direct prelogin-core consumers were built/checked. Previously known unrelated
-  broad failures remain: incident_state_lifecycle_static_checks and
+* No production computers or 192.168.1.50. No host policy apply, native systemd
+  journal persistence/reboot, VT/DRM/DM E2E: container lacks systemd manager.
+  Tested actual logging output channel plus existing unit stderr=journal wiring.
+* Original transient D-Bus incident cause remains unknown; timeout not established
+  as its cause. Full CTest not repeated for focused follow-up. Prior unrelated
+  broad failures remain incident_state_lifecycle_static_checks and
   identity_policy_hierarchy_tests (previous225 PASS /4 SKIP /2 FAIL).

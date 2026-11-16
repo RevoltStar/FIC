@@ -48,11 +48,30 @@ transport и exact typed schema. Environment не меняет production endpoi
 
 Если systemd-наблюдение не удалось, `DAEMON_UNAVAILABLE` обозначает отсутствие
 текущего подтверждения: первый этап и banner показывают предупреждение, а не
-красный отказ запуска. Это не `STARTUP_FAILED` (подтверждённая ошибка первичного
-применения) и не `DAEMON_DEGRADED`. Диагностика содержит операцию sd-bus, имя
+красный отказ запуска. Успешное systemd-наблюдение `ActiveState=failed` без
+подтверждённого IPC-статуса даёт отдельный `DAEMON_SERVICE_FAILED`: красный первый
+этап «Запуск демона», остальные этапы ожидают; banner указывает подтверждённый
+systemd отказ `fic.service`, не утверждая ошибку применения политик.
+`STARTUP_FAILED` сохраняется для подтверждённой ошибки первичного применения
+(красный второй этап), `DAEMON_DEGRADED` — для подтверждённого DEGRADED.
+Подтверждённый `prelogin_status` имеет прежний приоритет над systemd-наблюдением.
+Ни отказ службы, ни недоступность наблюдения не разрешают auto-handoff:
+он по-прежнему требует свежего подтверждённого IPC-статуса и всех readiness proofs.
+Ручные handoff/power/recovery остаются доступны.
+
+Диагностика содержит операцию sd-bus, имя
 свойства при чтении, return code и ограниченный текст errno/D-Bus ошибки.
 Она сохраняется перед ожидаемой ошибкой отсутствующего IPC-сокета и передаётся
 в интерфейс; частично прочитанные systemd-свойства не публикуются как текущие.
+Broker после каждого poll регистрирует `SystemdStatus.error` в stderr
+(`StandardError=journal`): ошибки открытия system bus, настройки timeout,
+GetUnit/чтения ответа и чтения ActiveState/SubState/StatusText/MainPID. Сохраняется
+готовая безопасная диагностика <=1024 байт с operation/property/code/текстом.
+Одна и та же текущая ошибка пишется один раз; новая причина пишется сразу.
+Успешное полное наблюдение сбрасывает подавление: та же ошибка после восстановления
+пишется снова. Отсутствующий IPC-сокет сам по себе не является D-Bus-ошибкой.
+Qt не журналирует её; консоль показывает полный текст на TTY, а во время ошибки
+пишет в stdout только состояние, исключая дублирование диагностики в journal.
 Следующий штатный polling может восстановить наблюдение без рестарта.
 Таймаут D-Bus остаётся 250 мс, дополнительных запросов/retries нет.
 Потеря свежего подтверждённого IPC-статуса сбрасывает countdown; восстановление
@@ -89,6 +108,12 @@ TTY1 и другие recovery TTY не заменяются.
 
 Unit/transport tests: `prelogin_controller_tests`, `incident_access_client_tests`.
 Generated package scripts: `prelogin_package_lifecycle_tests`.
+Follow-up service-failure/journaling проверен в Docker: сборка broker/frontend и
+прямых consumers exit0; 7 PASS /0 FAIL /0 SKIP, CTest exit0 (точный набор и команды
+в `docs/HANDOFF.md`). Новые controller/Qt regressions сначала дали 2 FAIL (exit8).
+Проверяются реальные состояния Qt offscreen, broker packet, записи в логирующий
+канал (A/A/A → A; A/B/B/success/A → A/B/A) и отсутствие ложной D-Bus-записи
+при недоступном IPC с успешным systemd-наблюдением.
 Systemd/DRM проверки выполняются только в disposable VM. Контейнерная сборка
 и offscreen tests не доказывают корректность DRM handoff или конкретного GPU.
 

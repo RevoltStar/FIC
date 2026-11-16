@@ -1,4 +1,7 @@
 #include "PreLoginController.h"
+#include "PreLoginObservationLog.h"
+#include <sstream>
+#include <algorithm>
 #include "PreLoginStatusProvider.h"
 #include <fic/ipc/FicIpcClient.h>
 #include <fic/core/runtime/SystemBootInfo.h>
@@ -63,7 +66,9 @@ void lifecycle() {
     { Provider p; Gui g; Power w; g.ok = false;
       PreLoginController c(p,g,w,boot,[]{return testNow;}); c.request(Action::Handoff); require(c.finished() && c.exitCode()!=0, "cleanup false success"); }
     for (const auto action : {Action::Reboot, Action::PowerOff}) {
-        Provider p; Gui g; Power w; PreLoginController c(p,g,w,boot,[]{return testNow;}); c.request(action);
+        Provider p; Gui g; Power w;
+        p.value.systemd={true,123,"failed","failed","failed"};
+        PreLoginController c(p,g,w,boot,[]{return testNow;}); c.poll(); c.request(action);
         require(g.closes==1 && w.actions==std::vector<Action>{action}, "power action wasn't cleanup-first and restricted");
     }
     for (const auto mode : {"ACTIVE", "PASSIVE", "OFF"}) {
@@ -206,11 +211,55 @@ void observationFailures() {
      require(!value.verified&&value.error.find("peer identity")!=std::string::npos,"systemd/IPC PID mismatch accepted");}
     std::cout<<"D-Bus per-operation/property/errno/bounds/Observation/IPC failure/recovery PASS\n";
 }
+void observationLogging() {
+    struct Channel : std::stringbuf {
+        int records=0;
+        int sync() override { ++records; return std::stringbuf::sync(); }
+    } channel;
+    std::ostream output(&channel);
+    PreLoginObservationLog log(output);
+    SystemdStatus status;
+    const std::string a="systemd D-Bus operation=get_property property=MainPID code=-110: timed out";
+    const std::string b="systemd D-Bus operation=GetUnit code=-13: Access denied";
+    status.error=a;
+    log.record(status);log.record(status);log.record(status);
+    require(channel.records==1,"identical errors wrote duplicate journal records");
+    require(channel.str()=="fic-prelogin broker: "+a+"\n","journal channel lost diagnostic");
+    status.error=b;log.record(status);log.record(status);
+    require(channel.records==2,"changed cause not recorded exactly once");
+    status={true,123,"activating","start","Starting daemon"};log.record(status);
+    require(channel.records==2,"successful observation logged an error");
+    status={};status.error=a;log.record(status);
+    require(channel.records==3,"same error after recovery suppressed");
+    const auto records=channel.str();
+    require(std::count(records.begin(),records.end(),'\n')==3&&
+        records=="fic-prelogin broker: "+a+"\nfic-prelogin broker: "+b+"\nfic-prelogin broker: "+a+"\n",
+        "unexpected journal channel contents");
+    // Real provider, missing IPC socket, healthy private sd-bus: no D-Bus log.
+    SystemdPeer peer; Socket socket;
+    PreLoginStatusProvider provider(socket.path+"-missing",::geteuid(),peer.open());
+    const auto observed=provider.read();
+    require(!observed.verified&&observed.systemd.available&&observed.systemd.error.empty()&&
+        !observed.error.empty(),"missing IPC fixture did not exercise healthy fallback");
+    Provider progress;Gui view;Power power;progress.value=observed;
+    PreLoginController controller(progress,view,power,boot);controller.poll();
+    require(controller.state()==UiState::Applying&&!controller.countdownSeconds(),"missing IPC failed normal progress");
+    log.record(observed.systemd);
+    require(channel.records==3,"missing administrative IPC logged as D-Bus failure");
+    peer.failure=4;const auto failed=provider.read();log.record(failed.systemd);log.record(failed.systemd);
+    require(channel.records==4&&channel.str().find(failed.systemd.error)!=std::string::npos,
+        "actual sd-bus diagnostic not registered exactly once");
+    peer.failure=-1;const auto recovered=provider.read();log.record(recovered.systemd);
+    require(recovered.systemd.error.empty()&&recovered.error.find("systemd D-Bus")==std::string::npos,
+        "recovery retained old D-Bus error");
+    log.record(failed.systemd);require(channel.records==5,"actual D-Bus recovery did not reset suppression");
+    std::cout<<"Broker journal channel duplicate/change/recovery/missing IPC PASS\n";
+}
 void observationStates() {
     Provider p;Gui g;Power w;PreLoginController c(p,g,w,boot,[]{return testNow;});
     p.value.systemd={true,123,"activating","start","Applying startup policies"};
     c.poll();require(c.state()==UiState::Applying&&!c.countdownSeconds(),"unverified applying state");
-    p.value={};p.value.error="systemd D-Bus operation=get_property property=MainPID code=-110";
+    p.value={};p.value.systemd.active="failed";p.value.systemd.error="systemd D-Bus operation=get_property property=MainPID code=-110";p.value.error=p.value.systemd.error;
     c.poll();require(c.state()==UiState::Unavailable&&!c.finished()&&!c.countdownSeconds(),"unavailable became startup failure/success");
     p.value.systemd={true,123,"activating","start","Applying startup policies"};
     c.poll();require(c.state()==UiState::Applying,"applying not restored");
@@ -224,12 +273,28 @@ void observationStates() {
     for(const auto& [active,text,state]:std::vector<std::tuple<std::string,std::string,UiState>>{
         {"inactive","",UiState::Waiting},{"activating","Starting daemon",UiState::Starting},
         {"activating","Applying startup policies",UiState::Applying},
-        {"active","READY=1",UiState::Unavailable},{"failed","Failed",UiState::Unavailable}}){
+        {"active","READY=1",UiState::Unavailable},{"failed","Failed",UiState::ServiceFailed}}){
         Provider source;Gui view;Power power;source.value.systemd={true,123,active,"sub",text};
         PreLoginController controller(source,view,power,boot,[]{return testNow;});controller.poll();
         require(controller.state()==state&&!controller.countdownSeconds()&&!controller.finished(),"systemd-only state/handoff changed");
     }
-    p.value={};p.value.verified=success();p.value.verified->applyOk=false;p.value.verified->diagnostic="confirmed apply failure";
+    {
+        Provider source; Gui view; Power power;
+        source.value.systemd={true,123,"failed","failed","Service failed"};
+        PreLoginController controller(source,view,power,boot,[]{return testNow;});
+        controller.poll();
+        require(std::string(uiStateToken(controller.state()))=="DAEMON_SERVICE_FAILED" &&
+            controller.state()!=UiState::Failed,"confirmed systemd failure classified as unavailable/apply failure");
+        testNow+=std::chrono::seconds(10);controller.poll();
+        require(!controller.finished()&&!controller.countdownSeconds(),"systemd failure allowed auto handoff");
+        source.value.verified=success();controller.poll();
+        require(controller.state()==UiState::Succeeded&&controller.countdownSeconds()==5,"systemd displaced verified IPC");
+        source.value.verified.reset();controller.poll();
+        require(!controller.countdownSeconds(),"systemd failure retained countdown");
+        controller.request(Action::Handoff);
+        require(controller.finished()&&controller.exitCode()==0&&view.closes==1,"service failure blocked manual handoff");
+    }
+    p.value={};p.value.systemd={true,123,"failed","failed","failed"};p.value.verified=success();p.value.verified->applyOk=false;p.value.verified->diagnostic="confirmed apply failure";
     PreLoginController failed(p,g,w,boot,[]{return testNow;});failed.poll();
     require(failed.state()==UiState::Failed&&failed.observation().verified->diagnostic=="confirmed apply failure"&&
         !failed.countdownSeconds(),"real startup failure hidden");
@@ -269,6 +334,6 @@ void transport() {
 }
 }
 int main() {
-    try { lifecycle(); observationStates(); transport(); observationFailures(); return 0; }
+    try { lifecycle(); observationStates(); observationLogging(); transport(); observationFailures(); return 0; }
     catch (const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }

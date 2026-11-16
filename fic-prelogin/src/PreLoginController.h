@@ -5,7 +5,7 @@
 #include <functional>
 
 namespace fic::prelogin {
-enum class UiState { Waiting, Starting, Applying, Succeeded, Failed, Degraded, Unavailable, Handoff, PowerAction };
+enum class UiState { Waiting, Starting, Applying, Succeeded, Failed, ServiceFailed, Degraded, Unavailable, Handoff, PowerAction };
 enum class Action { Handoff, Reboot, PowerOff };
 struct SystemdStatus {
     bool available = false;

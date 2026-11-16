@@ -14,7 +14,8 @@ int main(){
  // Exercise the actual broker render path: observation diagnostics must reach
  // the private frontend packet without turning missing observation into failure.
  {
-  struct Provider final:StatusProvider{Observation read()override{Observation o;
+  struct Provider final:StatusProvider{bool failed=false;Observation read()override{Observation o;
+      if(failed){o.systemd={true,123,"failed","failed","failed"};return o;}
       o.error="systemd D-Bus operation=get_property property=MainPID code=-110: timed out\nIPC: absent";return o;}} provider;
   struct Power final:PowerController{bool execute(Action,std::string&)override{return false;}} power;
   int channel[2];require(socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,channel)==0,"render socketpair");
@@ -28,6 +29,13 @@ int main(){
       status.at("detail").get<std::string>().find("property=MainPID code=-110")!=std::string::npos&&
       status.at("startup").get<std::string>().find("не подтверждён")!=std::string::npos,
       "broker lost diagnostic or asserted startup result");
+  provider.failed=true;controller.poll();graphics.render(controller);
+  const auto failedBytes=recv(channel[1],packet,sizeof(packet),MSG_DONTWAIT);
+  require(failedBytes>0,"missing service failure packet");
+  const auto failed=nlohmann::json::parse(packet,packet+failedBytes);
+  require(failed.at("state")=="DAEMON_SERVICE_FAILED"&&
+      failed.at("startup").get<std::string>().find("не подтверждён")!=std::string::npos,
+      "broker lost service failure or asserted apply failure");
   close(channel[1]);
  }
 

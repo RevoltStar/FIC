@@ -1,4 +1,5 @@
 #include "PreLoginController.h"
+#include "PreLoginObservationLog.h"
 #include "PreLoginStatusProvider.h"
 #ifdef FIC_PRELOGIN_GRAPHICS
 #include "FrontendProcess.h"
@@ -60,7 +61,10 @@ public:
         if (text != last_) {
             last_ = text;
             (void)::write(output_, text.data(), text.size());
-            std::cout << text << std::flush;
+            // Full diagnostics go to the TTY above; D-Bus errors are journaled
+            // once by the broker, independent of console/graphics rendering.
+            if (observation.systemd.error.empty()) std::cout << text << std::flush;
+            else std::cout << "FIC prelogin state: " << uiStateToken(controller.state()) << '\n' << std::flush;
         }
     }
     bool recoverConsole(std::string& error) {
@@ -141,6 +145,7 @@ int main(int argc, char** argv) {
         PreLoginStatusProvider provider;
         PreLoginPowerController power;
         PreLoginController controller(provider, gui, power, SystemBootInfo::get_boot_id());
+        PreLoginObservationLog observationLog(std::cerr);
         std::string input;
         while (!controller.finished() && !stopping) {
 #ifdef FIC_PRELOGIN_GRAPHICS
@@ -157,6 +162,7 @@ int main(int argc, char** argv) {
             }
 #endif
             controller.poll();
+            observationLog.record(controller.observation().systemd);
             if (controller.finished()) break;
 #ifdef FIC_PRELOGIN_GRAPHICS
             if (graphical) {
