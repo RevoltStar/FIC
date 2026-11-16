@@ -133,14 +133,60 @@ are used; no Device Control rule or enforcement changes are involved.
 Tests: `udev_access_readiness_tests` covers positive/negative/timeout/launch error,
 unavailable executable, cache expiry/intensive polling, recovery, other denials,
 READY re-projection, existing PAM recovery ordering and both wire formats. Native
-runner: `tests/integration/udev-access/run-native.sh IMAGE BUILD_DIR`, requiring
-a Debian12 systemd/udev image and the built test executable. It uses a disposable
-private PID/mount/cgroup/network container with no host binds/ports/socket and
-read-only sysfs/proc-sys. It checks absent control socket, responding udevd,
-SIGSTOP/unresponsive control interface, SIGCONT recovery and socket activation.
-A stopped-daemon negative control rejects chroot/no-op ping as integration evidence.
+runner: `tests/integration/udev-access/run-native.sh IMAGE BUILD_DIR`. Its five
+existing scenarios are retained, but run only if systemd can boot within the
+restricted container. Otherwise it prints SKIP and returns77; no privileged
+fallback is available. Use a separate disposable VM or independently isolated,
+properly delegated systemd environment for a full native run when Docker cannot
+supply this environment. This runner does not provision that environment.
 
-Validation (2026-11-16, base `eb6a87f60a23faefdefe34a907700fd1068a0278`):
+The current Docker runner creates then inspects the container **before start**:
+Privileged=false, cap-drop=ALL/empty CapAdd, no-new-privileges, private cgroup/PID/
+IPC/mount context, network none, no binds/volumes/ports, requested devices, device
+requests or custom device-cgroup rules. Only runtime-created /run, /run/lock and
+/tmp tmpfs are permitted. Docker default device restrictions and seccomp are
+retained; no unconfined override is used. Bootstrap checks /sys and /proc/sys RO,
+all effective/permitted/inheritable/bounding/ambient capabilities zero, NNP=1,
+and seccomp filter mode2. Standard Docker character devices/PTY remain; physical
+USB/PCI/block devices and Docker socket are not passed through. Namespaces alone
+are not an absolute host-isolation proof.
+
+Restricted reproduction (2026-11-16, base `d5a2c430d942247d0c8de3163c1e888fe01fe9a0`):
+Debian12/systemd252.39 first failed an internal /run/lock API tmpfs mount without
+CAP_SYS_ADMIN. A safe runtime-created /run/lock tmpfs removed that obstacle.
+Systemd then exited255: `Failed to create /init.scope control group: Read-only
+file system`, `Failed to allocate manager object`. Private cgroup namespace does
+not itself provide writable cgroup delegation. The image's /sbin/init was also
+an image-specific remount wrapper; the runner deliberately invokes the actual
+/lib/systemd/systemd after its guards, without executing that wrapper.
+
+The old remount approach required CAP_SYS_ADMIN. It has been removed rather than
+re-enabled. No working minimum capability set for all five native cases was
+established: PID1 cannot bootstrap under the accepted current constraints.
+Writing a host cgroup bind, remounting cgroupfs with SYS_ADMIN, exposing host devices,
+or disabling seccomp/LSM are not accepted workarounds. Vendor udevd unit namespace
+and other sandbox requirements may add further constraints after bootstrap;
+those stages were not reached here. Control ping and same-UID signalling alone
+do not justify adding SYS_ADMIN or a broad capability set.
+
+Final runner **SKIP77, all five native scenarios SKIP/not executed**; inspect and
+bootstrap security assertions passed. Unchanged focused unit/IPC/prelogin tests
+**5/5 PASS** in Docker with cap-drop ALL, NNP, network none (source RO/build output
+RW only in the unit container). Bash syntax/diff checks passed, runner containers
+removed on failure, and production code remains unchanged. Logs and probe inspect:
+`/tmp/fic-udev-restricted/`. No host udev changes, triggers, USB authorization or
+new device scenarios were performed. The ordinary runner cannot elevate itself.
+
+Docker's [run privilege documentation](https://docs.docker.com/engine/containers/run/)
+explains that privileged mode expands device access and relaxes confinement;
+[run reference](https://docs.docker.com/reference/cli/docker/container/run/)
+describes capabilities, device controls and no-new-privileges. Replacing the flag
+with SYS_ADMIN plus unrestricted mounts would not establish equivalent safety to
+the restricted profile above.
+
+Historical functional validation (before privilege follow-up; **not evidence of
+safe Docker isolation**, old runner used --privileged):
+2026-11-16, base `eb6a87f60a23faefdefe34a907700fd1068a0278`:
 Docker Debian12 target build of `fic`, `udev_access_readiness_tests`,
 `incident_access_gate_core_tests`, `daemon_readiness_tests`,
 `incident_access_client_tests` and `prelogin_controller_tests` passed; focused
