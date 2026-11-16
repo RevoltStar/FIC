@@ -289,10 +289,12 @@ bool QtPreLoginView::display(const nlohmann::json& value) {
                 "Состояние защиты не подтверждено. Рекомендуется проверить состояние системы (Recovery: Ctrl+Alt+F1).");
             bannerKind = Banner::Warning;
         } else if (state == "DAEMON_UNAVAILABLE") {
-            steps[0] = S::Failed;
+            steps[0] = S::Warning;
             bannerText = QStringLiteral(
-                "Не удалось связаться с демоном FIC. Проверьте систему (Recovery: Ctrl+Alt+F1).");
-            bannerKind = Banner::Error;
+                "Не удалось получить текущее состояние демона FIC. "
+                "Успешность запуска и применения политик не подтверждена. "
+                "Recovery: Ctrl+Alt+F1.");
+            bannerKind = Banner::Warning;
         } else if (state == "HANDOFF") {
             steps[0] = S::Done;
             steps[1] = S::Done;

@@ -51,7 +51,7 @@ int main(int argc,char** argv){
    "STARTUP_SUCCEEDED",{2,2,0},0,"startup_succeeded"},{
    "STARTUP_FAILED",{2,3,0},2,"startup_failed"},{
    "DAEMON_DEGRADED",{0,4,0},1,"daemon_degraded"},{
-   "DAEMON_UNAVAILABLE",{3,0,0},2,"daemon_unavailable"},{
+   "DAEMON_UNAVAILABLE",{4,0,0},1,"daemon_unavailable"},{
    "HANDOFF",{2,2,1},0,"handoff"},{
    "POWER_ACTION",{0,0,0},3,"power_action"}};
  for(const auto& expected:stepMatrix){
@@ -63,7 +63,12 @@ int main(int argc,char** argv){
   const bool bannerVisible=view.warningBannerVisible();
   if(expected.banner==0) require(!bannerVisible,"unexpected banner shown");
   else require(bannerVisible,"required banner missing");
-  if(expected.banner==1) require(view.warningBannerText().contains("не подтверждено"),"degraded banner must deny proven protection");
+  if(expected.banner==1) require(view.warningBannerText().contains(
+      std::string(expected.state)=="DAEMON_UNAVAILABLE"?"не подтверждена":"не подтверждено"),"warning must deny proven protection");
+  if(std::string(expected.state)=="DAEMON_UNAVAILABLE"){
+    require(view.warningBannerText().contains("текущее состояние"),"unavailability must explain missing current observation");
+    require(view.findChild<QLabel*>("banner")->styleSheet().contains("#fff4dd"),"unavailability uses red failure banner");
+  }
   shot(view,expected.shot);
   status["detail"]=std::string(4096,'x');require(view.display(status),"bounded long diagnostic rejected");
   app.processEvents();
@@ -77,6 +82,23 @@ int main(int argc,char** argv){
   auto* handoff=view.findChild<QPushButton*>("handoff");require(handoff->isEnabled(),"manual handoff unavailable");
   handoff->click();handoff->click();require(actions==1,"duplicate handoff action");
   status["extra"]=true;require(!view.display(status),"unbounded schema accepted");
+ }
+ // One widget must recover through a transient observation outage without restart.
+ {
+  QtPreLoginView view([](char){});
+  for(const auto& expected:std::vector<std::pair<std::string,std::pair<int,int>>>{
+      {"STARTUP_APPLYING",{2,1}},{"DAEMON_UNAVAILABLE",{4,0}},
+      {"STARTUP_APPLYING",{2,1}},{"STARTUP_SUCCEEDED",{2,2}},
+      {"STARTUP_FAILED",{2,3}}}){
+   const auto status=nlohmann::json{{"state",expected.first},{"detail","operation=get_property property=MainPID code=-110"},
+       {"mode","не подтверждён"},{"severity","не подтверждена"},{"startup","result"}};
+   require(view.display(status),"state transition rejected");
+   require(view.stepState(0)==expected.second.first&&view.stepState(1)==expected.second.second,
+       "transient observation/failure step semantics lost");
+   if(expected.first=="STARTUP_FAILED")require(view.findChild<QLabel*>("banner")->styleSheet().contains("#fdecec"),
+       "confirmed startup failure lost red error banner");
+   require(view.findChild<QLabel*>("detail")->text().contains("property=MainPID"),"D-Bus diagnostic not rendered");
+  }
  }
  // POWER_ACTION не должен помечать этапы выполненными (без ложного успеха).
  {

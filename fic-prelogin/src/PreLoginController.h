@@ -11,6 +11,7 @@ struct SystemdStatus {
     bool available = false;
     unsigned int pid = 0;
     std::string active, sub, text;
+    std::string error;
 };
 struct Observation {
     std::optional<ipc::PreLoginStatus> verified;

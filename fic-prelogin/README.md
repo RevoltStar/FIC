@@ -46,6 +46,18 @@ Read-only `prelogin_status` использует administrative socket с про
 peer UID, kernel peer PID, systemd MainPID при доступном observer, bounded
 transport и exact typed schema. Environment не меняет production endpoint.
 
+Если systemd-наблюдение не удалось, `DAEMON_UNAVAILABLE` обозначает отсутствие
+текущего подтверждения: первый этап и banner показывают предупреждение, а не
+красный отказ запуска. Это не `STARTUP_FAILED` (подтверждённая ошибка первичного
+применения) и не `DAEMON_DEGRADED`. Диагностика содержит операцию sd-bus, имя
+свойства при чтении, return code и ограниченный текст errno/D-Bus ошибки.
+Она сохраняется перед ожидаемой ошибкой отсутствующего IPC-сокета и передаётся
+в интерфейс; частично прочитанные systemd-свойства не публикуются как текущие.
+Следующий штатный polling может восстановить наблюдение без рестарта.
+Таймаут D-Bus остаётся 250 мс, дополнительных запросов/retries нет.
+Потеря свежего подтверждённого IPC-статуса сбрасывает countdown; восстановление
+подтверждения начинает полный пятисекундный отсчёт заново.
+
 Общие 10 полей `access_gate_status`: `api_version`, `ok`, `message`,
 `daemon_state`, `response_mode`, `response_mode_proven`, `severity`,
 `persistent_state_proven`, `persistent_provenance`, `ordinary_login_allowed`.

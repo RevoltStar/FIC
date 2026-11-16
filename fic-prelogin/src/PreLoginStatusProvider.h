@@ -6,7 +6,8 @@ class PreLoginStatusProvider final : public StatusProvider {
 public:
     PreLoginStatusProvider();
     // Explicit fixture seam; production never accepts an endpoint argument.
-    PreLoginStatusProvider(std::string path, uid_t uid);
+    PreLoginStatusProvider(std::string path, uid_t uid,
+                           PreLoginSystemdIntegration::OpenBus openBus = {});
     Observation read() override;
 private:
     ipc::Client client_;

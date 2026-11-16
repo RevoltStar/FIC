@@ -6,10 +6,31 @@
 #include <signal.h>
 #include <sys/prctl.h>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 using namespace fic::prelogin;
 void require(bool ok,const char* detail){if(!ok)throw std::runtime_error(detail);}
 int main(){
+ // Exercise the actual broker render path: observation diagnostics must reach
+ // the private frontend packet without turning missing observation into failure.
+ {
+  struct Provider final:StatusProvider{Observation read()override{Observation o;
+      o.error="systemd D-Bus operation=get_property property=MainPID code=-110: timed out\nIPC: absent";return o;}} provider;
+  struct Power final:PowerController{bool execute(Action,std::string&)override{return false;}} power;
+  int channel[2];require(socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,channel)==0,"render socketpair");
+  FrontendProcess graphics(-1,channel[0]);
+  PreLoginController controller(provider,graphics,power,"11111111-1111-4111-8111-111111111111");
+  controller.poll();graphics.render(controller);
+  char packet[8192];const auto bytes=recv(channel[1],packet,sizeof(packet),MSG_DONTWAIT);
+  require(bytes>0,"missing broker display packet");
+  const auto status=nlohmann::json::parse(packet,packet+bytes);
+  require(status.at("state")=="DAEMON_UNAVAILABLE"&&
+      status.at("detail").get<std::string>().find("property=MainPID code=-110")!=std::string::npos&&
+      status.at("startup").get<std::string>().find("не подтверждён")!=std::string::npos,
+      "broker lost diagnostic or asserted startup result");
+  close(channel[1]);
+ }
+
  for(const auto kind:{"clean","failure","hung","malformed"}){
   int pair[2];require(socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,pair)==0,"socketpair");
   pid_t child=fork();require(child>=0,"fork");
