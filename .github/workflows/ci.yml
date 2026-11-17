@@ -113,9 +113,7 @@ jobs:
                 qt6-base-dev-tools qt6-qpa-plugins util-linux xauth xvfb
               ;;
             alt-p11)
-              # Same p11 mirror and build packages as packaging/rpm/Dockerfile.
-              sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list
-              sed -i '/^#rpm \[p11\] http:/s/^#//' /etc/apt/sources.list.d/yandex.list
+              # Keep the image's default repositories; packages follow the RPM Dockerfile.
               apt-get update
               apt-get install -y \
                 bash ca-certificates cmake file gcc-c++ git-core glibc-devel \
