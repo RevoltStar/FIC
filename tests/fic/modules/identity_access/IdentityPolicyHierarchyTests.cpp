@@ -1819,6 +1819,36 @@ int main() {
         PamFailedAuthenticationUnlockTimePolicy unlock(dependencyPlatform);
         PamPasswordHistoryDepthPolicy history(dependencyPlatform);
         PamPasswdqcRetryCountPolicy quality(dependencyPlatform);
+        PamPasswordMinLengthPolicy readOnlyQuality(dependencyPlatform);
+        TestPamPlatformConfig staticPlatform(dependencyPlatform);
+        staticPlatform.capabilities[1].topology =
+            fic::platform::PamTopologyStrategyKind::StaticVerifyOnly;
+        PamPasswordMinLengthPolicy staticQuality(staticPlatform);
+        using Feature = fic::platform::PamPolicyFeature;
+        using Support = fic::platform::PamPolicySupport;
+        using fic::identity::pam::pamPolicySupport;
+        // Faillock/pwhistory have bindings and managed topology. Pwquality
+        // on non-mutable pam-auth-update is ReadOnly, but still has an
+        // activation prerequisite. It has no binding for passwdqc options.
+        require(pamPolicySupport(dependencyPlatform,
+                                 Feature::FailedAuthenticationAttempts) ==
+                    Support::RequiresTopologyActivation &&
+                    pamPolicySupport(dependencyPlatform,
+                                     Feature::PasswordHistoryDepth) ==
+                        Support::RequiresTopologyActivation &&
+                    pamPolicySupport(dependencyPlatform,
+                                     Feature::PasswordMinLength) ==
+                        Support::ReadOnly &&
+                    pamPolicySupport(staticPlatform,
+                                     Feature::PasswordMinLength) ==
+                        Support::Supported &&
+                    pamPolicySupport(dependencyPlatform,
+                                     Feature::PasswdqcRetryCount) ==
+                        Support::Unsupported &&
+                    pamPolicySupport({},
+                                     Feature::FailedAuthenticationCountingPeriod) ==
+                        Support::Unsupported,
+                "PAM dependency fixtures no longer match provider/topology support");
         const PolicyRef passwordlessRef{
             "IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"};
         const PolicyRef lockoutActivationRef{
@@ -1827,14 +1857,14 @@ int main() {
             "IDENTITY_ACCESS", "PAM", "enable_password_history"};
         const PolicyRef qualityActivationRef{
             "IDENTITY_ACCESS", "PAM", "enable_password_quality"};
-        const auto recommendedCount = [&](const Policy& policy,
-                                          const PolicyRef& expected) {
+        const auto requiredCount = [&](const Policy& policy,
+                                       const PolicyRef& expected) {
             return std::count_if(
                 policy.dependencies().begin(), policy.dependencies().end(),
                 [&](const PolicyDependency& dependency) {
                     return dependency.policy == expected &&
                         dependency.strength ==
-                            PolicyDependencyStrength::Recommended;
+                            PolicyDependencyStrength::Required;
                 });
         };
         const auto hasRecommendedPasswordless = [&](const Policy& policy) {
@@ -1854,17 +1884,25 @@ int main() {
         require(!hasRecommendedPasswordless(history) &&
                     !hasRecommendedPasswordless(quality),
                 "password-only PAM policy gained passwordless dependency");
-        require(recommendedCount(attempts, lockoutActivationRef) == 1 &&
-                    recommendedCount(period, lockoutActivationRef) == 1 &&
-                    recommendedCount(rootLockout, lockoutActivationRef) == 1 &&
-                    recommendedCount(unlock, lockoutActivationRef) == 1 &&
-                    recommendedCount(history, historyActivationRef) == 1 &&
-                    recommendedCount(quality, qualityActivationRef) == 0,
+        require(requiredCount(attempts, lockoutActivationRef) == 1 &&
+                    requiredCount(period, lockoutActivationRef) == 1 &&
+                    requiredCount(rootLockout, lockoutActivationRef) == 1 &&
+                    requiredCount(unlock, lockoutActivationRef) == 1 &&
+                    requiredCount(history, historyActivationRef) == 1 &&
+                    requiredCount(readOnlyQuality, qualityActivationRef) == 1 &&
+                    requiredCount(staticQuality, qualityActivationRef) == 1 &&
+                    requiredCount(quality, qualityActivationRef) == 0,
                 "PAM option policies lack unique capability activation "
-                "recommendations");
+                "requirements");
         require(attempts.dependencies().size() == 2 &&
+                    period.dependencies().size() == 2 &&
+                    rootLockout.dependencies().size() == 2 &&
+                    unlock.dependencies().size() == 2 &&
                     history.dependencies().size() == 1 &&
-                    quality.dependencies().empty(),
+                    readOnlyQuality.dependencies().size() == 1 &&
+                    staticQuality.dependencies().size() == 1 &&
+                    quality.dependencies().empty() &&
+                    countingPeriod.dependencies().empty(),
                 "PAM option dependency mapping contains duplicates");
         SssdCacheCredentialsPolicy sssd;
         DummyKerberosPolicy kerberos;

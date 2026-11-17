@@ -56,10 +56,15 @@ def main():
                         '\nwrite_file_list "$1" "$2"', "bash",
                         str(package_root), str(manifest)], check=True)
         listed = manifest.read_text().splitlines()
-        require("%dir /opt/fic" not in listed and
-                "%dir /opt/fic/config" not in listed and
-                "%dir /opt/fic/bin" in listed and "/opt/fic/bin/fic" in listed,
-                "RPM manifest must leave security parent unowned and retain children")
+        listed_paths = [line.split()[-1] for line in listed]
+        require("/opt/fic" not in listed_paths and
+                "/opt/fic/config" not in listed_paths,
+                "RPM manifest must leave security and recovery parents unowned")
+        require(listed.count("%dir %attr(2750,root,fic) /opt/fic/bin") == 1 and
+                listed_paths.count("/opt/fic/bin") == 1,
+                "RPM bin directory must have unique root:fic ownership and mode 2750")
+        require("/opt/fic/bin/fic" in listed,
+                "RPM manifest must retain the daemon executable")
 
     print('PASS: persistent authority not repaired; complete-install precedes start; RPM leaves recovery parent unowned')
 if __name__=='__main__':main()
