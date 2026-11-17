@@ -4,8 +4,18 @@ repo=$(cd "$(dirname "$0")/../../.." && pwd)
 work=$(mktemp -d)
 export STAGING_BASE="$work/stage" BUILD_ROOT="$work/build" DIST_DIR="$work/dist" BUILD_JOBS=1
 mkdir -p "$STAGING_BASE"
-source "$repo/packaging/deb/build-fic-debian12-deb.sh" 0.1.1
 trap 'rm -rf "$work"' EXIT
+# Sourcing the builder only needs Debian architecture, not host dpkg tooling.
+dpkg() {
+    if [[ $# == 1 && $1 == --print-architecture ]]; then
+        printf '%s\n' amd64
+    else
+        echo 'Unexpected dpkg invocation in test fixture' >&2
+        return 1
+    fi
+}
+source "$repo/packaging/deb/build-fic-debian12-deb.sh" 0.1.1
+unset -f dpkg
 for name in fic-cli fic-gui; do
  mkdir -p "$work/$name/DEBIAN"
  write_symlink_postinst "$work/$name" "$name" "/opt/fic/bin/$name"

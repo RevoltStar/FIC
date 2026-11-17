@@ -382,7 +382,8 @@ void testSelectedProfile() {
         "distribution-specific user-creation defaults are incorrect");
     require(!profile.packageManager.queryCandidates.empty(),
             "package manager query candidates are missing");
-    require(profile.displayManager.sddmConfigPath == "/etc/sddm.conf",
+    require(profile.displayManager.sddmConfigPath ==
+                (profile.id == "alt-p11" ? "/etc/X11/sddm/sddm.conf" : "/etc/sddm.conf"),
             "SDDM configuration path is incorrect");
     require(profile.displayManager.lightDmConfigPath ==
                 "/etc/lightdm/lightdm.conf",

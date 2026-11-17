@@ -4,8 +4,18 @@ repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 test_root="$(mktemp -d /tmp/fic-deb-depends-test.XXXXXX)"
 export STAGING_BASE="$test_root/staging" BUILD_ROOT="$test_root/build" DIST_DIR="$test_root/dist" BUILD_JOBS=1
 mkdir -p "$STAGING_BASE"
-source "$repo/packaging/deb/build-fic-debian12-deb.sh" 0.1.1
 trap 'rm -rf "$test_root"' EXIT
+# Sourcing the builder only needs Debian architecture, not host dpkg tooling.
+dpkg() {
+    if [[ $# == 1 && $1 == --print-architecture ]]; then
+        printf '%s\n' amd64
+    else
+        echo 'Unexpected dpkg invocation in test fixture' >&2
+        return 1
+    fi
+}
+source "$repo/packaging/deb/build-fic-debian12-deb.sh" 0.1.1
+unset -f dpkg
 fail() { echo "DEB dependency test failed: $*" >&2; exit 1; }
 mkdir -p "$test_root/input with spaces"
 touch "$test_root/input with spaces/daemon" "$test_root/helper"
