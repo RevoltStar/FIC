@@ -352,3 +352,10 @@ assert "desktopGlobalConfig.reconcile" not in reload
 assert "reconcileDisplayManagerScope" not in reload
 assert "!requireAllBackends" in reload
 assert "MutationJournal" not in (root / "fic/src/modules/oss/desktop_environment/backends/KdeBackend.cpp").read_text()
+
+# The broker must use the same complete-session operation exercised by socket
+# regressions, rather than rebuilding a partial identity in main.cpp.
+ready_validation = main.split("bool validate_session_ready(", 1)[1].split("void reconcile_session_ready(", 1)[0]
+assert "return session_ready_validation::buildSession(" in ready_validation
+assert "classified.session, error" in ready_validation
+assert "classified.session.uid =" not in ready_validation

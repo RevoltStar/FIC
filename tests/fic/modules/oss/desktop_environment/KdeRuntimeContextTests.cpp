@@ -3,6 +3,10 @@
 #include "modules/oss/desktop_environment/backends/KdeScreenLockerRuntimeContextResolverInternal.h"
 #include "modules/oss/desktop_environment/DesktopEnvironmentControl.h"
 #include "session/SessionCommandExecutorInternal.h"
+#include "session/SessionCommandExecutor.h"
+#include "session/SessionReadyValidation.h"
+#include <limits>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstring>
@@ -642,9 +646,35 @@ void testKdeBackendRejectsOwnerReplacementAfterConfigure() {
             "KScreenLocker owner replacement after configure was accepted");
 }
 
+void testSessionReadyExecutorIdentity() {
+    UserSession ready;std::string error;
+    require(session_ready_validation::buildSession(::getuid(),::getuid(),"3","user","active",
+        "wayland",false,ready,error),"real NSS session construction: "+error);
+    require(!ready.user.empty(),"real NSS omitted name");
+    SessionContext context{"3","KDE","wayland",{}, {}};
+    const auto execute=[&](const UserSession& identity) {
+        // Invalid override proves identity passed but stops before any command,
+        // KDE, process privilege change or D-Bus access.
+        return SessionCommandExecutor::executeWithKdeConfigEnvironment(identity,context,"/unused",{},
+            {{"FIC_INVALID_OVERRIDE",std::string("value")}});
+    };
+    const auto valid=execute(ready);
+    require(!valid.started&&valid.error.find("unsafe or duplicate session environment override")!=std::string::npos,
+        "complete session_ready identity failed independent executor proof");
+    for(const auto& name:std::vector<std::string>{"",ready.user+"-wrong"}) {
+        auto invalid=ready;invalid.user=name;const auto result=execute(invalid);
+        require(!result.started&&result.error=="failed to resolve graphical session user","executor accepted empty/mismatched name");
+    }
+    auto missing=ready;missing.uid=std::numeric_limits<uid_t>::max();
+    require(::getpwuid(missing.uid)==nullptr,"test UID unexpectedly present");
+    const auto result=execute(missing);
+    require(!result.started&&result.error=="failed to resolve graphical session user","executor accepted unresolved UID");
+}
+
 } // namespace
 
 int main() {
+    testSessionReadyExecutorIdentity();
     testProductionReaderAcceptsRootOwnedProcMetadata();
     testKdeBackendUsesLockerSelectedGraph(6);
     testKdeBackendUsesLockerSelectedGraph(5);

@@ -1,4 +1,5 @@
 #include "session/SessionEventServer.h"
+#include "session/SessionReadyValidation.h"
 
 #include <nlohmann/json.hpp>
 #include <chrono>
@@ -66,7 +67,43 @@ nlohmann::json exchange(int serverFd, const std::string& path,
 }
 }
 
+namespace {
+bool missingUser=false, mismatchUid=false;
+int nssCalls=0;
+int eventLookup(uid_t uid,passwd* entry,char* buffer,std::size_t,passwd** result) {
+    ++nssCalls;*result=nullptr;
+    if(missingUser)return 0;
+    std::strcpy(buffer,"admsys");entry->pw_uid=uid;entry->pw_name=buffer;*result=entry;return 0;
+}
+void identityEvents() {
+    std::string path;const int fd=listener(path);int reconciliations=0;
+    SessionEventServer server(fd,[&](uid_t uid,const std::string& id,ClassifiedGraphicalSession& out,std::string& error) {
+        require(uid==::getuid(),"SO_PEERCRED UID was not used");
+        return session_ready_validation::buildSession(uid,mismatchUid?uid+1:uid,id,
+            "user","active","wayland",false,out.session,error,eventLookup);
+    },[&](const ClassifiedGraphicalSession& out) {
+        require((out.session.id=="3"||out.session.id=="4")&&out.session.uid==::getuid()&&out.session.user=="admsys"&&
+            out.session.type=="wayland","incomplete production session reached reconciler");++reconciliations;
+    });
+    nlohmann::json request={{"event","session_ready"},{"session_id","3"}};
+    require(exchange(fd,path,server,request).value("ok",false)&&server.pendingCount()==1,"valid session 3 not queued");
+    server.processOne();require(reconciliations==1,"valid session 3 not reconciled");
+    request["session_id"]="4";
+    missingUser=true;
+    auto ack=exchange(fd,path,server,request);
+    require(!ack.value("ok",true)&&!ack.value("message",std::string()).empty()&&server.pendingCount()==0,"NSS failure queued/ACKed");
+    server.processOne();require(reconciliations==1,"NSS failure reconciled");
+    missingUser=false;mismatchUid=true;nssCalls=0;
+    require(!exchange(fd,path,server,request).value("ok",true)&&server.pendingCount()==0&&nssCalls==0,"UID mismatch reached NSS/queue");
+    mismatchUid=false;
+    require(exchange(fd,path,server,request).value("ok",false)&&server.pendingCount()==1&&reconciliations==1,"valid event not queued");
+    server.processOne();require(reconciliations==2&&server.pendingCount()==0,"complete session not reconciled");
+    ::close(fd);::unlink(path.c_str());::rmdir(path.substr(0,path.find_last_of('/')).c_str());
+}
+}
+
 int main() {
+    identityEvents();
     std::string path;
     const int fd = listener(path);
     int reconciliations = 0;

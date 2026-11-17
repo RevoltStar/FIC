@@ -1634,19 +1634,13 @@ bool validate_session_ready(
             SessionAgentClient::socketPath(
                 UserSession{sessionId, peerUid, {}, typeValue}),
             peerUid);
-    if (classResult < 0 || stateResult < 0 || typeResult < 0 ||
-        !session_ready_validation::validLogindClaim(
-            peerUid, sessionUid, classValue, stateValue, typeValue,
-            safeAgentEndpointPresent)) {
+    if (classResult < 0 || stateResult < 0 || typeResult < 0) {
         error = "session is not a live graphical user session";
         return false;
     }
-
-    classified.session.id = sessionId;
-    classified.session.uid = peerUid;
-    classified.session.type = typeValue;
-    error.clear();
-    return true;
+    return session_ready_validation::buildSession(
+        peerUid, sessionUid, sessionId, classValue, stateValue, typeValue,
+        safeAgentEndpointPresent, classified.session, error);
 }
 
 void reconcile_session_ready(

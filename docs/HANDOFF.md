@@ -1,46 +1,66 @@
 # Current workspace
 
 ## Current base / task
-* Branch main; base `d5a2c430d942247d0c8de3163c1e888fe01fe9a0`.
-* Udev native-runner privilege follow-up complete; one thematic commit, no push.
-* Only runner + docs changed. ACTIVE login production implementation is unchanged.
+* Branch main; base `a3b80085f927c4b4040914a4efa9f6b20e8af1b2`.
+* session_ready complete identity fix finished; one thematic commit is HEAD,
+  no push. No unrelated source changes.
 
 ## Accepted architecture / completed
-* tests/integration/udev-access/run-native.sh no longer uses --privileged,
-  SYS_ADMIN, cap additions, remount bootstrap or unconfined security profiles.
-* docker create→inspect→start: cap-drop ALL, NNP, default seccomp/device controls,
-  network none, private cgroup/PID/IPC/mount context, no host binds/ports/devices/
-  Docker socket. Only runtime /run,/run/lock,/tmp tmpfs permitted.
-* Bootstrap checks /sys,/proc/sys read-only, all capability sets0, NNP1, seccomp2;
-  bypasses image-specific /sbin/init wrapper and execs actual systemd binary.
-* Without a working restricted systemd manager runner returns SKIP77, prints
-  diagnostics and removes its container. No privileged/unsafe fallback flags.
-* Five existing native scenarios retained behind that prerequisite. They are
-  not claimed PASS here. Full native validation needs a disposable VM or other
-  independently isolated/delegated systemd environment; no VM infrastructure added.
-* Contract/results and historical privileged-run caveat: docs/startup-readiness.md.
+* Defect originated in 15f059fd: validate_session_ready filled id/uid/type but not
+  user; SessionLocator already supplied user and executor UID/name proof predated it.
+* main.cpp uses shared session_ready_validation::buildSession after successful
+  logind property reads. SO_PEERCRED/logind UID match, class/state/type and safe
+  tty endpoint claim are checked before NSS. Full UserSession is published only
+  after getpwuid_r returns matching UID and a nonempty username.
+* Missing NSS entry, error, null/empty name or inconsistent UID rejects before
+  queue/reconciliation. ERANGE doubles16KiB→4MiB, at most9 calls. Same budget as
+  existing session containment lookup. Diagnostics include UID/cause/code.
+* Existing FileStats ownerName cannot be reused: it falls back to a numeric UID;
+  this path must fail closed. No generic user-resolution service introduced.
+* Existing SessionCommandExecutor getpwuid UID/name guard unchanged. No event JSON,
+  peer credentials, SessionAgentClient query, type allowlist, queue/coalescing,
+  reconciliation, KDE runtime resolver, incident, apply/rollback changes.
+* Documentation: docs/session-agent.md. getpwuid_r semantics verified against
+  https://man7.org/linux/man-pages/man3/getpwuid_r.3.html (0/null vs errno/ERANGE).
 
-## Validation (actually executed)
-* No-cap/NNP Docker probe: systemd252.39 initially failed mounting /run/lock.
-  Providing runtime tmpfs /run/lock removed that obstacle; next fatal failure:
-  create /init.scope: read-only cgroup2; manager allocation fails, exit255.
-  No CAP_SYS_ADMIN/RW host cgroup/host devices were provided to bypass it.
-* Final restricted runner: inspected fields and runtime RO/cap/NNP/seccomp guards
-  PASS, bootstrap blocked as above, final exit77. Native cases1–5 ALL SKIP.
-* Unchanged Docker unit/IPC/prelogin CTest:5 PASS/0 FAIL/0 SKIP in
-  fic-udev-access:debian12, cap-drop ALL/NNP/network none, source RO/build RW:
-  udev_access_readiness_tests, incident_access_gate_core_tests,
-  incident_access_client_tests, daemon_readiness_tests, prelogin_controller_tests.
-* bash -n and git diff --check PASS. Production/test C++/CMake unchanged; no rebuild
-  required. Probes/runner containers removed. No host udev/USB/device changes.
-* Logs /tmp/fic-udev-restricted/{runner-final,unit,cgroup-ro-failure}.log;
-  final-probe-inspect.json records restricted configuration.
+## Changed areas
+* fic/src/main.cpp; fic/src/session/SessionReadyValidation.h.
+* Existing SessionReadyValidationTests, SessionEventServerTests,
+  KdeRuntimeContextTests and desktop environment static contract check.
+* docs/session-agent.md and this snapshot. No CMake changes.
+
+## Validation (Docker, actually executed)
+* Docker CLI -H unix:///run/user/678421280/podman/podman.sock;
+  image fic-gui-dependency-tests:debian12; run --rm --network none --cap-drop ALL
+  --security-opt no-new-privileges; repo mounted /src:ro, build-gui-dependencies
+  mounted /build:rw, -w /src. No extra capabilities/host services/devices.
+* RED extracted the old production construction unchanged, then exercised the
+  same helper through real SessionEventServer/SOCK_SEQPACKET/SO_PEERCRED.
+  cmake --build /build --target session_ready_validation_tests
+  session_event_server_tests -j2: exit0. ctest --test-dir /build -R
+  '^(session_ready_validation_tests|session_event_server_tests)$'
+  --output-on-failure: exit8, **0 PASS /2 FAIL /0 SKIP**, empty user reached
+  reconciler / complete-session username assertion failed.
+* GREEN cmake --build /build --target fic session_ready_validation_tests
+  session_event_server_tests session_agent_client_tests kde_runtime_context_tests
+  session_aware_policy_tests session_ready_retry_tests session_ready_incident_tests
+  kde_media_controls_tests session_setting_reconciler_tests -j2: exit0.
+* ctest --test-dir /build -R
+  '^(session_ready_validation_tests|session_event_server_tests|session_agent_client_tests|kde_runtime_context_tests|session_aware_policy_tests|session_ready_retry_tests|session_ready_incident_tests|kde_media_controls_tests|session_setting_reconciler_tests|desktop_environment_architecture_static_checks)$'
+  --output-on-failure: exit0, **10 PASS /0 FAIL /0 SKIP**, 6.42s.
+* Coverage: UID1000/admsys/full fields; type allowlist/tty endpoint; mismatch UID
+  skips NSS; missing/error/empty/null/mismatched NSS entry; ERANGE recovery/limit;
+  stale output cleared; real queue ACK/refusal/recovery and reconciler object;
+  executor real NSS success/empty/wrong/unresolved UID. Valid executor identity
+  then hits forbidden environment override, stopping before process execution.
+  Static check binds main.cpp to the helper exercised by socket regressions.
+* Evidence: build-gui-dependencies/session-identity-{red,green}-{build,tests}.log.
+* Final diff review, git diff --check PASS.
 
 ## Remaining / limits
-* Functional production task remains completed at base. This follow-up does not
-  re-prove real udev on restricted Docker: all five native cases were unavailable.
-* Private cgroup namespace does not grant delegation. No universal claim that all
-  possible restricted runtimes cannot run systemd; current Docker cannot bootstrap
-  it with accepted permissions. Additional vendor unit requirements not reached.
-* Earlier privileged5/5 was functional evidence, not safe-host-isolation evidence.
-  Do not restore privileged or equivalent permissions just to make native green.
+* No production computers or 192.168.1.50; no host policy apply or session mutation.
+* logind properties and NSS failures are fixtures; real container NSS used for
+  executor compatibility. No real logind, LDAP/SSSD NSS, KDE/KScreenLocker or
+  user D-Bus integration. No process launch in the new executor identity test.
+* Full CTest not repeated: focused production build and10 affected checks passed.
+  This task does not re-prove unrelated restricted udev native validation.

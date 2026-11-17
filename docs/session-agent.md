@@ -21,7 +21,12 @@ display, policy name, or policy value on this endpoint. If the daemon is still
 starting, notification retries run in a background thread while the context
 socket remains available. A positive ACK means only that reconciliation was
 scheduled. The daemon derives the peer UID from `SO_PEERCRED`, validates the
-claimed session through logind, and then queries the existing context socket;
+claimed session through logind (UID, class/state/type), resolves its username
+through NSS `getpwuid_r`, and only then schedules the complete `UserSession` and
+queries the existing context socket. The agent never supplies the username.
+Missing/empty NSS records or lookup errors reject the event before queueing;
+ERANGE retries grow a 16 KiB buffer up to 4 MiB, then fail closed. The command
+executor independently rechecks the session UID/name against NSS before execution;
 the agent is not a privileged identity or a source of policy decisions.
 
 The agent prefers `XDG_SESSION_ID`, but validates the referenced logind session:
