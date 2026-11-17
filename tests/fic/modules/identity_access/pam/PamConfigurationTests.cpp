@@ -187,15 +187,18 @@ fic::identity::pam::PamCapabilityVerification verifyCapability(
         [capability](const auto& candidate) {
             return candidate.capability == capability;
         });
-    if ((provider == fic::identity::pam::PamProviderKind::PamPwquality ||
-            provider == fic::identity::pam::PamProviderKind::PamPwhistory) &&
+    const bool usesProviderConfigFile =
         capabilityConfig != platform.capabilities.end() &&
+        capabilityConfig->configurationMode ==
+            fic::platform::PamCapabilityConfigurationMode::ProviderConfigFile;
+    if (usesProviderConfigFile &&
+        (provider == fic::identity::pam::PamProviderKind::PamPwquality ||
+            provider == fic::identity::pam::PamProviderKind::PamPwhistory) &&
         !std::filesystem::exists(capabilityConfig->configPath)) {
         writeFile(capabilityConfig->configPath, "");
     }
-    if (descriptor.externalConfigMode ==
+    if (usesProviderConfigFile && descriptor.externalConfigMode ==
             fic::identity::pam::PamExternalConfigMode::Optional &&
-        capabilityConfig != platform.capabilities.end() &&
         descriptor.defaultConfigTopology.primaryPath.has_value() &&
         capabilityConfig->configPath !=
             *descriptor.defaultConfigTopology.primaryPath) {
@@ -2728,15 +2731,28 @@ void testLegacyPwhistoryNativeRememberSemantics() {
     platform.passwordServices = {"passwd"};
     platform.capabilities[2].configurationMode =
         fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
-    platform.capabilities[2].configPath = "/etc/security/pwhistory.conf";
     writeFile(temp.path() / "security/pam_pwhistory.so", "test", 0555);
-    writeFile(temp.path() / "pam.d/passwd",
-              "password required pam_pwhistory.so use_authtok\n"
-              "password required pam_unix.so use_authtok\n");
+    std::string stack =
+        "password required pam_pwhistory.so use_authtok\n"
+        "password required pam_unix.so use_authtok\n";
+    const auto stackPath = temp.path() / "pam.d/passwd";
+    writeFile(stackPath, stack);
+    const auto requireUntouchedFixture = [&]() {
+        require(!std::filesystem::exists(platform.passwordHistoryConfigPath),
+                "ModuleArguments verification created a provider config file");
+        std::ifstream input(stackPath, std::ios::binary);
+        require(input.is_open(), "could not read ModuleArguments PAM stack");
+        const std::string actual((std::istreambuf_iterator<char>(input)),
+                                 std::istreambuf_iterator<char>());
+        require(actual == stack,
+                "ModuleArguments verification rewrote the PAM stack");
+    };
+    requireUntouchedFixture();
     auto verification = verifyCapability(
         platform, fic::identity::pam::PamCapability::PasswordHistory,
         fic::identity::pam::PamProviderKind::PamPwhistory,
         platform.passwordServices);
+    requireUntouchedFixture();
     require(verification.state ==
                 fic::identity::pam::PamEnforcementState::Effective,
             "native default remember=10 was not security-effective: " +
@@ -2756,13 +2772,14 @@ void testLegacyPwhistoryNativeRememberSemantics() {
                 inspection, binding, "3", false, error),
             "native default remember=10 satisfied explicit policy depth 3");
 
-    writeFile(temp.path() / "pam.d/passwd",
-              "password required pam_pwhistory.so use_authtok remember=0\n"
-              "password required pam_unix.so use_authtok\n");
+    stack = "password required pam_pwhistory.so use_authtok remember=0\n"
+            "password required pam_unix.so use_authtok\n";
+    writeFile(stackPath, stack);
     verification = verifyCapability(
         platform, fic::identity::pam::PamCapability::PasswordHistory,
         fic::identity::pam::PamProviderKind::PamPwhistory,
         platform.passwordServices);
+    requireUntouchedFixture();
     require(verification.state ==
                 fic::identity::pam::PamEnforcementState::Ineffective,
             "explicit legacy remember=0 was considered effective");
@@ -2770,6 +2787,7 @@ void testLegacyPwhistoryNativeRememberSemantics() {
         fic::identity::pam::PamCapability::PasswordHistory,
         fic::identity::pam::PamProviderKind::PamPwhistory, platform.passwordServices,
         fic::identity::pam::PamCapabilityVerificationMode::Structural);
+    requireUntouchedFixture();
     require(verification.state == fic::identity::pam::PamEnforcementState::Effective,
         "Structural must accept valid history participation with remember=0");
 }
@@ -3397,8 +3415,6 @@ void testPwhistoryManagedOptionSemantics() {
     auto argumentsPlatform = platform;
     argumentsPlatform.capabilities[2].configurationMode =
         fic::platform::PamCapabilityConfigurationMode::ModuleArguments;
-    argumentsPlatform.capabilities[2].configPath =
-        "/etc/security/pwhistory.conf";
     writeFile(
         temp.path() / "pam.d/passwd",
         "password required pam_pwhistory.so use_authtok remember=7\n");
