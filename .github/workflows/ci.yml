@@ -15,8 +15,18 @@ concurrency:
 
 jobs:
   build-and-test:
-    name: build-and-test
-    runs-on: ubuntu-24.04
+    name: build-and-test (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            platform: ubuntu-24.04
+          - runner: ubuntu-26.04
+            platform: ubuntu-26.04
+    env:
+      FIC_TARGET_PLATFORM: ${{ matrix.platform }}
 
     steps:
       - name: Checkout repository
@@ -36,6 +46,7 @@ jobs:
             libpam0g-dev \
             dpkg-dev \
             file \
+            git \
             libgl1-mesa-dev \
             libglib2.0-dev \
             libopengl-dev \
@@ -53,12 +64,88 @@ jobs:
             xvfb
 
       - name: Configure
-        run: cmake -S . -B build-ci -DFIC_TARGET_PLATFORM=ubuntu-24.04
+        run: |
+          test "$(id -u)" -ne 0
+          cmake -S . -B build-ci -DFIC_TARGET_PLATFORM="$FIC_TARGET_PLATFORM"
 
       - name: Build and test
         env:
           FIC_BUILD_DIR: build-ci
         run: scripts/run-development-checks.sh full
+
+  build-and-test-container:
+    name: build-and-test (${{ matrix.platform }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:12
+            platform: debian-12
+          - image: debian:13
+            platform: debian-13
+          - image: registry.altlinux.org/p11/alt:latest
+            platform: alt-p11
+    container:
+      image: ${{ matrix.image }}
+      env:
+        LANG: C.UTF-8
+        LC_ALL: C.UTF-8
+    defaults:
+      run:
+        shell: bash
+    env:
+      FIC_TARGET_PLATFORM: ${{ matrix.platform }}
+
+    steps:
+      # Install git before checkout so provenance checks get a real full clone.
+      - name: Install build and CI dependencies
+        run: |
+          case "$FIC_TARGET_PLATFORM" in
+            debian-12|debian-13)
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                bash build-essential ca-certificates cmake dpkg-dev file git \
+                libgl1-mesa-dev libglib2.0-dev libopengl-dev libpam0g-dev \
+                libsqlite3-dev libssl-dev libsystemd-dev libxkbcommon-dev \
+                nlohmann-json3-dev passwd pkg-config python3 qt6-base-dev \
+                qt6-base-dev-tools qt6-qpa-plugins util-linux xauth xvfb
+              ;;
+            alt-p11)
+              # Same p11 mirror and build packages as packaging/rpm/Dockerfile.
+              sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/alt.list
+              sed -i '/^#rpm \[p11\] http:/s/^#//' /etc/apt/sources.list.d/yandex.list
+              apt-get update
+              apt-get install -y \
+                bash ca-certificates cmake file gcc-c++ git-core glibc-devel \
+                libgio-devel libglvnd-devel libpam0-devel libsqlite3-devel \
+                libsystemd-devel make nlohmann-json-devel openssl-devel \
+                passwd pkg-config python3 qt6-base-devel qt6-declarative-devel \
+                rpm-build shadow-utils util-linux xauth xvfb-run
+              ;;
+          esac
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          # Retained I1/I2 evidence binds to immutable accepted source commits.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare unprivileged build user
+        run: |
+          useradd --create-home --user-group --shell /bin/bash fic-ci
+          chown -R fic-ci:fic-ci "$GITHUB_WORKSPACE"
+
+      - name: Configure, build and test as unprivileged user
+        run: |
+          runuser -u fic-ci -- bash -euo pipefail -c '
+            test "$(id -u)" -ne 0
+            cd "$1"
+            cmake -S . -B build-ci -DFIC_TARGET_PLATFORM="$2"
+            FIC_BUILD_DIR=build-ci scripts/run-development-checks.sh full
+          ' bash "$GITHUB_WORKSPACE" "$FIC_TARGET_PLATFORM"
 
   compiler-warnings:
     name: compiler-warnings
