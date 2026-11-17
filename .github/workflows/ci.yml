@@ -116,11 +116,12 @@ jobs:
               # Keep the image's default repositories; packages follow the RPM Dockerfile.
               apt-get update
               apt-get install -y \
-                bash ca-certificates cmake file gcc-c++ git-core glibc-devel \
+                bash ca-certificates cmake ctest file gcc-c++ git-core glibc-devel \
                 libgio-devel libglvnd-devel libpam0-devel libsqlite3-devel \
                 libsystemd-devel make nlohmann-json-devel openssl-devel \
                 passwd pkg-config python3 qt6-base-devel qt6-declarative-devel \
                 rpm-build shadow-utils util-linux xauth xvfb-run
+              command -v ctest
               ;;
           esac
 

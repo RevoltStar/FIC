@@ -10,7 +10,7 @@
 
 using namespace fic::incident;
 namespace {
-void require(bool b) { if (!b) throw std::runtime_error("udev access readiness invariant"); }
+void require(bool b, const std::string& message="udev access readiness invariant") { if (!b) throw std::runtime_error(message); }
 fic::ipc::AccessGateStatus allowed() {
     fic::ipc::AccessGateStatus s;
     s.state="READY";s.mode="ACTIVE";s.modeProven=true;s.stateProven=true;
@@ -63,7 +63,9 @@ int main(int argc,char** argv) {
     }
     require(argc==1);
     // Existing resolver is exercised, but unit tests never need or execute udev.
-    fic::platform::PlatformExecutableResolver resolver({{{fic::platform::ExecutableId::Udevadm,{"/usr/bin/true","/bin/true"}}}});
+    // Bash is installed in every CI image; ALT exposes its regular binary as bash5.
+    // The injected runner below never executes either fixture binary.
+    fic::platform::PlatformExecutableResolver resolver({{{fic::platform::ExecutableId::Udevadm,{"/usr/bin/bash","/usr/bin/bash5"}}}});
     using Clock=UdevAccessReadiness::Clock;auto now=Clock::time_point{};
     unsigned calls=0;ProcessResult result;result.started=true;result.exitCode=0;bool throws=false;
     UdevAccessReadiness check([&](const auto&,const auto& args,const ProcessOptions& options){
@@ -71,7 +73,10 @@ int main(int argc,char** argv) {
         require(options.timeout==std::chrono::milliseconds(1250)&&options.clearEnvironment&&options.maxOutputBytes==4096);
         if(throws)throw std::runtime_error("fixture");return result;
     },[&]{return now;});
-    require(check.apply(allowed(),resolver).loginAllowed&&calls==1);
+    const auto initial=check.apply(allowed(),resolver);
+    require(initial.loginAllowed&&calls==1,
+        "initial ACTIVE probe failed (runner calls="+std::to_string(calls)+
+        "): "+check.diagnostic());
     for(unsigned i=0;i<1000;++i)require(check.apply(allowed(),resolver).loginAllowed);
     require(calls==1);now+=std::chrono::milliseconds(1999);
     require(check.apply(allowed(),resolver).loginAllowed&&calls==1);
