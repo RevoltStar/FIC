@@ -348,11 +348,14 @@ fic/src/resources/service/fic.service
 Сервис запускает демон как постоянный процесс:
 
 ```text
-ExecStart=/opt/fic/bin/fic --interval 1800
+ExecStart=/opt/fic/bin/fic
 ```
 
-Периодичность находится внутри постоянного daemon process; отдельный systemd
-timer не устанавливается.
+Основной интервал задаётся политикой `GLOBAL/check_interval`, минимальная пауза —
+`GLOBAL/periodic_apply_min_pause`. Обе настройки читаются при следующем запуске
+службы; сохранение не вызывает автоматический перезапуск. Периодичность находится
+внутри постоянного daemon process; отдельный systemd timer не устанавливается.
+Подробности: [периодическое применение политик](../docs/periodic-apply.md).
 
 ## Конфигурация и данные
 

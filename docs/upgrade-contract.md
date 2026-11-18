@@ -56,8 +56,9 @@ metadata is never repaired. A missing `GLOBAL.conf` or unsafe configuration
 authority aborts package configuration, and the daemon refuses startup before
 READY. `ensure-config` preserves existing configuration fields. For the two
 GLOBAL scheduling policies it appends only missing status/value defaults under
-the existing atomic write contract; ordinary startup performs the same targeted
-update before registry construction. See [periodic-apply.md](periodic-apply.md).
+the existing atomic write contract. Ordinary startup only verifies/reads the
+configuration and uses startup defaults for missing scheduling keys; it does not
+require this write. See [periodic-apply.md](periodic-apply.md).
 `check-config` remains read-only and rejects missing, invalid, lower or future
 schema versions.
 The accepted size of each working config, including recovery authority

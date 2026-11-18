@@ -9,6 +9,14 @@
 #include <fic/core/fs/AtomicFileWriter.h>
 #include <algorithm>
 #include <vector>
+#include <cstddef>
+#include <cerrno>
+#include <fcntl.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
+#include <sys/prctl.h>
+#include <sys/syscall.h>
+#include <sys/wait.h>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -49,6 +57,27 @@ void scheduleTests() {
         schedule.attempted(next); // Never replay missed periods.
         require(!schedule.due(next), "missed passes accumulated");
     }
+    // A 45s admitted preflight must not consume the 60s apply interval.
+    PeriodicApplySchedule admitted(zero, seconds(60), seconds(30));
+    const auto attempt = zero + seconds(60);
+    const auto actualStart = attempt + seconds(45);
+    require(admitted.due(attempt), "preflight attempt not due");
+    admitted.attempted(actualStart);
+    admitted.finished(actualStart + seconds(1));
+    require(!admitted.due(actualStart + seconds(31)) &&
+            !admitted.due(actualStart + seconds(60) - milliseconds(1)) &&
+            admitted.due(actualStart + seconds(60)), "preflight shortened actual apply interval");
+    // A refused, slow preflight retains attempt+I and the previous completion.
+    for (const int preflightDuration : {45, 90}) {
+        PeriodicApplySchedule denied(zero, seconds(60), seconds(30));
+        denied.finished(zero + seconds(20));
+        require(denied.due(attempt), "refused attempt not due");
+        const auto preflightEnd = attempt + seconds(preflightDuration);
+        denied.attempted(attempt); // no actual apply, no finished(preflightEnd)
+        require(!denied.due(attempt + seconds(60) - milliseconds(1)) &&
+                denied.due(std::max(attempt + seconds(60), preflightEnd)),
+                "refused preflight changed finish or moved deadline from preflight end");
+    }
     PeriodicApplySchedule noPause(zero, seconds(60), seconds(0));
     noPause.attempted(zero + seconds(60));
     noPause.finished(zero + seconds(240));
@@ -65,6 +94,96 @@ void scheduleTests() {
     refused.finished(zero + seconds(150));
     refused.attempted(zero + seconds(750));
     require(refused.due(zero + seconds(810)), "refusal replaced previous finish");
+}
+// Restrict only this child: kernel-enforced denial of write opens, without
+// changing canonical config metadata or requiring root/mount privileges.
+void denyWriteOpens() {
+    constexpr unsigned mask = O_ACCMODE | O_CREAT | O_TRUNC | O_APPEND;
+    const sock_filter filter[] = {
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_openat, 0, 3),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[2])),
+        BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, mask, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EACCES),
+#ifdef SYS_open
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_open, 0, 3),
+        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[1])),
+        BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, mask, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | EACCES),
+#endif
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+    };
+    sock_fprog program{static_cast<unsigned short>(sizeof(filter) / sizeof(filter[0])),
+                       const_cast<sock_filter*>(filter)};
+    require(::prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0 &&
+            ::prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program) == 0,
+            "could not install test-only write denial");
+}
+void readOnlyStartupTests(const fs::path& root) {
+    const auto defaults = root / "startup-defaults";
+    const auto working = root / "startup-config";
+    fs::create_directories(defaults); fs::create_directories(working);
+    require(::chmod(working.c_str(), 02750) == 0, "fixture directory chmod failed");
+    const char* names[] = {"AUDIT", "DAC", "DC", "GLOBAL", "IDENTITY_ACCESS",
+                           "FIREWALL", "NET", "OSS", "SYSCTL"};
+    const std::string old = "_schema_version=1\n# preserved old config\n";
+    for (const auto* name : names) {
+        write(defaults / (std::string(name) + ".conf"), old);
+        write(working / (std::string(name) + ".conf"), old);
+    }
+    const auto identity = fic::core::ConfigAuthorityIdentity{::geteuid(), ::getegid()};
+    const auto global = working / "GLOBAL.conf";
+    const pid_t child = ::fork();
+    require(child >= 0, "fork failed");
+    if (child == 0) {
+        try {
+            denyWriteOpens();
+            const int fd = ::open(global.c_str(), O_WRONLY);
+            if (fd >= 0) ::close(fd);
+            require(fd == -1 && errno == EACCES, "write denial not effective");
+            std::string error;
+            auto startup = [&] {
+                ModuleConfigFileHandler config(working, "GLOBAL");
+                PeriodicApplySettings settings;
+                return fic::core::ConfigSchemaManager::verifyConfigs(working, error, identity) &&
+                    readPeriodicApplySettings(config, std::nullopt, settings, error) &&
+                    settings.intervalSeconds == 1800 && settings.minPauseSeconds == 30;
+            };
+            require(startup(), "old read-only config prevented startup load: " + error);
+            require(!fic::core::ConfigSchemaManager::ensureConfigs(defaults, working, error, false, identity),
+                    "package ensure-config hid denied write");
+            require(startup() && read(global) == old, "failed package write changed startup load");
+            ::_exit(0);
+        } catch (const std::exception& ex) {
+            std::cerr << ex.what() << '\n'; ::_exit(1);
+        }
+    }
+    int status = 0;
+    require(::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0,
+            "read-only startup child failed");
+    for (const auto* name : names)
+        require(read(working / (std::string(name) + ".conf")) == old, "startup modified config");
+    std::string error;
+    require(fic::core::ConfigSchemaManager::ensureConfigs(defaults, working, error, false, identity),
+            "package ensure-config did not upgrade old config: " + error);
+    const auto upgraded = read(global);
+    require(upgraded.find("periodic_apply_min_pause.status=ENABLE\n") != std::string::npos &&
+            upgraded.find("check_interval.value=1800\n") != std::string::npos, "package defaults missing");
+    require(fic::core::ConfigSchemaManager::ensureConfigs(defaults, working, error, false, identity) &&
+            read(global) == upgraded, "package ensure-config not idempotent");
+    const std::string disabled = "_schema_version=1\ncheck_interval.status=DISABLE\ncheck_interval.value=777\n"
+        "periodic_apply_min_pause.status=DISABLE\nperiodic_apply_min_pause.value=45\n";
+    write(global, disabled);
+    require(fic::core::ConfigSchemaManager::ensureConfigs(defaults, working, error, false, identity) &&
+            read(global) == disabled, "package ensure-config overwrote saved values or DISABLE");
+    write(global, "_schema_version=0\n");
+    require(!fic::core::ConfigSchemaManager::verifyConfigs(working, error, identity),
+            "startup accepted corrupt config schema");
+    write(global, old);
+    require(::chmod(global.c_str(), 0666) == 0, "fixture chmod failed");
+    require(!fic::core::ConfigSchemaManager::verifyConfigs(working, error, identity),
+            "startup accepted untrusted metadata");
 }
 void configTests(const fs::path& root) {
     const auto file = root / "config/GLOBAL.conf";
@@ -198,7 +317,7 @@ int main() {
         paths.configDir = root / "config"; paths.logDir = root;
         std::string error;
         require(fic::core::FicRuntimePaths::initialize(paths, error), error);
-        scheduleTests(); cliTests(); configTests(root);
+        scheduleTests(); cliTests(); readOnlyStartupTests(root); configTests(root);
         fs::remove_all(root);
         std::cout << "PASS periodic settings, migration, policy metadata and model-time scheduling\n";
         return 0;

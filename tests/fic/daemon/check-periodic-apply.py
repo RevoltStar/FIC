@@ -11,8 +11,14 @@ assert main.count('readPeriodicApplySettings(') == 1
 assert 'readPeriodicApplySettings(' not in loop
 assert main.index('const auto periodicSettings = loadedPeriodicSettings;') < main.index('PeriodicApplySchedule periodicSchedule')
 assert 'if (!uninstallMode && !fic::daemon::readPeriodicApplySettings(' in main
-assert 'if (mayApply)\n                run_daemon_apply_all_pass(' in periodic
-assert periodic.index('periodicSchedule.attempted(now);') < periodic.index('bool mayApply')
+assert 'if (mayApply) {\n                periodicSchedule.attempted(std::chrono::steady_clock::now());\n                run_daemon_apply_all_pass(' in periodic
+assert periodic.count('periodicSchedule.attempted(') == 2
+assert periodic.index('bool mayApply') < periodic.index('periodicSchedule.attempted(std::chrono::steady_clock::now());')
+refused = periodic[periodic.index('} else {'):periodic.index('if (!periodicRegistryReloadFailed)')]
+assert 'periodicSchedule.attempted(now);' in refused
+assert 'periodicSchedule.finished(' not in refused
+assert 'ensurePeriodicApplyDefaults(' not in main
+assert 'ConfigSchemaManager::verifyConfigs(' in main
 assert periodic.index('recomputeAccessReadiness(') < periodic.index('periodicSchedule.finished(')
 assert 'if (mayApply)\n                periodicSchedule.finished(std::chrono::steady_clock::now());' in periodic
 assert 'sleep' not in periodic
@@ -35,4 +41,16 @@ for builder in ('packaging/deb/build-fic-debian12-deb.sh', 'packaging/rpm/build-
 policy = (root / 'fic/src/modules/global/system_settings/policies/GLOBAL_periodic_apply_settings.cpp').read_text()
 for forbidden in ('ProcessExecutor', 'systemctl', 'MutationJournal', 'saveConfig', 'AtomicFileWriter'):
     assert forbidden not in policy
-print('PASS periodic wiring, independent SSH checks, registration, localization and service contract')
+
+# Fresh install, upgrade/reconfigure both run the existing package migration.
+for script in ('packaging/deb/lifecycle/fic.postinst', 'packaging/rpm/lifecycle/fic.post'):
+    text = (root / script).read_text()
+    assert 'config_command=ensure-config\n' in text
+    assert 'config_command=ensure-config-first-install\n' in text
+    ensure = text.index('/opt/fic/bin/fic --maintenance "$config_command"')
+    assert ensure < text.index('/opt/fic/bin/fic --maintenance complete-install')
+    assert ensure < text.index('systemctl start fic.service')
+readme = (root / 'fic/README.md').read_text()
+assert 'ExecStart=/opt/fic/bin/fic\n' in readme
+assert 'ExecStart=/opt/fic/bin/fic --interval' not in readme
+print('PASS periodic timing, read-only startup, package migration and independent SSH contracts')

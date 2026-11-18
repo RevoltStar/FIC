@@ -2266,8 +2266,6 @@ int main(int argc, char* argv[]) {
         }
         std::string configError;
         if (!fic::core::ConfigSchemaManager::verifyConfigs(
-                fic::core::FicRuntimePaths::get().configDir, configError) ||
-            !fic::core::ConfigSchemaManager::ensurePeriodicApplyDefaults(
                 fic::core::FicRuntimePaths::get().configDir, configError)) {
             std::cerr << "refusing to start with incompatible configuration: "
                       << configError << std::endl;
@@ -2522,7 +2520,6 @@ int main(int argc, char* argv[]) {
         auto now = std::chrono::steady_clock::now();
         const bool mayMutate = fic::core::readPackageState().state == fic::core::PackageState::Installed;
         if (mayMutate && periodicSchedule.due(now)) {
-            periodicSchedule.attempted(now);
             bool mayApply = true;
             const auto periodicMode =
                 fic::incident::IncidentResponseModeResolver::production();
@@ -2543,10 +2540,16 @@ int main(int argc, char* argv[]) {
                               << blockError << std::endl;
                 }
             }
-            if (mayApply)
+            if (mayApply) {
+                periodicSchedule.attempted(std::chrono::steady_clock::now());
                 run_daemon_apply_all_pass(
                     policyRegistry, desktopGlobalConfig, platform, executables,
                     "periodic", &periodicRegistryReloadFailed);
+            } else {
+                // Refused preflight retains the original attempt-based delay;
+                // it must not invent a completed policy pass.
+                periodicSchedule.attempted(now);
+            }
             if (!periodicRegistryReloadFailed)
                 recomputeAccessReadiness(policyRegistry, platform, executables);
             else
