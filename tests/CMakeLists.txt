@@ -80,6 +80,9 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/integration/packaging/IncidentStateLifecycleChecks.py
     )
+    add_test(NAME hardware_inventory_packaging_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/integration/package-lifecycle/hardware_inventory_packaging.py)
+    set_tests_properties(hardware_inventory_packaging_checks PROPERTIES SKIP_RETURN_CODE 77 LABELS packaging)
     add_test(
         NAME notification_packaging_static_checks
         COMMAND ${Python3_EXECUTABLE}

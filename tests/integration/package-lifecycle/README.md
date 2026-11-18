@@ -57,6 +57,20 @@ before installing FIC and checked with native visudo; FIC does not repair it.
 ALT emergency SKIP is tested after actual daemon PAM release: SKIP is never
 expected to undo policy topology after breaking the ownership engine.
 
+Both default native drivers also verify automatic CPU/board/memory collection:
+enabled oneshot, a completed invocation and concrete database rows immediately
+after install; repeated start versus restart; stop/start with the boot enable
+link retained; refusal during an explicit INSTALLING fence without DB writes;
+exact-version reinstall and optional upgrade recovery; stopped collector after
+prepare-uninstall. DMI placeholders remain valid existing collector behavior
+inside a container; these checks do not prove physical DMI access.
+
+The fast CTest `hardware_inventory_packaging_checks` builds tiny DEB/RPM archive
+fixtures with production post-install generators (for builders available on the
+test machine), extracts their scripts and injects admission/collector failures
+into the startup tail using command doubles. It never installs these fixtures;
+it complements, rather than replaces, the real-package native gates above.
+
 The restricted daemon gate uses genuinely malformed config/journal, mutating
 IPC, periodic intervals, SIGKILL/restart, then a PID1/container restart with
 fresh tmpfs `/run` and persistent UNINSTALLING. This is a restart-equivalent

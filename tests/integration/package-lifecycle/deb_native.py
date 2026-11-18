@@ -7,6 +7,7 @@ import socket
 import struct
 import subprocess
 import time
+import hardware_inventory
 
 assert os.environ.get('FIC_PACKAGE_LIFECYCLE_NATIVE') == '1'
 assert Path('/proc/1/comm').read_text().strip() == 'systemd'
@@ -92,6 +93,13 @@ try:
     run(['dpkg', '-i', *pkgs], timeout=300)
     run(['systemctl', 'is-active', 'fic.service', 'fic-device.service'])
     assert Path('/var/lib/fic-lifecycle/status').read_text() == 'INSTALLED\n'
+    hardware_inventory.oneshot_semantics(run)
+    fresh_config = config_snapshot()
+    run(['/opt/fic/bin/fic-package-infrastructure', 'prepare-install'])
+    hardware_inventory.rejected_while_installing(run)
+    run(['dpkg', '-i', *pkgs], timeout=300)
+    assert config_snapshot() == fresh_config
+    hardware_inventory.collected(run)
     run(['/opt/fic/bin/fic-cli', 'status'])
     # SKIP never overrides exclusion of an actually running daemon.
     override=Path('/etc/fic-uninstall-overload')
@@ -156,6 +164,7 @@ try:
             run(['dpkg','--configure','-a'],timeout=300)
             assert Path('/var/lib/fic-lifecycle/status').read_text()=='INSTALLED\n'
             assert owned<=active() and config_snapshot()==saved
+        hardware_inventory.collected(run)
         use_upgrades=True
         pkgs=[package(name) for name in ('fic-dick','fic','fic-cli')]
 
@@ -164,6 +173,7 @@ try:
     applying=subprocess.Popen(['/opt/fic/bin/fic-cli','policy','apply','IDENTITY_ACCESS',
                               'password_max_age_days'],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
     run(['/opt/fic/bin/fic-cli', 'prepare-uninstall'])
+    hardware_inventory.stopped(run)
     output=applying.communicate(timeout=120)[0]
     events.append(dict(command=['concurrent','policy apply','prepare-uninstall'],
                        exit_code=applying.returncode,output=output))

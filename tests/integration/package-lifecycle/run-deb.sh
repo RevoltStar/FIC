@@ -33,6 +33,7 @@ assert all(m['Type']=='tmpfs' and m['Destination'] in ('/run','/tmp') for m in c
 PY
 docker exec "$name" timeout 60 sh -ec 'until systemctl show-environment >/dev/null 2>&1; do sleep .1; done'
 docker exec "$name" timeout 60 sh -c 'systemctl is-system-running --wait >/dev/null 2>&1; exit 0'
+docker cp "$repo/tests/integration/package-lifecycle/hardware_inventory.py" "$name:/usr/local/bin/hardware_inventory.py"
 docker exec "$name" mkdir -p /var/tmp/fic-packages
 docker cp "$packages/." "$name:/var/tmp/fic-packages/"
 docker cp "$repo/tests/integration/package-lifecycle/$driver" "$name:/usr/local/bin/deb-native.py"

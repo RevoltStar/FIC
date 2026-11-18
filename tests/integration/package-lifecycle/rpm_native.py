@@ -7,6 +7,7 @@ import socket
 import struct
 import subprocess
 import time
+import hardware_inventory
 
 assert os.environ.get('FIC_PACKAGE_LIFECYCLE_NATIVE') == '1'
 assert Path('/proc/1/comm').read_text().strip() == 'systemd'
@@ -96,6 +97,13 @@ try:
     # RPM may return zero after failed %post; readiness requires real proofs.
     assert Path('/var/lib/fic-lifecycle/status').read_text()=='INSTALLED\n'
     run(['systemctl','is-active','fic.service','fic-device.service'])
+    hardware_inventory.oneshot_semantics(run)
+    fresh_config = config_snapshot()
+    run(['/opt/fic/bin/fic-package-infrastructure', 'prepare-install'])
+    hardware_inventory.rejected_while_installing(run)
+    run(['rpm','-Uvh','--replacepkgs',*packages],timeout=300)
+    assert config_snapshot() == fresh_config
+    hardware_inventory.collected(run)
     run(['/opt/fic/bin/fic-cli','policy','enable','IDENTITY_ACCESS','password_max_age_days'])
     run(['/opt/fic/bin/fic-cli','policy','apply','IDENTITY_ACCESS','password_max_age_days'])
     for policy in ('sudo_disable_scoped_defaults','sudo_exempt_group_disable','sudo_env_reset','sudo_timeout'):
@@ -120,8 +128,10 @@ try:
         assert Path('/var/lib/fic-lifecycle/status').read_text()=='INSTALLED\n'
         assert owned<=active() and config_snapshot()==saved
         # All subsequent reinstalls use the matching exact-version package set.
+        hardware_inventory.collected(run)
         packages=list(map(str,upgrades))
     run(['/opt/fic/bin/fic-cli','prepare-uninstall'])
+    hardware_inventory.stopped(run)
     assert request('apply_all').get('error_code')=='UNINSTALL_IN_PROGRESS'
     staged=Path('/etc/sssd/conf.d/zzzz-fic.conf.fic-removing-native-test')
     staged.parent.mkdir(parents=True,exist_ok=True)

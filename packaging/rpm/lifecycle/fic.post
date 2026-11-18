@@ -31,10 +31,14 @@ fi
 ln -sfn /opt/fic/bin/fic /bin/fic
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf
 systemctl daemon-reload
-systemctl enable fic.service fic-device.service fic-notify.service
+systemctl enable fic.service fic-device.service fic-notify.service fic_get_device_info.service
 systemctl start fic.service fic-device.service fic-notify.service
 # fic-device.service is Type=notify: the start job waits for READY=1, which
 # proves the device policy is activated; the initial device reconciliation
 # may still be running and is not part of the package readiness contract.
 /opt/fic/bin/fic --maintenance wait-daemon 30
+# Hardware inventory is best effort; retain a failed unit and its diagnostics.
+if ! systemctl start fic_get_device_info.service; then
+    echo 'FIC: WARNING: CPU/board/memory collection failed; inspect journalctl -u fic_get_device_info.service' >&2
+fi
 echo 'FIC: installation infrastructure verified; policy apply results are available in the daemon journal'
