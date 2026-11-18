@@ -21,12 +21,13 @@ void writeLicenseInfo()
     std::cout
         << "FIC is licensed under the Sustainable Use License 1.0.\n\n"
         << "fic-gui uses Qt as separately licensed third-party software.\n\n"
-        << "The bundled Qt components used by fic-gui are distributed by FIC under GNU LGPL "
+        << "When Qt components are bundled with fic-gui, they are distributed by FIC under GNU LGPL "
            "version 3 where that license option applies. Distribution package notices may "
            "describe alternative Qt licensing options and licenses of embedded third-party "
            "components.\n\n"
-        << "Full license texts, distribution notices, the provenance manifest, and Corresponding "
-           "Source information are installed in /usr/share/doc/fic-gui/.\n";
+        << "For bundled Qt, full license texts, distribution notices, the provenance manifest, and Corresponding "
+           "Source information are installed in /usr/share/doc/fic-gui/.\n"
+        << "For system Qt, consult the notices supplied by the distribution Qt packages.\n";
 }
 
 std::string loadedQtCorePath()

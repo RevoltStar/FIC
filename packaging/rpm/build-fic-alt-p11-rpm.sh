@@ -324,7 +324,7 @@ write_file_list() {
             /etc/security/fic-pwhistory.conf)
                 printf '%%config(noreplace) %s\n' "$path" >> "$file_list"
                 ;;
-            /usr/share/doc/fic-gui/*)
+            /usr/share/doc/fic-gui/*|/usr/share/doc/fic-gui-system-qt/LICENSE)
                 printf '%%doc %s\n' "$path" >> "$file_list"
                 ;;
             *)
@@ -366,6 +366,10 @@ write_spec_file() {
             # non-Qt runtime dependency.
             printf '%%filter_from_requires /^libQt6/d\n'
         fi
+        case "$package_name" in
+            fic-gui) printf 'Conflicts: fic-gui-system-qt\n' ;;
+            fic-gui-system-qt) printf 'Conflicts: fic-gui\n' ;;
+        esac
         printf 'Source0: %s\n' "$source_name"
         printf 'Source1: %s\n' "$file_list_source"
         if [ -n "$requires" ]; then
@@ -410,7 +414,7 @@ build_rpm_package() {
     local file_list_source="${package_name}.files"
     local file_list_path="$RPM_TOPDIR/SOURCES/$file_list_source"
     local spec_path="$RPM_TOPDIR/SPECS/${package_name}.spec"
-    local output_rpm
+    local output_rpm requirements
 
     tar -C "$package_root" -czf "$source_path" .
     write_file_list "$package_root" "$file_list_path"
@@ -435,6 +439,14 @@ build_rpm_package() {
     if [ -z "$output_rpm" ]; then
         echo "Failed to locate built RPM for $package_name" >&2
         exit 1
+    fi
+
+    if [ "$package_name" = fic-gui-system-qt ]; then
+        requirements="$(rpm -qp --requires "$output_rpm")" || return 1
+        if ! grep -Eq '^libQt6Widgets\.so\.6([[:space:](]|$)' <<<"$requirements"; then
+            echo 'System GUI RPM lacks automatic Qt6 Widgets requirements' >&2
+            return 1
+        fi
     fi
 
     mkdir -p "$DIST_DIR"
@@ -483,6 +495,14 @@ fi
 
 exit 0
 EOF
+}
+
+gui_symlink_preun_script() {
+    # APT-RPM can install the replacement before erasing the conflicting GUI.
+    # Both variants publish the same link, so leave it to the installed variant.
+    local replacement="$1"
+    printf 'if rpm -q --quiet "%s"; then exit 0; fi\n' "$replacement"
+    symlink_preun_script fic-gui /opt/fic/bin/fic-gui
 }
 
 system_integration_symlink_preun_script() {
@@ -642,11 +662,26 @@ build_fic_gui_package() {
         "fic = ${PACKAGE_VERSION}-${RPM_RELEASE}, fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}" \
         "$(common_pre_script)" \
         "$(symlink_post_script "fic-gui" "/opt/fic/bin/fic-gui")" \
-        "$(symlink_preun_script "fic-gui" "/opt/fic/bin/fic-gui")")" || return 1
+        "$(gui_symlink_preun_script fic-gui-system-qt)")" || return 1
 
     cp "$package_root/usr/share/doc/fic-gui/third-party-components.json" \
         "$output_rpm.third-party-components.json"
 
+    printf '%s\n' "$output_rpm"
+}
+
+build_fic_gui_system_qt_package() {
+    local package_name=fic-gui-system-qt
+    local package_root plugin_requires output_rpm
+    package_root="$(init_package_root "$package_name")" || return 1
+    fic_gui_stage_system_payload "$package_root" || return 1
+    plugin_requires="$(fic_gui_system_plugin_dependencies rpm)" || return 1
+    output_rpm="$(build_rpm_package "$package_root" "$package_name" \
+        "Free Integrity Control GUI using system Qt6" "Free Integrity Control GUI using system Qt6." \
+        "fic = ${PACKAGE_VERSION}-${RPM_RELEASE}, fic-dick = ${PACKAGE_VERSION}-${RPM_RELEASE}, $plugin_requires" \
+        "$(common_pre_script)" \
+        "$(symlink_post_script fic-gui /opt/fic/bin/fic-gui)" \
+        "$(gui_symlink_preun_script fic-gui)")" || return 1
     printf '%s\n' "$output_rpm"
 }
 
@@ -730,7 +765,7 @@ main() {
     local fic_rpm
     local session_agent_rpm
     local cli_rpm
-    local gui_rpm
+    local gui_rpm system_gui_rpm
     local prelogin_rpm
 
     dick_rpm="$(build_fic_dick_package)"
@@ -738,6 +773,7 @@ main() {
     session_agent_rpm="$(build_fic_session_agent_package)"
     cli_rpm="$(build_fic_cli_package)"
     gui_rpm="$(build_fic_gui_package)"
+    system_gui_rpm="$(build_fic_gui_system_qt_package)" || exit 1
     prelogin_rpm="$(build_fic_prelogin_package)" || exit 1
 
     verify_rpm_metadata "$dick_rpm" fic-dick
@@ -745,6 +781,7 @@ main() {
     verify_rpm_metadata "$session_agent_rpm" fic-session-agent
     verify_rpm_metadata "$cli_rpm" fic-cli
     verify_rpm_metadata "$gui_rpm" fic-gui
+    verify_rpm_metadata "$system_gui_rpm" fic-gui-system-qt
     verify_rpm_metadata "$prelogin_rpm" fic-prelogin
     verify_rpm_gui_license_metadata "$gui_rpm"
     verify_rpm_gui_dependency_metadata "$gui_rpm"
@@ -755,6 +792,7 @@ main() {
     echo "  $session_agent_rpm"
     echo "  $cli_rpm"
     echo "  $gui_rpm"
+    echo "  $system_gui_rpm"
     echo "  $prelogin_rpm"
 }
 

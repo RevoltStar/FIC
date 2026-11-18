@@ -383,3 +383,52 @@ fic_gui_verify_gui_smoke() {
     }
     rm -rf "$override_root"
 }
+
+# QPA and image format plugins are loaded dynamically, outside ELF dependency
+# discovery. Resolve their runtime packages in the target build environment.
+fic_gui_system_plugin_dependencies() {
+    local family="$1" plugins plugin owner
+    local dependencies=()
+    plugins="$(find_qt_plugin_dir)" || return 1
+    for plugin in platforms/libqxcb.so imageformats/libqjpeg.so; do
+        if [ ! -f "$plugins/$plugin" ]; then
+            fic_gui_runtime_error "missing system Qt plugin: $plugin"
+            return 1
+        fi
+        owner="$(fic_gui_package_owner "$family" "$plugins/$plugin")" || {
+            fic_gui_runtime_error "no package owns system Qt plugin: $plugin"
+            return 1
+        }
+        case "${owner%%:*}" in
+            *-dev|*-devel|*-dev-tools|*-devel-*)
+                fic_gui_runtime_error "system Qt plugin has a development package owner: $owner"
+                return 1 ;;
+        esac
+        if [[ ! " ${dependencies[*]} " == *" $owner "* ]]; then
+            dependencies+=("$owner")
+        fi
+    done
+    local result
+    printf -v result '%s, ' "${dependencies[@]}"
+    printf '%s' "${result%, }"
+}
+
+fic_gui_verify_system_elf() {
+    local dynamic
+    dynamic="$(LC_ALL=C readelf -d "$1")" || return 1
+    if [[ "$dynamic" != *'[libQt6Widgets.so.6]'* ||
+          "$dynamic" == *'(RPATH)'* || "$dynamic" == *'(RUNPATH)'* ]]; then
+        fic_gui_runtime_error "expected a Qt6 GUI ELF without RPATH/RUNPATH: $1"
+        return 1
+    fi
+}
+
+fic_gui_stage_system_payload() {
+    local package_root="$1" binary
+    binary="$package_root/opt/fic/bin/fic-gui"
+    install_cmake_component "$FIC_GUI_BUILD_DIR" fic-gui "$package_root" || return 1
+    fic_gui_verify_system_elf "$binary" || return 1
+    chmod 0750 "$binary" || return 1
+    install -Dm644 "$ROOT_DIR/LICENSE" \
+        "$package_root/usr/share/doc/fic-gui-system-qt/LICENSE"
+}

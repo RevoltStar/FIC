@@ -78,19 +78,41 @@ mapfile -d '' ARTIFACTS < <(
     find "$SNAPSHOT_DIR/dist" -maxdepth 1 -type f \
         \( -name '*.deb' -o -name '*.rpm' \) -print0 | sort -z
 )
-if [ "${#ARTIFACTS[@]}" -ne 25 ]; then
-    echo "Expected 25 release packages, found ${#ARTIFACTS[@]}" >&2
+components=(fic fic-cli fic-dick fic-gui fic-gui-system-qt fic-session-agent fic-prelogin)
+if [ "${#ARTIFACTS[@]}" -ne 35 ]; then
+    echo "Expected 35 release packages, found ${#ARTIFACTS[@]}" >&2
     exit 1
 fi
 
-mapfile -d '' THIRD_PARTY_MANIFESTS < <(
-    find "$SNAPSHOT_DIR/dist" -maxdepth 1 -type f \
-        -name 'fic-gui*.third-party-components.json' -print0 | sort -z
-)
-if [ "${#THIRD_PARTY_MANIFESTS[@]}" -ne 5 ]; then
-    echo "Expected 5 fic-gui third-party manifests, found ${#THIRD_PARTY_MANIFESTS[@]}" >&2
+THIRD_PARTY_MANIFESTS=()
+shopt -s nullglob
+for platform in debian12 debian13 ubuntu2404 ubuntu2604 altp11; do
+    for component in "${components[@]}"; do
+        if [ "$platform" = altp11 ]; then
+            matches=("$SNAPSHOT_DIR/dist/$component-$FIC_PACKAGE_VERSION-${RPM_RELEASE:-1.altp11}."*.rpm)
+        else
+            matches=("$SNAPSHOT_DIR/dist/${component}_${FIC_PACKAGE_VERSION}_${platform}_"*.deb)
+        fi
+        if [ "${#matches[@]}" -ne 1 ]; then
+            echo "Expected exactly one $component artifact for $platform" >&2
+            exit 1
+        fi
+        if [ "$component" = fic-gui ]; then
+            manifest="${matches[0]}.third-party-components.json"
+            if [ ! -f "$manifest" ]; then
+                echo "Missing bundled Qt manifest: $manifest" >&2
+                exit 1
+            fi
+            THIRD_PARTY_MANIFESTS+=("$manifest")
+        fi
+    done
+done
+manifests=("$SNAPSHOT_DIR/dist/"*.third-party-components.json)
+if [ "${#manifests[@]}" -ne "${#THIRD_PARTY_MANIFESTS[@]}" ]; then
+    echo 'Unexpected third-party manifest outside the bundled GUI packages' >&2
     exit 1
 fi
+shopt -u nullglob
 
 source_verify_args=()
 for manifest in "${THIRD_PARTY_MANIFESTS[@]}"; do

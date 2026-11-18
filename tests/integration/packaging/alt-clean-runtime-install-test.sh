@@ -39,7 +39,7 @@ assert_no_system_qt "before FIC installation"
 
 fic_dick_rpm="$(find_one_rpm 'fic-dick-*.rpm')"
 fic_rpm="$(find_one_rpm 'fic-[0-9]*.rpm')"
-fic_gui_rpm="$(find_one_rpm 'fic-gui-*.rpm')"
+fic_gui_rpm="$(find_one_rpm 'fic-gui-[0-9]*.rpm')"
 
 echo "fic-gui Requires:"
 rpm -qp --requires "$fic_gui_rpm" | sort

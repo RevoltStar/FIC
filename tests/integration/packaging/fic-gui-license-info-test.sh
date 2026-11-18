@@ -18,3 +18,5 @@ grep -Fq 'alternative Qt licensing options and licenses of embedded third-party 
     <<<"${output}"
 grep -Fq 'distribution notices, the provenance manifest' <<<"${output}"
 grep -Fq '/usr/share/doc/fic-gui/' <<<"${output}"
+grep -Fq 'When Qt components are bundled with fic-gui' <<<"${output}"
+grep -Fq 'For system Qt, consult the notices' <<<"${output}"

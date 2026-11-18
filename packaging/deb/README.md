@@ -19,13 +19,15 @@ SYSCTL runtime использует `/proc/sys` напрямую, а загру�
 systemd-sysctl; утилиты procps для работы ядра FIC не нужны. Ограничения release
 описаны в [package lifecycle](../../docs/package-lifecycle.md).
 
-This packaging flow builds five distribution-specific Debian-format packages:
+This packaging flow builds seven distribution-specific Debian-format packages:
 
 - `fic-dick`
 - `fic`
 - `fic-session-agent`
 - `fic-cli`
-- `fic-gui`
+- `fic-gui` (bundled Qt)
+- `fic-gui-system-qt` (system Qt6)
+- `fic-prelogin`
 
 ## Package contents
 
@@ -232,3 +234,28 @@ the obsolete legacy pair validator.
 
 The ownership/diagnostic details are in
 [`docs/pam-owned-faillock-slots.md`](../../docs/pam-owned-faillock-slots.md).
+
+## System Qt GUI option
+
+Install `fic-gui-system-qt` to use the distribution Qt6 runtime. Both GUI
+packages install the `fic-gui` command, require matching versions of `fic` and
+`fic-dick`, and restrict the executable to root and the `fic` group.
+The two variants conflict. Hand both the desired local archive and the
+removal request for the other variant to APT if interactive conflict
+resolution is unavailable. For example, from a directory containing the
+packages, use `apt-get install ./<system-gui-archive> fic-gui-`, or the reverse
+with the bundled archive and `fic-gui-system-qt-`.
+The system package contains the GUI ELF and relies on the target package
+manager for the Qt libraries and the XCB and JPEG plugin packages.
+
+Run the GUI transaction test in a fresh disposable target container with
+Xvfb, xauth, and the FIC installation prerequisites. Mount the repository
+and one platform's package directory read-only, then run:
+
+```sh
+FIC_DISPOSABLE_GUI_VARIANT_TEST=1 bash /workspace/tests/integration/packaging/gui-variant-install-test.sh deb /packages
+```
+
+Use a second clean container with `FIC_GUI_TEST_SCENARIO=remove` to exercise
+fresh system GUI installation and removal. The smoke test checks the loaded
+Qt libraries and plugins as a member of the `fic` group.

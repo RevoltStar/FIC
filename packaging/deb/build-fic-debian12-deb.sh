@@ -351,6 +351,7 @@ write_control_file() {
     local depends="$3"
     local description="$4"
     local recommends="${5:-}"
+    local conflicts="${6:-}"
     local installed_size
 
     installed_size="$(du -sk "$package_root" | awk '{print $1}')"
@@ -367,6 +368,9 @@ Installed-Size: ${installed_size}
 Description: ${description}
 EOF
 
+    if [ -n "$conflicts" ]; then
+        printf 'Conflicts: %s\n' "$conflicts" >> "$package_root/DEBIAN/control"
+    fi
     if [ -n "$recommends" ]; then
         sed -i "/^Installed-Size:/i Recommends: ${recommends}" "$package_root/DEBIAN/control"
     fi
@@ -412,6 +416,7 @@ write_symlink_postinst() {
     local client_paths
     case "$2:$3" in
         fic-cli:/opt/fic/bin/fic-cli) client_paths='/opt/fic/bin/fic-cli' ;;
+        fic-gui-system-qt:/opt/fic/bin/fic-gui) client_paths='/opt/fic/bin/fic-gui' ;;
         fic-gui:/opt/fic/bin/fic-gui) client_paths='/opt/fic/bin/fic-gui /opt/fic/bin/fic-gui.real' ;;
         *) echo 'Unknown private client package' >&2; return 1 ;;
     esac
@@ -445,7 +450,7 @@ chown root:fic /opt/fic /opt/fic/bin
 chmod 2750 /opt/fic /opt/fic/bin
 chown root:fic $client_paths
 chmod 0750 $client_paths
-ln -sfn "$3" "/bin/$2"
+ln -sfn "$3" "/bin/${3##*/}"
 EOF
     chmod 0755 "$1/DEBIAN/postinst"
 }
@@ -742,7 +747,7 @@ build_fic_gui_package() {
         "$package_root" \
         "$package_name" \
         "$package_depends" \
-        "Free Integrity Control GUI package"
+        "Free Integrity Control GUI package" "" fic-gui-system-qt
 
     write_common_preinst "$package_root"
     write_symlink_postinst "$package_root" "fic-gui" "/opt/fic/bin/fic-gui"
@@ -753,6 +758,29 @@ build_fic_gui_package() {
     cp "$package_root/usr/share/doc/fic-gui/third-party-components.json" \
         "$output_deb.third-party-components.json"
 
+    printf '%s\n' "$output_deb"
+}
+
+build_fic_gui_system_qt_package() {
+    local package_name=fic-gui-system-qt
+    local package_root output_deb binary plugin_depends binary_depends
+    package_root="$(init_package_root "$package_name")" || return 1
+    output_deb="$DIST_DIR/${package_name}_${PACKAGE_VERSION}_${PACKAGE_DISTRO_TAG}_${ARCH}.deb"
+    binary="$package_root/opt/fic/bin/fic-gui"
+    fic_gui_stage_system_payload "$package_root" || return 1
+    binary_depends="$(detect_binary_depends "$binary")" || return 1
+    if ! grep -Eq '(^|, )libqt6widgets6(t64)?([[:space:]:,(]|$)' <<<"$binary_depends"; then
+        echo 'System GUI dependency analysis did not resolve Qt6 Widgets' >&2
+        return 1
+    fi
+    plugin_depends="$(fic_gui_system_plugin_dependencies deb)" || return 1
+    write_control_file "$package_root" "$package_name" \
+        "$(join_depends "$binary_depends" "$plugin_depends" "fic (= ${PACKAGE_VERSION})" "fic-dick (= ${PACKAGE_VERSION})")" \
+        "Free Integrity Control GUI using system Qt6" "" fic-gui || return 1
+    write_common_preinst "$package_root" || return 1
+    write_symlink_postinst "$package_root" "$package_name" "/opt/fic/bin/fic-gui" || return 1
+    write_symlink_prerm "$package_root" fic-gui "/opt/fic/bin/fic-gui" || return 1
+    build_deb_package "$package_root" "$output_deb" || return 1
     printf '%s\n' "$output_deb"
 }
 
@@ -849,7 +877,7 @@ main() {
     local fic_deb
     local session_agent_deb
     local cli_deb
-    local gui_deb
+    local gui_deb system_gui_deb
     local prelogin_deb
 
     dick_deb="$(build_fic_dick_package)"
@@ -857,6 +885,7 @@ main() {
     session_agent_deb="$(build_fic_session_agent_package)"
     cli_deb="$(build_fic_cli_package)"
     gui_deb="$(build_fic_gui_package)" || exit 1
+    system_gui_deb="$(build_fic_gui_system_qt_package)" || exit 1
     prelogin_deb="$(build_fic_prelogin_package)" || exit 1
 
     verify_deb_metadata "$dick_deb" fic-dick
@@ -864,6 +893,7 @@ main() {
     verify_deb_metadata "$session_agent_deb" fic-session-agent
     verify_deb_metadata "$cli_deb" fic-cli
     verify_deb_metadata "$gui_deb" fic-gui
+    verify_deb_metadata "$system_gui_deb" fic-gui-system-qt
     verify_deb_metadata "$prelogin_deb" fic-prelogin
     verify_deb_gui_compliance_metadata "$gui_deb"
 
@@ -873,6 +903,7 @@ main() {
     echo "  $session_agent_deb"
     echo "  $cli_deb"
     echo "  $gui_deb"
+    echo "  $system_gui_deb"
     echo "  $prelogin_deb"
 }
 

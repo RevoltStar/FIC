@@ -149,3 +149,36 @@ if python3 "$ROOT_DIR/packaging/lib/gui-runtime-manifest.py" verify \
     echo "Manifest verification accepted an unlisted runtime library" >&2
     exit 1
 fi
+
+(
+    # Qt plugin ownership is resolved on the build host, independently of the
+    # GUI ELF dependencies. Exercise both package families and error paths.
+    fixture_plugins="$TEMP_DIR/system-plugins"
+    mkdir -p "$fixture_plugins"/{platforms,imageformats}
+    touch "$fixture_plugins/platforms/libqxcb.so" "$fixture_plugins/imageformats/libqjpeg.so"
+    find_qt_plugin_dir() { printf '%s\n' "$fixture_plugins"; }
+    owners=runtime
+    fic_gui_package_owner() {
+        case "$owners:$1:$2" in
+            runtime:deb:*) printf 'libqt6gui6:amd64\n' ;;
+            runtime:rpm:*/libqxcb.so) printf 'qt6-base-platform-xcb\n' ;;
+            runtime:rpm:*/libqjpeg.so) printf 'qt6-base-imageformats\n' ;;
+            development:*) printf 'qt6-base-devel\n' ;;
+            *) return 1 ;;
+        esac
+    }
+    [ "$(fic_gui_system_plugin_dependencies deb)" = libqt6gui6:amd64 ]
+    [ "$(fic_gui_system_plugin_dependencies rpm)" = 'qt6-base-platform-xcb, qt6-base-imageformats' ]
+    for owners in unknown development; do
+        if fic_gui_system_plugin_dependencies rpm >/dev/null 2>&1; then
+            echo "Accepted invalid Qt plugin owner ($owners)" >&2
+            exit 1
+        fi
+    done
+    owners=runtime
+    rm "$fixture_plugins/imageformats/libqjpeg.so"
+    if fic_gui_system_plugin_dependencies deb >/dev/null 2>&1; then
+        echo 'Accepted missing JPEG plugin' >&2
+        exit 1
+    fi
+)

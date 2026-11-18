@@ -72,8 +72,10 @@ source tree and builds Debian 12, Debian 13, Ubuntu 24.04, Ubuntu 26.04, and ALT
 p11 packages from that immutable snapshot.
 
 Successful output is written to `dist/release/VERSION/`. The directory contains
-25 packages, per-platform third-party manifests, the retained Corresponding
-Source set, and a deterministic `release-manifest.json` with product version,
+35 packages: seven distinct components per platform, including both GUI variants.
+Each bundled `fic-gui` archive has a corresponding third-party manifest, for five
+manifests total. The release also includes the retained Corresponding Source set
+and a deterministic `release-manifest.json` with product version,
 native package version, tag, full commit, artifact names, source-index hash, and
 package SHA-256 hashes. Existing release output is never overwritten.
 

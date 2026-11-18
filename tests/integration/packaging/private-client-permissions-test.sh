@@ -24,6 +24,13 @@ for name in fic-cli fic-gui; do
  grep -Fq "chmod 0750 /opt/fic/bin/$name" "$work/$name/DEBIAN/postinst"
  if grep -Eq '(chown|chmod).* (-R|--recursive)|find /opt/fic' "$work/$name/DEBIAN/postinst"; then exit 1; fi
  done
+mkdir -p "$work/fic-gui-system-qt/DEBIAN"
+write_symlink_postinst "$work/fic-gui-system-qt" fic-gui-system-qt /opt/fic/bin/fic-gui
+system_postinst="$work/fic-gui-system-qt/DEBIAN/postinst"
+sh -n "$system_postinst"
+grep -Fxq 'chmod 0750 /opt/fic/bin/fic-gui' "$system_postinst"
+grep -Fxq 'ln -sfn "/opt/fic/bin/fic-gui" "/bin/fic-gui"' "$system_postinst"
+if grep -Eq 'fic-gui\.real|fic-gui-system-qt|(chown|chmod).* (-R|--recursive)' "$system_postinst"; then exit 1; fi
 if write_symlink_postinst "$work/fic-cli" fic /opt/fic/bin/fic; then exit 1; fi
 # The actual file-list producer is tested independently of host rpm tools.
 ROOT_DIR="$repo" source /dev/stdin <<EOF_RPM

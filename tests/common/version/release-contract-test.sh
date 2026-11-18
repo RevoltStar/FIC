@@ -38,11 +38,15 @@ for mock_builder in \
         'MOCK_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"' \
         'mkdir -p "$MOCK_ROOT/dist"' \
         'builder="$(basename "$0" .sh)"' \
-        'case "$builder" in *rpm*) extension=rpm ;; *) extension=deb ;; esac' \
-        'for component in fic fic-cli fic-dick fic-gui fic-session-agent; do' \
-        '    touch "$MOCK_ROOT/dist/${component}_${builder}.${extension}"' \
+        'case "$builder" in' \
+        '    *rpm*) suffix="-0.1.0~rc.1-1.altp11.x86_64.rpm" ;;' \
+        '    *) platform="${builder#build-fic-}"; platform="${platform%-deb-docker}"; suffix="_0.1.0~rc.1_${platform}_amd64.deb" ;;' \
+        'esac' \
+        'for component in fic fic-cli fic-dick fic-gui fic-gui-system-qt fic-session-agent fic-prelogin; do' \
+        '    touch "$MOCK_ROOT/dist/$component$suffix"' \
         'done' \
-        'cat > "$MOCK_ROOT/dist/fic-gui_${builder}.${extension}.third-party-components.json" <<EOF' \
+        'if [ "${FIC_TEST_WRONG_COMPONENT:-}" = 1 ]; then mv "$MOCK_ROOT/dist/fic-gui-system-qt$suffix" "$MOCK_ROOT/dist/fic-other$suffix"; fi' \
+        'cat > "$MOCK_ROOT/dist/fic-gui$suffix.third-party-components.json" <<EOF' \
         '{"components":[{"source_family":"deb","source_package":"qt6-base","source_version":"6.test"}]}' \
         'EOF' > "$TEMP_DIR/$mock_builder"
     chmod +x "$TEMP_DIR/$mock_builder"
@@ -93,13 +97,24 @@ FIC_CORRESPONDING_SOURCE_DIR="$TEMP_DIR/release-sources" \
     "$TEMP_DIR/packaging/release/build-release.sh" >/dev/null
 RELEASE_OUTPUT="$TEMP_DIR/dist/release/0.1.0-rc.1"
 [ -f "$RELEASE_OUTPUT/release-manifest.json" ] || fail "release manifest is missing"
-[ "$(find "$RELEASE_OUTPUT" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)" -eq 25 ] ||
-    fail "release entry point did not collect 25 packages"
+[ "$(find "$RELEASE_OUTPUT" -maxdepth 1 -type f \( -name '*.deb' -o -name '*.rpm' \) | wc -l)" -eq 35 ] ||
+    fail "release entry point did not collect 35 packages"
 grep -Fq "\"commit\": \"$FIC_RELEASE_COMMIT\"" \
     "$RELEASE_OUTPUT/release-manifest.json" || fail "manifest commit is wrong"
 [ -f "$RELEASE_OUTPUT/corresponding-source/corresponding-source.json" ] ||
     fail "corresponding source index is missing from release output"
+[ "$(find "$RELEASE_OUTPUT/compliance-manifests" -type f | wc -l)" -eq 5 ] ||
+    fail "release must collect exactly five bundled manifests"
+[ "$(grep -c '"file": "fic-gui-system-qt' "$RELEASE_OUTPUT/release-manifest.json")" -eq 5 ] ||
+    fail "release manifest lacks system Qt packages"
 rm -rf "$TEMP_DIR/dist"
+if wrong_output="$(FIC_TEST_WRONG_COMPONENT=1 FIC_CORRESPONDING_SOURCE_DIR="$TEMP_DIR/release-sources" \
+    "$TEMP_DIR/packaging/release/build-release.sh" 2>&1)"; then
+    fail "accepted the wrong component set with the correct total count"
+fi
+grep -Fq 'Expected exactly one fic-gui-system-qt artifact' <<<"$wrong_output" ||
+    fail "wrong component set did not reach composition validation"
+
 
 printf 'dirty\n' >> "$TEMP_DIR/README.md"
 if (fic_validate_release_checkout "$TEMP_DIR" >/dev/null 2>&1); then

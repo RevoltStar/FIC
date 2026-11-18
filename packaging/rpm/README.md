@@ -5,13 +5,15 @@ Payload бинарников, service-файлов, конфигурации и 
 systemd и tmpfiles; скрипт упаковки отвечает за RPM metadata, lifecycle и Qt
 runtime bundle, а не за генерацию integration-файлов.
 
-This packaging flow builds five RPM packages for ALT Linux p11:
+This packaging flow builds seven RPM packages for ALT Linux p11:
 
 - `fic-dick`
 - `fic`
 - `fic-session-agent`
 - `fic-cli`
-- `fic-gui`
+- `fic-gui` (bundled Qt)
+- `fic-gui-system-qt` (system Qt6)
+- `fic-prelogin`
 
 The packaging script always configures the daemon with
 `FIC_TARGET_PLATFORM=alt-p11`; it does not derive the profile from the build
@@ -410,3 +412,34 @@ Optional `fic-prelogin` uses system Qt6 EGLFS/KMS. Qt ELF requirements are not
 filtered as they are for the bundled `fic-gui`; both QPA/KMS plugin owners are
 explicit requirements. Lifecycle/recovery and validation limits:
 [Pre-Login Gate](../../fic-prelogin/README.md).
+
+## System Qt GUI option
+
+Install `fic-gui-system-qt` to use the distribution Qt6 runtime. Both GUI
+packages install the `fic-gui` command, require matching versions of `fic` and
+`fic-dick`, and restrict the executable to root and the `fic` group.
+The two variants conflict. Hand both the desired local archive and the
+removal request for the other variant to APT if interactive conflict
+resolution is unavailable. For example, from a directory containing the
+packages, use `apt-get install ./<system-gui-archive> fic-gui-`, or the reverse
+with the bundled archive and `fic-gui-system-qt-`.
+The system package contains the GUI ELF and relies on the target package
+manager for the Qt libraries and the XCB and JPEG plugin packages.
+
+APT-RPM may install the replacement before erasing the outgoing package.
+The GUI RPMs built by this revision preserve the shared link in that order.
+When switching from an older bundled RPM that lacks this check, first
+remove `fic-gui`, then install the system Qt archive in a separate APT
+transaction. Keep `fic` and `fic-dick` installed.
+
+Run the GUI transaction test in a fresh disposable target container with
+Xvfb, xauth, and the FIC installation prerequisites. Mount the repository
+and one platform's package directory read-only, then run:
+
+```sh
+FIC_DISPOSABLE_GUI_VARIANT_TEST=1 bash /workspace/tests/integration/packaging/gui-variant-install-test.sh rpm /packages
+```
+
+Use a second clean container with `FIC_GUI_TEST_SCENARIO=remove` to exercise
+fresh system GUI installation and removal. The smoke test checks the loaded
+Qt libraries and plugins as a member of the `fic` group.

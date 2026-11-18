@@ -55,7 +55,12 @@ daemon, or requiring a graphical display.
 
 ## Installed compliance payload
 
-Every `fic-gui` binary package installs:
+The separate `fic-gui-system-qt` package ships the same application ELF and
+gets Qt6 from distribution runtime packages. Their packages supply the Qt
+notices. Bundled manifests and Corresponding Source checks apply to the
+`fic-gui` package.
+
+Every bundled `fic-gui` binary package installs:
 
 - `/usr/share/doc/fic-gui/licenses/FIC-SUL-1.0.txt`;
 - `/usr/share/doc/fic-gui/licenses/LGPL-3.0-only.txt` and
