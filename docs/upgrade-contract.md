@@ -54,8 +54,12 @@ must be a real `root:fic` directory with mode `2750`; every working config
 must be a single-link regular `root:fic` file with mode `0640`. Existing
 metadata is never repaired. A missing `GLOBAL.conf` or unsafe configuration
 authority aborts package configuration, and the daemon refuses startup before
-READY. `ensure-config` never overwrites an existing working configuration;
-`check-config` rejects missing, invalid, lower or future schema versions.
+READY. `ensure-config` preserves existing configuration fields. For the two
+GLOBAL scheduling policies it appends only missing status/value defaults under
+the existing atomic write contract; ordinary startup performs the same targeted
+update before registry construction. See [periodic-apply.md](periodic-apply.md).
+`check-config` remains read-only and rejects missing, invalid, lower or future
+schema versions.
 The accepted size of each working config, including recovery authority
 `GLOBAL.conf`, is at most 1 MiB. The separate short `lockstatus` state retains
 its stricter secure-read limit.

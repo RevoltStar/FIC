@@ -193,7 +193,7 @@ flowchart TD
     compiled --> initMap
     initMap -->|ошибка| initFatal([exit with error])
     initMap -->|успех| socketPath["Выбор socket path<br/>--socket или /run/fic/fic.sock"]
-    socketPath --> interval["Выбор interval<br/>--interval или 1800 сек"]
+    socketPath --> interval["Startup snapshot I и P<br/>--interval / GLOBAL / defaults"]
     interval --> signals[Регистрация SIGTERM/SIGINT]
     signals --> startupApply[fail-closed initPolicyRegistry + apply enabled non-FIREWALL policies]
     startupApply -->|registry rebuild error| registryFatal([audit + exit with error])
@@ -211,19 +211,22 @@ flowchart TD
     route --> queue[поставить фреймированный ответ в bounded queue]
     queue --> periodic
 
-    ready -->|нет| periodic{пора periodic apply?}
+    ready -->|нет| periodic{"now >= S+I и F+P?"}
     periodic -->|да| reload[initPolicyRegistry]
     reload -->|ошибка| keepRegistry[сохранить последний корректный registry<br/>audit error; skip apply/firewall]
     keepRegistry --> schedule
     reload -->|успех| applyAll[apply enabled non-FIREWALL policies]
     applyAll --> firewallReconcile[FIREWALL full reconciliation]
-    firewallReconcile --> schedule[обновить nextPeriodicApply]
+    firewallReconcile --> schedule[deadline от начала + завершение прохода]
     schedule --> mainLoop
 
     periodic -->|нет| mainLoop
     mainLoop -->|stop| cleanup[close socket и unlink]
     cleanup --> stopped([fic daemon stopped])
 ```
+
+Контракт интервала, минимальной паузы и обновления старого GLOBAL.conf:
+[Периодическое применение политик](periodic-apply.md).
 
 Профиль выбирается только во время сборки. Runtime-проверка не ищет другой
 профиль, а fail-closed подтверждает, что пакет запущен на предназначенной для

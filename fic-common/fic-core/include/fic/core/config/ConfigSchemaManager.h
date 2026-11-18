@@ -18,6 +18,12 @@ public:
         bool allowRecoveryBootstrap = false,
         std::optional<ConfigAuthorityIdentity> testIdentity = std::nullopt);
 
+    // Targeted additive upgrade for GLOBAL scheduling keys. Caller holds the
+    // daemon/package admission lock; existing fields are never overwritten.
+    static bool ensurePeriodicApplyDefaults(
+        const std::filesystem::path& configDirectory, std::string& error,
+        std::optional<ConfigAuthorityIdentity> testIdentity = std::nullopt);
+
     static bool verifyConfigs(const std::filesystem::path& configDirectory,
                               std::string& error,
                               std::optional<ConfigAuthorityIdentity> testIdentity =

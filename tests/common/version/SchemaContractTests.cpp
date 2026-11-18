@@ -136,7 +136,14 @@ void testConfigContract(const fs::path& root) {
     assert(ensureTestConfigs(
         defaults, working, error, true));
     for (const char* fileName : CONFIG_FILES) {
-        assert(readFile(working / fileName) == readFile(defaults / fileName));
+        if (std::string(fileName) == "GLOBAL.conf") {
+            const auto upgraded = readFile(working / fileName);
+            assert(upgraded.rfind(readFile(defaults / fileName), 0) == 0);
+            assert(upgraded.find("check_interval.status=ENABLE\ncheck_interval.value=1800\n") != std::string::npos);
+            assert(upgraded.find("periodic_apply_min_pause.status=ENABLE\nperiodic_apply_min_pause.value=30\n") != std::string::npos);
+        } else {
+            assert(readFile(working / fileName) == readFile(defaults / fileName));
+        }
         struct stat info {};
         assert(::lstat((working / fileName).c_str(), &info) == 0);
         assert((info.st_mode & 07777) == 0640);

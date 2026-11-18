@@ -3597,3 +3597,23 @@ foreach(profile Debian12 Debian13 Ubuntu2404 Ubuntu2604 AltP11)
 endforeach()
 target_sources(pam_capability_activation_policy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamDisableRootSddmLoginPolicy.cpp)
+
+add_executable(periodic_apply_tests
+    fic/daemon/PeriodicApplyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/GLOBAL.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/system_settings/SystemSettings.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/system_settings/PeriodicApplySettings.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/global/system_settings/policies/GLOBAL_periodic_apply_settings.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryInitialization.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryJson.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryMutation.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyDependencyGraph.cpp)
+target_include_directories(periodic_apply_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(periodic_apply_tests PRIVATE fic-policy)
+add_test(NAME periodic_apply_tests COMMAND periodic_apply_tests)
+set_tests_properties(periodic_apply_tests PROPERTIES LABELS unit)
+if(Python3_Interpreter_FOUND)
+    add_test(NAME periodic_apply_contract_checks COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/fic/daemon/check-periodic-apply.py ${CMAKE_SOURCE_DIR})
+    set_tests_properties(periodic_apply_contract_checks PROPERTIES LABELS static)
+endif()

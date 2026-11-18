@@ -988,3 +988,9 @@ Where possible, a lock against modification is applied
 
 [module:GLOBAL][policy:lock_exempt_fic_members]=Exempt fic group members from containment
 [module:GLOBAL][policy:lock_exempt_fic_members][description]=ENABLE preserves recovery access for fic group members; DISABLE removes this exemption. Local root recovery remains independent. Status changes reconcile current containment; previously terminated sessions are not restored.
+
+[module:GLOBAL][policy:check_interval]=Periodic policy application interval
+[module:GLOBAL][policy:check_interval][description]=Periodic policy application interval in seconds, measured from the start of the previous periodic apply. Range: 60–86400; default 1800. DISABLE uses 1800 seconds. Changes take effect at the next FIC service start, including after a computer reboot. No automatic restart is performed. These settings control only the main periodic apply, not other independent FIC checks.
+
+[module:GLOBAL][policy:periodic_apply_min_pause]=Minimum pause between periodic policy applications
+[module:GLOBAL][policy:periodic_apply_min_pause][description]=Minimum time after periodic apply finishes before the next pass starts. Value 0 disables the limit. Range: 0–600 seconds; default 30. DISABLE turns off the limit. Changes take effect at the next FIC service start, including after a computer reboot. No automatic restart is performed. These settings control only the main periodic apply, not other independent FIC checks.

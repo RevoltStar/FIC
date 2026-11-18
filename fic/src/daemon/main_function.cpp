@@ -673,6 +673,8 @@ bool initPolicyRegistry(
     //Глобальные настройки программы
     cafArr.push_back(std::make_unique<AUDIT_log_level>());
     cafArr.push_back(std::make_unique<GLOBAL_lang>());
+    cafArr.push_back(std::make_unique<GLOBAL_check_interval>());
+    cafArr.push_back(std::make_unique<GLOBAL_periodic_apply_min_pause>());
     cafArr.push_back(std::make_unique<GLOBAL_incident_response_mode>());
     cafArr.push_back(std::make_unique<GLOBAL_lock_exempt_fic_members>());
     //Для удобства отсортируем в массив вида "модуль->подмодуль->политика->класс,представляющий политику для данного модуля"

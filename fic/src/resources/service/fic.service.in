@@ -5,7 +5,7 @@ Wants=fic-device.service
 [Service]
 Type=notify
 NotifyAccess=main
-ExecStart=@FIC_PRIVATE_BINDIR@/fic --interval 1800
+ExecStart=@FIC_PRIVATE_BINDIR@/fic
 TimeoutStartSec=600s
 Restart=on-failure
 UMask=0027

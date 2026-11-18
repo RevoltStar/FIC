@@ -1,3 +1,5 @@
+#include "daemon/PeriodicApplySchedule.h"
+#include "modules/global/system_settings/PeriodicApplySettings.h"
 #include "modules/dc/DC.h"
 #include "daemon/DeviceStartupReadiness.h"
 #include <algorithm>
@@ -111,20 +113,6 @@ std::string get_arg_value(int argc, char* argv[], int index) {
         return "";
     }
     return argv[index];
-}
-
-int get_interval_seconds(int argc, char* argv[]) {
-    for (int i = 1; i + 1 < argc; ++i) {
-        if (std::string(argv[i]) == "--interval") {
-            try {
-                int value = std::stoi(argv[i + 1]);
-                return value > 0 ? value : 1800;
-            } catch (...) {
-                return 1800;
-            }
-        }
-    }
-    return 1800;
 }
 
 std::string get_socket_path(int argc, char* argv[]) {
@@ -2278,6 +2266,8 @@ int main(int argc, char* argv[]) {
         }
         std::string configError;
         if (!fic::core::ConfigSchemaManager::verifyConfigs(
+                fic::core::FicRuntimePaths::get().configDir, configError) ||
+            !fic::core::ConfigSchemaManager::ensurePeriodicApplyDefaults(
                 fic::core::FicRuntimePaths::get().configDir, configError)) {
             std::cerr << "refusing to start with incompatible configuration: "
                       << configError << std::endl;
@@ -2358,7 +2348,16 @@ int main(int argc, char* argv[]) {
     }
 
     const std::string socketPath = get_socket_path(argc, argv);
-    const int intervalSeconds = get_interval_seconds(argc, argv);
+    ModuleConfigFileHandler periodicConfig("GLOBAL");
+    fic::daemon::PeriodicApplySettings loadedPeriodicSettings;
+    std::string periodicSettingsError;
+    if (!uninstallMode && !fic::daemon::readPeriodicApplySettings(
+            periodicConfig, fic::daemon::periodicIntervalOverride(argc, argv),
+            loadedPeriodicSettings, periodicSettingsError)) {
+        std::cerr << periodicSettingsError << std::endl;
+        return 1;
+    }
+    const auto periodicSettings = loadedPeriodicSettings;
 
     std::signal(SIGTERM, handle_signal);
     std::signal(SIGINT, handle_signal);
@@ -2489,10 +2488,14 @@ int main(int argc, char* argv[]) {
             : "READY=1\nSTATUS=Running; startup policy apply completed with errors");
 
     std::cout << "fic daemon started, socket=" << socketPath
-              << ", interval=" << intervalSeconds << "s"
+              << ", interval=" << periodicSettings.intervalSeconds << "s"
+              << ", periodic-min-pause=" << periodicSettings.minPauseSeconds << "s"
               << ", target-platform=" << platform.id << std::endl;
 
-    auto nextPeriodicApply = std::chrono::steady_clock::now() + std::chrono::seconds(intervalSeconds);
+    fic::daemon::PeriodicApplySchedule periodicSchedule(
+        std::chrono::steady_clock::now(),
+        std::chrono::seconds(periodicSettings.intervalSeconds),
+        std::chrono::seconds(periodicSettings.minPauseSeconds));
     bool periodicRegistryReloadFailed = false;
     auto nextSshCheck = std::chrono::steady_clock::now() + std::chrono::seconds(30);
 
@@ -2518,7 +2521,8 @@ int main(int argc, char* argv[]) {
 
         auto now = std::chrono::steady_clock::now();
         const bool mayMutate = fic::core::readPackageState().state == fic::core::PackageState::Installed;
-        if (mayMutate && now >= nextPeriodicApply) {
+        if (mayMutate && periodicSchedule.due(now)) {
+            periodicSchedule.attempted(now);
             bool mayApply = true;
             const auto periodicMode =
                 fic::incident::IncidentResponseModeResolver::production();
@@ -2547,7 +2551,8 @@ int main(int argc, char* argv[]) {
                 recomputeAccessReadiness(policyRegistry, platform, executables);
             else
                 daemonReadiness().set(fic::incident::DaemonReadinessState::Degraded);
-            nextPeriodicApply = now + std::chrono::seconds(intervalSeconds);
+            if (mayApply)
+                periodicSchedule.finished(std::chrono::steady_clock::now());
         }
         if (mayMutate && now >= nextSshCheck) {
             if (!periodicRegistryReloadFailed && !registryRebuildFailedThisRequest()) {
