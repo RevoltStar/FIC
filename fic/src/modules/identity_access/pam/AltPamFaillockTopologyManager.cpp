@@ -1157,7 +1157,7 @@ bool writeCandidates(
                 "could not atomically " + action +
                     " FIC pam_faillock topology at " +
                     target.target.path.string() + ": " + writeError,
-                error, index);
+                error, index + 1);
         }
     }
     error.clear();

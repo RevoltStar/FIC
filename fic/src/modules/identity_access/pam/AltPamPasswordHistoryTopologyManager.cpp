@@ -112,6 +112,38 @@ AtomicWriteOptions writeOptionsFor(const AtomicWriteOptions& base,
     return result;
 }
 
+// A writer can report failure after rename. Restore only our candidate;
+// preserve any independently modified bytes and report unproven recovery.
+bool compensateTopologyWrite(const std::filesystem::path& path,
+                             const TargetSnapshot& original,
+                             const std::string& candidate,
+                             const AltPamPasswordHistoryTopologyOptions& options,
+                             std::string& error) {
+    TargetSnapshot current;
+    std::string detail;
+    if (!inspectSecureTarget(path, current, detail, options.readValidationHook)) {
+        error += "; CRITICAL: rollback failed: " + detail;
+        return false;
+    }
+    if (current.content != candidate && current.content != original.content) {
+        error += "; CRITICAL: rollback refused: concurrent content change";
+        return false;
+    }
+    if (current.content != original.content &&
+        !options.writer(path.string(), original.content,
+                        writeOptionsFor(options.writeOptions, current), &detail)) {
+        error += "; CRITICAL: rollback failed: " + detail;
+        return false;
+    }
+    if (!inspectSecureTarget(path, current, detail, options.readValidationHook) ||
+        current.content != original.content) {
+        error += "; CRITICAL: rollback verification failed: " + detail;
+        return false;
+    }
+    error += "; original PAM configuration restored";
+    return false;
+}
+
 bool parseRules(const std::filesystem::path& path,
                 const std::string& content,
                 std::vector<PamRule>& rules,
@@ -859,32 +891,12 @@ bool AltPamPasswordHistoryTopologyManager::enable(std::string& error) {
             writeOptionsFor(options_.writeOptions, original), &writeError)) {
         error = "could not atomically enable FIC pam_pwhistory topology: " +
             writeError;
-        return false;
+        return compensateTopologyWrite(capability->topologyTarget, original, candidate,
+                                       options_, error);
     }
-    if (!verifySemanticEffectiveness(error)) {
-        TargetSnapshot written;
-        std::string rollbackError;
-        if (!inspectSecureTarget(capability->topologyTarget, written,
-                                 rollbackError,
-                                 options_.readValidationHook)) {
-            error += "; CRITICAL: rollback failed: " + rollbackError;
-            return false;
-        }
-        if (written.content != candidate && written.content != original.content) {
-            error += "; CRITICAL: rollback refused: concurrent content change";
-            return false;
-        }
-        if (written.content != original.content &&
-            !options_.writer(capability->topologyTarget.string(),
-                original.content,
-                writeOptionsFor(options_.writeOptions, written),
-                &rollbackError)) {
-            error += "; CRITICAL: rollback failed: " + rollbackError;
-            return false;
-        }
-        error += "; original PAM configuration restored";
-        return false;
-    }
+    if (!verifySemanticEffectiveness(error))
+        return compensateTopologyWrite(capability->topologyTarget, original, candidate,
+                                       options_, error);
     error.clear();
     return true;
 }
@@ -946,7 +958,8 @@ bool AltPamPasswordHistoryTopologyManager::disable(std::string& error) {
             writeOptionsFor(options_.writeOptions, original), &writeError)) {
         error = "could not atomically disable FIC pam_pwhistory topology: " +
             writeError;
-        return false;
+        return compensateTopologyWrite(capability->topologyTarget, original, candidate,
+                                       options_, error);
     }
     error.clear();
     return true;

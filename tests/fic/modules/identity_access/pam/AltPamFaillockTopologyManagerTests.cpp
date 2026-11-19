@@ -832,6 +832,42 @@ void testSecondTargetWriteFailureRollsBackFirstTarget() {
             "second-target failure did not restore the first target exactly");
 }
 
+void testWriteFailureCompensation() {
+    for (const int failedTarget : {1, 2}) {
+        for (const bool published : {false, true}) {
+            TemporaryTree tree;
+            writeSshUseFirstPassGraph(tree);
+            auto options = tree.options();
+            const auto secondary = tree.root / "pam.d/system-auth-use_first_pass-local-only";
+            const auto primaryBefore = TemporaryTree::read(tree.target());
+            const auto secondaryBefore = TemporaryTree::read(secondary);
+            int writes = 0;
+            bool sawPublication = false;
+            options.writer = [&](const std::string& path, const std::string& bytes,
+                                 const AtomicWriteOptions& opts, std::string* detail) {
+                if (++writes != failedTarget)
+                    return AtomicFileWriter::write(path, bytes, opts, detail);
+                if (!published) return false;
+                AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string&) {
+                    sawPublication = TemporaryTree::read(path) == bytes;
+                    return false;
+                });
+                const bool success = AtomicFileWriter::write(path, bytes, opts, detail);
+                AtomicFileWriter::setDirectoryFsyncHookForTests({});
+                return success;
+            };
+            AltPamFaillockTopologyManager manager(useFirstPassPlatform(tree), options);
+            std::string error;
+            require(!manager.enable(error) && error.find("configuration restored") != std::string::npos, error);
+            require(sawPublication == published && writes == 2 * failedTarget - !published,
+                    "wrong publication or compensation count");
+            require(TemporaryTree::read(tree.target()) == primaryBefore &&
+                    TemporaryTree::read(secondary) == secondaryBefore,
+                    "write failure did not restore both targets");
+        }
+    }
+}
+
 void testCompensationPreservesConcurrentEdit() {
     TemporaryTree tree;
     writeSshUseFirstPassGraph(tree);
@@ -1464,6 +1500,7 @@ int main(int argc, char** argv) {
         testUseFirstPassUnsafeAuthTailRejectedBeforeWrite();
         testFaillockAndPasswordHistoryCoexistence();
         testSecondTargetWriteFailureRollsBackFirstTarget();
+        testWriteFailureCompensation();
         testCompensationPreservesConcurrentEdit();
         testExecutableAuthTailRejectedBeforeWrite();
         testExternalTopologyRejected();

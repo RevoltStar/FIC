@@ -495,6 +495,35 @@ void testPostconditionFailureRollsBack() {
             "failed enable did not restore exact original content");
 }
 
+void testPostRenameWriteFailure() {
+    for (const bool releasing : {false, true}) {
+        TemporaryTree tree;
+        auto options = tree.options();
+        AltPamPasswordHistoryTopologyManager setup(tree.platform(), options);
+        std::string error;
+        if (releasing) require(setup.enable(error), error);
+        const auto before = TemporaryTree::read(tree.target());
+        bool sawPublication = false;
+        int writes = 0;
+        options.writer = [&](const std::string& path, const std::string& bytes,
+                             const AtomicWriteOptions& opts, std::string* detail) {
+            if (++writes != 1) return AtomicFileWriter::write(path, bytes, opts, detail);
+            AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string&) {
+                sawPublication = TemporaryTree::read(path) == bytes;
+                return false;
+            });
+            const bool success = AtomicFileWriter::write(path, bytes, opts, detail);
+            AtomicFileWriter::setDirectoryFsyncHookForTests({});
+            return success;
+        };
+        AltPamPasswordHistoryTopologyManager manager(tree.platform(), options);
+        const bool success = releasing ? manager.disable(error) : manager.enable(error);
+        require(!success && sawPublication && writes == 2 &&
+                TemporaryTree::read(tree.target()) == before &&
+                error.find("configuration restored") != std::string::npos, error);
+    }
+}
+
 void testCompensationPreservesConcurrentEdit() {
     TemporaryTree tree;
     auto options = tree.options();
@@ -641,6 +670,7 @@ int main() {
         testBrokenMarkersFailClosed();
         testPostconditionFailureRollsBack();
         testCompensationPreservesConcurrentEdit();
+        testPostRenameWriteFailure();
         testHistoryStorageConfigTrustedRead();
         testTransactionModuleTrustedInspection();
     } catch (const std::exception& exception) {
