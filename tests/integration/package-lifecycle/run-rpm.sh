@@ -21,7 +21,7 @@ python3 - "$out/container.json" <<'PY'
 import json,sys
 c=json.load(open(sys.argv[1]))[0]; h=c['HostConfig']
 assert h['NetworkMode']=='none' and h['CgroupnsMode']=='private'
-assert not h['Binds'] and not h['PortBindings'] and not h['PidMode'] and h['IpcMode']!='host'
+assert not h['Binds'] and not h['PortBindings'] and h['PidMode'] in ('', 'private') and h['IpcMode']!='host'
 assert all(m['Type']=='tmpfs' and m['Destination'] in ('/run','/tmp') for m in c['Mounts'])
 PY
 docker exec "$name" timeout 60 sh -ec 'until systemctl show-environment >/dev/null 2>&1; do sleep .1; done'

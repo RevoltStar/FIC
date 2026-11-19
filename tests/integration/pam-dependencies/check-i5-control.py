@@ -11,6 +11,13 @@ assert x['scope_narrowed'] is False
 assert set(x['initial']['capabilities'][0]['services']) == {
     'login', 'sshd', 'sudo', 'su', 'sddm', 'gdm-password', 'lightdm', 'system-auth'}
 assert all(a['ok'] for a in x['activate'])
+assert all(a['ok'] for a in x['strategy_transition'] + x['strategy_restore'])
+before = x['activated']['capabilities'][0]
+switched = x['strategy_switched']['capabilities'][0]
+assert switched['physical_mutation_id'] == switched['journal_mutation_id'] == before['journal_mutation_id'] > 0
+assert 'pam_faillock.so preauth' in x['strategy_switched']['targets']['/etc/pam.d/system-auth-local-only']
+assert 'auth\trequisite\tpam_faillock.so preauth' in x['strategy_switched']['targets']['/etc/pam.d/system-auth-local-only']
+
 baseline = x['initial']['targets']
 owned = x['activated']['targets']
 primary = owned['/etc/pam.d/system-auth-local-only']
@@ -61,6 +68,13 @@ assert x['unsupported_after']['targets'] == baseline
 assert all(not c['inspect'] for c in x['missing_module_before']['capabilities'])
 assert all(a['ok'] for a in x['missing_module_release'])
 assert x['missing_module_after']['targets'] == baseline
+assert not x['wrong_id_apply']['ok'] and not x['wrong_id_release']['ok']
+assert x['wrong_id_preserved'] and all(a['ok'] for a in x['wrong_id_cleanup'])
+assert x['legacy_preserved']
+assert all(a['ok'] for a in x['legacy_apply'] + x['legacy_release']
+           + x['legacy_reactivate'] + x['legacy_cleanup'])
+history = x['legacy_reactivated']['capabilities'][1]
+assert history['physical_mutation_id'] == history['journal_mutation_id'] > 0
 partial_before = x['partial_before']['capabilities'][0]
 partial_after = x['partial_after']['capabilities'][0]
 assert partial_before['inspect'] is False and partial_before['physical_mutation_id'] is None

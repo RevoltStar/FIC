@@ -67,6 +67,30 @@ def snapshot(label):
     (results/'commands.json').write_text(json.dumps(events,indent=2))
 
 
+PAM_PRIMARY = Path('/etc/pam.d/system-auth-local-only')
+PAM_SECONDARY = Path('/etc/pam.d/system-auth-use_first_pass-local-only')
+
+
+def alt_topology_ids():
+    records = json.loads(Path('/opt/fic/db/mutation-journal.json').read_text())['records']
+    ids = {}
+    for policy, boundary, targets in (
+        ('enable_authentication_lockout', 'pam_faillock preauth', (PAM_PRIMARY, PAM_SECONDARY)),
+        ('enable_password_history', 'pam_pwhistory transaction', (PAM_PRIMARY,)),
+    ):
+        active = [r for r in records if r['policy']['policy'] == policy
+                  and r['backend'] == 'pam' and r['status'] == 'applied']
+        assert len(active) == 1, (policy, active)
+        mutation_id = active[0]['id']
+        assert mutation_id > 0, active
+        for target in targets:
+            lines = target.read_text().splitlines()
+            for edge in ('BEGIN', 'END'):
+                assert f'# {edge} FIC {boundary} v1 id={mutation_id} target={target}' in lines, target
+        ids[policy] = mutation_id
+    return ids
+
+
 def package(name):
     found = list(Path('/var/tmp/fic-packages').glob(name+'_*.deb'))
     assert len(found) == 1, found
@@ -109,12 +133,14 @@ try:
     for policy in ('sudo_disable_scoped_defaults','sudo_exempt_group_disable','sudo_env_reset','sudo_timeout'):
         run(['/opt/fic/bin/fic-cli','policy','enable','DAC',policy])
         run(['/opt/fic/bin/fic-cli','policy','apply','DAC',policy])
+    pam_before = {target: target.read_bytes() for target in (PAM_PRIMARY, PAM_SECONDARY)}
     # Current Required dependency contracts also require password-quality activation.
     for policy in ('enable_authentication_lockout','enable_password_quality','enable_password_history'):
         run(['/opt/fic/bin/fic-cli','policy','enable','IDENTITY_ACCESS',policy])
         run(['/opt/fic/bin/fic-cli','policy','apply','IDENTITY_ACCESS',policy])
     run(['/opt/fic/bin/fic-cli','policy','enable','IDENTITY_ACCESS','passwdqc_retry_count'])
     run(['/opt/fic/bin/fic-cli','policy','apply','IDENTITY_ACCESS','passwdqc_retry_count'])
+    pam_ids = alt_topology_ids()
     saved=config_snapshot()
     snapshot("owned-before-upgrade")
     upgrades=sorted(Path('/var/tmp/fic-packages/upgrades').glob('*.rpm'))
@@ -127,6 +153,7 @@ try:
         run(['rpm','-Uvh',*map(str,upgrades)],timeout=300)
         assert Path('/var/lib/fic-lifecycle/status').read_text()=='INSTALLED\n'
         assert owned<=active() and config_snapshot()==saved
+        assert alt_topology_ids() == pam_ids
         # All subsequent reinstalls use the matching exact-version package set.
         hardware_inventory.collected(run)
         packages=list(map(str,upgrades))
@@ -150,9 +177,13 @@ try:
     assert config_snapshot()==saved
     assert Path('/var/lib/fic-lifecycle/status').read_text()=='REMOVED\n'
     assert not Path('/opt/fic/bin/fic').exists()
+    assert all(target.read_bytes() == previous for target, previous in pam_before.items())
     snapshot('removed-with-journal-witness')
     run(['rpm','-Uvh','--replacepkgs',*packages],timeout=300)
     assert config_snapshot()==saved
+    for policy in pam_ids:
+        run(['/opt/fic/bin/fic-cli','policy','apply','IDENTITY_ACCESS',policy])
+    assert all(new_id != pam_ids[policy] for policy, new_id in alt_topology_ids().items())
     run(['/opt/fic/bin/fic-cli','policy','apply','IDENTITY_ACCESS','password_max_age_days'])
     run(['rpm','-e','fic-cli','fic'],timeout=300)
     run(['rpm','-e','fic-dick'],timeout=300)

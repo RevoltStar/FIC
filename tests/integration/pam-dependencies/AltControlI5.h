@@ -118,6 +118,20 @@ json altControlI5(const PlatformProfile& profile,
 
     result["initial_control"]=command("/usr/sbin/control",{"system-auth","local"});
     result["initial"]=snapshot();result["activate"]=apply();result["activated"]=snapshot();
+    const auto activatedBeforeTransition=bytes();
+    const auto configureStrategy=[&](const std::string& strategy) {
+        write(paths.configDir / "IDENTITY_ACCESS.conf",
+              "enable_authentication_lockout.status=ENABLE\n"
+              "enable_authentication_lockout.value=" + strategy + "\n"
+              "enable_password_history.status=ENABLE\n");
+    };
+    configureStrategy("preauth_requisite");
+    result["strategy_transition"]=apply();
+    result["strategy_switched"]=snapshot();
+    configureStrategy("preauth_required");
+    result["strategy_restore"]=apply();
+    need(bytes()==activatedBeforeTransition,"strategy round trip changed canonical bytes");
+
     // Preserve native stock templates and scopes. Missing service packages
     // remain missing; no LDAP/SSSD services are installed by this probe.
     result["modes"]=json::array();
@@ -168,6 +182,52 @@ json altControlI5(const PlatformProfile& profile,
     result["missing_module_after"]=snapshot();
     for(const auto& module:modules) fs::rename(module.string()+".i5-hidden",module);
     result["final_release"]=release();result["final"]=snapshot();
+    for(const auto& activation:apply())
+        need(activation.at("ok").get<bool>(),"foreign ID fixture activation failed");
+    const auto exactPrimary=read(targets[0]);
+    auto foreignPrimary=exactPrimary;
+    const auto foreignMarker=foreignPrimary.find(" v1 id=");
+    need(foreignMarker!=std::string::npos,"missing versioned target marker");
+    const auto foreignIdStart=foreignMarker+std::string(" v1 id=").size();
+    const auto foreignIdEnd=foreignPrimary.find(' ',foreignIdStart);
+    foreignPrimary.replace(foreignIdStart,foreignIdEnd-foreignIdStart,"999999");
+    write(targets[0],foreignPrimary);
+    result["wrong_id_apply"]=apply()[0];
+    const auto wrongIdRelease=fic::rollback::rollbackPolicyBeforeDisable(
+        {"IDENTITY_ACCESS","PAM","enable_authentication_lockout"},"",deps);
+    result["wrong_id_release"]={{"ok",wrongIdRelease.rollbackCompleted()},{"detail",wrongIdRelease.message}};
+    result["wrong_id_preserved"]=read(targets[0])==foreignPrimary;
+    write(targets[0],exactPrimary);
+    result["wrong_id_cleanup"]=release();
+    for(const auto& activation:apply())
+        need(activation.at("ok").get<bool>(),"legacy fixture activation failed");
+    const PolicyRef historyRef{"IDENTITY_ACCESS","PAM","enable_password_history"};
+    auto historyRecords=journal->activeRecords(historyRef);
+    need(historyRecords.size()==1,"expected one active history record");
+    auto legacyRecord=historyRecords.front();
+    need(journal->setStatus(legacyRecord.id,fic::rollback::MutationStatus::RolledBack,error),error);
+    legacyRecord.id=0;
+    std::get<fic::rollback::UndoDisablePamCapability>(legacyRecord.undo.payload).topology=
+        fic::rollback::PamTopologyKind::AltTcbManaged;
+    fic::rollback::MutationId legacyId=0;
+    need(journal->prepareMutation(legacyRecord,legacyId,error) &&
+         journal->setStatus(legacyId,fic::rollback::MutationStatus::Applied,error),error);
+    auto legacyPrimary=read(targets[0]);
+    for(const auto* boundary:{"# BEGIN FIC pam_pwhistory transaction","# END FIC pam_pwhistory transaction"}) {
+        const auto at=legacyPrimary.find(boundary);
+        need(at!=std::string::npos,"missing native history boundary");
+        const auto suffix=at+std::string(boundary).size();
+        const auto end=legacyPrimary.find('\n',suffix);
+        need(end!=std::string::npos && end>suffix,"missing versioned history suffix");
+        legacyPrimary.erase(suffix,end-suffix);
+    }
+    write(targets[0],legacyPrimary);
+    result["legacy_apply"]=apply();
+    result["legacy_preserved"]=read(targets[0])==legacyPrimary;
+    result["legacy_release"]=release();
+    result["legacy_reactivate"]=apply();
+    result["legacy_reactivated"]=snapshot();
+    result["legacy_cleanup"]=release();
     // Model a crash after publication of the first faillock target. Use
     // an actual Prepared receipt and keep administrator bytes on the target
     // that was never published.

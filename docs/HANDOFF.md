@@ -1,114 +1,65 @@
-# Current task
+# ALT PAM post-rename compensation and package preflight
 
-* Base 60a5a127. Add fic-gui-system-qt alongside the bundled fic-gui.
-* One existing Qt6 ELF per target, two staging roots. Both packages expose
-  /bin/fic-gui, conflict with each other and depend on matching fic/fic-dick.
-* DEB keeps dpkg-shlibdeps Qt requirements. RPM keeps automatic ELF
-  requirements and verifies Widgets before publication. Both query runtime
-  package ownership of the XCB and JPEG plugins and fail on missing owners.
-* System payload has the ELF and the FIC license. The bundled launcher,
-  FIC_QT_ROOT, private Qt closure, provenance and source gate stay on fic-gui.
-* APT-RPM was observed installing the replacement before erasing the outgoing
-  GUI. Both new RPMs check the installed alternative before removing the
-  shared symlink in %preun. Older bundled RPMs lack this check and require
-  separate remove and install transactions when switching.
-* Release validates seven component names/versions per distro and exactly
-  five bundled sidecars. System GUI has no bundled manifest.
+* Branch main. Follow-up base 8af70c49. No push.
+* 6ac53d63 includes the failing write in faillock compensation and reuses
+  history compensation for enable/disable writer errors. Writer failure after
+  rename can leave candidate bytes. Restore only matching candidate bytes
+  using the existing CAS and trusted metadata checks, leave original bytes
+  alone, and report CRITICAL if compensation cannot be proven.
+* 31ae61aa requires read-only proof of partial topology at package preflight.
+  Only an exact-ID proper subset under Prepared v1 faillock provenance is
+  eligible. The check shares strict target, marker and placement checks with
+  release, which repeats proof under lock. Complete and legacy paths retain
+  their existing journal/physical matching rules.
+* Existing ALT control and RPM suites now assert physical marker IDs, including
+  across strategy transitions and upgrades. RPM runner accepts the explicit
+  private PID namespace reported by Podman, and its test image declares the
+  SQLite Python stdlib subpackage required by the hardware check.
 
-# Validation
+## Verification
 
-* Host GUI build and six focused CTest checks passed: release composition,
-  GUI compliance/license info, private permissions, DEB dependency analysis
-  and prelogin packaging. Bash syntax and git diff --check passed.
-* Ubuntu 24.04 and 26.04 each built both real GUI DEBs from a single build.
-  SHA-256 of the ELF matched between variants. Fresh install/remove and
-  bundled -> system -> bundled passed with APT/dpkg and Xvfb.
-* ALT p11 built both real GUI RPMs. The system package has libQt6 ELF
-  requirements, libqt6-gui plugin ownership dependency and License SUL-1.0.
-  After the symlink fix, fresh install/remove and both APT-RPM switches
-  passed with Xvfb, including preservation of the link and core fixtures.
-* The isolated GUI tests use real GUI packages and minimal same-version
-  fic/fic-dick fixtures. They verify native transaction order, payload, link,
-  group access, and loaded Qt libraries and plugins. They do not exercise
-  daemon lifecycle or live IPC.
-* Debian 12 and 13 builder preparation stalled or retried downloading APT
-  package indexes. Both attempts were cancelled after more than ten minutes,
-  before GUI compilation.
-* Full release build, hosted CI and full FIC package lifecycle were not run.
-  Local receipts: /tmp/fic-gui-matrix/*.log.
+* Five CTests passed in build-prelogin (journal, platform, activation policy,
+  ALT faillock and history). Fsync fixtures observed candidate bytes before
+  refusing durability for first/second faillock targets and history
+  activation/release. Existing concurrent modification and compensation
+  failure cases passed. Partial proof accepts matching ID, preserves bytes,
+  and rejects wrong IDs, malformed markers and unreadable targets.
+* PackageReleaseResources.cpp compiled. git diff --check, bash -n for the
+  RPM runner, and Python syntax checks passed.
+* Native ALT p11: production daemon, PAM transaction module and control
+  probe built. Expanded I5 checker passed with control modes, matching IDs,
+  strategy round trip, legacy release then v1, wrong/malformed markers,
+  partial recovery and retained third-party history. Evidence:
+  build-pam-p1-alt/followup-control-expanded.json.
+* Production RPMs 0.1.0 and 0.1.1 built. Two full native RPM gate attempts
+  passed fresh install and reached exact-version reinstall, then reproduced
+  sqlite3.DatabaseError: database disk image is malformed in the existing
+  hardware_inventory.collected assertion, before PAM activation.
+* A separate PAM-focused invocation of the existing RPM driver passed with
+  only the unrelated hardware inventory subscenario omitted. It used the
+  identical RPMs and actual scriptlets/daemon in an isolated systemd runtime.
+  Verified fresh install, both capability activations, 0.1.0 -> 0.1.1
+  preserving IDs, release restoring original target bytes, erase, reinstall
+  with fresh IDs and direct erase with active v1 topology. Legacy transition
+  was proven through native control, not a legacy RPM upgrade. Full gate
+  still fails on the inventory check. Host PAM was untouched.
 
-# PAM follow-up in progress
+## Reproduction / evidence
 
-* Base 13fb1a17. P1 started with the shared Prepared recovery check.
-  Recovery from the previous strategy now requires the matching physical ID
-  for an ID-bound manager before it restores Applied. The regression test
-  supplies a physical ID independent of the ID passed to bind.
-* pam_capability_activation_policy_tests built and passed in build-prelogin.
-* P1 ALT marker grammar, legacy provenance, partial publication recovery and
-  native package gates are pending. P3 audit and P2 report follow P1.
-* P1 implementation adds ALT v1 journal domain and target-bound boundary markers.
-  Host fixture tests passed (activation, journal and both ALT topology suites).
-  Native ALT configure stopped at missing nlohmann_json in the cached image.
-  Native control and package lifecycle gates remain outstanding.
-* P3 removed the ID-less undoPamCapability overload (only six fixture calls)
-  and an unreferenced static slot-writer ownership flag. Production release
-  already passes record.id. Legacy inspection and refusal paths remain needed
-  for package/recovery checks. The old paired-slot writer still has direct
-  tests and was retained. All four Debian/Ubuntu profiles select mutable C2
-  for supported password topology. ALT has its own history manager and
-  static passwdqc topology. Docs and stale profile comments distinguish these.
-* rollback_executor_tests built. Both PAM cases passed, but the complete
-  executable failed its mode-and-owner case with "test identity lookup
-  failed". platform_profile_tests passed.
-* Native ALT p11 retry installed build dependencies in the disposable
-  container and compiled both ALT manager suites. The image has no ctest,
-  so both binaries were then run directly in a fresh ALT p11 container.
-  Both passed, including fixture ID/partial-publication checks. The existing
-  --live-alt-enable round trip passed on container PAM, using legacy markers.
-  The ID-bound production control-mode and final erase/reinstall gates
-  still require native lifecycle validation.
-* P2 report: docs/pam-alt-pwhistory-parameter-rollback.md. Recommendation A,
-  preserve dedicated config semantics. No P2 production changes.
-* P1 follow-up routed ALT final erase domain release through the existing PAM
-  rollback backend. The former direct manager disable skipped journal
-  provenance and could not release v1. The later uninstall policy phase
-  still retires the journal record after proving absence.
-* Added a legacy -> release -> v1 fixture and adapted the existing ALT
-  production control probe to check physical/journal ID agreement and
-  Prepared recovery after one published target. Six focused CTests passed,
-  including pam_dependency_contract_tests. PackageReleaseResources.cpp
-  compiled separately. The updated native control gate attempt timed out
-  at ALT apt-get update (exit 124), before the full build.
-* Pending native commands with the test images prepared per the harness:
-  FIC_PAM_GATE_STAGE=i5 bash tests/integration/pam-dependencies/run-i1.sh alt-p11 alt-p11 build-pam-p1-alt
-  bash tests/integration/pam-dependencies/alt-control.sh build-pam-p1-alt --i5
-  bash /src/tests/integration/package-lifecycle/build-rpm.sh 0.1.0
-  bash /src/tests/integration/package-lifecycle/build-rpm.sh 0.1.1
-  bash tests/integration/package-lifecycle/run-rpm.sh fic-package-native:alt-p11 build-pam-p1-alt/lifecycle-packages
-  Arrange 0.1.1 RPMs in upgrades/ before the lifecycle run. The RPM build
-  commands run inside the matching builder with /src and /build mounts.
-
-# ALT PAM P1 follow-up
-
-* Compensation now includes the current faillock target when its writer
-  returns false, since rename can precede the failed directory fsync.
-  History uses the same local compensation path after writer failure on
-  activation/release and after a failed activation postcondition. Trusted
-  reread, existing CAS, original-byte no-op and CRITICAL on unknown or
-  unconfirmed recovery remain in force. Shared PAM snapshot writers already
-  compensate every attempted write and were left alone.
-* ALT package preflight accepts an incomplete topology only for a Prepared
-  v1 faillock record with a nonempty proper subset of exact-ID targets.
-  It runs the same read/placement/candidate checks as release, then returns
-  before writing. The rollback path repeats those checks under lock.
-* Tests use the AtomicFileWriter post-rename fsync hook and assert candidate
-  bytes were physically published at injection time. Both targets are
-  covered before and after rename, as are history enable and disable.
-  Partial proof tests cover correct ID, wrong ID, malformed marker and
-  missing target, and check that preview leaves PAM bytes unchanged.
-* Five focused CTests passed. PackageReleaseResources.cpp compiled.
-* Existing ALT cache has the earlier topology test binaries only. The image
-  fic-client-access:altp11 lacks systemd, ctest and build dependencies.
-  The initial bounded apt-get update succeeded in 49 s. Full native control
-  and RPM lifecycle require the builder/runtime dependencies and current
-  artifacts. See the native commands above.
+* Native images: localhost/fic-p1-followup-runtime:altp11 (build/control)
+  and localhost/fic-p1-followup-systemd:altp11 (runtime with pam-config 1.10
+  and Python sqlite3). Bounded APT preparation succeeded.
+* Use the production builders build-rpm.sh 0.1.0 and build-rpm.sh 0.1.1
+  from tests/integration/package-lifecycle inside the ALT builder with
+  /src and /build mounted. Put the 0.1.1 artifacts in upgrades/.
+* Full gate: run tests/integration/package-lifecycle/run-rpm.sh with
+  localhost/fic-p1-followup-systemd:altp11 and
+  build-pam-p1-alt/lifecycle-packages. On this machine set DOCKER_HOST to
+  the rootless Podman Docker socket. Logs: /tmp/fic-p1-rpm-lifecycle-sqlite.log
+  and /tmp/fic-p1-rpm-lifecycle-repeat.log.
+* Scoped diagnostic driver and result: /tmp/fic-p1-pam-rpm.QMpIrp
+  (copy of the same harness with the unrelated hardware subscenario removed).
+  Transcript: /tmp/fic-p1-rpm-pam-focused.log.
+* Native control harness: tests/integration/pam-dependencies/alt-control.sh
+  build-pam-p1-alt --i5 with the matching test image alias. Transcript:
+  /tmp/fic-p1-follow-native-final.log.
