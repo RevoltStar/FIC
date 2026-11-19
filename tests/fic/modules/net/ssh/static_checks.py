@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 import sys
 
 
@@ -128,10 +129,32 @@ def main():
             startup.count("recomputeAccessReadiness(") >= 4 and
             "std::chrono::seconds(30)" in startup,
             "admin changes and short periodic drift checks must recompute ACTIVE proof")
-    periodic = startup.find("if (mayMutate && now >= nextPeriodicApply)")
-    periodic_block = startup.find("incidentSshGuard().block(", periodic)
-    periodic_apply = startup.find("run_daemon_apply_all_pass(", periodic)
-    require(0 <= periodic < periodic_block < periodic_apply,
+    # Ignore comments and quoted text when locating blocks and calls.
+    code = re.sub(r"""//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""",
+                  " ", startup, flags=re.S)
+
+    def braced_body(source, opening):
+        depth = 1
+        for brace in re.finditer(r"[{}]", source[opening + 1:]):
+            depth += 1 if brace.group() == "{" else -1
+            if depth == 0:
+                return source[opening + 1:opening + 1 + brace.start()]
+        raise AssertionError("unterminated periodic apply block")
+
+    periodic = re.search(
+        r"\bif\s*\(\s*mayMutate\s*&&\s*periodicSchedule\s*\.\s*due"
+        r"\s*\(\s*now\s*\)\s*\)\s*\{", code)
+    require(periodic is not None, "periodic apply block missing")
+    body = braced_body(code, periodic.end() - 1)
+    active = re.search(
+        r"\bif\s*\(\s*periodicMode\s*\.\s*mode\s*==\s*"
+        r"fic::incident::IncidentResponseMode::Active\s*&&[^{}]*\{", body)
+    apply_call = re.search(r"\brun_daemon_apply_all_pass\s*\(", body)
+    active_body = braced_body(body, active.end() - 1) if active else ""
+    require(active is not None and apply_call is not None and
+            active.end() + len(active_body) < apply_call.start() and
+            re.search(r"\bincidentSshGuard\s*\(\s*\)\s*\.\s*block\s*\(",
+                      active_body),
             "periodic apply must guard an externally activated mode first")
     bridge_source = (root / "fic/src/incident/SshIncidentPamBridgeVerifier.cpp").read_text()
     require("/proc/" in bridge_source and "/exe" in bridge_source and

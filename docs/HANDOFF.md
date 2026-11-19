@@ -63,3 +63,12 @@
 * Native control harness: tests/integration/pam-dependencies/alt-control.sh
   build-pam-p1-alt --i5 with the matching test image alias. Transcript:
   /tmp/fic-p1-follow-native-final.log.
+
+## SSH periodic static check
+
+* Updated ssh_policy_static_checks for PeriodicApplySchedule. The check
+  scopes the guard to the ACTIVE branch and requires that branch to precede
+  the periodic apply call within the same scheduler block.
+* Both SSH and periodic contract CTests passed. Temporary source copies
+  failed as expected with the guard removed, moved after apply, or moved
+  outside the periodic block. No periodic_apply_tests binary was available.
