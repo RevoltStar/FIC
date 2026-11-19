@@ -958,6 +958,38 @@ void testAltHistoryOwnershipMatrix(const std::filesystem::path& root) {
     const auto terminal = readFile(journalPath);
     require(!policy.apply() && readFile(path) == owned && readFile(journalPath) == terminal,
         "ALT history orphan block adopted without journal");
+
+    auto legacyBytes = owned;
+    for (auto pos = legacyBytes.find(" v1 id="); pos != std::string::npos;
+         pos = legacyBytes.find(" v1 id=", pos)) {
+        const auto end = legacyBytes.find('\n', pos);
+        require(end != std::string::npos, "unterminated ALT marker");
+        legacyBytes.erase(pos, end - pos);
+    }
+    require(legacyBytes != owned, "fixture has no v1 markers");
+    writeFile(path, legacyBytes);
+    require(!policy.apply() && readFile(path) == legacyBytes,
+            "orphan legacy history was adopted");
+    auto legacy = journal->records().back();
+    legacy.id = 0;
+    auto& undo = std::get<fic::rollback::UndoDisablePamCapability>(legacy.undo.payload);
+    undo.topology = fic::rollback::PamTopologyKind::AltTcbManaged;
+    fic::rollback::MutationId legacyId = 0;
+    require(journal->prepareMutation(legacy, legacyId, error), error);
+    require(journal->setStatus(legacyId, fic::rollback::MutationStatus::Applied, error), error);
+    require(policy.apply() && readFile(path) == legacyBytes,
+            "legacy history was rewritten instead of preserving its provenance");
+    AltPamPasswordHistoryTopologyManager legacyManager(platform, managerOptions);
+    require(legacyManager.disable(error), error);
+    require(journal->setStatus(legacyId, fic::rollback::MutationStatus::RolledBack, error), error);
+    require(policy.apply(), "release of legacy history did not allow new activation");
+    const auto newRecord = journal->activeRecords(ref).front();
+    require(newRecord.id != legacyId &&
+            readFile(path).find(" v1 id=" + std::to_string(newRecord.id) + " target=") != std::string::npos,
+            "legacy release did not transition to v1 ownership");
+    writeFile(path, legacyBytes);
+    require(!policy.apply() && readFile(path) == legacyBytes,
+            "v1 provenance accepted replacement legacy blocks");
 }
 
 void testStaticPasswdqcStructural(const std::filesystem::path& root) {

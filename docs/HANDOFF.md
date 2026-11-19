@@ -69,3 +69,21 @@
   still require native lifecycle validation.
 * P2 report: docs/pam-alt-pwhistory-parameter-rollback.md. Recommendation A,
   preserve dedicated config semantics. No P2 production changes.
+* P1 follow-up routed ALT final erase domain release through the existing PAM
+  rollback backend. The former direct manager disable skipped journal
+  provenance and could not release v1. The later uninstall policy phase
+  still retires the journal record after proving absence.
+* Added a legacy -> release -> v1 fixture and adapted the existing ALT
+  production control probe to check physical/journal ID agreement and
+  Prepared recovery after one published target. Six focused CTests passed,
+  including pam_dependency_contract_tests. PackageReleaseResources.cpp
+  compiled separately. The updated native control gate attempt timed out
+  at ALT apt-get update (exit 124), before the full build.
+* Pending native commands with the test images prepared per the harness:
+  FIC_PAM_GATE_STAGE=i5 bash tests/integration/pam-dependencies/run-i1.sh alt-p11 alt-p11 build-pam-p1-alt
+  bash tests/integration/pam-dependencies/alt-control.sh build-pam-p1-alt --i5
+  bash /src/tests/integration/package-lifecycle/build-rpm.sh 0.1.0
+  bash /src/tests/integration/package-lifecycle/build-rpm.sh 0.1.1
+  bash tests/integration/package-lifecycle/run-rpm.sh fic-package-native:alt-p11 build-pam-p1-alt/lifecycle-packages
+  Arrange 0.1.1 RPMs in upgrades/ before the lifecycle run. The RPM build
+  commands run inside the matching builder with /src and /build mounts.

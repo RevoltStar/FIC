@@ -36,7 +36,7 @@ for row in x['modes']:
     assert [a['ok'] for a in row['apply']] == expected[mode]
     assert row['apply_bytes_preserved'] and row['apply_journal_preserved']
     for cap in row['before']['capabilities']:
-        assert cap['physical_mutation_id'] is None  # no invented causal receipt
+        assert cap['physical_mutation_id'] == cap['journal_mutation_id'] > 0
         assert cap['active_records'] == 1
     h = row['before']['capabilities'][1]
     assert h['selected_local_proof']['ok'] == expected[mode][1]
@@ -53,6 +53,7 @@ for row in x['modes']:
     assert row['after_release']['system_auth'] == row['before']['system_auth']
     assert all(c['active_records'] == 0 for c in row['after_release']['capabilities'])
     assert all(a['ok'] for a in row['reacquire'])
+    owned = row['reacquired']['targets']
 assert all(not a['ok'] for a in x['unsupported_apply'])
 assert all(a['ok'] for a in x['unsupported_release'])
 assert x['unsupported_after']['system_auth'] == 'i5-unsupported'
@@ -60,6 +61,13 @@ assert x['unsupported_after']['targets'] == baseline
 assert all(not c['inspect'] for c in x['missing_module_before']['capabilities'])
 assert all(a['ok'] for a in x['missing_module_release'])
 assert x['missing_module_after']['targets'] == baseline
+partial_before = x['partial_before']['capabilities'][0]
+partial_after = x['partial_after']['capabilities'][0]
+assert partial_before['inspect'] is False and partial_before['physical_mutation_id'] is None
+assert all(a['ok'] for a in x['partial_apply'] + x['partial_release'])
+assert partial_after['physical_mutation_id'] == partial_after['journal_mutation_id'] > 0
+assert partial_after['journal_mutation_id'] != partial_before['journal_mutation_id']
+assert x['partial_preserved']
 for row in x['journal_states']:
     should_apply = row['phase'] in {'PreparedBefore', 'PreparedAfter'}
     assert all(a['ok'] == should_apply for a in row['apply']), row['phase']

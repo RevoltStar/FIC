@@ -40,7 +40,10 @@ json altControlI5(const PlatformProfile& profile,
             need(bool(manager),error); p::PamTopologyStatus state; error.clear();
             member["inspect"]=manager->inspect(state,error);
             member["state"]=static_cast<int>(state.state);member["detail"]=error;
-            member["physical_mutation_id"]=state.ownershipMutationId ? json(*state.ownershipMutationId) : json(nullptr);
+            p::PamTopologyStatus physical;
+            const bool physicalOk=manager->inspectForRelease(physical,error);
+            member["physical_mutation_id"]=physicalOk && physical.ownershipMutationId
+                ? json(*physical.ownershipMutationId) : json(nullptr);
             p::PamConfiguration configuration(profile.pam);p::PamCapabilityVerification proof;
             member["structural"]=p::PamCapabilityVerifier::verify(configuration,profile.pam,
                 scope->services,kind,capability->provider,proof,p::PamCapabilityVerificationMode::Structural);
@@ -59,7 +62,10 @@ json altControlI5(const PlatformProfile& profile,
                 }
             }
 
-            member["active_records"]=journal->activeRecords({"IDENTITY_ACCESS","PAM",pamCapabilityActivationPolicyName(kind)}).size();
+            const auto records=journal->activeRecords(
+                {"IDENTITY_ACCESS","PAM",pamCapabilityActivationPolicyName(kind)});
+            member["active_records"]=records.size();
+            member["journal_mutation_id"]=records.size()==1 ? json(records.front().id) : json(nullptr);
             member["graph"]=json::array();
             for(const auto& service:scope->services) {
                 json g={{"service",service},{"present",configuration.serviceExists(service)}};
@@ -162,8 +168,27 @@ json altControlI5(const PlatformProfile& profile,
     result["missing_module_after"]=snapshot();
     for(const auto& module:modules) fs::rename(module.string()+".i5-hidden",module);
     result["final_release"]=release();result["final"]=snapshot();
-    // Journal crash-state fixtures use the real legacy payload and parser;
-    // no marker ID or historical causality receipt is invented.
+    // Model a crash after publication of the first faillock target. Use
+    // an actual Prepared receipt and keep administrator bytes on the target
+    // that was never published.
+    const auto partialBefore=bytes();
+    for(const auto& activation:apply())
+        need(activation.at("ok").get<bool>(),"partial fixture activation failed");
+    const PolicyRef lockoutRef{"IDENTITY_ACCESS","PAM","enable_authentication_lockout"};
+    const auto partialRecords=journal->activeRecords(lockoutRef);
+    need(partialRecords.size()==1 && journal->setStatus(partialRecords.front().id,
+        fic::rollback::MutationStatus::Prepared,error),error);
+    const auto separateTarget=targets[1].string();
+    const std::string adminComment="# P1 administrator comment\n";
+    const auto unpublished=partialBefore[separateTarget].get<std::string>()+adminComment;
+    write(targets[1],unpublished);
+    result["partial_before"]=snapshot();
+    result["partial_apply"]=apply();
+    result["partial_after"]=snapshot();
+    result["partial_release"]=release();
+    result["partial_preserved"]=read(targets[1])==unpublished;
+    write(targets[1],partialBefore[separateTarget].get<std::string>());
+    // Use the receipts and the physical markers published by the real policy.
     result["journal_states"]=json::array();
     for(const auto* phase:{"PreparedBefore","PreparedAfter","RollbackFailed","AppliedAbsent"}) {
         json test={{"phase",phase}};
@@ -186,7 +211,8 @@ json altControlI5(const PlatformProfile& profile,
                 if(std::string(phase)=="AppliedAbsent") {
                     const auto* c=p::capabilityConfig(profile.pam,kind);const auto* scope=p::scopeConfig(profile.pam,c->scope);
                     auto manager=p::createPamTopologyManager(profile.pam,*c,scope->services,executables,error);
-                    need(manager && manager->disable(error),error); // external physical disappearance fixture
+                    need(manager && manager->bindJournalMutationId(records[0].id,error) &&
+                         manager->disable(error),error); // external physical disappearance fixture
                 } else need(journal->setStatus(records[0].id, std::string(phase)=="PreparedAfter"
                     ? fic::rollback::MutationStatus::Prepared : fic::rollback::MutationStatus::RollbackFailed,error),error);
             }
@@ -207,7 +233,11 @@ json altControlI5(const PlatformProfile& profile,
         const auto* scope=p::scopeConfig(profile.pam,c->scope);
         auto manager=p::createPamTopologyManager(profile.pam,*c,scope->services,executables,error);
         need(bool(manager),error);
-        if(std::string(phase)=="AppliedAbsent") need(manager->disable(error),error);
+        if(std::string(phase)=="AppliedAbsent") {
+            const auto records=journal->activeRecords({"IDENTITY_ACCESS","PAM","enable_password_history"});
+            need(records.size()==1 && manager->bindJournalMutationId(records[0].id,error) &&
+                 manager->disable(error),error);
+        }
         write(foreignHistory,foreignBytes);
         write(targets[0],read(targets[0])+foreignInclude);
         if(std::string(phase)=="BrokenBlock") {
@@ -260,11 +290,13 @@ json altControlI5(const PlatformProfile& profile,
         test["reset_without_foreign"]=release();
         result["foreign_history"].push_back(test);
     }
-    result["orphan"]=json::array();
+    for(const auto& activation:apply())
+        need(activation.at("ok").get<bool>(),"orphan fixture activation failed");
     for(auto kind:{PamCapability::AuthenticationLockout,PamCapability::PasswordHistory}) {
-        const auto* c=p::capabilityConfig(profile.pam,kind);const auto* scope=p::scopeConfig(profile.pam,c->scope);
-        auto manager=p::createPamTopologyManager(profile.pam,*c,scope->services,executables,error);
-        need(manager && manager->enable(error),error);
+        const auto records=journal->activeRecords(
+            {"IDENTITY_ACCESS","PAM",pamCapabilityActivationPolicyName(kind)});
+        need(records.size()==1 && journal->setStatus(records.front().id,
+            fic::rollback::MutationStatus::RolledBack,error),error);
     }
     write(foreignHistory,foreignBytes);
     write(targets[0],read(targets[0])+foreignInclude);

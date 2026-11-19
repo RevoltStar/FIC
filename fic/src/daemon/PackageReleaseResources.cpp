@@ -4,9 +4,10 @@
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
 #include "modules/oss/display_manager/DisplayManagerConfigTransaction.h"
 #include "rollback/ScopeTransition.h"
-#include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
-#include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
-#include <grp.h>
+#include "modules/identity_access/pam/PamPlatformComposition.h"
+#include "modules/identity_access/pam/PamTopologyManagerFactory.h"
+#include "modules/identity_access/pam/policies/PamCapabilityActivationPolicy.h"
+#include "rollback/PamRollback.h"
 namespace fic::daemon {
 bool PackageReleaseResources::preflight(PackageReleaseDomain domain,fic::rollback::MutationJournal& journal,
     PackageResourceReleaseReport& report,std::string& error) const {
@@ -26,40 +27,66 @@ bool PackageReleaseResources::run(PackageReleaseDomain domain,fic::rollback::Mut
     report={};
     if(supports(domain,error)!=PackageReleaseSupport::Supported)return false;
     switch(domain) {
-    case PackageReleaseDomain::AltHistoryTopology: {
-        using namespace fic::identity::pam;
-        const auto* shadow=::getgrnam("shadow");
-        if(!shadow){error="ALT pam_pwhistory requires the shadow group";return false;}
-        AltPamPasswordHistoryTopologyOptions options;
-        options.lockFilePath=paths_.runtimeDir/"pam-alt-pwhistory-topology.lock";
-        options.lockDebugLogPath=paths_.lockDebugLogFile;
-        options.storageGroup=shadow->gr_gid;
-        AltPamPasswordHistoryTopologyManager backend(platform_.pam,std::move(options));
-        AltPamPasswordHistoryTopologyState state;
-        if(preview||proof) {
-            if(!backend.inspectReadOnly(state,error))return false;
-            if(proof&&state!=AltPamPasswordHistoryTopologyState::Disabled){error="ALT password history remains enabled";return false;}
-            return true;
-        }
-        if(!backend.disable(error)||!backend.status(state,error)||!backend.confirmDurable(error))return false;
-        if(state!=AltPamPasswordHistoryTopologyState::Disabled){error="ALT password history remains enabled";return false;}
-        return true;
-    }
+    case PackageReleaseDomain::AltHistoryTopology:
     case PackageReleaseDomain::AltFaillockTopology: {
         using namespace fic::identity::pam;
-        AltPamFaillockTopologyOptions options;
-        options.lockFilePath=paths_.runtimeDir/"pam-alt-faillock-topology.lock";
-        options.lockDebugLogPath=paths_.lockDebugLogFile;
-        AltPamFaillockTopologyManager backend(platform_.pam,std::move(options));
-        AltPamFaillockTopologyState state;
-        if(preview||proof) {
-            if(!backend.inspectReadOnly(state,error))return false;
-            if(proof&&state!=AltPamFaillockTopologyState::Disabled){error="ALT faillock remains enabled";return false;}
+        using namespace fic::platform;
+        using namespace fic::rollback;
+        const auto kind = domain == PackageReleaseDomain::AltHistoryTopology
+            ? PamCapability::PasswordHistory : PamCapability::AuthenticationLockout;
+        const std::string name = pamCapabilityActivationPolicyName(kind);
+        const auto records = journal.activeRecords({"IDENTITY_ACCESS", "PAM", name});
+        const PamCapabilityConfig* capability = nullptr;
+        const std::vector<std::string>* services = nullptr;
+        if (!resolveCapability(platform_.pam, kind, capability, services, error))
+            return false;
+        PamRollbackOptions options;
+        options.platform = platform_.pam;
+        options.managerFactory = [&](const auto& config, const auto& roots, auto& detail) {
+            return createPamTopologyManager(platform_.pam, config, roots, executables_, detail);
+        };
+        auto backend = options.managerFactory(*capability, *services, error);
+        if (!backend) return false;
+
+        PamTopologyStatus state;
+        if (proof || records.empty()) {
+            if (!backend->inspectForRelease(state, error)) return false;
+            if (state.state != PamTopologyState::Disabled) {
+                error = "ALT PAM topology remains present without release proof";
+                return false;
+            }
             return true;
         }
-        if(!backend.disable(error)||!backend.status(state,error)||!backend.confirmDurable(error))return false;
-        if(state!=AltPamFaillockTopologyState::Disabled){error="ALT faillock remains enabled";return false;}
-        return true;
+
+        const auto& record = records.front();
+        const auto* undo = std::get_if<UndoDisablePamCapability>(&record.undo.payload);
+        if (records.size() != 1 || !record.id || record.resource != "capability/" + name ||
+            record.undo.backend != MutationBackend::Pam || !undo ||
+            undo->capability != name || !undo->activationIdentifiers.empty() ||
+            (undo->topology != PamTopologyKind::AltTcbManaged &&
+             undo->topology != PamTopologyKind::AltTcbJournalBoundV1)) {
+            error = "ALT PAM package release has ambiguous journal provenance";
+            return false;
+        }
+        if (preview) {
+            const bool bound = undo->topology == PamTopologyKind::AltTcbJournalBoundV1;
+            // A partial v1 publication is deliberately not a complete
+            // inspection proof. The rollback backend validates every present
+            // artifact under its write lock before compensating any target.
+            if (!backend->inspectForRelease(state, error)) return bound;
+            if (state.state == PamTopologyState::Disabled ||
+                (state.state == PamTopologyState::Enabled && state.manageable &&
+                 (bound ? state.ownershipMutationId == record.id : !state.ownershipMutationId)))
+                return true;
+            error = "ALT PAM package release physical ownership differs from the journal";
+            return false;
+        }
+        const auto released = undoPamCapability(options, record.id, *undo);
+        error = released.message;
+        // The subsequent policy rollback retires the record after proving
+        // absence again, preserving the existing uninstall ordering.
+        return released.state == PamRollbackState::Released ||
+               released.state == PamRollbackState::AlreadyReleased;
     }
     case PackageReleaseDomain::DisplayManager: {
         DisplayManagerConfigTransaction backend(executables_,platform_.displayManager);
