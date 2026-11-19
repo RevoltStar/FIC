@@ -1671,6 +1671,14 @@ bool AltPamFaillockTopologyManager::enableStrategy(
 }
 
 bool AltPamFaillockTopologyManager::disable(std::string& error) {
+    return releaseImpl(false, error);
+}
+
+bool AltPamFaillockTopologyManager::provePartialRelease(std::string& error) {
+    return releaseImpl(true, error);
+}
+
+bool AltPamFaillockTopologyManager::releaseImpl(bool partialProofOnly, std::string& error) {
     const auto* capability = capabilityConfig(
         platformConfig_, PamCapability::AuthenticationLockout);
     if (!canEnable(error) || capability == nullptr) {
@@ -1692,6 +1700,10 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
         targets.begin(), targets.end(), [](const ManagedTargetState& target) {
             return target.managed.state == ManagedState::Present;
         }));
+    if (partialProofOnly && (!boundMutationId_ || present == 0 || present == targets.size())) {
+        error = "no exact partial ALT pam_faillock publication to release";
+        return false;
+    }
     if (present == 0) {
         error.clear();
         return true;
@@ -1730,6 +1742,10 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
                 target.target.path.string() + ": " + error;
             return false;
         }
+    }
+    if (partialProofOnly) {
+        error.clear();
+        return true;
     }
     if (!writeCandidates(targets, options_, "disable", error)) {
         return false;

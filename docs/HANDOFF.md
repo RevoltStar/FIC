@@ -87,3 +87,28 @@
   bash tests/integration/package-lifecycle/run-rpm.sh fic-package-native:alt-p11 build-pam-p1-alt/lifecycle-packages
   Arrange 0.1.1 RPMs in upgrades/ before the lifecycle run. The RPM build
   commands run inside the matching builder with /src and /build mounts.
+
+# ALT PAM P1 follow-up
+
+* Compensation now includes the current faillock target when its writer
+  returns false, since rename can precede the failed directory fsync.
+  History uses the same local compensation path after writer failure on
+  activation/release and after a failed activation postcondition. Trusted
+  reread, existing CAS, original-byte no-op and CRITICAL on unknown or
+  unconfirmed recovery remain in force. Shared PAM snapshot writers already
+  compensate every attempted write and were left alone.
+* ALT package preflight accepts an incomplete topology only for a Prepared
+  v1 faillock record with a nonempty proper subset of exact-ID targets.
+  It runs the same read/placement/candidate checks as release, then returns
+  before writing. The rollback path repeats those checks under lock.
+* Tests use the AtomicFileWriter post-rename fsync hook and assert candidate
+  bytes were physically published at injection time. Both targets are
+  covered before and after rename, as are history enable and disable.
+  Partial proof tests cover correct ID, wrong ID, malformed marker and
+  missing target, and check that preview leaves PAM bytes unchanged.
+* Five focused CTests passed. PackageReleaseResources.cpp compiled.
+* Existing ALT cache has the earlier topology test binaries only. The image
+  fic-client-access:altp11 lacks systemd, ctest and build dependencies.
+  The initial bounded apt-get update succeeded in 49 s. Full native control
+  and RPM lifecycle require the builder/runtime dependencies and current
+  artifacts. See the native commands above.

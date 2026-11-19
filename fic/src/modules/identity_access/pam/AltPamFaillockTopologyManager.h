@@ -105,7 +105,11 @@ public:
         fic::platform::PamFaillockStrategy strategy,
         std::string& error) override;
 
+    // A read-only proof for a Prepared record interrupted between targets.
+    bool provePartialRelease(std::string& error);
+
 private:
+    bool releaseImpl(bool partialProofOnly, std::string& error);
     std::optional<std::uint64_t> boundMutationId_;
     fic::platform::PamPlatformConfig platformConfig_;
     AltPamFaillockTopologyOptions options_;

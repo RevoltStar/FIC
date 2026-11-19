@@ -1,4 +1,5 @@
 #include "daemon/PackageReleaseResources.h"
+#include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 #include "modules/oss/desktop_environment/DesktopGlobalConfigReconciler.h"
 #include "modules/oss/desktop_environment/backends/FlySystemBackend.h"
 #include "modules/oss/desktop_environment/backends/GnomeSystemBackend.h"
@@ -70,10 +71,13 @@ bool PackageReleaseResources::run(PackageReleaseDomain domain,fic::rollback::Mut
         }
         if (preview) {
             const bool bound = undo->topology == PamTopologyKind::AltTcbJournalBoundV1;
-            // A partial v1 publication is deliberately not a complete
-            // inspection proof. The rollback backend validates every present
-            // artifact under its write lock before compensating any target.
-            if (!backend->inspectForRelease(state, error)) return bound;
+            if (!backend->inspectForRelease(state, error)) {
+                if (!bound || record.status != MutationStatus::Prepared)
+                    return false;
+                auto* faillock = dynamic_cast<AltPamFaillockTopologyManager*>(backend.get());
+                return faillock && faillock->bindJournalMutationId(record.id, error) &&
+                    faillock->provePartialRelease(error);
+            }
             if (state.state == PamTopologyState::Disabled ||
                 (state.state == PamTopologyState::Enabled && state.manageable &&
                  (bound ? state.ownershipMutationId == record.id : !state.ownershipMutationId)))

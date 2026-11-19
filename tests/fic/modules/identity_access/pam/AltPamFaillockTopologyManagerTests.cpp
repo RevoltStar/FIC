@@ -1449,9 +1449,25 @@ static void testJournalBoundPartialPublication() {
     PamTopologyStatus status;
     require(!manager.inspect(status, error), "partial publication accepted as enabled");
     require(manager.bindJournalMutationId(18, error), error);
-    require(!manager.disable(error), "partial publication released by a foreign ID");
+    require(!manager.provePartialRelease(error) && !manager.disable(error),
+            "partial publication accepted with a foreign ID");
     require(TemporaryTree::read(tree.target()) == primaryBound, "refusal changed primary");
     require(manager.bindJournalMutationId(17, error), error);
+    const auto unpublished = TemporaryTree::read(secondary);
+    require(manager.provePartialRelease(error), error);
+    require(TemporaryTree::read(tree.target()) == primaryBound &&
+            TemporaryTree::read(secondary) == unpublished, "preflight wrote PAM files");
+    auto malformed = primaryBound;
+    const auto marker = malformed.find(" v1 id=17");
+    require(marker != std::string::npos, "missing test marker");
+    malformed.replace(marker, std::string(" v1 id=17").size(), " v1 id=0");
+    TemporaryTree::write(tree.target(), malformed);
+    require(!manager.provePartialRelease(error) &&
+            TemporaryTree::read(tree.target()) == malformed, "preflight accepted malformed marker");
+    TemporaryTree::write(tree.target(), primaryBound);
+    fs::remove(secondary);
+    require(!manager.provePartialRelease(error), "preflight accepted unreadable target");
+    TemporaryTree::write(secondary, unpublished);
     require(manager.disable(error), error);
     require(TemporaryTree::read(tree.target()) == kCanonical, "primary not compensated");
     require(TemporaryTree::read(secondary) == secondaryBefore + "# administrator edit\n",
