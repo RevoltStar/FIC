@@ -107,6 +107,7 @@ struct ManagerState {
     bool journalBoundPhysicalOwnership = false;
     bool disableTransitionsToDisabled = false;
     std::optional<std::uint64_t> boundMutationId;
+    std::optional<std::uint64_t> physicalMutationIdOverride;
     std::function<void()> onConfirmDurable;
     std::optional<fic::platform::PamFaillockStrategy> activeStrategy;
     std::vector<fic::platform::PamFaillockStrategy> requestedStrategies;
@@ -132,7 +133,8 @@ public:
         if (state_->journalBoundPhysicalOwnership &&
             state_->topologyState ==
                 fic::identity::pam::PamTopologyState::Enabled) {
-            status.ownershipMutationId = state_->boundMutationId;
+            status.ownershipMutationId = state_->physicalMutationIdOverride
+                ? state_->physicalMutationIdOverride : state_->boundMutationId;
         }
         error = state_->inspectResult ? "" : "inspection failed";
         return state_->inspectResult;
@@ -488,6 +490,16 @@ void testPamJournalLifecycle(const std::filesystem::path& root,
     require(journal->prepareMutation(transition, staleId, error) &&
                 staleId == transitionId, error);
     setLockoutValue("preauth_requisite");
+    state->journalBoundPhysicalOwnership = true;
+    state->physicalMutationIdOverride = transitionId + 1;
+    auto foreignPrevious = onCurrentJournal();
+    require(!foreignPrevious.apply(), "Prepared BEFORE accepted a foreign physical id");
+    records = journal->activeRecords(ref);
+    require(records.size() == 1 && records.front().id == transitionId &&
+                records.front().status == fic::rollback::MutationStatus::Prepared,
+            "Prepared BEFORE rewrote the journal without matching physical ownership");
+    state->journalBoundPhysicalOwnership = false;
+    state->physicalMutationIdOverride.reset();
     state->canEnableStrategyResult = false;
     auto changedDesired = onCurrentJournal();
     require(!changedDesired.apply() && state->enableStrategyCalls == 0,

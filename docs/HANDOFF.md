@@ -36,3 +36,13 @@
   before GUI compilation.
 * Full release build, hosted CI and full FIC package lifecycle were not run.
   Local receipts: /tmp/fic-gui-matrix/*.log.
+
+# PAM follow-up in progress
+
+* Base 13fb1a17. P1 started with the shared Prepared recovery check.
+  Recovery from the previous strategy now requires the matching physical ID
+  for an ID-bound manager before it restores Applied. The regression test
+  supplies a physical ID independent of the ID passed to bind.
+* pam_capability_activation_policy_tests built and passed in build-prelogin.
+* P1 ALT marker grammar, legacy provenance, partial publication recovery and
+  native package gates are pending. P3 audit and P2 report follow P1.

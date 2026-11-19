@@ -416,6 +416,8 @@ bool PamCapabilityActivationPolicy::applyPam(
                    status.state ==
                        fic::identity::pam::PamTopologyState::Enabled &&
                    status.manageable && recordedPrevious &&
+                   (!journalBoundPhysicalOwnership ||
+                    status.ownershipMutationId == active.front().id) &&
                    status.activeStrategy == recordedPrevious) {
             if (!proveEnabled(true, recordedPrevious) ||
                 !journal->setStatusWithMessage(active.front().id,
