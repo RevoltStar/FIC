@@ -30,6 +30,7 @@ struct AltPamPasswordHistoryTopologyOptions {
     gid_t storageGroup = 0;
     std::chrono::milliseconds transactionLockTimeout{15000};
     AtomicWriteOptions writeOptions;
+    bool requireJournalOwnership = false;
     std::function<bool(const std::string&, const std::string&,
                        const AtomicWriteOptions&, std::string*)> writer;
     std::function<bool(std::string&)> semanticVerifier;
@@ -38,6 +39,17 @@ struct AltPamPasswordHistoryTopologyOptions {
 
 class AltPamPasswordHistoryTopologyManager final : public PamTopologyManager {
 public:
+    bool journalBindsPhysicalOwnership() const override {
+        return options_.requireJournalOwnership;
+    }
+    bool bindJournalMutationId(std::uint64_t id, std::string& error) override {
+        if (id == 0) {
+            error = "invalid ALT PAM journal binding";
+            return false;
+        }
+        boundMutationId_ = id;
+        return true;
+    }
     bool confirmDurable(std::string& error) const override;
     inline static constexpr const char* BEGIN =
         "# BEGIN FIC pam_pwhistory transaction";
@@ -65,13 +77,15 @@ public:
     bool disable(std::string& error) override;
 
 private:
+    std::optional<std::uint64_t> boundMutationId_;
     fic::platform::PamPlatformConfig platformConfig_;
     AltPamPasswordHistoryTopologyOptions options_;
 
     bool statusImpl(AltPamPasswordHistoryTopologyState& state,
                     bool& unavailable, std::string& error);
     bool inspectReadOnlyImpl(AltPamPasswordHistoryTopologyState& state,
-                    bool& unavailable,std::string& error, bool proveEffective = true);
+                    bool& unavailable,std::string& error, bool proveEffective = true,
+                    std::optional<std::uint64_t>* ownership = nullptr);
     bool verifySemanticEffectiveness(std::string& error) const;
 };
 

@@ -1,3 +1,4 @@
+#include "AltPamOwnershipMarker.h"
 #include "modules/identity_access/pam/AltPamPasswordHistoryTopologyManager.h"
 
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
@@ -36,6 +37,7 @@ struct TargetSnapshot {
 };
 
 struct ManagedBlock {
+    std::optional<std::uint64_t> ownership;
     bool present = false;
     std::size_t begin = 0;
     std::size_t tcb = 0;
@@ -171,9 +173,14 @@ bool inspectTopology(const std::filesystem::path& path,
                      ManagedBlock& block,
                      std::string& error) {
     lines = splitLines(content);
-    if (!parseRules(path, content, rules, error) ||
+    using M = AltPamPasswordHistoryTopologyManager;
+    std::optional<std::uint64_t> ownership;
+    if (!inspectAltPamMarkers(lines, path, "pam_pwhistory", {M::BEGIN, M::END},
+                             ownership, error) ||
+        !parseRules(path, content, rules, error) ||
         !inspectBlock(lines, rules, block, error))
         return false;
+    block.ownership = ownership;
     std::size_t tcbCount = 0;
     std::size_t historyCount = 0;
     std::size_t transactionCount = 0;
@@ -690,7 +697,9 @@ bool AltPamPasswordHistoryTopologyManager::inspectReadOnly(AltPamPasswordHistory
 }
 
 bool AltPamPasswordHistoryTopologyManager::inspectReadOnlyImpl(AltPamPasswordHistoryTopologyState& state,
-    bool& unavailable,std::string& error, bool proveEffective) {
+    bool& unavailable,std::string& error, bool proveEffective,
+    std::optional<std::uint64_t>* ownership) {
+    if (ownership) ownership->reset();
     unavailable=false;
     if(!canEnable(error))return false;
     const auto* capability = capabilityConfig(
@@ -724,6 +733,7 @@ bool AltPamPasswordHistoryTopologyManager::inspectReadOnlyImpl(AltPamPasswordHis
         !validateHistoryFiles(options_, error) ||
         (proveEffective && !verifySemanticEffectiveness(error)))
         return false;
+    if (ownership) *ownership = block.ownership;
     state = AltPamPasswordHistoryTopologyState::Enabled;
     return true;
 }
@@ -734,12 +744,13 @@ bool AltPamPasswordHistoryTopologyManager::inspectForRelease(PamTopologyStatus& 
     if (!lock.acquire()) { error = "could not acquire PAM topology lock"; return false; }
     AltPamPasswordHistoryTopologyState state;
     bool unavailable = false;
-    if (!inspectReadOnlyImpl(state, unavailable, error, false)) {
+    std::optional<std::uint64_t> ownership;
+    if (!inspectReadOnlyImpl(state, unavailable, error, false, &ownership)) {
         result = {unavailable ? PamTopologyState::Unavailable : PamTopologyState::Broken, true, {}, error};
         return false;
     }
     result = {state == AltPamPasswordHistoryTopologyState::Enabled ? PamTopologyState::Enabled
-        : PamTopologyState::Disabled, true, {}, {}};
+        : PamTopologyState::Disabled, true, {}, {}, ownership};
     return true;
 }
 
@@ -747,7 +758,13 @@ bool AltPamPasswordHistoryTopologyManager::inspect(PamTopologyStatus& result,
                                                     std::string& error) {
     AltPamPasswordHistoryTopologyState current;
     bool unavailable = false;
-    if (!statusImpl(current, unavailable, error)) {
+    ExclusivePidLock lock(options_.lockFilePath.string(), options_.lockDebugLogPath.string(), false);
+    if (!lock.acquire()) {
+        error = "could not acquire PAM topology lock";
+        return false;
+    }
+    std::optional<std::uint64_t> ownership;
+    if (!inspectReadOnlyImpl(current, unavailable, error, true, &ownership)) {
         result = {unavailable ? PamTopologyState::Unavailable
                               : PamTopologyState::Broken,
                   true, {}, error};
@@ -756,7 +773,7 @@ bool AltPamPasswordHistoryTopologyManager::inspect(PamTopologyStatus& result,
     result = {current == AltPamPasswordHistoryTopologyState::Enabled
                   ? PamTopologyState::Enabled
                   : PamTopologyState::Disabled,
-              true, {}, {}};
+              true, {}, {}, ownership};
     return true;
 }
 
@@ -767,6 +784,10 @@ bool AltPamPasswordHistoryTopologyManager::enable(std::string& error) {
         options_.lockDebugLogPath.string(), false);
     if (!topologyLock.acquire()) {
         error = "could not acquire PAM topology lock";
+        return false;
+    }
+    if (options_.requireJournalOwnership && !boundMutationId_) {
+        error = "ALT pam_pwhistory mutation requires journal binding";
         return false;
     }
     if (!prepareStorageBeforeTransaction(options_, error))
@@ -791,8 +812,15 @@ bool AltPamPasswordHistoryTopologyManager::enable(std::string& error) {
     if (!verifyNoExternalHistory(
             platformConfig_, *capability, block.present, error))
         return false;
-    if (block.present)
+    if (block.present) {
+        if (block.ownership != boundMutationId_) {
+            error = "ALT pam_pwhistory journal ownership mismatch";
+            return false;
+        }
         return verifySemanticEffectiveness(error);
+    }
+    const auto suffix = boundMutationId_
+        ? altPamMarkerSuffix(*boundMutationId_, capability->topologyTarget) : std::string();
 
     std::optional<std::size_t> tcbLine;
     for (const auto& rule : rules) {
@@ -811,12 +839,12 @@ bool AltPamPasswordHistoryTopologyManager::enable(std::string& error) {
             candidateLines.push_back(lines[index]);
             continue;
         }
-        candidateLines.push_back({BEGIN, "\n"});
+        candidateLines.push_back({BEGIN + suffix, "\n"});
         candidateLines.push_back({LOCK_RULE, "\n"});
         candidateLines.push_back({HISTORY_RULE, "\n"});
         candidateLines.push_back(lines[index]);
         candidateLines.push_back({UNLOCK_RULE, "\n"});
-        candidateLines.push_back({END, "\n"});
+        candidateLines.push_back({END + suffix, "\n"});
     }
     const std::string candidate = joinLines(candidateLines);
     std::vector<PhysicalLine> checkedLines;
@@ -886,6 +914,10 @@ bool AltPamPasswordHistoryTopologyManager::disable(std::string& error) {
     if (!block.present) {
         error.clear();
         return true;
+    }
+    if (block.ownership != boundMutationId_) {
+        error = "ALT pam_pwhistory release ownership mismatch";
+        return false;
     }
     if (!validateStorageObject(options_.stateDirectory, 02730,
             options_.storageOwner, options_.storageGroup, true, false, error))

@@ -864,7 +864,8 @@ json serializeUndoAction(const UndoAction& action) {
                    std::get_if<UndoDisablePamCapability>(&action.payload)) {
         value["capability"] = pam->capability;
         value["topology"] = pam->topology == PamTopologyKind::PamAuthUpdate
-            ? "pam_auth_update" : "alt_tcb_managed";
+            ? "pam_auth_update" : pam->topology == PamTopologyKind::AltTcbJournalBoundV1
+                ? "alt_tcb_journal_bound_v1" : "alt_tcb_managed";
         value["activation_identifiers"] = pam->activationIdentifiers;
         value["had_applied_provenance"] = pam->hadAppliedProvenance;
         value["previous_strategy"] = pam->previousStrategy
@@ -1007,7 +1008,8 @@ bool validatePamUndoPayload(const UndoDisablePamCapability& payload,
         return false;
     }
     if (payload.topology != PamTopologyKind::PamAuthUpdate &&
-        payload.topology != PamTopologyKind::AltTcbManaged) {
+        payload.topology != PamTopologyKind::AltTcbManaged &&
+        payload.topology != PamTopologyKind::AltTcbJournalBoundV1) {
         error = "disable_pam_capability has an unknown topology kind";
         return false;
     }
@@ -1022,7 +1024,7 @@ bool validatePamUndoPayload(const UndoDisablePamCapability& payload,
         error = "pam_auth_update undo requires activation identifiers";
         return false;
     }
-    if (payload.topology == PamTopologyKind::AltTcbManaged &&
+    if (payload.topology != PamTopologyKind::PamAuthUpdate &&
         !payload.activationIdentifiers.empty()) {
         error = "ALT PAM undo must not contain activation identifiers";
         return false;
@@ -1618,6 +1620,8 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
             payload.topology = PamTopologyKind::PamAuthUpdate;
         } else if (*topology == "alt_tcb_managed") {
             payload.topology = PamTopologyKind::AltTcbManaged;
+        } else if (*topology == "alt_tcb_journal_bound_v1") {
+            payload.topology = PamTopologyKind::AltTcbJournalBoundV1;
         } else {
             error = "unknown PAM topology in undo";
             return false;

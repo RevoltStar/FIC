@@ -1362,6 +1362,66 @@ void testAltAuthsuccRoundTripChains() {
 
 } // namespace
 
+static void testJournalBoundOwnership() {
+    TemporaryTree tree;
+    auto options = tree.options();
+    options.requireJournalOwnership = true;
+    AltPamFaillockTopologyManager manager(tree.platform(), options);
+    std::string error;
+    require(!manager.enable(error), "unbound ALT activation succeeded");
+    require(manager.bindJournalMutationId(42, error), error);
+    using fic::platform::PamFaillockStrategy;
+    require(manager.enableStrategy(PamFaillockStrategy::PreauthRequired, error), error);
+    require(manager.enableStrategy(PamFaillockStrategy::PreauthRequisite, error), error);
+    fic::identity::pam::PamTopologyStatus status;
+    require(manager.inspect(status, error) && status.ownershipMutationId == 42, error);
+    require(manager.inspectForRelease(status, error) && status.ownershipMutationId == 42, error);
+    const auto owned = TemporaryTree::read(tree.target());
+    AltPamFaillockTopologyManager foreign(tree.platform(), options);
+    require(!foreign.disable(error), "orphan ID-bound artifact was removed");
+    require(foreign.bindJournalMutationId(43, error), error);
+    require(!foreign.disable(error), "wrong journal ID removed topology");
+    require(TemporaryTree::read(tree.target()) == owned, "refusal changed topology");
+    auto malformed = owned;
+    const auto marker = malformed.find(" v1 id=42");
+    require(marker != std::string::npos, "versioned marker missing");
+    malformed.replace(marker, std::string(" v1 id=42").size(), " v1 id=0");
+    TemporaryTree::write(tree.target(), malformed);
+    require(!manager.inspectForRelease(status, error) && !manager.disable(error),
+            "damaged marker permitted release");
+    require(TemporaryTree::read(tree.target()) == malformed, "damaged bytes changed");
+    TemporaryTree::write(tree.target(), owned);
+    require(manager.disable(error), error);
+    require(TemporaryTree::read(tree.target()) == kCanonical, "release did not restore original bytes");
+}
+
+static void testJournalBoundPartialPublication() {
+    TemporaryTree tree;
+    writeSshUseFirstPassGraph(tree);
+    auto options = tree.options();
+    options.requireJournalOwnership = true;
+    options.semanticVerifier = [](std::string&) { return true; };
+    AltPamFaillockTopologyManager manager(useFirstPassPlatform(tree), options);
+    const auto secondary = tree.root / "pam.d/system-auth-use_first_pass-local-only";
+    const auto secondaryBefore = TemporaryTree::read(secondary);
+    std::string error;
+    require(manager.bindJournalMutationId(17, error), error);
+    require(manager.enableStrategy(fic::platform::PamFaillockStrategy::PreauthRequired, error), error);
+    const auto primaryBound = TemporaryTree::read(tree.target());
+    TemporaryTree::write(secondary, secondaryBefore + "# administrator edit\n");
+
+    PamTopologyStatus status;
+    require(!manager.inspect(status, error), "partial publication accepted as enabled");
+    require(manager.bindJournalMutationId(18, error), error);
+    require(!manager.disable(error), "partial publication released by a foreign ID");
+    require(TemporaryTree::read(tree.target()) == primaryBound, "refusal changed primary");
+    require(manager.bindJournalMutationId(17, error), error);
+    require(manager.disable(error), error);
+    require(TemporaryTree::read(tree.target()) == kCanonical, "primary not compensated");
+    require(TemporaryTree::read(secondary) == secondaryBefore + "# administrator edit\n",
+            "compensation changed unowned bytes");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string(argv[1]) == "--live-alt-enable") {
@@ -1385,6 +1445,8 @@ int main(int argc, char** argv) {
             return 0;
         }
         require(argc == 1, "unknown ALT topology test arguments");
+        testJournalBoundOwnership();
+        testJournalBoundPartialPublication();
         testCanonicalRoundTrip();
         testReleaseProofIndependentOfEffectiveness();
         testTwoTargetReleaseConflicts();

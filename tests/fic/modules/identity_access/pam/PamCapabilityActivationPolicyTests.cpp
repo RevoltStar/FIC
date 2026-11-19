@@ -334,14 +334,16 @@ std::string readFile(const std::filesystem::path& path) {
 
 PamCapabilityActivationPolicy makeAltLockoutPolicy(
     const fic::platform::PamPlatformConfig& platform,
-    const std::filesystem::path& root) {
+    const std::filesystem::path& root, bool journalBound = false) {
     PamCapabilityActivationPolicyOptions options;
     options.managerFactory =
-        [platform, root](const auto&, const auto&, std::string& error) {
+        [platform, root, journalBound](const auto&, const auto&, std::string& error) {
             error.clear();
+            auto managerOptions = altLockoutOptions(root);
+            managerOptions.requireJournalOwnership = journalBound;
             return std::make_unique<fic::identity::pam::
                 AltPamFaillockTopologyManager>(
-                    platform, altLockoutOptions(root));
+                    platform, managerOptions);
         };
     return PamCapabilityActivationPolicy(
         platform, fic::platform::PamCapability::AuthenticationLockout,
@@ -868,7 +870,7 @@ void testAltOwnedStructuralApply(const std::filesystem::path& root) {
     writeFile(root / "config/IDENTITY_ACCESS.conf", "enable_authentication_lockout.status=ENABLE\n"
         "enable_authentication_lockout.value=preauth_required\n");
     const auto platform = makeAltLockoutPlatform(tree);
-    auto policy = makeAltLockoutPolicy(platform, tree);
+    auto policy = makeAltLockoutPolicy(platform, tree, true);
     require(policy.apply(), "ALT absent mechanism did not activate with real Structural proof");
     const auto owned = readFile(path);
     std::string error; auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
@@ -876,6 +878,10 @@ void testAltOwnedStructuralApply(const std::filesystem::path& root) {
     const auto records = journal->activeRecords(ref);
     require(records.size() == 1 && records[0].status == fic::rollback::MutationStatus::Applied,
         "ALT successful activation has no Applied provenance");
+    require(std::get<fic::rollback::UndoDisablePamCapability>(records[0].undo.payload).topology ==
+                fic::rollback::PamTopologyKind::AltTcbJournalBoundV1 &&
+            owned.find(" v1 id=" + std::to_string(records[0].id) + " target=" + path.string()) != std::string::npos,
+            "ALT policy record and physical ID are not linked");
     require(policy.apply() && readFile(path) == owned && journal->records().size() == 1 &&
             journal->activeRecords(ref)[0].id == records[0].id,
         "ALT owned reapply mutated files or lost provenance");
@@ -908,6 +914,7 @@ void testAltHistoryOwnershipMatrix(const std::filesystem::path& root) {
         PamScope::LocalPasswordChange, "/etc/security/fic-pwhistory.conf",
         PamTopologyStrategyKind::AltTcbManaged, path}};
     AltPamPasswordHistoryTopologyOptions managerOptions;
+    managerOptions.requireJournalOwnership = true;
     managerOptions.lockFilePath = tree / "run/topology.lock";
     managerOptions.stateDirectory = tree / "state";
     managerOptions.historyFile = tree / "state/opasswd";

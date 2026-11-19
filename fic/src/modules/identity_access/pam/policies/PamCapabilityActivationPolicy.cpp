@@ -237,7 +237,7 @@ bool PamCapabilityActivationPolicy::applyPam(
 
     const bool mutableTopology = capability->topology !=
         fic::platform::PamTopologyStrategyKind::StaticVerifyOnly;
-    const bool journalBoundPhysicalOwnership =
+    bool journalBoundPhysicalOwnership =
         manager->journalBindsPhysicalOwnership();
     const bool legacyPamAuthUpdatePasswordTopology =
         capability->topology ==
@@ -266,7 +266,9 @@ bool PamCapabilityActivationPolicy::applyPam(
         undo.topology = capability->topology ==
                 fic::platform::PamTopologyStrategyKind::PamAuthUpdate
             ? fic::rollback::PamTopologyKind::PamAuthUpdate
-            : fic::rollback::PamTopologyKind::AltTcbManaged;
+            : journalBoundPhysicalOwnership
+                ? fic::rollback::PamTopologyKind::AltTcbJournalBoundV1
+                : fic::rollback::PamTopologyKind::AltTcbManaged;
         undo.activationIdentifiers =
             fic::identity::pam::activationIdentifiers(*capability);
         if (active.size() > 1) {
@@ -282,11 +284,18 @@ bool PamCapabilityActivationPolicy::applyPam(
                     fic::rollback::MutationBackend::Pam ||
                 active.front().resource != "capability/" + policyName ||
                 recorded == nullptr || recorded->capability != undo.capability ||
-                recorded->topology != undo.topology ||
+                (recorded->topology != undo.topology &&
+                 !(undo.topology == fic::rollback::PamTopologyKind::AltTcbJournalBoundV1 &&
+                   recorded->topology == fic::rollback::PamTopologyKind::AltTcbManaged)) ||
                 recorded->activationIdentifiers != undo.activationIdentifiers) {
                 log("Active PAM provenance does not match current profile "
                     "(fail closed)", logLevel::ERROR);
                 return false;
+            }
+            if (undo.topology == fic::rollback::PamTopologyKind::AltTcbJournalBoundV1 &&
+                recorded->topology == fic::rollback::PamTopologyKind::AltTcbManaged) {
+                undo.topology = recorded->topology;
+                journalBoundPhysicalOwnership = false;
             }
             if (journalBoundPhysicalOwnership &&
                 !manager->bindJournalMutationId(active.front().id, error)) {
@@ -345,6 +354,17 @@ bool PamCapabilityActivationPolicy::applyPam(
         }
     }
 
+    const bool legacyAltOwnership = !active.empty() &&
+        undo.topology == fic::rollback::PamTopologyKind::AltTcbManaged &&
+        manager->journalBindsPhysicalOwnership();
+    if (legacyAltOwnership &&
+        (status.ownershipMutationId ||
+         status.state != fic::identity::pam::PamTopologyState::Enabled ||
+         (strategyAware() && status.activeStrategy != strategy))) {
+        log("ALT legacy PAM topology requires explicit release before mutation", logLevel::ERROR);
+        return false;
+    }
+
     const auto proveEnabled = [&](bool durable,
             std::optional<fic::platform::PamFaillockStrategy> expected) {
         fic::identity::pam::PamTopologyStatus current;
@@ -352,7 +372,10 @@ bool PamCapabilityActivationPolicy::applyPam(
         if (!manager->inspect(current, proofError) ||
             current.state != fic::identity::pam::PamTopologyState::Enabled ||
             ((durable || !active.empty()) && !current.manageable) ||
-            (strategyAware() && current.activeStrategy != expected)) {
+            (strategyAware() && current.activeStrategy != expected) ||
+            (journalBoundPhysicalOwnership && (mutationId || !active.empty()) &&
+             current.ownershipMutationId !=
+                (mutationId ? mutationId : active.front().id))) {
             error = "PAM topology AFTER proof failed: " +
                 (proofError.empty() ? current.detail : proofError);
             return false;
@@ -615,6 +638,7 @@ mutation_failed:
             (reused
                 ? restored.state == fic::identity::pam::PamTopologyState::Enabled &&
                     restored.manageable &&
+                    (!journalBoundPhysicalOwnership || restored.ownershipMutationId == mutationId) &&
                     restored.activeStrategy == status.activeStrategy
                 : restored.state == fic::identity::pam::PamTopologyState::Disabled);
         if (proven) {

@@ -160,7 +160,9 @@ PamRollbackResult undoPamCapability(
         ? PamTopologyKind::PamAuthUpdate : PamTopologyKind::AltTcbManaged;
     if (capability->topology ==
             fic::platform::PamTopologyStrategyKind::StaticVerifyOnly ||
-        kind != undo.topology ||
+        (kind != undo.topology &&
+         !(kind == PamTopologyKind::AltTcbManaged &&
+           undo.topology == PamTopologyKind::AltTcbJournalBoundV1)) ||
         fic::identity::pam::activationIdentifiers(*capability) !=
             undo.activationIdentifiers) {
         return {PamRollbackState::Conflict,
@@ -168,6 +170,29 @@ PamRollbackResult undoPamCapability(
     }
     auto manager = options.managerFactory(*capability, *services, error);
     if (!manager) return {PamRollbackState::Failed, error};
+
+    if (undo.topology == PamTopologyKind::AltTcbJournalBoundV1) {
+        if (!manager->journalBindsPhysicalOwnership() || mutationId == 0 ||
+            !manager->bindJournalMutationId(mutationId, error)) {
+            return {PamRollbackState::Conflict, "ALT PAM release has no journal binding: " + error};
+        }
+        fic::identity::pam::PamTopologyStatus before;
+        if (manager->inspectForRelease(before, error) &&
+            before.state == PamTopologyState::Disabled) {
+            if (!manager->confirmDurable(error))
+                return {PamRollbackState::Failed, "ALT PAM release durability unproven: " + error};
+            return {PamRollbackState::AlreadyReleased, "ALT PAM topology absent"};
+        }
+        // The manager checks every present block under its mutation lock,
+        // including exact-ID subsets left by interrupted publication.
+        if (!manager->disable(error))
+            return {PamRollbackState::Conflict, "ALT PAM release refused: " + error};
+        fic::identity::pam::PamTopologyStatus after;
+        if (!manager->inspectForRelease(after, error) ||
+            after.state != PamTopologyState::Disabled || !manager->confirmDurable(error))
+            return {PamRollbackState::Failed, "ALT PAM release unproven: " + error};
+        return {PamRollbackState::Released, "Journal-bound ALT PAM topology released"};
+    }
 
     if (managedFaillockSlotDomain(undo)) {
         if (mutationId == 0 ||
@@ -255,7 +280,7 @@ PamRollbackResult undoPamCapability(
     }
     if (before.state != PamTopologyState::Enabled)
         return {PamRollbackState::Conflict, "PAM topology is not proven"};
-    if (!before.manageable) {
+    if (!before.manageable || before.ownershipMutationId) {
         return {PamRollbackState::Conflict, "PAM topology is foreign"};
     }
     if (!manager->disable(error))

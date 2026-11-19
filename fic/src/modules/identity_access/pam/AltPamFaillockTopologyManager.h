@@ -21,6 +21,7 @@ struct AltPamFaillockTopologyOptions {
     std::filesystem::path lockFilePath;
     std::filesystem::path lockDebugLogPath;
     AtomicWriteOptions writeOptions;
+    bool requireJournalOwnership = false;
     std::function<bool(const std::string&,
                        const std::string&,
                        const AtomicWriteOptions&,
@@ -30,6 +31,17 @@ struct AltPamFaillockTopologyOptions {
 
 class AltPamFaillockTopologyManager final : public PamTopologyManager {
 public:
+    bool journalBindsPhysicalOwnership() const override {
+        return options_.requireJournalOwnership;
+    }
+    bool bindJournalMutationId(std::uint64_t id, std::string& error) override {
+        if (id == 0) {
+            error = "invalid ALT PAM journal binding";
+            return false;
+        }
+        boundMutationId_ = id;
+        return true;
+    }
     bool confirmDurable(std::string& error) const override;
     // Preauth strategies keep the original pam_tcb rule shape: the FIC
     // preauth block stores the original rule (hex encoded) and re-adds it as
@@ -94,6 +106,7 @@ public:
         std::string& error) override;
 
 private:
+    std::optional<std::uint64_t> boundMutationId_;
     fic::platform::PamPlatformConfig platformConfig_;
     AltPamFaillockTopologyOptions options_;
 
@@ -104,7 +117,8 @@ private:
                 std::optional<fic::platform::PamFaillockStrategy>& strategy,std::string& error);
     bool inspectReadOnlyImpl(AltPamFaillockTopologyState& state,
         std::optional<fic::platform::PamFaillockStrategy>& strategy,
-        std::string& error, bool proveEffective);
+        std::string& error, bool proveEffective,
+        std::optional<std::uint64_t>* ownership = nullptr);
     bool verifySemanticEffectiveness(std::string& error) const;
 };
 

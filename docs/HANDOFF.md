@@ -46,3 +46,7 @@
 * pam_capability_activation_policy_tests built and passed in build-prelogin.
 * P1 ALT marker grammar, legacy provenance, partial publication recovery and
   native package gates are pending. P3 audit and P2 report follow P1.
+* P1 implementation adds ALT v1 journal domain and target-bound boundary markers.
+  Host fixture tests passed (activation, journal and both ALT topology suites).
+  Native ALT configure stopped at missing nlohmann_json in the cached image.
+  Native control and package lifecycle gates remain outstanding.

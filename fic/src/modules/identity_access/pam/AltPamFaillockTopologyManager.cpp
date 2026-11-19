@@ -1,3 +1,4 @@
+#include "AltPamOwnershipMarker.h"
 #include "modules/identity_access/pam/AltPamFaillockTopologyManager.h"
 
 #include "modules/identity_access/pam/PamCapabilityVerifier.h"
@@ -43,6 +44,7 @@ enum class ManagedState {
 };
 
 struct ManagedInspection {
+    std::optional<std::uint64_t> ownership;
     ManagedState state = ManagedState::Absent;
     std::set<std::size_t> blockLines;
     std::set<std::size_t> ruleLines;
@@ -915,7 +917,16 @@ bool parseAndInspect(const std::filesystem::path& path,
     if (!parseTarget(path, content, rules, error)) {
         return false;
     }
-    return inspectManagedBlocks(lines, role, managed, error);
+    using M = AltPamFaillockTopologyManager;
+    std::optional<std::uint64_t> ownership;
+    if (!inspectAltPamMarkers(lines, path, "pam_faillock",
+            {M::PREAUTH_BEGIN, M::PREAUTH_END, M::ACCOUNT_BEGIN, M::ACCOUNT_END,
+             M::AUTHFAIL_BEGIN, M::AUTHFAIL_END, M::AUTHSUCC_BEGIN, M::AUTHSUCC_END,
+             M::AUTHSUCC_ANCHOR_BEGIN, M::AUTHSUCC_ANCHOR_END},
+            ownership, error) || !inspectManagedBlocks(lines, role, managed, error))
+        return false;
+    managed.ownership = ownership;
+    return true;
 }
 
 bool loadManagedTargets(
@@ -973,7 +984,7 @@ bool validatePresentTarget(const ManagedTargetState& target,
 
 bool prepareEnabledCandidate(ManagedTargetState& target,
                              fic::platform::PamFaillockStrategy strategy,
-                             std::string& error) {
+                             std::string& error, std::optional<std::uint64_t> ownership) {
     if (target.managed.state != ManagedState::Absent) {
         error = "managed PAM target is not disabled: " +
             target.target.path.string();
@@ -999,6 +1010,15 @@ bool prepareEnabledCandidate(ManagedTargetState& target,
     target.candidate = buildEnabledContent(
         strategy, target.lines, target.rules, target.target.role,
         authLine, accountLine);
+    if (ownership) {
+        auto generated = splitLines(target.candidate);
+        for (auto& line : generated) {
+            if (line.text.compare(0, 24, "# BEGIN FIC pam_faillock") == 0 ||
+                line.text.compare(0, 22, "# END FIC pam_faillock") == 0)
+                line.text += altPamMarkerSuffix(*ownership, target.target.path);
+        }
+        target.candidate = renderLines(generated);
+    }
     ManagedTargetState checked;
     checked.target = target.target;
     checked.snapshot.content = target.candidate;
@@ -1039,7 +1059,7 @@ bool buildTransitionCandidate(
             "transition in " + target.target.path.string() + ": " + error;
         return false;
     }
-    if (!prepareEnabledCandidate(rebuilt, strategy, error)) {
+    if (!prepareEnabledCandidate(rebuilt, strategy, error, target.managed.ownership)) {
         error = "could not build the requested pam_faillock strategy "
             "topology in " + target.target.path.string() + ": " + error;
         return false;
@@ -1126,6 +1146,7 @@ bool writeCandidates(
                     error,
                 error, index);
         }
+        if (target.candidate == target.snapshot.content) continue;
         std::string writeError;
         if (!options.writer(
                 target.target.path.string(), target.candidate,
@@ -1306,7 +1327,9 @@ bool AltPamFaillockTopologyManager::inspectReadOnly(AltPamFaillockTopologyState&
 bool AltPamFaillockTopologyManager::inspectReadOnlyImpl(
     AltPamFaillockTopologyState& state,
     std::optional<fic::platform::PamFaillockStrategy>& strategy,
-    std::string& error, bool proveEffective) {
+    std::string& error, bool proveEffective,
+    std::optional<std::uint64_t>* ownership) {
+    if (ownership) ownership->reset();
     const auto* capability=capabilityConfig(platformConfig_,PamCapability::AuthenticationLockout);
     if(!canEnable(error)||!capability)return false;
     std::vector<ManagedTargetState> targets;
@@ -1329,11 +1352,13 @@ bool AltPamFaillockTopologyManager::inspectReadOnlyImpl(
     std::optional<fic::platform::PamFaillockStrategy> detected =
         targets.front().managed.strategy;
     for (const auto& target : targets) {
-        if (target.managed.strategy != detected) {
+        if (target.managed.strategy != detected ||
+            target.managed.ownership != targets.front().managed.ownership) {
             error = "mixed FIC pam_faillock strategies across managed targets";
             return false;
         }
     }
+    if (ownership) *ownership = targets.front().managed.ownership;
     if (!proveEffective) {
         for (const auto& target : targets) {
             if (!verifyManagedPlacement(target.rules, target.lines, target.target.role,
@@ -1370,7 +1395,13 @@ bool AltPamFaillockTopologyManager::inspect(PamTopologyStatus& result,
 {
     AltPamFaillockTopologyState current;
     std::optional<fic::platform::PamFaillockStrategy> strategy;
-    if (!status(current, strategy, error)) {
+    ExclusivePidLock lock(options_.lockFilePath.string(), options_.lockDebugLogPath.string(), false);
+    if (!lock.acquire()) {
+        error = "could not acquire PAM topology lock";
+        return false;
+    }
+    std::optional<std::uint64_t> ownership;
+    if (!inspectReadOnlyImpl(current, strategy, error, true, &ownership)) {
         result = {PamTopologyState::Broken, true, {}, error};
         return false;
     }
@@ -1381,6 +1412,7 @@ bool AltPamFaillockTopologyManager::inspect(PamTopologyStatus& result,
     result.activeStrategy =
         result.state == PamTopologyState::Enabled ? strategy : std::nullopt;
     result.detail.clear();
+    result.ownershipMutationId = ownership;
     return true;
 }
 
@@ -1390,12 +1422,13 @@ bool AltPamFaillockTopologyManager::inspectForRelease(PamTopologyStatus& result,
     if (!lock.acquire()) { error = "could not acquire PAM topology lock"; return false; }
     AltPamFaillockTopologyState state;
     std::optional<fic::platform::PamFaillockStrategy> strategy;
-    if (!inspectReadOnlyImpl(state, strategy, error, false)) {
+    std::optional<std::uint64_t> ownership;
+    if (!inspectReadOnlyImpl(state, strategy, error, false, &ownership)) {
         result = {PamTopologyState::Broken, true, {}, error};
         return false;
     }
     result = {state == AltPamFaillockTopologyState::Enabled ? PamTopologyState::Enabled
-        : PamTopologyState::Disabled, true, strategy, {}};
+        : PamTopologyState::Disabled, true, strategy, {}, ownership};
     return true;
 }
 
@@ -1498,6 +1531,18 @@ bool AltPamFaillockTopologyManager::enableStrategy(
         return false;
     }
 
+    if (options_.requireJournalOwnership && !boundMutationId_) {
+        error = "ALT pam_faillock mutation requires journal binding";
+        return false;
+    }
+    for (const auto& target : targets) {
+        if (target.managed.state == ManagedState::Present &&
+            target.managed.ownership != boundMutationId_) {
+            error = "ALT pam_faillock journal ownership mismatch";
+            return false;
+        }
+    }
+
     const auto externalGraph = inspectExternalFaillockInRelevantGraph(
         platformConfig_, targets, error);
     if (externalGraph == ExternalFaillockGraphState::Error) {
@@ -1585,7 +1630,7 @@ bool AltPamFaillockTopologyManager::enableStrategy(
     }
 
     for (auto& target : targets) {
-        if (!prepareEnabledCandidate(target, strategy, error)) {
+        if (!prepareEnabledCandidate(target, strategy, error, boundMutationId_)) {
             return false;
         }
     }
@@ -1651,12 +1696,20 @@ bool AltPamFaillockTopologyManager::disable(std::string& error) {
         error.clear();
         return true;
     }
-    if (present != targets.size()) {
+    if (present != targets.size() && !boundMutationId_) {
         error = "partial FIC pam_faillock topology across managed targets";
         return false;
     }
 
     for (auto& target : targets) {
+        if (target.managed.state == ManagedState::Absent) {
+            target.candidate = target.snapshot.content;
+            continue;
+        }
+        if (target.managed.ownership != boundMutationId_) {
+            error = "ALT pam_faillock release ownership mismatch";
+            return false;
+        }
         if (!verifyManagedPlacement(
                 target.rules, target.lines, target.target.role,
                 target.managed, error)) {

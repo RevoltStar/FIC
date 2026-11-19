@@ -382,7 +382,7 @@ struct UndoRestoreKerberosScalar {
 // PAM activation provenance, never a snapshot of PAM configuration. The
 // identifiers form the complete FIC-owned selection domain for this
 // capability (including all supported faillock strategies).
-enum class PamTopologyKind { PamAuthUpdate, AltTcbManaged };
+enum class PamTopologyKind { PamAuthUpdate, AltTcbManaged, AltTcbJournalBoundV1 };
 struct UndoDisablePamCapability {
     std::string capability;
     PamTopologyKind topology = PamTopologyKind::PamAuthUpdate;

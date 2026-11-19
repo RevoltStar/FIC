@@ -594,8 +594,41 @@ void testTransactionModuleTrustedInspection() {
 
 } // namespace
 
+static void testJournalBoundOwnership() {
+    TemporaryTree tree;
+    auto options = tree.options();
+    options.requireJournalOwnership = true;
+    AltPamPasswordHistoryTopologyManager manager(tree.platform(), options);
+    std::string error;
+    require(!manager.enable(error), "unbound ALT activation succeeded");
+    require(manager.bindJournalMutationId(42, error), error);
+    require(manager.enable(error), error);
+    require(manager.enable(error), error);
+    fic::identity::pam::PamTopologyStatus status;
+    require(manager.inspect(status, error) && status.ownershipMutationId == 42, error);
+    require(manager.inspectForRelease(status, error) && status.ownershipMutationId == 42, error);
+    const auto owned = TemporaryTree::read(tree.target());
+    AltPamPasswordHistoryTopologyManager foreign(tree.platform(), options);
+    require(!foreign.disable(error), "orphan ID-bound artifact was removed");
+    require(foreign.bindJournalMutationId(43, error), error);
+    require(!foreign.disable(error), "wrong journal ID removed topology");
+    require(TemporaryTree::read(tree.target()) == owned, "refusal changed topology");
+    auto malformed = owned;
+    const auto marker = malformed.find(" v1 id=42");
+    require(marker != std::string::npos, "versioned marker missing");
+    malformed.replace(marker, std::string(" v1 id=42").size(), " v1 id=0");
+    TemporaryTree::write(tree.target(), malformed);
+    require(!manager.inspectForRelease(status, error) && !manager.disable(error),
+            "damaged marker permitted release");
+    require(TemporaryTree::read(tree.target()) == malformed, "damaged bytes changed");
+    TemporaryTree::write(tree.target(), owned);
+    require(manager.disable(error), error);
+    require(TemporaryTree::read(tree.target()) == kCanonical, "release did not restore original bytes");
+}
+
 int main() {
     try {
+        testJournalBoundOwnership();
         testRoundTripAndStorage();
         testForeignIncludedHistoryDoesNotBlockRelease();
         testReleaseProofIndependentOfEffectiveness();

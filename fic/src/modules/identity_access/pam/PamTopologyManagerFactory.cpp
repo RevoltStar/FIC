@@ -77,6 +77,7 @@ std::unique_ptr<PamTopologyManager> createPamTopologyManager(
         if (capability.capability ==
             fic::platform::PamCapability::AuthenticationLockout) {
             AltPamFaillockTopologyOptions options;
+            options.requireJournalOwnership = true;
             options.lockFilePath =
                 paths.runtimeDir / "pam-alt-faillock-topology.lock";
             options.lockDebugLogPath = paths.lockDebugLogFile;
@@ -92,6 +93,7 @@ std::unique_ptr<PamTopologyManager> createPamTopologyManager(
                 return nullptr;
             }
             AltPamPasswordHistoryTopologyOptions options;
+            options.requireJournalOwnership = true;
             options.lockFilePath =
                 paths.runtimeDir / "pam-alt-pwhistory-topology.lock";
             options.lockDebugLogPath = paths.lockDebugLogFile;
