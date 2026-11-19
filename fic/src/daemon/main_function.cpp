@@ -1,4 +1,5 @@
 #include "main_function.h"
+#include "modules/identity_access/pam/policies/PamDenyEmptyPasswordLoginPolicy.h"
 
 #include "daemon/PolicyDisableFlow.h"
 #include "policy/execution/PolicyDependencyGraph.h"
@@ -488,6 +489,9 @@ bool initPolicyRegistry(
         fic::platform::PamPolicyFeature::PasswordHistoryEnforceForRoot,
         std::make_unique<PamPasswordHistoryEnforceForRootPolicy>(
             platform.pam, passwordOptionCoordinatorFactory));
+    if (!platform.pam.emptyPasswordAuthSelection.empty()) {
+        cafArr.push_back(std::make_unique<PamDenyEmptyPasswordLoginPolicy>(platform.pam));
+    }
     if (platform.pam.passwordlessLoginControl.has_value()) {
         cafArr.push_back(std::make_unique<PamDisableNopasswdloginPolicy>(
             platform.pam, executables));

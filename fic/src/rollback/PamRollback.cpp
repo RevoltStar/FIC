@@ -1,4 +1,5 @@
 #include "rollback/PamRollback.h"
+#include "modules/identity_access/pam/PamEmptyPasswordLogin.h"
 
 #include "modules/identity_access/IdentityAccessPolicy.h"
 #include "modules/identity_access/pam/PamPlatformComposition.h"
@@ -140,6 +141,19 @@ PamRollbackResult undoPamCapability(
     const PamRollbackOptions& options,
     MutationId mutationId,
     const UndoDisablePamCapability& undo) {
+    if (undo.capability == fic::identity::pam::emptyPasswordPolicy) {
+        if (mutationId == 0 || undo.topology != PamTopologyKind::PamAuthUpdate ||
+            undo.activationIdentifiers != std::vector<std::string>{fic::identity::pam::emptyPasswordHook}) {
+            return {PamRollbackState::Conflict, "invalid empty-password release domain"};
+        }
+        bool changed = false;
+        std::string error;
+        if (!fic::identity::pam::releaseEmptyPasswordLogin(
+                options.platform, mutationId, changed, error))
+            return {PamRollbackState::Conflict, error};
+        return {changed ? PamRollbackState::Released : PamRollbackState::AlreadyReleased,
+                "empty-password PAM slot is neutral"};
+    }
     // C2 joint password topology domain: the rollback is ONE joint
     // semantic transition through the C2 planner/executor, never the
     // legacy per-profile disable path and never the old two-profile
@@ -299,6 +313,13 @@ PamRollbackResult undoPamCapability(
 
 PamRollbackResult inspectUnrecordedPamCapability(
     const PamRollbackOptions& options, const std::string& policyName) {
+    if (policyName == fic::identity::pam::emptyPasswordPolicy) {
+        bool changed = false;
+        std::string error;
+        if (!fic::identity::pam::releaseEmptyPasswordLogin(options.platform, 0, changed, error))
+            return {PamRollbackState::Conflict, error};
+        return {PamRollbackState::AlreadyReleased, "no managed empty-password PAM slot"};
+    }
     const fic::platform::PamCapabilityConfig* capability = nullptr;
     const std::vector<std::string>* services = nullptr;
     std::string error;

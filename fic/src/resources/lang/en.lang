@@ -106,6 +106,8 @@
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Enforce password history for root
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root][description]=Controls native pam_pwhistory enforce_for_root semantics using the platform-selected configuration-file or module-argument strategy.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Failed PAM authentications before lockout
+[module:IDENTITY_ACCESS][policy:deny_empty_password_login]=Deny login with an empty password
+[module:IDENTITY_ACCESS][policy:deny_empty_password_login][description]=Rejects local account authentication with an empty password in the supported Debian 13 PAM stack.
 [module:IDENTITY_ACCESS][policy:disable_nopasswdlogin]=Disable passwordless login via nopasswdlogin
 [module:IDENTITY_ACCESS][policy:disable_nopasswdlogin][description]=Disables the platform-declared nopasswdlogin path. With local NSS it removes supplementary group membership and verifies the effective result; with SSS it atomically removes the exact declared GDM/LightDM PAM bypass without relying on domain-user enumeration. Primary GIDs and unknown topology fail closed.
 [module:IDENTITY_ACCESS][policy:disable_root_sddm_login]=Disable root login through SDDM

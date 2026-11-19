@@ -112,6 +112,13 @@ public:
                         std::string& error);
 };
 
+// Check for successful paths containing a local pam_unix success with a
+// blank token. The caller validates module names and supported arguments.
+bool proveNoEmptyUnixPasswordPath(
+    const PamEffectiveStack& stack,
+    const fic::platform::PamPlatformConfig& platformConfig,
+    bool& safe, std::string& error);
+
 // Classifies the pam_faillock topology of an expanded authentication stack
 // into one of the supported integration strategies. Returns nullopt and sets
 // error when the topology is not enabled, is ambiguous, or cannot be proven

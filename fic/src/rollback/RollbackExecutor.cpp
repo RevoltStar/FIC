@@ -124,7 +124,8 @@ bool isSupportedKerberosPolicy(const std::string& policyName) {
 }
 
 bool isSupportedPamPolicy(const std::string& policyName) {
-    return policyName == "enable_authentication_lockout" ||
+    return policyName == "deny_empty_password_login" ||
+           policyName == "enable_authentication_lockout" ||
            policyName == "enable_password_history" ||
            policyName == "enable_password_quality";
 }

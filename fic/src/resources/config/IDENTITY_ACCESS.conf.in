@@ -7,6 +7,7 @@ enable_password_quality.status=DISABLE
 enable_password_quality.value=ENABLE
 disable_nopasswdlogin.status=DISABLE
 disable_nopasswdlogin.value=ENABLE
+@FIC_EMPTY_PASSWORD_LOGIN_POLICY_DEFAULTS@
 disable_root_sddm_login.status=DISABLE
 disable_root_sddm_login.value=ENABLE
 password_quality_enforce_for_root.status=DISABLE

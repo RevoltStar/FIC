@@ -55,6 +55,7 @@ esac
 )",0755);
         auto platform=fic::platform::makeBuildPlatformProfile();platform.id="debian-12";
         platform.packageManager.kind=fic::platform::PackageManagerKind::Dpkg;
+        platform.pam.emptyPasswordAuthSelection.clear();
         platform.pam.incidentAccessGate.packageTopologyTarget.clear();platform.pam.configDirectories={pam};platform.pam.moduleDirectories={root/"modules"};
         fs::create_directory(root/"modules");
         require(argc==2,"expected actual built PAM module path");

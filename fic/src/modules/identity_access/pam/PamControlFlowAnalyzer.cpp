@@ -80,6 +80,7 @@ struct TrustedAuthenticationExclusionEvidence {
 };
 
 struct Evidence {
+    bool unixSucceeded = false;
     bool providerReached = false;
     bool providerSucceeded = false;
     bool preauthSucceeded = false;
@@ -121,6 +122,8 @@ struct ExecutionState {
 
 struct ExecutionBudget {
     std::size_t transitions = 0;
+    bool trackUnix = false;
+    bool modelBlankPassword = false;
 };
 
 std::string lowerCopy(std::string value) {
@@ -659,6 +662,7 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
     const auto& b = right.evidence;
     return left.impression == right.impression && left.status == right.status &&
         left.subject == right.subject &&
+        a.unixSucceeded == b.unixSucceeded &&
         a.providerReached == b.providerReached &&
         a.providerSucceeded == b.providerSucceeded &&
         a.preauthSucceeded == b.preauthSucceeded &&
@@ -786,6 +790,19 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                 ExecutionState state = incoming;
                 if (!refineIdentitySubject(state, entry.rule, result)) {
                     continue;
+                }
+                if (budget.trackUnix && result == "success" &&
+                    moduleBaseName(entry.rule) == "pam_unix.so") {
+                    // Debian pam_unix does not accept an empty token without
+                    // a null option. Treat all three null options as capable
+                    // of success, even when runtime conditions would deny.
+                    if (budget.modelBlankPassword &&
+                        !hasArgument(entry.rule, "nullok") &&
+                        !hasArgument(entry.rule, "nullok_secure") &&
+                        !hasArgument(entry.rule, "nullresetok")) {
+                        continue;
+                    }
+                    state.evidence.unixSucceeded = true;
                 }
                 recordEvidence(state, entry.rule, result, provider);
                 const auto found = control.actions.find(result);
@@ -1637,6 +1654,39 @@ std::string formatPamFlowViolation(const PamFlowViolation& violation) {
         formatted += "\n  ... PAM flow trace truncated ...";
     }
     return formatted;
+}
+
+bool proveNoEmptyUnixPasswordPath(
+    const PamEffectiveStack& stack,
+    const fic::platform::PamPlatformConfig& platformConfig,
+    bool& safe, std::string& error) {
+    ExecutionState initial;
+    initial.subject = IdentitySubject::Local;
+    ExecutionBudget budget;
+    budget.trackUnix = true;
+    budget.modelBlankPassword = true;
+    std::vector<ExecutionState> states;
+    safe = false;
+    if (!executeStack(stack.entries, initial, PamProviderKind::PamFaillock,
+                      stack.service, platformConfig, states, error, budget)) {
+        return false;
+    }
+    const auto unixSuccess = [](const auto& state) {
+        return state.evidence.unixSucceeded && stackSucceeded(state);
+    };
+    if (std::any_of(states.begin(), states.end(), unixSuccess)) return true;
+
+    // A graph which denies every local password must not pass vacuously.
+    budget = {};
+    budget.trackUnix = true;
+    states.clear();
+    if (!executeStack(stack.entries, initial, PamProviderKind::PamFaillock,
+                      stack.service, platformConfig, states, error, budget)) {
+        return false;
+    }
+    safe = std::any_of(states.begin(), states.end(), unixSuccess);
+    if (!safe) error = "no usable local password-authentication path in " + stack.service;
+    return safe;
 }
 
 } // namespace fic::identity::pam

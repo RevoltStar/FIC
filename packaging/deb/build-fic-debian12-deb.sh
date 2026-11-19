@@ -460,7 +460,11 @@ write_system_integration_postinst() {
 }
 
 write_system_integration_symlink_postinst() {
-    install -m 0755 "$ROOT_DIR/packaging/deb/lifecycle/fic.postinst" "$1/DEBIAN/postinst"
+    local d13=no
+    if [[ "$FIC_PACKAGING_TARGET_PLATFORM" == debian-13 ]]; then d13=yes; fi
+    sed "s/@FIC_D13_EMPTY_PASSWORD_HOOK@/$d13/" \
+        "$ROOT_DIR/packaging/deb/lifecycle/fic.postinst" > "$1/DEBIAN/postinst"
+    chmod 0755 "$1/DEBIAN/postinst"
 }
 write_symlink_prerm() {
     local package_root="$1"
@@ -540,6 +544,9 @@ install_fic_pam_profiles() {
             "$ROOT_DIR/packaging/deb/pam-configs/$profile" \
             "$profile_dir/$profile"
     done
+    if [[ "$FIC_PACKAGING_TARGET_PLATFORM" == debian-13 ]]; then
+        install -m 0644 "$ROOT_DIR/packaging/deb/pam-configs/fic-empty-password-hook" "$profile_dir/"
+    fi
 }
 
 install_fic_pam_slots() {
@@ -565,6 +572,10 @@ install_fic_pam_slots() {
 /etc/pam.d/fic-password-history
 /etc/pam.d/fic-password-history-initial
 EOF
+    if [[ "$FIC_PACKAGING_TARGET_PLATFORM" == debian-13 ]]; then
+        install -m 0644 "$ROOT_DIR/packaging/deb/pam-slots/fic-empty-password" "$slot_dir/"
+        printf '%s\n' '/etc/pam.d/fic-empty-password' >> "$package_root/DEBIAN/conffiles"
+    fi
 }
 
 build_fic_dick_package() {

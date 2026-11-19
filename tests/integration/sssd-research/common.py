@@ -2,7 +2,7 @@
 import hashlib,json,os,signal,subprocess,time
 from pathlib import Path
 OUT=Path('/run/sssd-research-out');MAIN=Path('/etc/sssd/sssd.conf');DROP=MAIN.parent/'conf.d'
-assert os.environ.get('FIC_SSSD_RESEARCH')=='1' and Path('/.dockerenv').exists()
+assert os.environ.get('FIC_SSSD_RESEARCH')=='1' and any(Path(p).exists() for p in ('/.dockerenv', '/run/.containerenv'))
 assert Path('/proc/1/comm').read_text().strip()=='systemd'
 assert os.stat('/proc/self/ns/mnt').st_ino!=int(os.environ['FIC_SSSD_HOST_MNT'])
 assert {p.name for p in Path('/sys/class/net').iterdir()}=={'lo'}

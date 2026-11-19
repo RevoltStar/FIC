@@ -111,6 +111,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.pam.moduleDirectories.push_back(
         std::filesystem::path("/usr/lib") / FIC_LIBRARY_ARCHITECTURE / "security");
 #endif
+    profile.pam.emptyPasswordAuthSelection = "/var/lib/pam/auth";
     profile.pam.scopes = {
         {PamScope::EffectiveAuthenticationStack,
          {"login", "sshd", "sudo", "su", "su-l", "sddm",

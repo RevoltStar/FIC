@@ -1,74 +1,42 @@
-# ALT PAM post-rename compensation and package preflight
+# Debian 13 empty-password login policy
 
-* Branch main. Follow-up base 8af70c49. No push.
-* 6ac53d63 includes the failing write in faillock compensation and reuses
-  history compensation for enable/disable writer errors. Writer failure after
-  rename can leave candidate bytes. Restore only matching candidate bytes
-  using the existing CAS and trusted metadata checks, leave original bytes
-  alone, and report CRITICAL if compensation cannot be proven.
-* 31ae61aa requires read-only proof of partial topology at package preflight.
-  Only an exact-ID proper subset under Prepared v1 faillock provenance is
-  eligible. The check shares strict target, marker and placement checks with
-  release, which repeats proof under lock. Complete and legacy paths retain
-  their existing journal/physical matching rules.
-* Existing ALT control and RPM suites now assert physical marker IDs, including
-  across strategy transitions and upgrades. RPM runner accepts the explicit
-  private PID namespace reported by Podman, and its test image declares the
-  SQLite Python stdlib subpackage required by the hardware check.
+* Branch main. D13-1 base `0e4d014a`. The policy is Debian 13 only and
+  defaults to DISABLE with a fixed value ENABLE.
+* Debian packaging attaches `fic-empty-password-hook` as an Additional
+  substack. The daemon changes only the journal-bound
+  `/etc/pam.d/fic-empty-password` slot using the existing PAM transaction
+  primitives. The strict `pam_unix use_first_pass` check is scoped to
+  local accounts; the official non-local SSSD route skips it.
+* Apply verifies the effective graph, selected hook, trusted modules and
+  the physical witness. An already strict foreign graph can be observed
+  without writing. Policy release does not require a usable provider or
+  attachment. Package detach first requires the canonical neutral slot
+  and then verifies that no live references remain.
+* Contract: `docs/rollback.md`. Targeted gate:
+  `tests/integration/pam-empty-password/README.md`.
 
-## Verification
+## Validation
 
-* Five CTests passed in build-prelogin (journal, platform, activation policy,
-  ALT faillock and history). Fsync fixtures observed candidate bytes before
-  refusing durability for first/second faillock targets and history
-  activation/release. Existing concurrent modification and compensation
-  failure cases passed. Partial proof accepts matching ID, preserves bytes,
-  and rejects wrong IDs, malformed markers and unreadable targets.
-* PackageReleaseResources.cpp compiled. git diff --check, bash -n for the
-  RPM runner, and Python syntax checks passed.
-* Native ALT p11: production daemon, PAM transaction module and control
-  probe built. Expanded I5 checker passed with control modes, matching IDs,
-  strategy round trip, legacy release then v1, wrong/malformed markers,
-  partial recovery and retained third-party history. Evidence:
-  build-pam-p1-alt/followup-control-expanded.json.
-* Production RPMs 0.1.0 and 0.1.1 built. Two full native RPM gate attempts
-  passed fresh install and reached exact-version reinstall, then reproduced
-  sqlite3.DatabaseError: database disk image is malformed in the existing
-  hardware_inventory.collected assertion, before PAM activation.
-* A separate PAM-focused invocation of the existing RPM driver passed with
-  only the unrelated hardware inventory subscenario omitted. It used the
-  identical RPMs and actual scriptlets/daemon in an isolated systemd runtime.
-  Verified fresh install, both capability activations, 0.1.0 -> 0.1.1
-  preserving IDs, release restoring original target bytes, erase, reinstall
-  with fresh IDs and direct erase with active v1 topology. Legacy transition
-  was proven through native control, not a legacy RPM upgrade. Full gate
-  still fails on the inventory check. Host PAM was untouched.
-
-## Reproduction / evidence
-
-* Native images: localhost/fic-p1-followup-runtime:altp11 (build/control)
-  and localhost/fic-p1-followup-systemd:altp11 (runtime with pam-config 1.10
-  and Python sqlite3). Bounded APT preparation succeeded.
-* Use the production builders build-rpm.sh 0.1.0 and build-rpm.sh 0.1.1
-  from tests/integration/package-lifecycle inside the ALT builder with
-  /src and /build mounted. Put the 0.1.1 artifacts in upgrades/.
-* Full gate: run tests/integration/package-lifecycle/run-rpm.sh with
-  localhost/fic-p1-followup-systemd:altp11 and
-  build-pam-p1-alt/lifecycle-packages. On this machine set DOCKER_HOST to
-  the rootless Podman Docker socket. Logs: /tmp/fic-p1-rpm-lifecycle-sqlite.log
-  and /tmp/fic-p1-rpm-lifecycle-repeat.log.
-* Scoped diagnostic driver and result: /tmp/fic-p1-pam-rpm.QMpIrp
-  (copy of the same harness with the unrelated hardware subscenario removed).
-  Transcript: /tmp/fic-p1-rpm-pam-focused.log.
-* Native control harness: tests/integration/pam-dependencies/alt-control.sh
-  build-pam-p1-alt --i5 with the matching test image alias. Transcript:
-  /tmp/fic-p1-follow-native-final.log.
-
-## SSH periodic static check
-
-* Updated ssh_policy_static_checks for PeriodicApplySchedule. The check
-  scopes the guard to the ACTIVE branch and requires that branch to precede
-  the periodic apply call within the same scheduler block.
-* Both SSH and periodic contract CTests passed. Temporary source copies
-  failed as expected with the guard removed, moved after apply, or moved
-  outside the periodic block. No periodic_apply_tests binary was available.
+* Debian 13 native PAM preflight with libpam 1.7.0-5 and libpam-sss
+  2.10.1-2+b1. Verified stock nullok, selected sss, nullresetok and
+  preservation of local modifications by pam-auth-update.
+* Rebuilt production DEBs and passed fresh install, apply and repeated
+  apply, profile regeneration, missing attachment rejection, explicit
+  disable and repeated disable, observation-only, faillock composition,
+  same-version reinstall with stable ID, bulk release and dpkg remove.
+  Actual PAM returned 0 for valid nonempty and 7 for blank, wrong and
+  locked. Real loopback LDAP/SSSD returned 0/7 for correct/wrong passwords
+  of a user absent from local shadow.
+* The native ownership fixture passed before/after Prepared recovery,
+  post-rename compensation in both directions, CAS conflict, missing
+  and wrong-ID witness, orphan refusal and release with provider removed.
+* Ten selected CTests passed inside Debian 13. The separate
+  `mutation_journal_tests` passed inside the same Debian 13 image as an
+  unprivileged user. Permission-denial fixtures fail as container root
+  because root can write the directories those tests chmod.
+* Final logs: `/tmp/fic-d13-1.fDnpFvhL/native-checked-build.log`,
+  `/tmp/fic-d13-1.fDnpFvhL/native-package-checked.log`, and the native
+  evidence directory printed on the first line of the latter.
+* No host PAM, real desktop/SSH login, AD/IPA, other distribution or
+  full CI run. Unsupported manual graphs and colliding local/domain
+  identities remain outside the declared scope.

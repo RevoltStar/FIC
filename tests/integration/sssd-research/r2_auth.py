@@ -49,10 +49,21 @@ memberUid: research
  def config(cache='true',offline=1,cached=0):
   return base(offline=offline,cache=cache).replace('ldap://127.0.0.1:9','ldap://127.0.0.1:1389')+f'ldap_id_use_start_tls=true\nldap_tls_reqcert=demand\nldap_tls_cacert={cert}\nldap_network_timeout=2\nldap_opt_timeout=2\ncached_auth_timeout={cached}\n'
  def auth(wrong=False):return run(['python3','/usr/local/bin/pam-probe.py','research@test',*(['wrong'] if wrong else [])],timeout=20)
- configure(config(cached=3600));experiment('online-start',observe_start())
+ online_only=sys.argv[2:] == ['--online-only']
+ configure(config(cached=0 if online_only else 3600))
+ if online_only:
+  started=ctl('restart','sssd.service',timeout=40)
+  experiment('online-start',started);assert started['exit_code']==0
+ else:experiment('online-start',observe_start())
  experiment('online-identity',run(['getent','passwd','research@test'],timeout=15))
  online=auth();experiment('online-password',online)
  if online['exit_code']!=0:raise RuntimeError('native online PAM did not succeed; no offline claim')
+ if online_only:
+  negative=auth(wrong=True);experiment('online-wrong-password',negative)
+  assert negative['exit_code']==1 and json.loads(negative['stdout'])['pam_authenticate']!=0
+  assert not any(line.startswith('research@test:') or line.startswith('research:') for line in Path('/etc/shadow').read_text().splitlines())
+  report['collection_complete']=True;save()
+  sys.exit(0)
  cache=Path('/var/lib/sss/db/cache_test.ldb')
  def cache_metadata():return run(['ldbsearch','-H',str(cache),'(uidNumber=160001)','dn','lastOnlineAuth','lastLogin','lastCachedPasswordChange'])
  experiment('cache-after-online',cache_metadata())

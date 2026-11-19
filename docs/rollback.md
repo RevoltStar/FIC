@@ -1554,6 +1554,33 @@ options (`PamOptionPolicy`, включая
 ALT password-history BEFORE при отсутствии managed topology не требует ещё
 не созданного history storage.
 
+### Debian 13: deny_empty_password_login
+
+The native `fic-empty-password-hook` is a permanent Additional profile.
+It attaches one `auth substack fic-empty-password` after the generated Primary
+block. Apply changes only its package slot, without invoking pam-auth-update or
+modifying the Unix or SSSD profiles. The active slot classifies the subject
+with pam_localuser, then rechecks the local password with strict
+`pam_unix.so use_first_pass`. Non-local subjects skip that recheck. The
+supported scope is local password authentication on Debian 13 through the
+declared PAM services using common-auth, with distinct local and domain
+identities. The verifier examines numeric jumps, early returns and substacks.
+It rejects unknown module or Unix argument contracts, unavailable required
+modules and graphs without a usable local password path. A proven strict
+foreign graph can satisfy the policy without a write or journal record.
+
+`UndoDisablePamCapability` binds the single immutable v1 slot shape to
+`capability/deny_empty_password_login` and the MutationId. Prepared is durable
+before conditional publication. Recovery compares the canonical neutral slot
+or the exact active slot bound to the historical ID. Before/after fsync errors
+and concurrent conflicts retain uncertain provenance. Reapply refuses lost
+or changed ownership even when the remaining graph is strict. Explicit
+rollback verifies ownership without loading PAM modules or requiring a live
+attachment, and conditionally restores the neutral `optional pam_deny.so`
+slot. Package detach requires that neutral state and checks the physical
+absence of references after pam-auth-update. Manual edits to generated files
+can prevent detach. The package does not use --force.
+
 ### C2 joint password topology rollback (Debian 12 / Ubuntu 24.04)
 
 Password Quality и Password History образуют ОДИН joint runtime topology

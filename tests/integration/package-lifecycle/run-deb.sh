@@ -3,7 +3,7 @@
 set -euo pipefail
 [[ $# -ge 2 && $# -le 4 ]] || { echo 'usage: run-deb.sh IMAGE PACKAGE_DIRECTORY [DRIVER [OPTIONAL_OWNER_FIXTURE]]' >&2; exit 2; }
 driver=${3:-deb_native.py}
-case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py|slow_init_native.py|startup_readiness_native.py) ;; *) exit 2 ;; esac
+case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py|slow_init_native.py|startup_readiness_native.py|d13_empty_password_native.py) ;; *) exit 2 ;; esac
 extra=()
 if [[ $# == 4 ]]; then
     [[ "$driver" == minimal_runtime_native.py && -f "$4" ]] || exit 2
@@ -28,7 +28,7 @@ python3 - "$out/container.json" <<'PY'
 import json,sys
 c=json.load(open(sys.argv[1]))[0]; h=c['HostConfig']
 assert h['NetworkMode']=='none' and h['CgroupnsMode']=='private'
-assert not h['Binds'] and not h['PortBindings'] and not h['PidMode'] and h['IpcMode']!='host'
+assert not h['Binds'] and not h['PortBindings'] and h['PidMode'] in ('', 'private') and h['IpcMode']!='host'
 assert all(m['Type']=='tmpfs' and m['Destination'] in ('/run','/tmp') for m in c['Mounts'])
 PY
 docker exec "$name" timeout 60 sh -ec 'until systemctl show-environment >/dev/null 2>&1; do sleep .1; done'
@@ -42,5 +42,12 @@ if [[ "$driver" == startup_readiness_native.py ]]; then
     [[ -f "${FIC_STARTUP_TEST_BINARY:-}" ]] || { echo 'FIC_STARTUP_TEST_BINARY required' >&2; exit 2; }
     docker cp "$FIC_STARTUP_TEST_BINARY" "$name:/usr/local/bin/startup-readiness-tests"
     docker cp "$repo/tests/integration/package-lifecycle/slow_init_native.py" "$name:/var/tmp/slow_init_native.py"
+fi
+if [[ "$driver" == d13_empty_password_native.py ]]; then
+    [[ -f "${FIC_D13_OWNERSHIP_TEST_BINARY:-}" ]] || { echo 'FIC_D13_OWNERSHIP_TEST_BINARY required' >&2; exit 2; }
+    docker cp "$FIC_D13_OWNERSHIP_TEST_BINARY" "$name:/usr/local/bin/d13-ownership-tests"
+    docker cp "$repo/tests/integration/sssd-research/common.py" "$name:/usr/local/bin/common.py"
+    docker cp "$repo/tests/integration/sssd-research/r2_auth.py" "$name:/usr/local/bin/r2_auth.py"
+    docker cp "$repo/tests/integration/sssd-research/pam-probe.py" "$name:/usr/local/bin/pam-probe.py"
 fi
 docker exec -e FIC_A2_TEST_GROUP="${FIC_STARTUP_TEST_GROUP:-all}" "$name" python3 /usr/local/bin/deb-native.py "${extra[@]}"

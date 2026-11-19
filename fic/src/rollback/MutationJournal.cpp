@@ -1013,6 +1013,15 @@ bool validatePamUndoPayload(const UndoDisablePamCapability& payload,
         error = "disable_pam_capability has an unknown topology kind";
         return false;
     }
+    if (payload.capability == "deny_empty_password_login") {
+        if (payload.topology != PamTopologyKind::PamAuthUpdate ||
+            payload.activationIdentifiers != std::vector<std::string>{"fic-empty-password-hook"} ||
+            payload.hadAppliedProvenance) {
+            error = "invalid empty-password PAM slot undo domain";
+            return false;
+        }
+        return true;
+    }
     if (payload.capability != "enable_authentication_lockout" &&
         payload.capability != "enable_password_history" &&
         payload.capability != "enable_password_quality") {

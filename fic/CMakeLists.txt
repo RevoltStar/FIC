@@ -149,6 +149,11 @@ fic_resolve_pam_policy_defaults(
     "${FIC_PAM_PASSWORD_HISTORY_PROVIDER}"
     FIC_PASSWORD_QUALITY_PROVIDER_POLICY_DEFAULTS
     FIC_PASSWORD_HISTORY_POLICY_DEFAULTS)
+set(FIC_EMPTY_PASSWORD_LOGIN_POLICY_DEFAULTS "")
+if(FIC_TARGET_PLATFORM STREQUAL "debian-13")
+    set(FIC_EMPTY_PASSWORD_LOGIN_POLICY_DEFAULTS
+        "deny_empty_password_login.status=DISABLE\ndeny_empty_password_login.value=ENABLE")
+endif()
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/config/IDENTITY_ACCESS.conf.in"
     "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"

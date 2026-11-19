@@ -44,6 +44,9 @@ fi
 pam-auth-update --package
 pam-auth-update --enable fic-faillock-hook-preauth fic-faillock-hook-authfail \
     fic-faillock-hook-authsucc fic-faillock-hook-account fic-incident-access
+if [ '@FIC_D13_EMPTY_PASSWORD_HOOK@' = yes ]; then
+    pam-auth-update --enable fic-empty-password-hook
+fi
 /opt/fic/bin/fic --maintenance complete-install
 ln -sfn /opt/fic/bin/fic /bin/fic
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/fic.conf

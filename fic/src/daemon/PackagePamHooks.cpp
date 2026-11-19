@@ -1,4 +1,5 @@
 #include "daemon/PackagePamHooks.h"
+#include "modules/identity_access/pam/PamEmptyPasswordLogin.h"
 #include "incident/AltIncidentAccessGateTopology.h"
 #include "incident/PamIncidentAccessGateVerifier.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
@@ -12,11 +13,12 @@
 #include <unistd.h>
 namespace fic::daemon {
 namespace {
-constexpr std::array<const char*,14> profiles{{"fic-faillock-notify","fic-faillock-authfail",
+constexpr std::array<const char*,15> profiles{{"fic-faillock-notify","fic-faillock-authfail",
     "fic-faillock-preauth-required","fic-faillock-authsucc","fic-faillock-hook-preauth",
     "fic-faillock-hook-authfail","fic-faillock-hook-authsucc","fic-faillock-hook-account",
     "fic-pwquality","fic-pwhistory","fic-password-quality-hook","fic-password-history-hook",
-    "fic-password-history-initial-hook","fic-incident-access"}};
+    "fic-password-history-initial-hook","fic-incident-access",
+    fic::identity::pam::emptyPasswordHook}};
 bool fail(std::string& error,const std::string& why){error=why;return false;}
 bool read(const std::filesystem::path& file,std::string& content,std::string& error) {
     const int parent=fic::core::openRootControlledDirectory(file.parent_path(),error);
@@ -38,10 +40,13 @@ bool PackagePamHooks::proveAttached(std::string& error) const {
     if(!pamAuthUpdate(platform_))return fail(error,"unsupported package PAM infrastructure platform");
     using namespace fic::identity::pam;
     struct Hook {const char* facility;const char* common;const char* profile;const char* target;PamManagementGroup group;};
-    for(const auto& hook:{Hook{"auth","common-auth","fic-faillock-hook-preauth","fic-faillock-preauth",PamManagementGroup::Auth},
+    std::vector<Hook> hooks{Hook{"auth","common-auth","fic-faillock-hook-preauth","fic-faillock-preauth",PamManagementGroup::Auth},
         Hook{"auth","common-auth","fic-faillock-hook-authfail","fic-faillock-authfail",PamManagementGroup::Auth},
         Hook{"auth","common-auth","fic-faillock-hook-authsucc","fic-faillock-authsucc",PamManagementGroup::Auth},
-        Hook{"account","common-account","fic-faillock-hook-account","fic-faillock-account",PamManagementGroup::Account}}) {
+        Hook{"account","common-account","fic-faillock-hook-account","fic-faillock-account",PamManagementGroup::Account}};
+    if (!platform_.pam.emptyPasswordAuthSelection.empty())
+        hooks.push_back({"auth", "common-auth", emptyPasswordHook, emptyPasswordSlot, PamManagementGroup::Auth});
+    for (const auto& hook : hooks) {
         std::string selection;
         if(!read(selection_/hook.facility,selection,error))return false;
         std::istringstream lines(selection);std::string line;unsigned selected=0;
@@ -52,8 +57,10 @@ bool PackagePamHooks::proveAttached(std::string& error) const {
         std::string content;std::vector<PamRule> rules;
         if(!read(file,content,error)||!PamConfiguration::parseRulesContent(file,content,rules,error))return false;
         unsigned included=0;
-        for(const auto& rule:rules)if(rule.group==hook.group&&rule.control=="include"&&
-            rule.includeKind==PamIncludeKind::Include&&rule.includeTarget==hook.target)++included;
+        const auto kind = std::string_view(hook.target) == emptyPasswordSlot
+            ? PamIncludeKind::Substack : PamIncludeKind::Include;
+        for(const auto& rule:rules)if(rule.group==hook.group&&
+            rule.includeKind==kind&&rule.includeTarget==hook.target)++included;
         if(included!=1)return fail(error,"permanent PAM hook physical attachment absent/duplicate: "+std::string(hook.target));
     }
     error.clear();return true;
@@ -135,6 +142,8 @@ bool PackagePamHooks::removeProfiles(bool incident,std::chrono::steady_clock::ti
     if(incident)args.emplace_back("fic-incident-access");
     else for(const auto* profile:{"fic-faillock-hook-preauth","fic-faillock-hook-authfail",
         "fic-faillock-hook-authsucc","fic-faillock-hook-account"})args.emplace_back(profile);
+    if (!incident && !platform_.pam.emptyPasswordAuthSelection.empty())
+        args.emplace_back(fic::identity::pam::emptyPasswordHook);
     ProcessOptions options;options.timeout=std::min(remaining,std::chrono::milliseconds(5000));options.maxOutputBytes=65536;
     options.clearEnvironment=true;options.environment={{"LANG","C"},{"LC_ALL","C"},{"PATH","/usr/sbin:/usr/bin:/sbin:/bin"}};
     const auto result=ProcessExecutor::execute(executable,args,options);
@@ -152,6 +161,13 @@ bool PackagePamHooks::detach(const DaemonInstanceLock& guard,std::chrono::steady
         return fic::incident::AltIncidentAccessGateTopology::detach(platform_.pam.incidentAccessGate.packageTopologyTarget,error)&&proveDetached(error);
     }
     if(!pamAuthUpdate(platform_))return fail(error,"unsupported package PAM infrastructure platform");
+    if (!platform_.pam.emptyPasswordAuthSelection.empty()) {
+        std::string content;
+        if (platform_.pam.configDirectories.empty() ||
+            !read(platform_.pam.configDirectories.front() / fic::identity::pam::emptyPasswordSlot,
+                  content, error) || content != fic::identity::pam::emptyPasswordNeutral)
+            return fail(error, "empty-password slot must be proven neutral before PAM detach");
+    }
     // Never compensate partial release with unproven hook/ownership adoption.
     // The caller's durable fence and masks remain active on EVERY failure.
     bool detached=false;

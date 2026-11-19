@@ -19,7 +19,8 @@ class Conv(c.Structure):_fields_=[('callback',Callback),('data',c.c_void_p)]
 conv=Conv(callback,None);handle=c.c_void_p()
 pam.pam_start.argtypes=[c.c_char_p,c.c_char_p,c.POINTER(Conv),c.POINTER(c.c_void_p)]
 pam.pam_authenticate.argtypes=[c.c_void_p,c.c_int];pam.pam_end.argtypes=[c.c_void_p,c.c_int]
-start=pam.pam_start(b'sssd-research',sys.argv[1].encode(),c.byref(conv),c.byref(handle))
+service=os.environ.get('FIC_SSSD_TEST_PAM_SERVICE','sssd-research').encode()
+start=pam.pam_start(service,sys.argv[1].encode(),c.byref(conv),c.byref(handle))
 auth=pam.pam_authenticate(handle,0) if start==0 else None
 if start==0:pam.pam_end(handle,auth)
 print(json.dumps({'pam_start':start,'pam_authenticate':auth,'fixture_user':sys.argv[1]}))

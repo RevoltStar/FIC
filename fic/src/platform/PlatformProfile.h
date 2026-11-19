@@ -377,6 +377,7 @@ struct PamPlatformConfig {
         std::vector<std::string> pamBypassNssServices;
     };
     std::optional<PasswordlessLoginControl> passwordlessLoginControl;
+    std::filesystem::path emptyPasswordAuthSelection;
     // Joint C2 password topology (quality + history) runtime mutation is
     // VALIDATED on this platform profile: the PamAuthUpdate C2 path passed
     // the real functional gates (executor + policy wiring) on this exact

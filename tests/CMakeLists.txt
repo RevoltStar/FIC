@@ -1256,6 +1256,7 @@ add_executable(rollback_executor_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEmptyPasswordLogin.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
@@ -1378,6 +1379,7 @@ add_executable(sudo_scoped_defaults_lifecycle_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEmptyPasswordLogin.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
@@ -1849,6 +1851,7 @@ add_executable(pam_password_wiring_tests
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEmptyPasswordLogin.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
@@ -2105,6 +2108,7 @@ add_executable(fic-pam-c2-wiring-driver EXCLUDE_FROM_ALL
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEmptyPasswordLogin.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryDepthPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamPasswordHistoryEnforceForRootPolicy.cpp
@@ -2463,6 +2467,7 @@ add_executable(identity_login_defs_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersGlobalDefaultsTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersManagedInclude.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEmptyPasswordLogin.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedConfig.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/user_creation/UserCreationManagedTransaction.cpp
@@ -2622,6 +2627,7 @@ add_executable(identity_concrete_policies_tests
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/rollback/PamRollback.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEmptyPasswordLogin.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyCoordinator.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPasswordTopologyState.cpp
@@ -3616,4 +3622,19 @@ if(Python3_Interpreter_FOUND)
     add_test(NAME periodic_apply_contract_checks COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/fic/daemon/check-periodic-apply.py ${CMAKE_SOURCE_DIR})
     set_tests_properties(periodic_apply_contract_checks PROPERTIES LABELS static)
+endif()
+
+if(FIC_TARGET_PLATFORM STREQUAL "debian-13")
+    get_target_property(empty_password_pam_sources pam_control_flow_analyzer_tests SOURCES)
+    list(FILTER empty_password_pam_sources EXCLUDE REGEX "PamControlFlowAnalyzerTests\\.cpp$")
+    add_executable(d13_empty_password_ownership_tests
+        integration/pam-empty-password/OwnershipTests.cpp
+        ${empty_password_pam_sources}
+        ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEmptyPasswordLogin.cpp
+        ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderManagedLock.cpp
+        ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+        ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    )
+    target_include_directories(d13_empty_password_ownership_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+    target_link_libraries(d13_empty_password_ownership_tests PRIVATE fic-core fic-policy fic-platform Threads::Threads)
 endif()

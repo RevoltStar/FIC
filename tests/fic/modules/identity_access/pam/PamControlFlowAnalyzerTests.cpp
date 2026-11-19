@@ -833,6 +833,38 @@ void testPasswordFlowSubstackJump(const fs::path& root) {
             "G7: token producer invariant must hold across substacks");
 }
 
+void testEmptyUnixPasswordPaths() {
+    using namespace fic::identity::pam;
+    const auto check = [](const std::string& primary,
+                          const std::vector<std::string>& tail, bool expected) {
+        PamEffectiveStack stack;
+        stack.service = "login";
+        std::string error;
+        const auto append = [&](const std::string& line) {
+            std::vector<PamRule> parsed;
+            require(PamConfiguration::parseRulesContent("login", line, parsed, error), error);
+            stack.entries.push_back({parsed.front(), {}});
+        };
+        append(primary);
+        for (const auto& rule : tail) append(rule);
+        bool safe = false;
+        require(proveNoEmptyUnixPasswordPath(stack, {}, safe, error), error);
+        require(safe == expected, "unexpected blank-password verdict: " + primary);
+    };
+    check("auth required pam_unix.so\n", {}, true);
+    for (const std::string option : {"nullok", "nullok_secure", "nullresetok"}) {
+        const auto unixPrimary = "auth [success=1 default=ignore] pam_unix.so " + option + "\n";
+        const std::string deny = "auth requisite pam_deny.so\n";
+        const std::string permit = "auth required pam_permit.so\n";
+        const std::string strict = "auth [success=ok default=die] pam_unix.so use_first_pass\n";
+        check(unixPrimary, {deny, permit}, false);
+        check(unixPrimary, {deny, permit, strict}, true);
+        check("auth sufficient pam_unix.so " + option + "\n", {strict}, false);
+        check("auth [success=2 default=ignore] pam_unix.so " + option + "\n",
+              {deny, strict, permit}, false);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -840,6 +872,7 @@ int main() {
         ("fic-pam-analyzer-test-" + std::to_string(::getpid()));
     fs::remove_all(root);
     try {
+        testEmptyUnixPasswordPaths();
         testDetectPamFaillockStrategy(root);
         testDebianGeneratedTopologiesAreEffective(root);
         testRecoverableFailureAccounting(root);

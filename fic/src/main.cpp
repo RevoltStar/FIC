@@ -32,6 +32,7 @@
 #include <systemd/sd-login.h>
 
 #include "daemon/main_function.h"
+#include "modules/identity_access/pam/PamEmptyPasswordLogin.h"
 #include "daemon/AdminAudit.h"
 #include "daemon/CalcHashCommand.h"
 #include "daemon/LogRecordsReader.h"
@@ -2121,6 +2122,16 @@ int main(int argc, char* argv[]) {
                              "topology"
                           << std::endl;
                 return 1;
+            }
+            if (!platform.pam.emptyPasswordAuthSelection.empty()) {
+                fic::rollback::MutationJournal journal(paths.mutationJournalFile);
+                if (!journal.validatePersistentStateReadOnly(validationError) ||
+                    !fic::identity::pam::proveEmptyPasswordSlot(
+                        platform.pam, journal, validationError)) {
+                    std::cerr << "FIC empty-password slot is unproven: "
+                              << validationError << std::endl;
+                    return 1;
+                }
             }
             std::cout << "safe to attach" << std::endl;
             return 0;

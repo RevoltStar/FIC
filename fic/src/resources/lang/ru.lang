@@ -106,6 +106,8 @@
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root]=Применять историю паролей для root
 [module:IDENTITY_ACCESS][policy:password_history_enforce_for_root][description]=Управляет native-семантикой pam_pwhistory enforce_for_root через выбранную platform profile стратегию config-файла или аргументов модуля.
 [module:IDENTITY_ACCESS][policy:failed_authentication_attempts]=Неудачные PAM-аутентификации до блокировки
+[module:IDENTITY_ACCESS][policy:deny_empty_password_login]=Запрет входа с пустым паролем
+[module:IDENTITY_ACCESS][policy:deny_empty_password_login][description]=Запрещает аутентификацию локальной учётной записи с пустым паролем в поддерживаемом PAM-стеке Debian 13.
 [module:IDENTITY_ACCESS][policy:disable_nopasswdlogin]=Отключение беспарольного входа через nopasswdlogin
 [module:IDENTITY_ACCESS][policy:disable_nopasswdlogin][description]=Отключает объявленный платформой путь nopasswdlogin. При локальном NSS удаляет supplementary membership и проверяет effective результат; при SSS атомарно удаляет exact объявленный GDM/LightDM PAM bypass без перечисления доменных пользователей. Primary GID и неизвестная topology дают fail-closed.
 [module:IDENTITY_ACCESS][policy:disable_root_sddm_login]=Запрет входа root через SDDM
