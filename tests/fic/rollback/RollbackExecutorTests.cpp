@@ -674,17 +674,17 @@ void testPamOwnershipRelease() {
             "FIC marker without provenance must fail closed");
     auto mismatched = undo;
     mismatched.activationIdentifiers = {"foreign"};
-    require(undoPamCapability(options, mismatched).state ==
+    require(undoPamCapability(options, 42, mismatched).state ==
                 PamRollbackState::Conflict,
             "recorded selection domain must match current profile");
     require(state->disableCalls == 0,
             "mismatched provenance must not invoke native disable");
     state->manageable = false;
-    require(undoPamCapability(options, undo).state ==
+    require(undoPamCapability(options, 42, undo).state ==
                 PamRollbackState::AlreadyReleased,
             "external equivalent topology must not be disabled");
     state->manageable = true;
-    require(undoPamCapability(options, undo).state ==
+    require(undoPamCapability(options, 42, undo).state ==
                 PamRollbackState::Conflict,
             "legacy profile-backed password history must not be "
             "destructively released");
@@ -721,7 +721,7 @@ void testPamOwnershipRelease() {
         {"fic-pwquality"}};
 
     // Exact profile name + journal record is still not causal provenance.
-    require(undoPamCapability(qualityOptions, qualityUndo).state ==
+    require(undoPamCapability(qualityOptions, 42, qualityUndo).state ==
                 PamRollbackState::Conflict &&
                 qualityState->disableCalls == 0,
             "FIC-specific pwquality profile must fail closed without a "
@@ -733,7 +733,7 @@ void testPamOwnershipRelease() {
     qualityState->state = fic::identity::pam::PamTopologyState::Enabled;
     qualityState->manageable = false;
     qualityState->disableCalls = 0;
-    require(undoPamCapability(qualityOptions, qualityUndo).state ==
+    require(undoPamCapability(qualityOptions, 42, qualityUndo).state ==
                 PamRollbackState::AlreadyReleased &&
                 qualityState->disableCalls == 0,
             "external pwquality replacement must never be disabled");
@@ -742,7 +742,7 @@ void testPamOwnershipRelease() {
     // their ownership domain no longer matches the platform profile.
     auto legacySharedUndo = qualityUndo;
     legacySharedUndo.activationIdentifiers = {"pwquality"};
-    require(undoPamCapability(qualityOptions, legacySharedUndo).state ==
+    require(undoPamCapability(qualityOptions, 42, legacySharedUndo).state ==
                 PamRollbackState::Conflict &&
                 qualityState->disableCalls == 0,
             "legacy shared pwquality provenance must require reconciliation");

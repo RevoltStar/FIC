@@ -155,10 +155,7 @@ PlatformProfile makeBuildPlatformProfile() {
          PamIdentitySubjectScope::AllPamSubjects,
          PamCapabilityConfigurationMode::ModuleArguments}
     };
-    // Evidence-based lift (real functional gates G1-G11 + production wiring
-    // gates passed on Debian 12): the joint C2 password topology is runtime
-    // mutable here. Debian 13 and other PamAuthUpdate platforms stay
-    // ReadOnly until their own gates pass.
+    // Native functional and production wiring gates qualified C2 on this profile.
     profile.pam.passwordTopologyRuntimeMutable = true;
     // Step 6 module-argument support (evidence-based, Debian 12 ships
     // Linux-PAM 1.5.2 whose pam_pwhistory accepts `remember=N` and the bare

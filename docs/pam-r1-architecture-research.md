@@ -795,6 +795,12 @@ provenance сохраняется. Сравнение bytes и последую�
 
 ### Архитектурное ограничение причинного ownership ALT
 
+Следующие абзацы описывают состояние I5. В текущем коде новые ALT
+мутации используют домен журнала `alt_tcb_journal_bound_v1` и маркеры
+`v1 id=<MutationId> target=<path>`. Старый домен сохраняется для ранее
+установленных блоков. См. действующий контракт в `docs/rollback.md`.
+
+
 ALT markers не содержат journal MutationId или file-generation receipt.
 `physical_mutation_id` в native report явно null. Active record + точный
 поддерживаемый block остаются существующим legacy release-контрактом, но не

@@ -166,11 +166,6 @@ public:
     // identity without duplicating the mapping.
     static PolicyRef canonicalPolicyRef(PamManagedPasswordDomain domain);
 
-    // The managed password slot grammar embeds the journal mutation id:
-    // physical ownership is proven through the journal (Step 7 wires this
-    // into the capability lifecycle layer).
-    static constexpr bool journalBindsPhysicalOwnership() { return true; }
-
     // Read-only ownership proof (no journal repair, no witness write, no
     // slot rewrite, no Prepared completion). The quality slot must be
     // canonical Active and its marker id must match a valid Applied record

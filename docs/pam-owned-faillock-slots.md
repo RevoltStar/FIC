@@ -48,13 +48,11 @@ crash-partial subset only when every existing active marker has that exact id.
 A malformed marker or a different id is a conflict. An unmarked external
 `pam_faillock` graph is never removed.
 
-PasswordQuality and PasswordHistory still use the legacy pam-auth-update
-inspection backend, but **new profile-selection mutation and destructive
-rollback are disabled**. The Docker probe validated faillock hook placement,
-not a permanent password-stack ownership contract; Password-Initial /
-`use_authtok` composition requires its own proof before those activation
-policies can safely mutate topology. An already-effective foreign topology may
-still be verified.
+The standalone legacy profile-selection path for PasswordQuality and
+PasswordHistory remains observation-only. C2 owns supported Debian/Ubuntu
+password topology transitions through the joint coordinator and managed slots.
+The historical inspection-only matrix predates C2 and does not describe the
+current production policy registry.
 
 Legacy exact, partial and mixed pam-auth-update selections are never treated as
 causal ownership merely from their profile names. Debian/Ubuntu package upgrade

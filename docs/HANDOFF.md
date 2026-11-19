@@ -50,3 +50,13 @@
   Host fixture tests passed (activation, journal and both ALT topology suites).
   Native ALT configure stopped at missing nlohmann_json in the cached image.
   Native control and package lifecycle gates remain outstanding.
+* P3 removed the ID-less undoPamCapability overload (only six fixture calls)
+  and an unreferenced static slot-writer ownership flag. Production release
+  already passes record.id. Legacy inspection and refusal paths remain needed
+  for package/recovery checks. The old paired-slot writer still has direct
+  tests and was retained. All four Debian/Ubuntu profiles select mutable C2
+  for supported password topology. ALT has its own history manager and
+  static passwdqc topology. Docs and stale profile comments distinguish these.
+* rollback_executor_tests built. Both PAM cases passed, but the complete
+  executable failed its mode-and-owner case with "test identity lookup
+  failed". platform_profile_tests passed.

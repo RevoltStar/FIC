@@ -1518,18 +1518,26 @@ permanent pam-auth-update hooks являются инфраструктурой,
 нейтрализует только strict FIC slot markers с exact journal mutation id. Crash-
 partial subset допускается к release только при совпадении id; malformed/wrong
 id — conflict. ALT использует существующие topology managers и их lock order.
-Для ALT known-journal release использует physical `inspectForRelease`, а не
-проверку участия в selected control graph. Неэффективный selection или
-отсутствующий provider module сами по себе не препятствуют удалению корректных
-blocks. Marker/placement, согласованность обоих faillock targets/strategy/tcb,
-history storage/transaction lock, payload/profile, CAS и durability остаются
-обязательными. Ordinary inspect/apply и control status требуют effectiveness;
-orphans не усыновляются. При компенсации неизвестные текущие bytes не
-перезаписываются старым whole-file snapshot; возвращается явный failure.
-Это не multi-file atomicity. ALT markers без MutationId/file-generation receipt
-не доказывают causal ownership при согласованном ABA recreation под оставшейся
-active записью. Существующий legacy release-контракт сохранён; подробная граница
-и native mode matrix — §13 docs/pam-r1-architecture-research.md.
+Новые ALT topology records используют `alt_tcb_journal_bound_v1`. Каждый
+BEGIN/END сохраняет имя модуля и роль блока и заканчивается суффиксом
+`v1 id=<ненулевой десятичный MutationId> target=<путь>`. Все маркеры операции
+должны иметь один ID. Смена стратегии сохраняет ID активной записи.
+
+Release проверяет структуру и принадлежность физического блока независимо
+от selected control graph. Для нового домена каждый существующий блок
+проверяется под lock по ID и target, включая неполный набор после сбоя.
+Неполный набор не подтверждает Applied. Prepared recovery может очистить
+доказанный набор с точным ID и повторить apply. Повреждённые, смешанные по
+формату или чужие маркеры отклоняются до записи. Сохраняются per-file CAS
+и компенсация с проверкой текущих байтов. Копирование блока вместе с ID
+привилегированным процессом по-прежнему неотличимо от оригинала.
+
+Старый домен `alt_tcb_managed` допускает idempotent apply существующей
+стратегии и прежний release при активной provenance. Смена стратегии
+требует освобождения и новой активации. Старые маркеры не дополняются ID
+автоматически. Отсутствие записи запрещает усыновление и release,
+а новый домен не даёт права удалить старый блок.
+
 `StaticVerifyOnly`
 никогда не создаёт provenance и не запускает native deactivation. PAM provider
 options (`PamOptionPolicy`, включая
@@ -1537,17 +1545,11 @@ options (`PamOptionPolicy`, включая
 Без active journal явно FIC-owned markers/selections
 считаются orphaned provenance: disable отклоняется, автоматического
 «усыновления» или разрушительного legacy rollback нет.
-PasswordQuality на Debian/Ubuntu разделяет compliance и ownership: distro
-profile `pwquality` может обеспечивать требуемую topology, но всегда остаётся
-external и потому даёт no-op без journal. Когда activation действительно
-нужна, FIC включает собственный profile `fic-pwquality`. Rollback отключает
-только `fic-pwquality`; disappearance этого marker при сохранённом journal
-означает release FIC-owned topology, даже если администратор затем включил
-эквивалентный distro `pwquality`. Таким образом journal доказывает lifecycle
-FIC mutation, а не превращает shared native identifier во владение FIC.
-Старые записи, содержащие activation domain `pwquality`, не усыновляются:
-несовпадение с текущим `fic-pwquality` domain даёт Conflict и требует ручной
-reconciliation.
+Исторический standalone profile-selection writer для Debian/Ubuntu
+не является действующим способом активации PasswordQuality. Поддерживаемые
+переходы пароля описаны ниже в разделе C2. Старыми идентификаторами по-прежнему
+пользуются диагностика и проверки provenance.
+
 Чистые preflight failures происходят до создания `Prepared`. Доказательство
 ALT password-history BEFORE при отсутствии managed topology не требует ещё
 не созданного history storage.
