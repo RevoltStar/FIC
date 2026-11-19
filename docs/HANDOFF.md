@@ -60,3 +60,12 @@
 * rollback_executor_tests built. Both PAM cases passed, but the complete
   executable failed its mode-and-owner case with "test identity lookup
   failed". platform_profile_tests passed.
+* Native ALT p11 retry installed build dependencies in the disposable
+  container and compiled both ALT manager suites. The image has no ctest,
+  so both binaries were then run directly in a fresh ALT p11 container.
+  Both passed, including fixture ID/partial-publication checks. The existing
+  --live-alt-enable round trip passed on container PAM, using legacy markers.
+  The ID-bound production control-mode and final erase/reinstall gates
+  still require native lifecycle validation.
+* P2 report: docs/pam-alt-pwhistory-parameter-rollback.md. Recommendation A,
+  preserve dedicated config semantics. No P2 production changes.
