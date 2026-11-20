@@ -53,7 +53,8 @@ memberUid: research
  assert run(['ldapadd','-x','-H','ldap://127.0.0.1:1389','-D','cn=admin,dc=example,dc=test',*provision],input=ldif)['exit_code']==0
  # Isolated /etc fixture only; no production PAM/NSS topology changed.
  write('/etc/pam.d/sssd-research','auth required pam_sss.so\naccount required pam_sss.so\n',0o644)
- nss=Path('/etc/nsswitch.conf');text=nss.read_text();text=re.sub(r'^(passwd|group):.*$',lambda m:m.group(1)+': files sss',text,flags=re.M);write(nss,text,0o644)
+ if not mfa_only:
+  nss=Path('/etc/nsswitch.conf');text=nss.read_text();text=re.sub(r'^(passwd|group):.*$',lambda m:m.group(1)+': files sss',text,flags=re.M);write(nss,text,0o644)
  def config(cache='true',offline=1,cached=0):
   return base(offline=offline,cache=cache).replace('ldap://127.0.0.1:9','ldap://127.0.0.1:1389')+f'ldap_id_use_start_tls=true\nldap_tls_reqcert=demand\nldap_tls_cacert={cert}\nldap_network_timeout=2\nldap_opt_timeout=2\ncached_auth_timeout={cached}\n'
  def auth(wrong=False):return run(['python3','/usr/local/bin/pam-probe.py','research@test',*(['wrong'] if wrong else [])],timeout=20)
@@ -69,7 +70,7 @@ memberUid: research
   assert run(['getent','passwd','research@test'])['exit_code']==0
   assert not any(line.startswith(('research@test:','research:')) for line in Path('/etc/shadow').read_text().splitlines())
   env=dict(os.environ,FIC_FIXTURE_DOMAIN_PASSWORD=password)
-  subprocess.run(['python3','/usr/local/bin/d13-mfa-native.py','--sssd'],env=env,check=True,timeout=80)
+  subprocess.run(['python3','/usr/local/bin/d13-mfa-native.py','--sssd'],env=env,check=True,timeout=150)
   sys.exit(0)
  online_only=sys.argv[2:] == ['--online-only']
  configure(config(cached=0 if online_only else 3600))

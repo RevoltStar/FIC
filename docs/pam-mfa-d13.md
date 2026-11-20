@@ -36,7 +36,11 @@ the supported MFA controls.
 
 The supported domain route has the Debian `pam_sss.so use_first_pass`
 Primary, one LDAP identity and authentication domain over verified TLS,
-fully qualified names, local-only shadow and `passwd: files sss`.
+fully qualified names, `shadow: files` and `passwd: files sss`.
+The SSSD NSS password field must stay locked (`*`, the remote LDAP
+default), including any per-domain override. `pam_unix` therefore
+cannot treat the passwd record from SSSD as a password hash or ask
+another shadow provider for a credential.
 Local accounts cannot occupy the qualified namespace. SSSD certificate
 and passkey authentication, password caching and cached authentication
 are disabled. The proof uses the trusted SSSD main file and drop-ins.
@@ -45,6 +49,27 @@ and group. Evidence describes the on-disk snapshot, so an application
 must load that PAM stack and the SSSD responder must use the proven
 configuration. [Debian pam_sss](https://manpages.debian.org/trixie/libpam-sss/pam_sss.8.en.html),
 [Debian sssd.conf](https://manpages.debian.org/trixie/sssd-common/sssd.conf.5.en.html).
+
+### NSS with libnss-systemd and SSSD
+
+Installing `libnss-systemd` on clean Debian 13 added `systemd` after
+`files` in `passwd`, `shadow` and `group`. Installing SSSD afterwards
+appended `sss` to all three. The proven mixed password route can retain
+both modules in `group`. Group resolution does not establish primary
+password evidence.
+
+Both `passwd: files systemd sss` and `passwd: files sss systemd`
+are unsupported with SSSD. The first can select a UserDB record before
+SSSD and the second can fall back to one when SSSD lookup fails. The
+module accepts names containing `@`, so a qualified name alone does
+not prove its source. The mixed route also rejects `systemd` in
+`shadow`, where UserDB can supply password hashes. Ordinary users
+from `files` are covered. DynamicUser and synthesized identities,
+systemd-homed and arbitrary UserDB services or drop-ins are outside
+the mixed password proof.
+[Debian nss-systemd](https://manpages.debian.org/trixie/libnss-systemd/nss-systemd.8.en.html),
+[systemd 257.13 NSS lookup](https://github.com/systemd/systemd/blob/v257.13/src/nss-systemd/nss-systemd.c),
+[systemd 257.13 name validation](https://github.com/systemd/systemd/blob/v257.13/src/basic/user-util.c).
 
 The credential contract is a root-owned mode-0700 directory
 `/etc/security/fic-mfa`, with single-link root-owned mode-0600 files
@@ -64,6 +89,15 @@ the real provider cases. The tested FIC-owned faillock hooks count a
 wrong primary. A wrong OTP after a correct primary is denied without
 adding a faillock failure. D13-1 and faillock can be reapplied with the
 canonical experiment attached.
+
+With both NSS modules installed, the gate verifies the mixed password
+route and runs the local and LDAP matrix. It repeats the native matrix
+for both unsupported passwd orders with `shadow: files systemd` to
+observe the fixture accounts. Those results cover only the tested
+accounts and do not establish namespace separation. Missing and
+corrupt TOTP registration cases supply the same valid code as their
+preceding successful call and restore the registration. The
+conversation error is a separate case.
 
 ## NOT_TESTED and UNSUPPORTED
 

@@ -13,7 +13,7 @@ ctest --test-dir /build --output-on-failure \
 ```
 
 Prepare the existing systemd runtime fixture for these DEBs. Add
-`slapd ldap-utils sssd-ldap libnss-sss libpam-sss libpam-google-authenticator libpam0g-dev gcc`
+`slapd ldap-utils sssd-ldap libnss-sss libnss-systemd libpam-sss libpam-google-authenticator libpam0g-dev gcc`
 in the runtime image build. Use a fresh image without an existing MFA
 slot, LDAP fixture or selected Winbind, homed or SSSD smart-card profiles.
 The runner installs the actual FIC DEBs in an isolated PID and mount
@@ -29,6 +29,12 @@ FIC_D13_MFA_PROBE=/path/to/build/tests/d13_mfa_probe \
 Use the evidence directory printed by the runner. `commands.log`
 contains verifier verdicts, fixture package versions and SSSD file
 metadata. `pam.log` contains actual PAM statuses and prompt counts.
+`nsswitch.image` captures the original runtime NSS rules. The gate
+retains both modules in `group` and checks the two combined orders
+for `passwd` as unsupported, recording the PAM results for the
+ordinary fixture accounts separately. Each NSS matrix starts with
+fresh faillock counters. `pam-provider.log` contains selected PAM
+diagnostics with no fixture credentials.
 `common-auth.local` and `common-auth.sssd` preserve the generated
 ordering. `result.json` is written after all assertions and credential
 cleanup. The runner removes the disposable container. Never invoke

@@ -111,6 +111,14 @@ bool proveSssdPasswordConfiguration(std::string& error) {
         return value.value_or("") == expected ||
                reject(error, "SSSD password route requires " + group + "/" + key + "=" + expected);
     };
+    const auto hasLockedNssPassword = [&](const std::string& group) {
+        std::optional<std::string> value;
+        if (!configuration.tryGetEffectiveValue(group, "pwfield", value, error)) return false;
+        // The remote LDAP default is "*". pam_unix must not consume a hash
+        // from the SSSD passwd record or follow its field into shadow.
+        return !value || *value == "*" ||
+               reject(error, "SSSD password route requires " + group + "/pwfield=*");
+    };
     return equals("sssd", "default_domain_suffix", "") &&
            equals("sssd", "full_name_format", "") &&
            equals("sssd", "re_expression", "") &&
@@ -121,6 +129,8 @@ bool proveSssdPasswordConfiguration(std::string& error) {
            equals(section, "auth_provider", "ldap") &&
            equals(section, "subdomains_provider", "none") &&
            equals(section, "use_fully_qualified_names", "true") &&
+           hasLockedNssPassword("nss") &&
+           hasLockedNssPassword(section) &&
            equals(section, "full_name_format", "") &&
            equals(section, "re_expression", "") &&
            equals(section, "cache_credentials", "false") &&
@@ -149,14 +159,19 @@ bool proveIdentitySources(bool sssd, std::string& error) {
         for (std::string value; right >> value;) services.push_back(std::move(value));
         if (key == "passwd") {
             ++passwdRules;
+            // NSS systemd can return UserDB identities with qualified names,
+            // including on fallback after a miss from sss.
+            if (sssd && std::find(services.begin(), services.end(), "systemd") != services.end())
+                return reject(error, "unsupported NSS passwd route for MFA: systemd can overlap the SSSD namespace");
             if ((!sssd && services != std::vector<std::string>{"files"} &&
                  services != std::vector<std::string>{"files", "systemd"}) ||
                 (sssd && services != std::vector<std::string>{"files", "sss"}))
                 return reject(error, "unsupported NSS passwd route for MFA");
         } else {
             ++shadowRules;
+            // Keep the mixed-route Unix credential source restricted to files.
             if (services != std::vector<std::string>{"files"} &&
-                services != std::vector<std::string>{"files", "systemd"})
+                (sssd || services != std::vector<std::string>{"files", "systemd"}))
                 return reject(error, "unsupported NSS shadow route for MFA");
         }
     }

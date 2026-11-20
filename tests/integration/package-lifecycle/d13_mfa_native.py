@@ -154,25 +154,71 @@ def exercise_linux_pam(key, required):
 
 
 def exercise_sssd():
+    domain = "research@test"
     primary = os.environ["FIC_FIXTURE_DOMAIN_PASSWORD"]
-    key, registration = prepare_secret("research@test")
+    local_password = os.environ["FIC_FIXTURE_LOCAL_PASSWORD"]
+    local_key, empty_key = (
+        base64.b32decode((store / f"totp-{name}").read_bytes().splitlines()[0])
+        for name in (user, empty)
+    )
+    key, registration = prepare_secret(domain)
+    nss = Path("/etc/nsswitch.conf")
+    original_nss = nss.read_text()
+
+    def matrix(label):
+        for name, provider in ((user, "files"), (empty, "files"), (domain, "sss")):
+            expected = run("getent", "-s", provider, "passwd", name).stdout
+            assert run("getent", "passwd", name).stdout == expected
+            # Each NSS order gets the same starting state. The previous
+            # matrix deliberately leaves failed attempts in the tally.
+            run("faillock", "--user", name, "--reset")
+        run("getent", "-s", "files", "passwd", domain, expected=False)
+        assert not any(line.partition(":")[0] == domain
+                       for line in Path("/etc/shadow").read_text().splitlines())
+        for name, correct, seed, supplied, otp_ok, success in (
+            (user, local_password, local_key, True, True, True),
+            (user, local_password, local_key, True, False, False),
+            (user, local_password, local_key, False, True, False),
+            (empty, "", empty_key, True, True, False),
+            (domain, primary, key, True, True, True),
+            (domain, primary, key, True, False, False),
+            (domain, primary, key, False, True, False),
+        ):
+            result = authenticate(
+                f"{label}: {name} primary={supplied} otp={otp_ok}",
+                name, correct if supplied else "incorrect",
+                totp(seed) if otp_ok else wrong_totp(seed), success)
+            if success:
+                assert "password_prompts=1 otp_prompts=1" in result.stdout
+
     try:
+        group = re.search(r"(?m)^group:\s*(.+)$", original_nss).group(1).split()
+        assert set(group) == {"files", "systemd", "sss"} and group[0] == "files"
         structural("installed")
-        p = authenticate("SSSD password and TOTP", "research@test", primary, totp(key), True)
-        assert "password_prompts=1 otp_prompts=1" in p.stdout
-        authenticate("SSSD password and invalid OTP", "research@test", primary, wrong_totp(key), False)
-        authenticate("invalid SSSD password and valid OTP", "research@test", "incorrect", totp(key), False)
+        matrix("files sss (proven); systemd in group")
+        for order in ("files systemd sss", "files sss systemd"):
+            mixed = re.sub(r"(?m)^passwd:.*$", f"passwd: {order}", original_nss)
+            mixed = re.sub(r"(?m)^shadow:.*$", "shadow: files systemd", mixed)
+            nss.write_text(mixed)
+            structural("installed", False, "systemd can overlap the SSSD namespace")
+            matrix(f"{order} (sample only; Unsupported)")
+        nss.write_text(re.sub(r"(?m)^shadow:.*$", "shadow: files systemd", original_nss))
+        structural("installed", False, "unsupported NSS shadow route")
+        nss.write_text(original_nss)
         p = authenticate("unqualified SSSD name is refused before OTP", "research", primary, totp(key), False)
         assert "otp_prompts=0" in p.stdout
         exercise_flow_negs(common.read_text(), slot.read_text())
         path = Path("/etc/sssd/sssd.conf")
         original = path.read_text()
-        path.write_text(original.replace("pam_passkey_auth=false", "pam_passkey_auth=true"))
         try:
+            path.write_text(original.replace("pam_passkey_auth=false", "pam_passkey_auth=true"))
             structural("installed", False, "pam_passkey_auth")
+            path.write_text(original.replace("[domain/test]\n", "[domain/test]\npwfield=x\n"))
+            structural("installed", False, "domain/test/pwfield")
         finally:
             path.write_text(original)
     finally:
+        nss.write_text(original_nss)
         registration.unlink()
 
 
@@ -182,7 +228,8 @@ def main():
     assert os.statvfs("/sys").f_flag & os.ST_RDONLY
     run("gcc", "-Wall", "-Wextra", "/var/tmp/auth.c", "-lpam", "-o", auth)
     run("gcc", "-Wall", "-Wextra", "-shared", "-fPIC", "/var/tmp/outcome.c", "-lpam", "-o", mock)
-    run("dpkg-query", "-W", "libpam0g", "libpam-runtime", "libpam-google-authenticator", "libpam-sss")
+    run("dpkg-query", "-W", "libpam0g", "libpam-runtime", "libpam-google-authenticator",
+        "libpam-sss", "libnss-systemd")
     packages = Path("/var/tmp/fic-packages")
     run("dpkg", "-i", *(str(next(packages.glob(name + "_*.deb")))
                        for name in ("fic-dick", "fic", "fic-cli")), timeout=180)
@@ -191,6 +238,7 @@ def main():
     # libnss-sss edits both databases during installation. The password
     # proof keeps shadow local even after the fixture enables SSSD passwd.
     nss_file = Path("/etc/nsswitch.conf")
+    (out / "nsswitch.image").write_text(nss_file.read_text())
     nss = re.sub(r"(?m)^passwd:.*$", "passwd: files systemd", nss_file.read_text())
     nss_file.write_text(re.sub(r"(?m)^shadow:.*$", "shadow: files systemd", nss))
     run("useradd", user)
@@ -241,17 +289,29 @@ def main():
     authenticate("unknown user", "fic-mfa-missing", password, "invalid", False)
     authenticate("no OTP response", user, password, "-", False)
     original = registration.read_bytes()
-    registration.unlink()
-    authenticate("missing OTP registration", user, password, "-", False)
-    registration.write_bytes(original)
-    registration.chmod(0o644)
-    structural("installed", False, "metadata")
-    authenticate("wrong registration permissions", user, password, totp(key), False)
-    registration.chmod(0o600)
-    registration.write_text("!!!!\n")
-    structural("installed", False, "TOTP-only")
-    authenticate("corrupt registration", user, password, "invalid", False)
-    registration.write_bytes(original)
+    for state in ("missing", "corrupt"):
+        code = totp(key)
+        authenticate(f"valid registration before {state} credential test",
+                     user, password, code, True)
+        try:
+            if state == "missing":
+                registration.unlink()
+            else:
+                registration.write_text("!!!!\n")
+                structural("installed", False, "TOTP-only")
+            p = authenticate(f"{state} OTP registration with valid code",
+                             user, password, code, False)
+            assert "password_prompts=1" in p.stdout and "otp_prompts=0" not in p.stdout
+        finally:
+            registration.write_bytes(original)
+            registration.chmod(0o600)
+    authenticate("restored OTP registration", user, password, totp(key), True)
+    try:
+        registration.chmod(0o644)
+        structural("installed", False, "metadata")
+        authenticate("wrong registration permissions", user, password, totp(key), False)
+    finally:
+        registration.chmod(0o600)
 
     module = next(Path("/usr/lib").glob("*/security/pam_google_authenticator.so"))
     hidden = module.with_suffix(".hidden")
@@ -272,9 +332,12 @@ def main():
     policy("apply", lockout)
     run("pam-auth-update", "--enable", "sss")
     (out / "common-auth.sssd").write_bytes(common.read_bytes())
+    nss = re.sub(r"(?m)^passwd:.*$", "passwd: files sss", nss_file.read_text())
+    nss_file.write_text(re.sub(r"(?m)^shadow:.*$", "shadow: files", nss))
     env = dict(os.environ, FIC_SSSD_RESEARCH="1",
+               FIC_FIXTURE_LOCAL_PASSWORD=password,
                FIC_SSSD_HOST_MNT=os.environ["FIC_HOST_MNT_INODE"])
-    run("python3", "/usr/local/bin/r2_auth.py", "debian-13", "--mfa-only", env=env, timeout=180)
+    run("python3", "/usr/local/bin/r2_auth.py", "debian-13", "--mfa-only", env=env, timeout=240)
     print("D13-2 real PAM and StructuralEffective passed", flush=True)
 
 
@@ -291,4 +354,10 @@ else:
         diagnostics = subprocess.run(["journalctl", "--no-pager", "-u", "fic.service"],
                                      text=True, capture_output=True)
         (out / "daemon.log").write_text(diagnostics.stdout)
+        messages = subprocess.run(
+            ["journalctl", "--no-pager", "-o", "cat", "_COMM=d13-pam-auth",
+             "--grep=Accepted google_authenticator|Invalid verification code|No secret configured|"
+             "Invalid file contents|valid BASE32 encoded secret|authentication failure|pam_faillock"],
+            text=True, capture_output=True)
+        (out / "pam-provider.log").write_text(messages.stdout)
     (out / "result.json").write_text('{"ok": true, "suite": "d13_mfa_native"}\n')
