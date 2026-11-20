@@ -7,13 +7,14 @@ PAM module directories.
 
 ```sh
 bash /src/tests/integration/package-lifecycle/build-deb.sh debian-13 0.1.2
-cmake --build /build --target d13_mfa_probe pam_control_flow_analyzer_tests -j4
+cmake --build /build --target pam_fic_ssh_stage d13_mfa_probe \
+  d13_mfa_ssh_stage_tests pam_control_flow_analyzer_tests -j4
 ctest --test-dir /build --output-on-failure \
-  -R '^(pam_control_flow_analyzer_tests|pam_packaging_static_checks|platform_profile_static_checks)$'
+  -R '^(d13_mfa_.*_tests|pam_control_flow_analyzer_tests|pam_packaging_static_checks|platform_profile_static_checks)$'
 ```
 
 Prepare the existing systemd runtime fixture for these DEBs. Add
-`slapd ldap-utils sssd-ldap libnss-sss libnss-systemd libpam-sss libpam-google-authenticator libpam0g-dev gcc`
+`slapd ldap-utils sssd-ldap libnss-sss libnss-systemd libpam-sss libpam-google-authenticator libpam0g-dev gcc openssh-client openssh-server`
 in the runtime image build. Use a fresh image without an existing MFA
 slot, LDAP fixture or selected Winbind, homed or SSSD smart-card profiles.
 The runner installs the actual FIC DEBs in an isolated PID and mount
@@ -22,6 +23,7 @@ and runtime image preparation separate from the isolated native gate.
 
 ```sh
 FIC_D13_MFA_PROBE=/path/to/build/tests/d13_mfa_probe \
+FIC_D13_MFA_SSH_MODULE=/path/to/build/fic/pam_fic_ssh_stage.so \
   bash tests/integration/package-lifecycle/run-deb.sh \
   DEBIAN13_RUNTIME_IMAGE /path/to/DEBS d13_mfa_native.py
 ```
@@ -50,3 +52,13 @@ unchanged primary token after a real TOTP check. The production C++
 verifier rejects alternate control flows separately. The
 [production contract](../../../docs/pam-mfa-d13.md) defines the
 scope of these results.
+
+The runner copies the built selector only into the test container.
+`ssh-pam.log` contains the actual PAM calls for the dedicated
+`fic-sshd-mfa` service, plus SSH prompt counts and remote-command
+results. The test-only interposer records PAM calls and injects
+evidence publication, removal and setcred failures. Authentication
+uses the production selector and real Google Authenticator. The gate
+reuses the online TLS/LDAP test fixture for both SSH authentication
+chains and the forward-pass conversation. The latter uses a PAM probe
+and reports lifecycle success, with no claim of an xrdp client session.

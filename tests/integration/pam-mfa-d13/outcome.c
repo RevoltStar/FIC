@@ -6,6 +6,10 @@
 int pam_sm_authenticate(pam_handle_t *pamh, int flags, int n, const char **args) {
     (void) flags;
     if (n != 1) return PAM_SYSTEM_ERR;
+    if (!strcmp(args[0], "seed-token")) {
+        const char *value = getenv("FIC_FIXTURE_PASSWORD");
+        return value ? pam_set_item(pamh, PAM_AUTHTOK, value) : PAM_SYSTEM_ERR;
+    }
     if (!strcmp(args[0], "token")) {
         const void *token = NULL;
         const char *expected = getenv("FIC_FIXTURE_PASSWORD");

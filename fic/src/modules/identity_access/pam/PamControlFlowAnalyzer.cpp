@@ -83,6 +83,9 @@ struct Evidence {
     bool unixSucceeded = false;
     bool mfaPrimaryVerified = false;
     bool mfaFactorAfterPrimary = false;
+    bool mfaFactorVerified = false;
+    bool mfaForwardedToken = false;
+    bool mfaSelectorReached = false;
     bool providerReached = false;
     bool providerSucceeded = false;
     bool preauthSucceeded = false;
@@ -122,12 +125,16 @@ struct ExecutionState {
     bool traceTruncated = false;
 };
 
+enum class SshMfaStage { None, Password, Totp, Invalid };
+
 struct ExecutionBudget {
     std::size_t transitions = 0;
     bool trackUnix = false;
     bool modelBlankPassword = false;
     const std::filesystem::path* mfaPrimarySource = nullptr;
     const std::filesystem::path* mfaFactorSource = nullptr;
+    PamMfaForm mfaForm = PamMfaForm::InteractiveTwoPrompt;
+    SshMfaStage sshStage = SshMfaStage::None;
 };
 
 std::string lowerCopy(std::string value) {
@@ -669,6 +676,9 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
         a.unixSucceeded == b.unixSucceeded &&
         a.mfaPrimaryVerified == b.mfaPrimaryVerified &&
         a.mfaFactorAfterPrimary == b.mfaFactorAfterPrimary &&
+        a.mfaFactorVerified == b.mfaFactorVerified &&
+        a.mfaForwardedToken == b.mfaForwardedToken &&
+        a.mfaSelectorReached == b.mfaSelectorReached &&
         a.providerReached == b.providerReached &&
         a.providerSucceeded == b.providerSucceeded &&
         a.preauthSucceeded == b.preauthSucceeded &&
@@ -792,8 +802,23 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                 // Linux-PAM's simple controls both map PAM_IGNORE to ignore.
                 control.actions["ignore"] = {ActionKind::Ignore, 0};
             }
-            for (const auto& result : moduleOutcomes(
-                     entry.rule, service, platformConfig)) {
+            const auto& rule = entry.rule;
+            const bool selector = budget.sshStage != SshMfaStage::None &&
+                rule.source == *budget.mfaFactorSource && rule.module == "pam_fic_ssh_stage.so";
+            const bool primary = budget.mfaPrimarySource &&
+                (rule.module == "pam_unix.so" || rule.module == "pam_sss.so");
+            const bool factor = budget.mfaFactorSource && rule.source == *budget.mfaFactorSource &&
+                rule.module == "pam_google_authenticator.so";
+            if ((budget.sshStage == SshMfaStage::Password && factor) ||
+                (budget.sshStage == SshMfaStage::Totp && primary)) {
+                error = "incorrect module reached for the declared SSH PAM stage";
+                return false;
+            }
+            const auto results = selector
+                ? std::vector<std::string>{budget.sshStage == SshMfaStage::Password ? "success" :
+                    budget.sshStage == SshMfaStage::Totp ? "auth_err" : "service_err"}
+                : moduleOutcomes(rule, service, platformConfig);
+            for (const auto& result : results) {
                 if (++budget.transitions > kMaximumSymbolicTransitions) {
                     error = "PAM symbolic transition limit exceeded";
                     return false;
@@ -815,22 +840,24 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                     }
                     state.evidence.unixSucceeded = true;
                 }
+                if (selector) state.evidence.mfaSelectorReached = true;
                 if (budget.mfaPrimarySource && result == "success") {
-                    const auto& rule = entry.rule;
-                    if (rule.module == "pam_unix.so") {
-                        if (state.subject == IdentitySubject::NonLocal ||
-                            (budget.modelBlankPassword &&
-                             !hasArgument(rule, "nullok") &&
-                             !hasArgument(rule, "nullok_secure") &&
-                             !hasArgument(rule, "nullresetok"))) continue;
-                        if (rule.source == *budget.mfaPrimarySource)
+                    if (rule.module == "pam_unix.so" &&
+                        (state.subject == IdentitySubject::NonLocal ||
+                         (budget.modelBlankPassword &&
+                          !hasArgument(rule, "nullok") &&
+                          !hasArgument(rule, "nullok_secure") &&
+                          !hasArgument(rule, "nullresetok")))) continue;
+                    if (rule.module == "pam_sss.so" && state.subject == IdentitySubject::Local)
+                        continue;
+                    if (primary && rule.source == *budget.mfaPrimarySource) {
+                        if (budget.mfaForm != PamMfaForm::SingleInputForwardPass ||
+                            (state.evidence.mfaForwardedToken && hasArgument(rule, "use_first_pass")))
                             state.evidence.mfaPrimaryVerified = true;
-                    } else if (rule.module == "pam_sss.so") {
-                        if (state.subject == IdentitySubject::Local) continue;
-                        state.evidence.mfaPrimaryVerified = true;
-                    } else if (rule.source == *budget.mfaFactorSource &&
-                               rule.module == "pam_google_authenticator.so") {
+                    } else if (factor) {
+                        state.evidence.mfaFactorVerified = true;
                         state.evidence.mfaFactorAfterPrimary = state.evidence.mfaPrimaryVerified;
+                        state.evidence.mfaForwardedToken = hasArgument(rule, "forward_pass");
                     }
                 }
                 recordEvidence(state, entry.rule, result, provider);
@@ -1727,37 +1754,60 @@ bool proveMfaAuthenticationPaths(
     const fic::platform::PamPlatformConfig& platformConfig,
     const std::filesystem::path& primarySource,
     const std::filesystem::path& factorSource,
-    bool hasSssdPasswordRoute, std::string& error) {
-    const auto proveSubject = [&](IdentitySubject subject, bool blank) {
+    bool hasSssdPasswordRoute, std::string& error, PamMfaForm form) {
+    const auto proveSubject = [&](IdentitySubject subject, bool blank, SshMfaStage stage) {
         ExecutionState initial;
         initial.subject = subject;
         ExecutionBudget budget;
         budget.modelBlankPassword = blank;
         budget.mfaPrimarySource = &primarySource;
         budget.mfaFactorSource = &factorSource;
+        budget.mfaForm = form;
+        budget.sshStage = stage;
         std::vector<ExecutionState> states;
         if (!executeStack(stack.entries, initial, PamProviderKind::PamFaillock,
                           stack.service, platformConfig, states, error, budget)) return false;
         bool successfulPath = false;
         for (const auto& state : states) {
             if (!stackSucceeded(state)) continue;
-            if (blank || !state.evidence.mfaPrimaryVerified ||
-                !state.evidence.mfaFactorAfterPrimary) {
+            const auto& e = state.evidence;
+            bool verified = false;
+            switch (stage) {
+            case SshMfaStage::None:
+                verified = e.mfaPrimaryVerified &&
+                    (form == PamMfaForm::SingleInputForwardPass ? e.mfaForwardedToken
+                                                               : e.mfaFactorAfterPrimary);
+                break;
+            case SshMfaStage::Password:
+                verified = e.mfaSelectorReached && e.mfaPrimaryVerified;
+                break;
+            case SshMfaStage::Totp:
+                verified = e.mfaSelectorReached && e.mfaFactorVerified;
+                break;
+            case SshMfaStage::Invalid:
+                break;
+            }
+            if (blank || !verified) {
                 error = blank ? "empty local password can reach authentication success"
-                              : "authentication success bypasses primary or MFA";
+                              : "authentication success bypasses the required PAM evidence";
                 return false;
             }
             successfulPath = true;
         }
-        if (!blank && !successfulPath) {
-            error = "no successful two-factor path for the declared primary route";
+        if (!blank && stage != SshMfaStage::Invalid && !successfulPath) {
+            error = "no successful path for the declared MFA PAM route";
             return false;
         }
         return true;
     };
-    return proveSubject(IdentitySubject::Local, false) &&
-           proveSubject(IdentitySubject::Local, true) &&
-           (!hasSssdPasswordRoute || proveSubject(IdentitySubject::NonLocal, false));
+    const auto primaryStage = form == PamMfaForm::SshStagedAuthentication
+        ? SshMfaStage::Password : SshMfaStage::None;
+    return proveSubject(IdentitySubject::Local, false, primaryStage) &&
+           proveSubject(IdentitySubject::Local, true, primaryStage) &&
+           (!hasSssdPasswordRoute || proveSubject(IdentitySubject::NonLocal, false, primaryStage)) &&
+           (form != PamMfaForm::SshStagedAuthentication ||
+            (proveSubject(IdentitySubject::Unknown, false, SshMfaStage::Totp) &&
+             proveSubject(IdentitySubject::Unknown, false, SshMfaStage::Invalid)));
 }
 
 } // namespace fic::identity::pam

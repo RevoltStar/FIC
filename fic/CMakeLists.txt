@@ -108,6 +108,14 @@ find_library(FIC_ACCESS_PAM_LIBRARY pam)
 if(NOT FIC_ACCESS_PAM_INCLUDE_DIR OR NOT FIC_ACCESS_PAM_LIBRARY)
     message(FATAL_ERROR "pam_fic_access requires PAM development files")
 endif()
+if(FIC_TARGET_PLATFORM STREQUAL "debian-13")
+    enable_language(C)
+    add_library(pam_fic_ssh_stage MODULE src/pam-modules/pam_fic_ssh_stage.c)
+    set_target_properties(pam_fic_ssh_stage PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden)
+    target_include_directories(pam_fic_ssh_stage PRIVATE "${FIC_ACCESS_PAM_INCLUDE_DIR}")
+    target_link_libraries(pam_fic_ssh_stage PRIVATE "${FIC_ACCESS_PAM_LIBRARY}")
+endif()
+
 add_library(pam_fic_access MODULE
     src/pam-modules/pam_fic_access.cpp
     src/incident/IncidentAccessGateCore.cpp

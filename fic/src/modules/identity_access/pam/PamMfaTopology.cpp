@@ -194,16 +194,19 @@ bool matchesScope(const fic::platform::PamPlatformConfig& pam, const std::string
 }
 
 bool proveSources(const PamEffectiveStack& stack, const fs::path& pamDir,
-                  const fs::path& service, std::string& error) {
+                  const fs::path& service, std::string& error,
+                  const std::string& dedicatedSlot = {}) {
     const std::set<std::string> inertSources{"common-account", "common-password", "common-session"};
     bool commonIncluded = false;
     for (const auto& file : stack.sourceFiles) {
         const auto name = file.filename().string();
+        const bool authSource = dedicatedSlot.empty()
+            ? (name == "common-auth" || name == mfaSlotName || name == "fic-empty-password" ||
+               name == "fic-faillock-preauth" || name == "fic-faillock-authfail" ||
+               name == "fic-faillock-authsucc")
+            : name == dedicatedSlot;
         if (file.parent_path() != pamDir ||
-            (file != service && name != "common-auth" && name != mfaSlotName &&
-             inertSources.count(name) == 0 &&
-             name != "fic-empty-password" && name != "fic-faillock-preauth" &&
-             name != "fic-faillock-authfail" && name != "fic-faillock-authsucc"))
+            (file != service && !authSource && inertSources.count(name) == 0))
             return reject(error, "unexpected MFA PAM include source: " + file.string());
         const auto source = readTrusted(file, 0, 1024 * 1024, error);
         std::vector<PamRule> rules;
@@ -220,12 +223,14 @@ bool proveSources(const PamEffectiveStack& stack, const fs::path& pamDir,
             if (rule.includeKind == PamIncludeKind::None ||
                 (rule.group != PamManagementGroup::Auth &&
                  rule.includeKind != PamIncludeKind::IncludeAll)) continue;
-            if (file == service && !commonIncluded && rule.includeTarget == "common-auth" &&
-                rule.includeKind != PamIncludeKind::Substack) {
+            if (file == service && !commonIncluded &&
+                (dedicatedSlot.empty()
+                    ? rule.includeTarget == "common-auth" && rule.includeKind != PamIncludeKind::Substack
+                    : rule.includeTarget == dedicatedSlot && rule.includeKind == PamIncludeKind::Substack)) {
                 commonIncluded = true;
                 continue;
             }
-            if (name == "common-auth" &&
+            if (dedicatedSlot.empty() && name == "common-auth" &&
                 ((rule.includeKind == PamIncludeKind::Substack &&
                   (rule.includeTarget == mfaSlotName || rule.includeTarget == "fic-empty-password")) ||
                  (rule.includeKind == PamIncludeKind::Include &&
@@ -235,7 +240,7 @@ bool proveSources(const PamEffectiveStack& stack, const fs::path& pamDir,
             return reject(error, "unexpected MFA PAM include directive");
         }
     }
-    return commonIncluded || reject(error, "PAM service does not use common-auth");
+    return commonIncluded || reject(error, "PAM service does not use the expected authentication include");
 }
 
 bool checkRule(const PamRule& rule, const fs::path& primary, const fs::path& service,
@@ -260,23 +265,84 @@ bool checkRule(const PamRule& rule, const fs::path& primary, const fs::path& ser
         return (source == "fic-faillock-preauth" && rule.arguments == std::vector<std::string>{"preauth"}) ||
                (source == "fic-faillock-authfail" && rule.arguments == std::vector<std::string>{"authfail"}) ||
                (source == "fic-faillock-authsucc" && rule.arguments == std::vector<std::string>{"authsucc"});
+    if (rule.source == service && service.filename() == "lightdm" &&
+        rule.module == "pam_gnome_keyring.so")
+        return rule.control == "optional" && rule.arguments.empty();
     return rule.source == service &&
            (rule.module == "pam_faildelay.so" || rule.module == "pam_nologin.so" ||
             rule.module == "pam_group.so" || rule.module == "pam_env.so" ||
             rule.module == "pam_rootok.so");
 }
 
+bool provePasswordIdentities(bool sssd, std::string& error) {
+    if (!proveIdentitySources(sssd, error) ||
+        (sssd && !proveSssdPasswordConfiguration(error))) return false;
+    const auto passwd = readTrusted("/etc/passwd", 0, 1024 * 1024, error);
+    if (passwd.status != SecureStateReadStatus::Proven)
+        return reject(error, "local account namespace cannot be proven");
+    if (sssd) {
+        std::istringstream accounts(passwd.content);
+        std::string line;
+        while (std::getline(accounts, line)) {
+            const auto end = line.find(':');
+            if (end == std::string::npos || line.substr(0, end).find('@') != std::string::npos)
+                return reject(error, "local account overlaps the qualified SSSD namespace");
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 bool buildDebian13MfaTopology(const std::vector<PamMfaFactor>& factors,
                              PamMfaTopology& topology, std::string& error) {
-    topology = {};
-    if (factors != std::vector<PamMfaFactor>{PamMfaFactor::GoogleTotp})
+    if (factors != std::vector<PamMfaFactor>{PamMfaFactor::GoogleTotp}) {
+        topology = {};
         return reject(error, "unsupported Debian 13 MFA factor set");
-    topology.profile = "Name: FIC mandatory MFA hook\nDefault: no\nPriority: -100002\n"
-                       "Auth-Type: Additional\nAuth:\n    substack fic-mfa\n";
+    }
+    return buildDebian13MfaTopology(PamMfaForm::InteractiveTwoPrompt, false, topology, error);
+}
+
+bool buildDebian13MfaTopology(PamMfaForm form, bool hasSssdPasswordRoute,
+                             PamMfaTopology& topology, std::string& error) {
+    topology = {};
     topology.neutralSlot = mfaNeutralSlot;
-    topology.requiredSlot = mfaRequiredSlot;
+    switch (form) {
+    case PamMfaForm::InteractiveTwoPrompt:
+        topology.slotName = mfaSlotName;
+        topology.requiredSlot = mfaRequiredSlot;
+        topology.profile = "Name: FIC mandatory MFA hook\nDefault: no\nPriority: -100002\n"
+                           "Auth-Type: Additional\nAuth:\n    substack fic-mfa\n";
+        break;
+    case PamMfaForm::SingleInputForwardPass:
+        topology.slotName = "fic-mfa-forward";
+        topology.requiredSlot = std::string(mfaIdentityGuard) +
+            "auth [success=ok default=die] " + mfaGoogleOptions + " forward_pass\n";
+        break;
+    case PamMfaForm::SshStagedAuthentication:
+        topology.slotName = "fic-mfa-ssh-auth";
+        // First password stage jumps over the two OTP rules. The OTP
+        // branch finishes the substack without prompting for a password.
+        topology.requiredSlot =
+            "auth [success=2 auth_err=ignore ignore=ignore default=die] pam_fic_ssh_stage.so\n";
+        topology.requiredSlot += std::string(mfaIdentityGuard) +
+            "auth [success=done default=die] " + mfaGoogleOptions + "\n";
+        break;
+    default:
+        return reject(error, "unsupported Debian 13 MFA topology");
+    }
+    topology.attachment = "auth substack " + topology.slotName + "\n";
+    if (form != PamMfaForm::InteractiveTwoPrompt) {
+        topology.requiredSlot += hasSssdPasswordRoute ? "auth [success=2 default=ignore] "
+                                                      : "auth [success=1 default=ignore] ";
+        topology.requiredSlot += "pam_unix.so";
+        if (form == PamMfaForm::SingleInputForwardPass)
+            topology.requiredSlot += " use_first_pass";
+        topology.requiredSlot += '\n';
+        if (hasSssdPasswordRoute)
+            topology.requiredSlot += "auth [success=1 default=ignore] pam_sss.so use_first_pass\n";
+        topology.requiredSlot += "auth requisite pam_deny.so\nauth required pam_permit.so\n";
+    }
     error.clear();
     return true;
 }
@@ -344,22 +410,56 @@ bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
         return reject(error, "MFA requires one Unix Primary and one factor substack");
     for (const auto& module : modules)
         if (!trustedModule(pam, module, error)) return false;
-    if (!proveIdentitySources(sssCount != 0, error) ||
-        (sssCount && !proveSssdPasswordConfiguration(error))) return false;
-    const auto passwd = readTrusted("/etc/passwd", 0, 1024 * 1024, error);
-    if (passwd.status != SecureStateReadStatus::Proven)
-        return reject(error, "local account namespace cannot be proven");
-    if (sssCount) {
-        std::istringstream accounts(passwd.content);
-        std::string line;
-        while (std::getline(accounts, line)) {
-            const auto end = line.find(':');
-            if (end == std::string::npos || line.substr(0, end).find('@') != std::string::npos)
-                return reject(error, "local account overlaps the qualified SSSD namespace");
-        }
-    }
+    if (!provePasswordIdentities(sssCount != 0, error)) return false;
     return proveTotpStore(error) &&
            proveMfaAuthenticationPaths(stack, pam, primary, factor, sssCount != 0, error);
+}
+
+bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
+                      const std::string& service, PamMfaProofTarget target,
+                      PamMfaForm form, bool hasSssdPasswordRoute, std::string& error) {
+    if (form == PamMfaForm::InteractiveTwoPrompt)
+        return verifyDebian13Mfa(platform, service, target, error);
+    const auto& pam = platform.pam;
+    const bool ssh = form == PamMfaForm::SshStagedAuthentication;
+    if (platform.id != "debian-13" || pam.configDirectories.empty() ||
+        service != (ssh ? mfaSshService : "xrdp-sesman"))
+        return reject(error, "unsupported dedicated Debian 13 MFA PAM service");
+    PamMfaTopology topology;
+    if (!buildDebian13MfaTopology(form, hasSssdPasswordRoute, topology, error)) return false;
+    const auto directory = pam.configDirectories.front();
+    const auto serviceFile = directory / service;
+    const auto slot = directory / topology.slotName;
+    const auto actual = readTrusted(slot, 0, 4096, error);
+    const bool candidate = target == PamMfaProofTarget::Candidate;
+    if (actual.status != SecureStateReadStatus::Proven ||
+        actual.content != (candidate ? topology.neutralSlot : topology.requiredSlot))
+        return reject(error, "MFA slot has unsupported or untrusted content");
+
+    PamConfiguration configuration(pam);
+    PamEffectiveStack stack;
+    if (!configuration.buildEffectiveStack(service, PamManagementGroup::Auth, stack, error) ||
+        !proveSources(stack, directory, serviceFile, error, topology.slotName)) return false;
+    if (stack.entries.size() != 1 || !stack.entries.front().isSubstack() ||
+        stack.entries.front().rule.source != serviceFile ||
+        stack.entries.front().rule.includeTarget != topology.slotName ||
+        !matchesMfaSlotRules(stack.entries.front().substack, slot, actual.content))
+        return reject(error, "dedicated MFA service must have one exact auth substack");
+
+    std::vector<PamRule> rules;
+    if (!PamConfiguration::parseRulesContent(slot, topology.requiredSlot, rules, error))
+        return false;
+    for (const auto& rule : rules) {
+        if (!trustedModule(pam, rule.module, error)) return false;
+    }
+    if (candidate) {
+        auto& children = stack.entries.front().substack;
+        children.clear();
+        for (auto& rule : rules) children.push_back({std::move(rule), {}});
+    }
+    return provePasswordIdentities(hasSssdPasswordRoute, error) &&
+           proveTotpStore(error) &&
+           proveMfaAuthenticationPaths(stack, pam, slot, slot, hasSssdPasswordRoute, error, form);
 }
 
 } // namespace fic::identity::pam

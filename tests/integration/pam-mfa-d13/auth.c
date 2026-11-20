@@ -23,7 +23,8 @@ static int reply(int n, const struct pam_message **messages,
             if (strstr(prompt, "Verification code:")) {
                 a->otp_prompts++;
                 if (strcmp(a->otp, "-") != 0) value = a->otp;
-            } else if (strstr(prompt, "Password:")) {
+            } else if (strstr(prompt, "Password:") ||
+                       strstr(prompt, "Password & verification code:")) {
                 a->password_prompts++;
                 value = a->password;
             }
@@ -49,7 +50,7 @@ conversation_error:
 
 int main(int argc, char **argv) {
     struct answers a = {0};
-    if (argc != 3 || !fgets(a.password, sizeof(a.password), stdin) ||
+    if ((argc != 3 && (argc != 4 || strcmp(argv[3], "--lifecycle") != 0)) || !fgets(a.password, sizeof(a.password), stdin) ||
         !fgets(a.otp, sizeof(a.otp), stdin)) return 2;
     a.password[strcspn(a.password, "\n")] = 0;
     a.otp[strcspn(a.otp, "\n")] = 0;
@@ -58,7 +59,31 @@ int main(int argc, char **argv) {
     int rc = pam_start(argv[1], argv[2], &conv, &pamh);
     if (rc == PAM_SUCCESS) {
         rc = pam_authenticate(pamh, 0);
-        pam_end(pamh, rc);
+        if (argc == 4 && rc == PAM_SUCCESS) {
+            printf("authenticate=%d ", rc);
+            rc = pam_acct_mgmt(pamh, 0);
+            printf("account=%d ", rc);
+            if (rc == PAM_SUCCESS) {
+                rc = pam_setcred(pamh, PAM_ESTABLISH_CRED);
+                printf("establish=%d ", rc);
+                if (rc == PAM_SUCCESS) {
+                    rc = pam_open_session(pamh, 0);
+                    printf("open=%d ", rc);
+                    if (rc == PAM_SUCCESS) {
+                        rc = pam_close_session(pamh, 0);
+                        printf("close=%d ", rc);
+                    }
+                    const int deleted = pam_setcred(pamh, PAM_DELETE_CRED);
+                    printf("delete=%d ", deleted);
+                    if (rc == PAM_SUCCESS) rc = deleted;
+                }
+            }
+        }
+        const int ended = pam_end(pamh, rc);
+        if (argc == 4) {
+            printf("end=%d\n", ended);
+            if (rc == PAM_SUCCESS) rc = ended;
+        }
     }
     printf("pam=%d password_prompts=%d otp_prompts=%d\n",
            rc, a.password_prompts, a.otp_prompts);

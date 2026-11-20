@@ -1,7 +1,7 @@
 #ifndef FIC_PAM_MFA_TOPOLOGY_H
 #define FIC_PAM_MFA_TOPOLOGY_H
 
-#include "modules/identity_access/pam/PamConfiguration.h"
+#include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 
 #include <string>
 #include <vector>
@@ -10,10 +10,13 @@ namespace fic::identity::pam {
 
 inline constexpr char mfaSlotName[] = "fic-mfa";
 inline constexpr char mfaNeutralSlot[] = "auth optional pam_deny.so\n";
-inline constexpr char mfaRequiredSlot[] =
-    "auth [success=ignore default=die] pam_succeed_if.so user !~ */* quiet\n"
-    "auth [success=ok default=die] pam_google_authenticator.so"
-    " user=root secret=/etc/security/fic-mfa/totp-${USER} noskewadj\n";
+inline constexpr char mfaIdentityGuard[] =
+    "auth [success=ignore ignore=ignore default=die] pam_succeed_if.so user !~ */* quiet\n";
+inline constexpr char mfaGoogleOptions[] =
+    "pam_google_authenticator.so user=root secret=/etc/security/fic-mfa/totp-${USER} noskewadj";
+inline const std::string mfaRequiredSlot =
+    std::string(mfaIdentityGuard) + "auth [success=ok default=die] " + mfaGoogleOptions + "\n";
+inline constexpr char mfaSshService[] = "fic-sshd-mfa";
 
 // Bind parsed graph entries to the exact slot language. Reused by D13-1 so
 // the independent blank-password proof can traverse a future MFA substack.
@@ -42,10 +45,15 @@ struct PamMfaTopology {
     std::string profile;
     std::string neutralSlot;
     std::string requiredSlot;
+    std::string slotName;
+    std::string attachment;
 };
 
 // Text only. The caller owns publication and must establish provenance.
 bool buildDebian13MfaTopology(const std::vector<PamMfaFactor>& factors,
+                             PamMfaTopology& topology, std::string& error);
+
+bool buildDebian13MfaTopology(PamMfaForm form, bool hasSssdPasswordRoute,
                              PamMfaTopology& topology, std::string& error);
 
 // StructuralEffective proof of a declared Debian 13 PAM service at the
@@ -55,6 +63,12 @@ bool buildDebian13MfaTopology(const std::vector<PamMfaFactor>& factors,
 bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
                       const std::string& service, PamMfaProofTarget target,
                       std::string& error);
+
+// The staged SSH proof is conditional on selector input. SSH attachment,
+// effective AuthenticationMethods and runtime activation belong to D13-3B.
+bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
+                      const std::string& service, PamMfaProofTarget target,
+                      PamMfaForm form, bool hasSssdPasswordRoute, std::string& error);
 
 } // namespace fic::identity::pam
 #endif

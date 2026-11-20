@@ -54,7 +54,10 @@ if [[ "$driver" == d13_mfa_native.py ]]; then
     [[ -f "${FIC_D13_MFA_PROBE:-}" ]] || { echo 'FIC_D13_MFA_PROBE required' >&2; exit 2; }
     docker cp "$FIC_D13_MFA_PROBE" "$name:/usr/local/bin/d13-mfa-proof"
     docker cp "$repo/tests/integration/package-lifecycle/$driver" "$name:/usr/local/bin/d13-mfa-native.py"
-    for fixture in auth.c outcome.c; do
+    [[ -f "${FIC_D13_MFA_SSH_MODULE:-}" ]] || { echo 'FIC_D13_MFA_SSH_MODULE required' >&2; exit 2; }
+    docker cp "$FIC_D13_MFA_SSH_MODULE" "$name:/var/tmp/pam_fic_ssh_stage.so"
+    docker cp "$repo/tests/integration/pam-mfa-d13/ssh_gate.py" "$name:/usr/local/bin/ssh_gate.py"
+    for fixture in auth.c outcome.c ssh_observer.c; do
         docker cp "$repo/tests/integration/pam-mfa-d13/$fixture" "$name:/var/tmp/$fixture"
     done
     for fixture in common.py r2_auth.py; do

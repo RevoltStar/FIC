@@ -121,12 +121,15 @@ bool proveNoEmptyUnixPasswordPath(
 
 // Internal MFA proof over a graph whose source paths and provider semantics
 // have already been admitted by the Debian 13 verifier.
+enum class PamMfaForm { InteractiveTwoPrompt, SingleInputForwardPass, SshStagedAuthentication };
+
 bool proveMfaAuthenticationPaths(
     const PamEffectiveStack& stack,
     const fic::platform::PamPlatformConfig& platformConfig,
     const std::filesystem::path& primarySource,
     const std::filesystem::path& factorSource,
-    bool hasSssdPasswordRoute, std::string& error);
+    bool hasSssdPasswordRoute, std::string& error,
+    PamMfaForm form = PamMfaForm::InteractiveTwoPrompt);
 
 // Classifies the pam_faillock topology of an expanded authentication stack
 // into one of the supported integration strategies. Returns nullopt and sets

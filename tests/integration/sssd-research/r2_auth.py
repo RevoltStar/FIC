@@ -45,7 +45,8 @@ memberUid: research
 '''
  if mfa_only:
   password=secrets.token_hex(24)
-  ldif=ldif.replace('Research-only-42',password)
+  ldif=ldif.replace('Research-only-42',password).replace('homeDirectory: /nonexistent',
+                                                      'homeDirectory: /home/fic-d13-ldap')
   bind_file=fixture/'ldap-bind'
   write(bind_file,'Research-admin-only')
   provision=['-y',str(bind_file)]
@@ -70,7 +71,7 @@ memberUid: research
   assert run(['getent','passwd','research@test'])['exit_code']==0
   assert not any(line.startswith(('research@test:','research:')) for line in Path('/etc/shadow').read_text().splitlines())
   env=dict(os.environ,FIC_FIXTURE_DOMAIN_PASSWORD=password)
-  subprocess.run(['python3','/usr/local/bin/d13-mfa-native.py','--sssd'],env=env,check=True,timeout=150)
+  subprocess.run(['python3','/usr/local/bin/d13-mfa-native.py','--sssd'],env=env,check=True,timeout=360)
   sys.exit(0)
  online_only=sys.argv[2:] == ['--online-only']
  configure(config(cached=0 if online_only else 3600))

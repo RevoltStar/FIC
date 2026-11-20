@@ -99,19 +99,90 @@ corrupt TOTP registration cases supply the same valid code as their
 preceding successful call and restore the registration. The
 conversation error is a separate case.
 
-## NOT_TESTED and UNSUPPORTED
+## D13-3A topology and SSH evidence
 
-The native contract is `pam_authenticate()` with the `login` PAM
-service and a conversation that supplies password and OTP independently.
-SSH password and keyboard-interactive modes, sudo, su and graphical
-login protocol behavior have no native proof here. A service that skips
-PAM auth, including SSH public-key-only authentication, has no MFA
-guarantee from this verifier. Winbind, homed, smart card, alternative
-SSSD providers, unknown PAM routes, HOTP, scratch codes and other MFA
-providers are outside the accepted contract. OTP replay prevention and
-credential rate limits have no proof in D13-2.
+| Form | Auth attachment | Successful path |
+|---|---|---|
+| `InteractiveTwoPrompt` | Existing D13-2 `fic-mfa` hook | Strict UNIX or proven LDAP/SSSD Primary, then Google TOTP |
+| `SingleInputForwardPass` | Exact dedicated `xrdp-sesman` auth substack `fic-mfa-forward` | Google TOTP via `forward_pass`, then strict UNIX or optional proven LDAP/SSSD Primary with `use_first_pass` |
+| `SshStagedAuthentication` | Exact dedicated `fic-sshd-mfa` auth substack `fic-mfa-ssh-auth` | Strict password at the initial stage, or Google TOTP at a stage with previously verified password/key |
 
-D13-3 owns policy integration, publication, provenance, journal-backed
-apply, recovery and rollback. D13-2 neither installs a slot or
-registration in production packages nor enables MFA on a production
-host.
+The original renderer API and the D13-2 Candidate and Installed proof
+remain available. The same credential store, module trust checks and
+Debian 13 NSS/SSSD restrictions apply to all forms. A dedicated body is
+admitted byte-for-byte and bound to its actual expanded substack. Its
+neutral candidate is replaced only in memory. The forward-pass proof
+counts Primary success only with a token from a previous successful
+Google `forward_pass`; the canonical rule uses neither
+`try_first_pass` nor `use_first_pass` for Google. Extra auth rules
+outside the dedicated substack are rejected. Scratch/HOTP credential
+formats remain excluded.
+
+`pam_fic_ssh_stage.so` is compiled as a Debian 13 PAM module, with
+only `pam_sm_authenticate` and `pam_sm_setcred` exported. It takes no
+arguments and requires the `fic-sshd-mfa` PAM service. It uses the
+PAM handle's environment. The tested OpenSSH revision is
+`1:10.0p1-7+deb13u4`. Version-0 evidence is bounded to the exact
+record forms below. The staged graph assumes OpenSSH has proven the
+two allowed SSH chains, including the signature when required.
+
+| `SSH_AUTH_INFO_0` at auth | Result | Meaning |
+|---|---|---|
+| Present, empty | `PAM_SUCCESS` | First password stage; jump over the two OTP rules |
+| Exactly `password\n` | `PAM_AUTH_ERR` | Prior password; deliberate OTP routing result |
+| Exactly `publickey ssh-ed25519 <blob>\n` with canonical 68-character base64 and the Ed25519 wire header and length | `PAM_AUTH_ERR` | Prior verified Ed25519; same OTP branch |
+| Missing, invalid, unknown identity, or PAM API failure | `PAM_SERVICE_ERR` | Abort |
+
+The selector computes the result before deleting `SSH_AUTH_INFO_0`
+with `pam_putenv`. The return value is released only after successful
+deletion and a bounded NSS lookup of the PAM identity. The lookup
+checks identity existence. SSH remains the authority for any prior
+authentication method. The result of deleting evidence is never returned directly.
+A failed nonempty publication by OpenSSH cannot recover a previous
+empty value after that value has been consumed. The provider records
+neither credentials nor key blobs. `pam_sm_setcred` validates the
+service and argument contract and returns `PAM_IGNORE` without reading
+or consuming evidence.
+
+The stage control is
+`[success=2 auth_err=ignore ignore=ignore default=die]`. The
+OTP branch stays in the same substack and terminates it on success
+with `[success=done default=die]`. Password success jumps to the
+explicit permit barrier; missing Primary reaches requisite deny.
+The shared name guard has `[success=ignore ignore=ignore default=die]`.
+Linux-PAM can use the current result in setcred when there is no
+cached auth chain. The mapping handles `pam_succeed_if` returning
+`PAM_IGNORE` in setcred while preserving the slash rejection in auth.
+Google `PAM_IGNORE` still fails. The conditional graph proof checks
+first password, prior successful method, and invalid stages. It
+does not authenticate an SSH key or verify the server process.
+
+### Validation and limits
+
+- **PROVEN_UNIT / PROVEN_STATIC** — the built module's PAM ABI and
+  evidence grammar, consumption, return codes, and failure on removal
+  error. The topology checks cover deterministic rendering and reject
+  mutated graphs.
+- **PROVEN_NATIVE_PAM** — full `login` and dedicated forward-pass PAM
+  lifecycles, actual Google TOTP and UNIX/LDAP Primary, registration
+  failures and a pre-existing token fixture. The forward-pass gate
+  exercises the PAM conversation without starting xrdp.
+- **PROVEN_NATIVE_SSH** — the dedicated test service on Debian 13
+  OpenSSH, true client sessions for both methods and both identity
+  sources, no remote command or open session on negative routes,
+  retries, and injected publication, consumption and setcred errors.
+- **NOT_TESTED** — production SSH runtime proof, ownership and package
+  detach for MFA, a new LightDM GTK or xrdp end-to-end run with this
+  renderer, and other greeters.
+- **UNSUPPORTED** — bare SSH methods, other SSH evidence formats,
+  other distributions, mixed NSS routes rejected in D13-2, alternative
+  providers and HOTP/scratch paths.
+
+D13-3B owns the verified SSH input closure and activation: exact
+`PAMServiceName` and `AuthenticationMethods` under effective
+`sshd -t`/`sshd -T -C` validation, rejection of competing or conditional
+routes, verified activation receipts, apply/reapply/rollback guards, and
+native switch/reload/drift tests. Its combined proof must bind the
+conditional PAM proof to the effective running SSH instance. Policy wiring,
+publication of PAM attachments, MutationJournal ownership and release,
+recovery, and MFA package lifecycle gates belong to D13-3C/D.

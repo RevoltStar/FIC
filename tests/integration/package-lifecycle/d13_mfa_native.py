@@ -10,6 +10,8 @@ import subprocess
 import sys
 import time
 
+from ssh_gate import exercise_ssh
+
 assert os.environ["FIC_PACKAGE_LIFECYCLE_NATIVE"] == "1"
 assert Path("/proc/1/comm").read_text().strip() == "systemd"
 assert os.stat("/proc/self/ns/mnt").st_ino != int(os.environ["FIC_HOST_MNT_INODE"])
@@ -33,7 +35,7 @@ def run(*args, expected=True, input=None, env=None, timeout=90):
     p = subprocess.run(args, input=input, env=env, timeout=timeout,
                        capture_output=True, text=True)
     with (out / "commands.log").open("a") as log:
-        print(p.returncode, " ".join(args), p.stdout, p.stderr, file=log)
+        print(p.returncode, " ".join(map(str, args)), p.stdout, p.stderr, file=log)
     assert (p.returncode == 0) == expected, (args, p.returncode, p.stdout, p.stderr)
     return p
 
@@ -153,6 +155,68 @@ def exercise_linux_pam(key, required):
         substack.unlink(missing_ok=True)
 
 
+def exercise_forward(subject, primary, key, registration, sssd):
+    mode = "sssd" if sssd else "local"
+
+    def render(part):
+        return run(proof, part, "forward", mode).stdout
+
+    service = pam / "xrdp-sesman"
+    factor = pam / render("slot-name").strip()
+    previous = service.read_bytes() if service.exists() else None
+    assert not factor.exists()
+    attachment = render("attachment") + "@include common-account\n@include common-session\n"
+    service.write_text(attachment)
+    factor.write_text(render("neutral"))
+    try:
+        run(proof, "candidate", "forward", mode, service.name)
+        body = render("required")
+        factor.write_text(body)
+        run(proof, "installed", "forward", mode, service.name)
+
+        accepted = run(auth, service.name, subject, "--lifecycle", input=f"{primary}{totp(key)}\n-\n")
+        assert "authenticate=0 account=0 establish=0 open=0 close=0 delete=0 end=0" in accepted.stdout
+        assert "password_prompts=1 otp_prompts=0" in accepted.stdout
+        for label, given in (
+            ("wrong password", "incorrect" + totp(key)),
+            ("wrong OTP", primary + wrong_totp(key)),
+            ("password only", primary),
+            ("OTP only (empty password)", totp(key)),
+        ):
+            authenticate(f"forward {mode} {label}", subject, given, "-", False, service.name)
+        original = registration.read_bytes()
+        try:
+            registration.unlink()
+            authenticate(f"forward {mode} missing registration", subject, primary + totp(key),
+                         "-", False, service.name)
+            registration.write_text("!!!!\n")
+            registration.chmod(0o600)
+            authenticate(f"forward {mode} damaged registration", subject, primary + totp(key),
+                         "-", False, service.name)
+        finally:
+            registration.write_bytes(original)
+            registration.chmod(0o600)
+
+        factor.write_text(body.replace(" forward_pass", ""))
+        run(proof, "installed", "forward", mode, service.name, expected=False)
+        factor.write_text(body)
+
+        env = dict(os.environ, FIC_FIXTURE_PASSWORD=primary)
+        service.write_text(attachment + f"auth required {mock} token\n")
+        authenticate("extracted token equals original password", subject, primary + totp(key),
+                     "-", True, service.name, env)
+        service.write_text(f"auth optional {mock} seed-token\n" + attachment)
+        run(proof, "installed", "forward", mode, service.name, expected=False)
+        authenticate("forward_pass cannot use a previously seeded password", subject, totp(key),
+                     "-", False, service.name, env)
+    finally:
+        factor.unlink()
+        if previous is None:
+            service.unlink()
+        else:
+            service.write_bytes(previous)
+
+
 def exercise_sssd():
     domain = "research@test"
     primary = os.environ["FIC_FIXTURE_DOMAIN_PASSWORD"]
@@ -217,6 +281,9 @@ def exercise_sssd():
             structural("installed", False, "domain/test/pwfield")
         finally:
             path.write_text(original)
+        exercise_forward(domain, primary, key, registration, True)
+        exercise_ssh(run, domain, primary, lambda: totp(key), lambda: wrong_totp(key),
+                     registration, True)
     finally:
         nss.write_text(original_nss)
         registration.unlink()
@@ -228,7 +295,13 @@ def main():
     assert os.statvfs("/sys").f_flag & os.ST_RDONLY
     run("gcc", "-Wall", "-Wextra", "/var/tmp/auth.c", "-lpam", "-o", auth)
     run("gcc", "-Wall", "-Wextra", "-shared", "-fPIC", "/var/tmp/outcome.c", "-lpam", "-o", mock)
-    run("dpkg-query", "-W", "libpam0g", "libpam-runtime", "libpam-google-authenticator",
+    run("gcc", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", "/var/tmp/ssh_observer.c",
+        "-ldl", "-lpam", "-o", "/var/tmp/d13-ssh-observer.so")
+    module_dir = next(Path("/usr/lib").glob("*/security/pam_google_authenticator.so")).parent
+    run("install", "-m", "0644", "/var/tmp/pam_fic_ssh_stage.so", module_dir)
+    Path("/run/sshd").mkdir(exist_ok=True)
+    run("ssh-keygen", "-A")
+    run("dpkg-query", "-W", "openssh-server", "openssh-client", "libpam0g", "libpam-runtime", "libpam-google-authenticator",
         "libpam-sss", "libnss-systemd")
     packages = Path("/var/tmp/fic-packages")
     run("dpkg", "-i", *(str(next(packages.glob(name + "_*.deb")))
@@ -325,6 +398,12 @@ def main():
     exercise_linux_pam(key, required)
     exercise_flow_negs(generated, required)
 
+    lifecycle = run(auth, "login", user, "--lifecycle", input=f"{password}\n{totp(key)}\n")
+    assert "authenticate=0 account=0 establish=0 open=0 close=0 delete=0 end=0" in lifecycle.stdout
+    exercise_forward(user, password, key, registration, False)
+    exercise_ssh(run, user, password, lambda: totp(key), lambda: wrong_totp(key),
+                 registration, False)
+
     # The existing policies must still be usable around the experimental slot.
     existing_guard = (pam / "fic-empty-password").read_bytes()
     policy("apply", deny_empty)
@@ -337,7 +416,7 @@ def main():
     env = dict(os.environ, FIC_SSSD_RESEARCH="1",
                FIC_FIXTURE_LOCAL_PASSWORD=password,
                FIC_SSSD_HOST_MNT=os.environ["FIC_HOST_MNT_INODE"])
-    run("python3", "/usr/local/bin/r2_auth.py", "debian-13", "--mfa-only", env=env, timeout=240)
+    run("python3", "/usr/local/bin/r2_auth.py", "debian-13", "--mfa-only", env=env, timeout=420)
     print("D13-2 real PAM and StructuralEffective passed", flush=True)
 
 
