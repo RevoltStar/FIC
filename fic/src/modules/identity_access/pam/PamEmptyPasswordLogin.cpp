@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <fcntl.h>
+#include <iterator>
 #include <sstream>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -133,10 +134,55 @@ bool supportedUnixRule(const PamRule& rule) {
            std::all_of(rule.arguments.begin(), rule.arguments.end(), supported);
 }
 
+bool generatedPrimaryJump(const PamRule& rule, std::size_t skip) {
+    std::istringstream control(rule.control);
+    std::string success, fallback, extra;
+    return (control >> success >> fallback) &&
+        success == "[success=" + std::to_string(skip) &&
+        fallback == "default=ignore]" && !(control >> extra);
+}
+
+bool proveWinbindRoute(const PamEffectiveStack& stack,
+                       const fic::platform::PamPlatformConfig& platform,
+                       std::string& error) {
+    const auto& entries = stack.entries;
+    const auto isWinbind = [](const auto& entry) {
+        return entry.rule.module == "pam_winbind.so";
+    };
+    const auto winbind = std::find_if(entries.begin(), entries.end(), isWinbind);
+    if (winbind == entries.end()) return true;
+
+    const auto primary = std::find_if(entries.begin(), winbind, [](const auto& entry) {
+        return entry.rule.module == "pam_unix.so";
+    });
+    const auto fallback = std::find_if(winbind, entries.end(), [](const auto& entry) {
+        return entry.rule.module == "pam_deny.so" && entry.rule.control == "requisite";
+    });
+    if (primary == winbind || fallback == entries.end() ||
+        std::find_if(std::next(winbind), entries.end(), isWinbind) != entries.end()) {
+        return fail(error, "unsupported Debian 13 winbind Primary order");
+    }
+
+    // winbind can canonicalize PAM_USER and handle PAM_AUTHTOK. The generated
+    // Unix success edge must skip it, and both providers must jump past the
+    // same generated requisite deny to the Primary success barrier.
+    const auto permit = std::next(fallback);
+    if (permit == entries.end() || permit->rule.module != "pam_permit.so" ||
+        permit->rule.control != "required" ||
+        permit->rule.source != winbind->rule.source ||
+        fallback->rule.source != winbind->rule.source ||
+        !generatedPrimaryJump(primary->rule, permit - primary - 1) ||
+        !generatedPrimaryJump(winbind->rule, permit - winbind - 1)) {
+        return fail(error, "unsupported Debian 13 winbind Primary transitions");
+    }
+    return proveModule(platform, "pam_winbind.so", error);
+}
+
 bool stageCandidate(std::vector<PamStackEntry>& entries,
                     const PamConfigFileSnapshot& slot,
                     const std::vector<PamStackEntry>& candidate,
-                    unsigned& primaries, unsigned& hooks, std::string& error) {
+                    unsigned& primaries, unsigned& hooks, unsigned& winbindRules,
+                    std::string& error) {
     for (auto& entry : entries) {
         const PamRule& rule = entry.rule;
         if (entry.isSubstack() && rule.includeTarget == emptyPasswordSlot) {
@@ -158,8 +204,15 @@ bool stageCandidate(std::vector<PamStackEntry>& entries,
                 "pam_group.so", "pam_rootok.so", "pam_wheel.so", "pam_succeed_if.so",
                 "pam_localuser.so", "pam_gnome_keyring.so", "pam_cap.so",
                 "pam_env.so", "pam_selinux_permit.so"};
-            if (std::find(supportedModules.begin(), supportedModules.end(), rule.module) ==
-                supportedModules.end()) {
+            if (rule.module == "pam_winbind.so") {
+                ++winbindRules;
+                const std::vector<std::string> nativeArgs{
+                    "krb5_auth", "krb5_ccache_type=FILE", "cached_login", "try_first_pass"};
+                if (rule.source != slot.path.parent_path() / "common-auth" ||
+                    rule.arguments != nativeArgs)
+                    return fail(error, "unsupported Debian 13 winbind arguments or source");
+            } else if (std::find(supportedModules.begin(), supportedModules.end(), rule.module) ==
+                       supportedModules.end()) {
                 return fail(error, "unsupported authentication module in " +
                                    rule.source.string() + ": " + rule.module);
             }
@@ -180,7 +233,7 @@ bool stageCandidate(std::vector<PamStackEntry>& entries,
               rule.arguments != std::vector<std::string>{"forward_pass"}))) {
             return fail(error, "unsupported pam_sss authentication rule");
         }
-        if (!stageCandidate(entry.substack, slot, candidate, primaries, hooks, error))
+        if (!stageCandidate(entry.substack, slot, candidate, primaries, hooks, winbindRules, error))
             return false;
     }
     return true;
@@ -211,13 +264,25 @@ bool proveGraph(const fic::platform::PamPlatformConfig& platform,
             if (service != "login" && service != "common-auth") services.push_back(service);
     }
     safe = true;
+    unsigned commonWinbindRules = 0;
     for (const auto& service : services) {
         PamEffectiveStack stack;
         unsigned primaries = 0;
         unsigned hooks = 0;
+        unsigned winbindRules = 0;
         bool serviceSafe = false;
         if (!configuration.buildEffectiveStack(service, PamManagementGroup::Auth, stack, error) ||
-            !stageCandidate(stack.entries, slot, candidate, primaries, hooks, error)) return false;
+            !stageCandidate(stack.entries, slot, candidate, primaries, hooks, winbindRules, error)) return false;
+        if (service == "common-auth") commonWinbindRules = winbindRules;
+        if (winbindRules != commonWinbindRules)
+            return fail(error, "winbind is outside its proven common-auth route");
+        if (service == "common-auth" && winbindRules != 0) {
+            const auto direct = std::count_if(stack.entries.begin(), stack.entries.end(),
+                [](const auto& entry) { return entry.rule.module == "pam_winbind.so"; });
+            if (winbindRules != 1 || direct != 1)
+                return fail(error, "winbind must be a single direct Debian 13 Primary rule");
+            if (!proveWinbindRoute(stack, platform, error)) return false;
+        }
         const bool needsHook = simulate || slot.content != emptyPasswordNeutral;
         if (primaries != 1 || hooks > 1 || (needsHook && hooks != 1))
             return fail(error, "unsupported primary or empty-password hook topology in " + service);

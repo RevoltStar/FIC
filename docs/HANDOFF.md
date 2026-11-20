@@ -1,42 +1,37 @@
-# Debian 13 empty-password login policy
+# Debian 13 empty-password PAM follow-up
 
-* Branch main. D13-1 base `0e4d014a`. The policy is Debian 13 only and
-  defaults to DISABLE with a fixed value ENABLE.
-* Debian packaging attaches `fic-empty-password-hook` as an Additional
-  substack. The daemon changes only the journal-bound
-  `/etc/pam.d/fic-empty-password` slot using the existing PAM transaction
-  primitives. The strict `pam_unix use_first_pass` check is scoped to
-  local accounts; the official non-local SSSD route skips it.
-* Apply verifies the effective graph, selected hook, trusted modules and
-  the physical witness. An already strict foreign graph can be observed
-  without writing. Policy release does not require a usable provider or
-  attachment. Package detach first requires the canonical neutral slot
-  and then verifies that no live references remain.
-* Contract: `docs/rollback.md`. Targeted gate:
-  `tests/integration/pam-empty-password/README.md`.
+Branch main. Base `16d51a63`. The policy remains Debian 13 only. Runtime
+apply still mutates only its exact journal-bound slot.
 
-## Validation
+- The verified generated Winbind Primary is admitted with its packaged
+  arguments, trusted module, and Unix and Winbind success jumps to the
+  same generated permit barrier. Unix success skips Winbind, which can
+  modify the PAM token and identity. The general analyzer, ownership,
+  rollback and package scripts retain their existing contracts.
+- The generated homed and SSSD optional smart-card graphs are rejected
+  with no PAM or journal writes. The required smart-card profile was
+  inspected. No Winbind AD or homed-user authentication was run.
+- Real 0.1.0 DEBs from `0e4d014a` were upgraded to 0.1.1 from
+  `16d51a63` and to the follow-up in separate Debian 13 containers.
+  A manual rule inside generated common-auth was preserved. The upgrade
+  stayed half-configured with the INSTALLING fence, no selected hook,
+  a neutral new slot and unchanged old slots, config and journal pair.
+  Restoring the known generated file and retrying dpkg configuration
+  completed installation. This is the existing package contract.
+- The final native gate exercises local PAM and online LDAP/SSSD with
+  Winbind and faillock enabled, exact ownership, unsupported control
+  flow, reinstall, and refusal of detach while a physical reference
+  remains. The retry uses the documented restricted daemon startup.
+- Four focused Debian 13 CTests passed. The native ownership executable
+  passed within the package gate.
 
-* Debian 13 native PAM preflight with libpam 1.7.0-5 and libpam-sss
-  2.10.1-2+b1. Verified stock nullok, selected sss, nullresetok and
-  preservation of local modifications by pam-auth-update.
-* Rebuilt production DEBs and passed fresh install, apply and repeated
-  apply, profile regeneration, missing attachment rejection, explicit
-  disable and repeated disable, observation-only, faillock composition,
-  same-version reinstall with stable ID, bulk release and dpkg remove.
-  Actual PAM returned 0 for valid nonempty and 7 for blank, wrong and
-  locked. Real loopback LDAP/SSSD returned 0/7 for correct/wrong passwords
-  of a user absent from local shadow.
-* The native ownership fixture passed before/after Prepared recovery,
-  post-rename compensation in both directions, CAS conflict, missing
-  and wrong-ID witness, orphan refusal and release with provider removed.
-* Ten selected CTests passed inside Debian 13. The separate
-  `mutation_journal_tests` passed inside the same Debian 13 image as an
-  unprivileged user. Permission-denial fixtures fail as container root
-  because root can write the directories those tests chmod.
-* Final logs: `/tmp/fic-d13-1.fDnpFvhL/native-checked-build.log`,
-  `/tmp/fic-d13-1.fDnpFvhL/native-package-checked.log`, and the native
-  evidence directory printed on the first line of the latter.
-* No host PAM, real desktop/SSH login, AD/IPA, other distribution or
-  full CI run. Unsupported manual graphs and colliding local/domain
-  identities remain outside the declared scope.
+Evidence in `/tmp/fic-d13-followup.ugs23n9o/`: `profiles.log`,
+`baseline.log`, `upgrade-baseline.log`, `upgrade-final.log`,
+`fixed-build.log` and `native-verified.log`. Native logs point to
+durable local evidence under `build-package-lifecycle/`. The runtime
+fixture copies two newly packaged SSH snippet symlink targets as regular
+files with identical bytes because the independent SSH inventory
+otherwise refuses rollback all. Production SSH checks were unchanged.
+
+Reproduction is in `tests/integration/pam-empty-password/README.md`.
+The upgrade and detach repair contracts are in `docs/package-lifecycle.md`.

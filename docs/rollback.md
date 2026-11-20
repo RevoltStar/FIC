@@ -1569,6 +1569,15 @@ It rejects unknown module or Unix argument contracts, unavailable required
 modules and graphs without a usable local password path. A proven strict
 foreign graph can satisfy the policy without a write or journal record.
 
+The Debian 13 generated Winbind Primary is supported only with its packaged
+options and exact Primary success jumps. Unix success skips Winbind, which can
+set the authentication token and canonicalize the username. A successful
+Winbind route for a distinct domain identity reaches the local-user selector
+and skips the strict Unix recheck. Module name alone does not qualify a rule.
+The pre-Unix systemd-homed Primary and the SSSD smart-card profiles remain
+unsupported by this policy. [Samba PAM implementation](https://github.com/samba-team/samba/blob/samba-4.22.11/nsswitch/pam_winbind.c),
+[systemd-homed PAM manual](https://manpages.debian.org/trixie/systemd-homed/pam_systemd_home.8.en.html)
+
 `UndoDisablePamCapability` binds the single immutable v1 slot shape to
 `capability/deny_empty_password_login` and the MutationId. Prepared is durable
 before conditional publication. Recovery compares the canonical neutral slot

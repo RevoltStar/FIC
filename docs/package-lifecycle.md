@@ -126,6 +126,22 @@ is retained as a `PAM_PASSWORD` / `FAILED` JSON result. Only the resolved native
 ALT p11 passwdqc/static + pwhistory/TCB pair makes the C2 domain
 `NOT_APPLICABLE`; its native release backends still run.
 
+### Debian 13 upgrade with a locally managed common-auth
+
+D13-1 introduces the permanent `fic-empty-password-hook`. If local edits
+prevent pam-auth-update from attaching it, dpkg leaves FIC half-configured
+and the lifecycle stays INSTALLING. The daemon stays stopped. The disabled
+policy does not make the package attachment proof optional. The diagnostic
+identifies the missing selection or physical PAM link.
+
+Preserve the edited PAM file before repair. In the native recovery test, the
+administrator restored the verified generated `common-auth` that immediately
+preceded the local edit, then ran `dpkg --configure -a`. On a real system,
+reconcile local requirements against the host's selected PAM profiles before
+retrying, using an administrative connection independent of the affected PAM
+stack. The package never forces regeneration or infers selection from an
+unproven physical link. [pam-auth-update(8)](https://manpages.debian.org/trixie/libpam-runtime/pam-auth-update.8.en.html)
+
 ### Manual retry after infrastructure detach failure
 
 A failed prerm may already have released policy ownership, stopped the daemon

@@ -3,6 +3,7 @@ import ctypes as c
 import ctypes.util
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 
@@ -113,6 +114,115 @@ def native_domain_login():
             (out / "sssd.json").write_bytes(result.read_bytes())
 
 
+def package_set(directory):
+    return [str(next(directory.glob(p + "_*.deb"))) for p in ("fic-dick", "fic", "fic-cli")]
+
+
+def upgrade_with_local_change(previous, packages):
+    run("dpkg", "-i", *package_set(previous))
+    run("systemctl", "is-active", "fic.service")
+    assert not slot.exists() and selected() == 0
+    original = common.read_bytes()
+    end = b"# end of pam-auth-update config"
+    assert original.count(end) == 1
+    edited = original.replace(end, b"auth optional pam_warn.so # administrator audit rule\n" + end)
+    common.write_bytes(edited)
+    journal_before = journal.read_bytes()
+    config_before = config.read_bytes()
+    witness = Path(str(journal) + ".initialized")
+    witness_before = witness.read_bytes()
+    pam_dir = common.parent
+    existing_slots = {p: p.read_bytes() for p in pam_dir.glob("fic-*")}
+
+    output = run("dpkg", "-i", *packages, expected=False)
+    assert "Local modifications to /etc/pam.d/common-*" in output, output
+    assert common.read_bytes() == edited and b"substack fic-empty-password" not in edited
+    assert selected() == 0
+    assert "permanent PAM hook selection absent/duplicate: fic-empty-password-hook" in output
+    assert journal.read_bytes() == journal_before and witness.read_bytes() == witness_before
+    assert all(p.read_bytes() == content for p, content in existing_slots.items())
+    assert slot.read_text() == "# FIC empty-password slot v1 neutral\nauth optional pam_deny.so\n"
+    assert config.read_bytes() == config_before
+    assert f"{name}.status=ENABLE" not in config.read_text()
+    assert Path("/var/lib/fic-lifecycle/status").read_text().strip() == "INSTALLING"
+    run("systemctl", "is-active", "fic.service", expected=False)
+    status = run("dpkg-query", "-W", "-f=${Status}", "fic")
+    assert status.strip() == "install ok half-configured", status
+    (out / "upgrade-common-auth.before").write_bytes(edited)
+    (out / "upgrade-common-auth.after").write_bytes(common.read_bytes())
+    (out / "upgrade-auth-selection.after").write_bytes(selection.read_bytes())
+    (out / "upgrade-journal.after").write_bytes(journal.read_bytes())
+
+    # Fixture administrator removes the audit rule after preserving the
+    # exact edited version above. The package scripts never replace it.
+    common.write_bytes(original)
+    run("dpkg", "--configure", "-a")
+    assert selected() == 1 and b"substack fic-empty-password" in common.read_bytes()
+    assert Path("/var/lib/fic-lifecycle/status").read_text().strip() == "INSTALLED"
+    run("systemctl", "is-active", "fic.service")
+    print("D13 upgrade refused safely; administrator repair and dpkg retry passed", flush=True)
+
+
+def official_profile_contracts(neutral):
+    run("dpkg-query", "-W", "libpam-winbind", "systemd-homed", "libpam-systemd")
+    for profile in ("unix", "sss", "winbind", "systemd", "systemd-homed",
+                    "sss-smart-card-optional", "sss-smart-card-required"):
+        path = Path("/usr/share/pam-configs") / profile
+        (out / ("profile-" + profile)).write_bytes(path.read_bytes())
+
+    run("pam-auth-update", "--enable", "winbind")
+    generated = common.read_bytes()
+    (out / "common-auth.winbind").write_bytes(generated)
+    assert b"pam_winbind.so" in generated and b"pam_sss.so" in generated
+    choices = selection.read_bytes()
+    authenticate("fic-d13-empty", "", True)
+    policy("enable")
+    policy("apply")
+    records = owned()
+    witness = slot.read_bytes()
+    assert len(records) == 1 and witness != neutral
+    authenticate("fic-d13-empty", "", False)
+    authenticate("fic-d13-password", password, True)
+    authenticate("fic-d13-password", "wrong", False)
+    authenticate("fic-d13-locked", password, False)
+    run("pam-auth-update", "--enable", "winbind")
+    policy("apply")
+    policy("apply", "enable_authentication_lockout")
+    assert common.read_bytes() == generated and selection.read_bytes() == choices
+    assert owned() == records and slot.read_bytes() == witness
+    native_domain_login()
+
+    # Repoint Unix success at Winbind. Its legal module name and options
+    # alone cannot admit a graph that can change identity after Unix success.
+    drift, changes = re.subn(rb"(auth\s+\[success=)\d+( default=ignore\]\s+pam_unix\.so)",
+                             rb"\g<1>ok\2", generated)
+    assert changes == 1
+    common.write_bytes(drift)
+    policy("apply", expected=False)
+    assert owned() == records and slot.read_bytes() == witness
+    assert "unsupported Debian 13 winbind Primary transitions" in run(
+        "journalctl", "--no-pager", "-u", "fic.service")
+    policy("disable")
+    assert common.read_bytes() == drift and slot.read_bytes() == neutral and not owned()
+    common.write_bytes(generated)
+    run("pam-auth-update", "--disable", "winbind")
+
+    for profile, module in (("systemd-homed", b"pam_systemd_home.so"),
+                            ("sss-smart-card-optional", b"try_cert_auth")):
+        run("pam-auth-update", "--enable", profile)
+        generated = common.read_bytes()
+        choices = selection.read_bytes()
+        (out / ("common-auth." + profile)).write_bytes(generated)
+        assert module in generated
+        journal_before = journal.read_bytes()
+        policy("enable")
+        policy("apply", expected=False)
+        assert common.read_bytes() == generated and selection.read_bytes() == choices
+        assert journal.read_bytes() == journal_before and slot.read_bytes() == neutral
+        policy("disable")
+        run("pam-auth-update", "--disable", profile)
+
+
 try:
     run("findmnt", "-n", "-T", "/sys", "-o", "OPTIONS")
     run("mount", "--rbind", "/sys", "/sys")
@@ -121,7 +231,11 @@ try:
     subprocess.run(["systemctl", "stop", "ssh.service", "ssh.socket"], check=False, timeout=30)
     run("/usr/local/bin/d13-ownership-tests")
     root = Path("/var/tmp/fic-packages")
-    packages = [str(next(root.glob(p + "_*.deb"))) for p in ("fic-dick", "fic", "fic-cli")]
+    packages = package_set(root)
+    previous = root / "previous"
+    if previous.is_dir():
+        upgrade_with_local_change(previous, packages)
+        raise SystemExit(0)
     run("dpkg", "-i", *packages)
     run("systemctl", "is-active", "fic.service")
     assert f"{name}.status=DISABLE" in config.read_text()
@@ -163,8 +277,6 @@ try:
     authenticate("fic-d13-empty", "", False)
     common.write_bytes(before)
 
-    native_domain_login()
-
     # Changed foreign auth graph must be diagnosed on apply; rollback still
     # uses the exact slot and leaves the foreign change byte-for-byte intact.
     missing_hook = b"".join(line for line in before.splitlines(keepends=True)
@@ -186,6 +298,7 @@ try:
 
     policy("enable", "enable_authentication_lockout")
     policy("apply", "enable_authentication_lockout")
+    official_profile_contracts(neutral)
     policy("enable")
     policy("apply")
     policy("apply", "enable_authentication_lockout")
@@ -205,6 +318,21 @@ try:
     run("/opt/fic/bin/fic-cli", "prepare-uninstall")
     run("/opt/fic/bin/fic-cli", "policy", "rollback", "all")
     assert slot.read_bytes() == neutral and not owned() and config.read_bytes() == saved
+    generated = common.read_bytes()
+    marker = b"# end of pam-auth-update config"
+    assert generated.count(marker) == 1
+    edited = generated.replace(marker, b"auth optional pam_warn.so # administrator audit rule\n" + marker)
+    common.write_bytes(edited)
+    output = run("dpkg", "--remove", "fic-cli", "fic", "fic-dick", expected=False)
+    assert "FIC PAM package hooks remain selected/attached after removal" in output, output
+    assert common.read_bytes() == edited and b"substack fic-empty-password" in edited
+    assert slot.read_bytes() == neutral
+    assert Path("/var/lib/fic-lifecycle/status").read_text().strip() == "UNINSTALLING"
+    common.write_bytes(generated)
+    # prerm stopped the daemon before detach. Start the documented restricted
+    # retry path under the existing durable UNINSTALLING fence.
+    run("systemctl", "start", "fic.service")
+    assert Path("/var/lib/fic-lifecycle/status").read_text().strip() == "UNINSTALLING"
     run("dpkg", "--remove", "fic-cli", "fic", "fic-dick")
     assert selected() == 0
     assert b"pam_sss.so" in common.read_bytes()
