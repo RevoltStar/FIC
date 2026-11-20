@@ -1,37 +1,33 @@
-# Debian 13 empty-password PAM follow-up
+# Debian 13 D13-2 MFA topology
 
-Branch main. Base `16d51a63`. The policy remains Debian 13 only. Runtime
-apply still mutates only its exact journal-bound slot.
+Branch `main`. Starting commit `1973dd406183bab4ac8b3c928c6e2e7cdafe2ba1`.
 
-- The verified generated Winbind Primary is admitted with its packaged
-  arguments, trusted module, and Unix and Winbind success jumps to the
-  same generated permit barrier. Unix success skips Winbind, which can
-  modify the PAM token and identity. The general analyzer, ownership,
-  rollback and package scripts retain their existing contracts.
-- The generated homed and SSSD optional smart-card graphs are rejected
-  with no PAM or journal writes. The required smart-card profile was
-  inspected. No Winbind AD or homed-user authentication was run.
-- Real 0.1.0 DEBs from `0e4d014a` were upgraded to 0.1.1 from
-  `16d51a63` and to the follow-up in separate Debian 13 containers.
-  A manual rule inside generated common-auth was preserved. The upgrade
-  stayed half-configured with the INSTALLING fence, no selected hook,
-  a neutral new slot and unchanged old slots, config and journal pair.
-  Restoring the known generated file and retrying dpkg configuration
-  completed installation. This is the existing package contract.
-- The final native gate exercises local PAM and online LDAP/SSSD with
-  Winbind and faillock enabled, exact ownership, unsupported control
-  flow, reinstall, and refusal of detach while a physical reference
-  remains. The retry uses the documented restricted daemon startup.
-- Four focused Debian 13 CTests passed. The native ownership executable
-  passed within the package gate.
+`PamMfaTopology` renders a disabled `pam-auth-update` Additional profile
+and the neutral and mandatory `fic-mfa` slot forms. The read-only
+StructuralEffective verifier checks a selected service's effective PAM
+graph, the strict password routes, trusted provider and credential
+format. It proves that every modeled success includes the appropriate
+primary followed by Google TOTP and that a blank local password cannot
+succeed. It makes no PAM or credential writes.
 
-Evidence in `/tmp/fic-d13-followup.ugs23n9o/`: `profiles.log`,
-`baseline.log`, `upgrade-baseline.log`, `upgrade-final.log`,
-`fixed-build.log` and `native-verified.log`. Native logs point to
-durable local evidence under `build-package-lifecycle/`. The runtime
-fixture copies two newly packaged SSH snippet symlink targets as regular
-files with identical bytes because the independent SSH inventory
-otherwise refuses rollback all. Production SSH checks were unchanged.
+The Debian 13 native gate invokes the production verifier and real
+`pam_authenticate()` for `login` with local Unix and online TLS LDAP/SSSD.
+It covers both factor failures, empty passwords, credential and provider
+failures, control transitions, token preservation and the D13-1 guard.
+With the tested faillock hooks, bad primary passwords increment the
+tally. Wrong OTPs after good passwords are denied without incrementing it.
 
-Reproduction is in `tests/integration/pam-empty-password/README.md`.
-The upgrade and detach repair contracts are in `docs/package-lifecycle.md`.
+The Debian 13 DEBs and probe were built natively. The six focused PAM,
+packaging and platform CTests passed. The D13-1 policy, ownership and
+package-lifecycle regression gate also passed. Logs are under
+`/tmp/fic-d13-mfa.O0UrDLT5/` in `debian-verified-build.log`,
+`ctest-final.log`, `native-final-gate.log` and `native-d13-1-final.log`.
+The native logs point to the exported `build-package-lifecycle/native-*`
+evidence. Reproduction is in
+[the native gate README](../tests/integration/pam-mfa-d13/README.md).
+
+[The D13-2 contract](pam-mfa-d13.md) records structural, native and
+unsupported scopes. Production packages contain no active MFA topology.
+D13-3 still owns policy wiring, journal-bound publication, provenance,
+recovery and rollback. SSH and graphical client conversations were
+outside the native gate.

@@ -1,0 +1,46 @@
+# Debian 13 Google TOTP native gate
+
+Use the existing [package-lifecycle container setup](../package-lifecycle/README.md)
+with a Debian 13 builder. Build the real packages and the probe in that
+builder where the production build profile resolves Debian's multiarch
+PAM module directories.
+
+```sh
+bash /src/tests/integration/package-lifecycle/build-deb.sh debian-13 0.1.2
+cmake --build /build --target d13_mfa_probe pam_control_flow_analyzer_tests -j4
+ctest --test-dir /build --output-on-failure \
+  -R '^(pam_control_flow_analyzer_tests|pam_packaging_static_checks|platform_profile_static_checks)$'
+```
+
+Prepare the existing systemd runtime fixture for these DEBs. Add
+`slapd ldap-utils sssd-ldap libnss-sss libpam-sss libpam-google-authenticator libpam0g-dev gcc`
+in the runtime image build. Use a fresh image without an existing MFA
+slot, LDAP fixture or selected Winbind, homed or SSSD smart-card profiles.
+The runner installs the actual FIC DEBs in an isolated PID and mount
+namespace with loopback networking and no host mounts. Keep the build
+and runtime image preparation separate from the isolated native gate.
+
+```sh
+FIC_D13_MFA_PROBE=/path/to/build/tests/d13_mfa_probe \
+  bash tests/integration/package-lifecycle/run-deb.sh \
+  DEBIAN13_RUNTIME_IMAGE /path/to/DEBS d13_mfa_native.py
+```
+
+Use the evidence directory printed by the runner. `commands.log`
+contains verifier verdicts, fixture package versions and SSSD file
+metadata. `pam.log` contains actual PAM statuses and prompt counts.
+`common-auth.local` and `common-auth.sssd` preserve the generated
+ordering. `result.json` is written after all assertions and credential
+cleanup. The runner removes the disposable container. Never invoke
+this driver on the host.
+
+The native probe calls `pam_authenticate()` for the real `login`
+service and keeps password and OTP responses separate. It checks the
+local and LDAP/SSSD success and failure matrix, registration errors,
+missing provider, unavailable OTP conversation and faillock behavior.
+The test-only module supplies deterministic `PAM_IGNORE`, auth and
+system errors, verifies substack boundaries and inspects the
+unchanged primary token after a real TOTP check. The production C++
+verifier rejects alternate control flows separately. The
+[production contract](../../../docs/pam-mfa-d13.md) defines the
+scope of these results.

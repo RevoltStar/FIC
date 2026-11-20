@@ -865,6 +865,38 @@ void testEmptyUnixPasswordPaths() {
     }
 }
 
+void testMfaAuthenticationPaths() {
+    using namespace fic::identity::pam;
+    const auto check = [](const std::string& before, const std::string& otp,
+                          const std::string& after, bool expected) {
+        const auto parse = [](const fs::path& file, const std::string& text,
+                              std::vector<PamStackEntry>& entries) {
+            std::vector<PamRule> rules;
+            std::string error;
+            require(PamConfiguration::parseRulesContent(file, text, rules, error), error);
+            for (auto& rule : rules) entries.push_back({std::move(rule), {}});
+        };
+        PamEffectiveStack stack;
+        stack.service = "login";
+        parse("common-auth", before, stack.entries);
+        parse("common-auth", "auth substack fic-mfa\n", stack.entries);
+        parse("fic-mfa", otp, stack.entries.back().substack);
+        parse("common-auth", after, stack.entries);
+        std::string error;
+        require(proveMfaAuthenticationPaths(stack, {}, "common-auth", "fic-mfa", false, error)
+                    == expected,
+                "unexpected MFA path verdict: " + error);
+    };
+    const std::string strict = "auth required pam_unix.so\n";
+    const std::string mfa = "auth [success=ok default=die] pam_google_authenticator.so\n";
+    check(strict, mfa, "", true);
+    check("auth required pam_unix.so nullok\n", mfa, "", false);
+    check("auth sufficient pam_unix.so\n", mfa, "", false);
+    check("auth optional pam_unix.so\n", mfa, "", false);
+    check(strict, "auth [success=ok ignore=ignore default=die] pam_google_authenticator.so\n", "", false);
+    check(strict, mfa, "auth [success=reset default=ignore] pam_permit.so\n", false);
+}
+
 } // namespace
 
 int main() {
@@ -872,6 +904,7 @@ int main() {
         ("fic-pam-analyzer-test-" + std::to_string(::getpid()));
     fs::remove_all(root);
     try {
+        testMfaAuthenticationPaths();
         testEmptyUnixPasswordPaths();
         testDetectPamFaillockStrategy(root);
         testDebianGeneratedTopologiesAreEffective(root);

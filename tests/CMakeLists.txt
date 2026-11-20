@@ -3637,4 +3637,14 @@ if(FIC_TARGET_PLATFORM STREQUAL "debian-13")
     )
     target_include_directories(d13_empty_password_ownership_tests PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
     target_link_libraries(d13_empty_password_ownership_tests PRIVATE fic-core fic-policy fic-platform Threads::Threads)
+    get_target_property(mfa_sssd_sources sssd_uninstall_inspection_tests SOURCES)
+    list(FILTER mfa_sssd_sources EXCLUDE REGEX "SssdUninstallInspectionTests\\.cpp$")
+    add_executable(d13_mfa_probe
+        integration/pam-mfa-d13/Probe.cpp
+        ${empty_password_pam_sources}
+        ${mfa_sssd_sources}
+        ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamMfaTopology.cpp
+    )
+    target_include_directories(d13_mfa_probe PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+    target_link_libraries(d13_mfa_probe PRIVATE fic-core fic-platform fic-policy)
 endif()

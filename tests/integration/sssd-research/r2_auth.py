@@ -1,7 +1,8 @@
 """Real local LDAP + native pam_sss; fixture credentials only, TLS on loopback."""
 from common import *
-import sys,shutil,re
+import sys,shutil,re,secrets
 report.update(stage='R2_AUTH',platform=sys.argv[1],scope='one synthetic LDAP password user; not AD/IPA/smartcard/passkey')
+mfa_only=sys.argv[2:] == ['--mfa-only']
 fixture=Path('/run/sssd-ldap');fixture.mkdir();(fixture/'db').mkdir()
 schema=Path('/etc/ldap/schema') if Path('/etc/ldap/schema').exists() else Path('/etc/openldap/schema')
 cert=fixture/'cert.pem';key=fixture/'key.pem'
@@ -42,13 +43,34 @@ cn: research
 gidNumber: 160001
 memberUid: research
 '''
- assert run(['ldapadd','-x','-H','ldap://127.0.0.1:1389','-D','cn=admin,dc=example,dc=test','-w','Research-admin-only'],input=ldif)['exit_code']==0
+ if mfa_only:
+  password=secrets.token_hex(24)
+  ldif=ldif.replace('Research-only-42',password)
+  bind_file=fixture/'ldap-bind'
+  write(bind_file,'Research-admin-only')
+  provision=['-y',str(bind_file)]
+ else:provision=['-w','Research-admin-only']
+ assert run(['ldapadd','-x','-H','ldap://127.0.0.1:1389','-D','cn=admin,dc=example,dc=test',*provision],input=ldif)['exit_code']==0
  # Isolated /etc fixture only; no production PAM/NSS topology changed.
  write('/etc/pam.d/sssd-research','auth required pam_sss.so\naccount required pam_sss.so\n',0o644)
  nss=Path('/etc/nsswitch.conf');text=nss.read_text();text=re.sub(r'^(passwd|group):.*$',lambda m:m.group(1)+': files sss',text,flags=re.M);write(nss,text,0o644)
  def config(cache='true',offline=1,cached=0):
   return base(offline=offline,cache=cache).replace('ldap://127.0.0.1:9','ldap://127.0.0.1:1389')+f'ldap_id_use_start_tls=true\nldap_tls_reqcert=demand\nldap_tls_cacert={cert}\nldap_network_timeout=2\nldap_opt_timeout=2\ncached_auth_timeout={cached}\n'
  def auth(wrong=False):return run(['python3','/usr/local/bin/pam-probe.py','research@test',*(['wrong'] if wrong else [])],timeout=20)
+ if mfa_only:
+  configuration=config(cache='false').replace(
+   '[pam]\n','[pam]\npam_cert_auth=false\npam_passkey_auth=false\n').replace(
+   '[domain/test]\n','[domain/test]\nsubdomains_provider=none\nuse_fully_qualified_names=true\n')
+  configure(configuration)
+  assert ctl('restart','sssd.service',timeout=40)['exit_code']==0
+  metadata=run(['stat','-c','%n %u:%g %a','/etc/sssd','/etc/sssd/conf.d','/etc/sssd/sssd.conf'])
+  assert metadata['exit_code']==0
+  print(metadata['stdout'],end='',flush=True)
+  assert run(['getent','passwd','research@test'])['exit_code']==0
+  assert not any(line.startswith(('research@test:','research:')) for line in Path('/etc/shadow').read_text().splitlines())
+  env=dict(os.environ,FIC_FIXTURE_DOMAIN_PASSWORD=password)
+  subprocess.run(['python3','/usr/local/bin/d13-mfa-native.py','--sssd'],env=env,check=True,timeout=80)
+  sys.exit(0)
  online_only=sys.argv[2:] == ['--online-only']
  configure(config(cached=0 if online_only else 3600))
  if online_only:

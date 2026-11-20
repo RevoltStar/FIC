@@ -3,6 +3,7 @@
 #include "modules/identity_access/pam/PamConfigFileTransaction.h"
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 #include "modules/identity_access/pam/PamProviderManagedLock.h"
+#include "modules/identity_access/pam/PamMfaTopology.h"
 #include "rollback/MutationJournal.h"
 
 #include <fic/core/fs/RootControlledDirectory.h>
@@ -193,6 +194,19 @@ bool stageCandidate(std::vector<PamStackEntry>& entries,
             }
             ++hooks;
             if (!candidate.empty()) entry.substack = candidate;
+            continue;
+        }
+        if (entry.isSubstack() && rule.includeTarget == mfaSlotName) {
+            const auto directory = slot.path.parent_path();
+            const auto path = directory / mfaSlotName;
+            const auto body = readTrusted(path, error);
+            if (rule.source != directory / "common-auth" ||
+                body.status != fic::core::SecureStateReadStatus::Proven ||
+                (body.content != mfaNeutralSlot && body.content != mfaRequiredSlot) ||
+                !matchesMfaSlotRules(entry.substack, path, body.content))
+                return fail(error, "unproven MFA slot in empty-password authentication graph");
+            // The existing graph executor still checks every path. Exact
+            // MFA syntax neither certifies nor replaces the strict Unix rule.
             continue;
         }
         if (!entry.isSubstack()) {

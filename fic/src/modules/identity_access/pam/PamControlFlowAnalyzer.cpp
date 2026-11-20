@@ -81,6 +81,8 @@ struct TrustedAuthenticationExclusionEvidence {
 
 struct Evidence {
     bool unixSucceeded = false;
+    bool mfaPrimaryVerified = false;
+    bool mfaFactorAfterPrimary = false;
     bool providerReached = false;
     bool providerSucceeded = false;
     bool preauthSucceeded = false;
@@ -124,6 +126,8 @@ struct ExecutionBudget {
     std::size_t transitions = 0;
     bool trackUnix = false;
     bool modelBlankPassword = false;
+    const std::filesystem::path* mfaPrimarySource = nullptr;
+    const std::filesystem::path* mfaFactorSource = nullptr;
 };
 
 std::string lowerCopy(std::string value) {
@@ -663,6 +667,8 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
     return left.impression == right.impression && left.status == right.status &&
         left.subject == right.subject &&
         a.unixSucceeded == b.unixSucceeded &&
+        a.mfaPrimaryVerified == b.mfaPrimaryVerified &&
+        a.mfaFactorAfterPrimary == b.mfaFactorAfterPrimary &&
         a.providerReached == b.providerReached &&
         a.providerSucceeded == b.providerSucceeded &&
         a.preauthSucceeded == b.preauthSucceeded &&
@@ -781,6 +787,11 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
             if (!parseControl(entry.rule, control, error)) {
                 return false;
             }
+            if (budget.mfaPrimarySource &&
+                (entry.rule.control == "required" || entry.rule.control == "requisite")) {
+                // Linux-PAM's simple controls both map PAM_IGNORE to ignore.
+                control.actions["ignore"] = {ActionKind::Ignore, 0};
+            }
             for (const auto& result : moduleOutcomes(
                      entry.rule, service, platformConfig)) {
                 if (++budget.transitions > kMaximumSymbolicTransitions) {
@@ -804,11 +815,33 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                     }
                     state.evidence.unixSucceeded = true;
                 }
+                if (budget.mfaPrimarySource && result == "success") {
+                    const auto& rule = entry.rule;
+                    if (rule.module == "pam_unix.so") {
+                        if (state.subject == IdentitySubject::NonLocal ||
+                            (budget.modelBlankPassword &&
+                             !hasArgument(rule, "nullok") &&
+                             !hasArgument(rule, "nullok_secure") &&
+                             !hasArgument(rule, "nullresetok"))) continue;
+                        if (rule.source == *budget.mfaPrimarySource)
+                            state.evidence.mfaPrimaryVerified = true;
+                    } else if (rule.module == "pam_sss.so") {
+                        if (state.subject == IdentitySubject::Local) continue;
+                        state.evidence.mfaPrimaryVerified = true;
+                    } else if (rule.source == *budget.mfaFactorSource &&
+                               rule.module == "pam_google_authenticator.so") {
+                        state.evidence.mfaFactorAfterPrimary = state.evidence.mfaPrimaryVerified;
+                    }
+                }
                 recordEvidence(state, entry.rule, result, provider);
                 const auto found = control.actions.find(result);
                 const ControlAction action = found == control.actions.end()
                     ? control.defaultAction
                     : found->second;
+                if (budget.mfaPrimarySource && action.kind == ActionKind::Reset) {
+                    error = "reset is outside the supported MFA authentication contract";
+                    return false;
+                }
                 recordProviderFailClosedEvidence(
                     state, entry.rule, result, action, provider);
                 recordTrustedAuthenticationExclusion(
@@ -1687,6 +1720,44 @@ bool proveNoEmptyUnixPasswordPath(
     safe = std::any_of(states.begin(), states.end(), unixSuccess);
     if (!safe) error = "no usable local password-authentication path in " + stack.service;
     return safe;
+}
+
+bool proveMfaAuthenticationPaths(
+    const PamEffectiveStack& stack,
+    const fic::platform::PamPlatformConfig& platformConfig,
+    const std::filesystem::path& primarySource,
+    const std::filesystem::path& factorSource,
+    bool hasSssdPasswordRoute, std::string& error) {
+    const auto proveSubject = [&](IdentitySubject subject, bool blank) {
+        ExecutionState initial;
+        initial.subject = subject;
+        ExecutionBudget budget;
+        budget.modelBlankPassword = blank;
+        budget.mfaPrimarySource = &primarySource;
+        budget.mfaFactorSource = &factorSource;
+        std::vector<ExecutionState> states;
+        if (!executeStack(stack.entries, initial, PamProviderKind::PamFaillock,
+                          stack.service, platformConfig, states, error, budget)) return false;
+        bool successfulPath = false;
+        for (const auto& state : states) {
+            if (!stackSucceeded(state)) continue;
+            if (blank || !state.evidence.mfaPrimaryVerified ||
+                !state.evidence.mfaFactorAfterPrimary) {
+                error = blank ? "empty local password can reach authentication success"
+                              : "authentication success bypasses primary or MFA";
+                return false;
+            }
+            successfulPath = true;
+        }
+        if (!blank && !successfulPath) {
+            error = "no successful two-factor path for the declared primary route";
+            return false;
+        }
+        return true;
+    };
+    return proveSubject(IdentitySubject::Local, false) &&
+           proveSubject(IdentitySubject::Local, true) &&
+           (!hasSssdPasswordRoute || proveSubject(IdentitySubject::NonLocal, false));
 }
 
 } // namespace fic::identity::pam

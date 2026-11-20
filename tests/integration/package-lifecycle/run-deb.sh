@@ -3,7 +3,7 @@
 set -euo pipefail
 [[ $# -ge 2 && $# -le 4 ]] || { echo 'usage: run-deb.sh IMAGE PACKAGE_DIRECTORY [DRIVER [OPTIONAL_OWNER_FIXTURE]]' >&2; exit 2; }
 driver=${3:-deb_native.py}
-case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py|slow_init_native.py|startup_readiness_native.py|d13_empty_password_native.py) ;; *) exit 2 ;; esac
+case "$driver" in deb_native.py|purge_failure_native.py|detach_retry_native.py|minimal_runtime_native.py|slow_init_native.py|startup_readiness_native.py|d13_empty_password_native.py|d13_mfa_native.py) ;; *) exit 2 ;; esac
 extra=()
 if [[ $# == 4 ]]; then
     [[ "$driver" == minimal_runtime_native.py && -f "$4" ]] || exit 2
@@ -49,5 +49,16 @@ if [[ "$driver" == d13_empty_password_native.py ]]; then
     docker cp "$repo/tests/integration/sssd-research/common.py" "$name:/usr/local/bin/common.py"
     docker cp "$repo/tests/integration/sssd-research/r2_auth.py" "$name:/usr/local/bin/r2_auth.py"
     docker cp "$repo/tests/integration/sssd-research/pam-probe.py" "$name:/usr/local/bin/pam-probe.py"
+fi
+if [[ "$driver" == d13_mfa_native.py ]]; then
+    [[ -f "${FIC_D13_MFA_PROBE:-}" ]] || { echo 'FIC_D13_MFA_PROBE required' >&2; exit 2; }
+    docker cp "$FIC_D13_MFA_PROBE" "$name:/usr/local/bin/d13-mfa-proof"
+    docker cp "$repo/tests/integration/package-lifecycle/$driver" "$name:/usr/local/bin/d13-mfa-native.py"
+    for fixture in auth.c outcome.c; do
+        docker cp "$repo/tests/integration/pam-mfa-d13/$fixture" "$name:/var/tmp/$fixture"
+    done
+    for fixture in common.py r2_auth.py; do
+        docker cp "$repo/tests/integration/sssd-research/$fixture" "$name:/usr/local/bin/$fixture"
+    done
 fi
 docker exec -e FIC_A2_TEST_GROUP="${FIC_STARTUP_TEST_GROUP:-all}" "$name" python3 /usr/local/bin/deb-native.py "${extra[@]}"

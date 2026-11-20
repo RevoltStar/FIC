@@ -119,6 +119,15 @@ bool proveNoEmptyUnixPasswordPath(
     const fic::platform::PamPlatformConfig& platformConfig,
     bool& safe, std::string& error);
 
+// Internal MFA proof over a graph whose source paths and provider semantics
+// have already been admitted by the Debian 13 verifier.
+bool proveMfaAuthenticationPaths(
+    const PamEffectiveStack& stack,
+    const fic::platform::PamPlatformConfig& platformConfig,
+    const std::filesystem::path& primarySource,
+    const std::filesystem::path& factorSource,
+    bool hasSssdPasswordRoute, std::string& error);
+
 // Classifies the pam_faillock topology of an expanded authentication stack
 // into one of the supported integration strategies. Returns nullopt and sets
 // error when the topology is not enabled, is ambiguous, or cannot be proven
