@@ -5,6 +5,7 @@
 #include <memory>
 #include <fic/core/fs/AtomicFileWriter.h>
 namespace fic::service::detail {struct SshUnitReferences;}
+namespace fic::identity::pam {struct PamSshMfaCandidate;}
 namespace fic::service::ssh {
 enum class ProofState { Proven, NonCompliant, NotProven, Unsupported };
 enum class SshActivationStatus { Success, Refused, ActivationFailed, RuntimeActivatedButPersistentDrift, ReleasedOffline };
@@ -46,6 +47,10 @@ struct SshVerifiedActivationRequest {
     // same reference snapshot as SSH files and are never inferred from markers.
     std::optional<MfaRequirement> mfa;
 };
+struct SshMfaReference {
+    SshVerifiedActivationRequest::MfaRequirement requirement;
+    std::vector<ControlledPath> pamInputs;
+};
 struct SshVerifiedActivationResult {
     SshActivationStatus status = SshActivationStatus::Refused;
     ProofState inputs = ProofState::NotProven;
@@ -76,11 +81,12 @@ public:
     // configuration is referenced, never enrolled as policy ownership.
     static SshVerifiedActivationRequest captureReference(
         const std::map<std::string,std::string>& policies,const std::string& expectedMainSha,
-        SshActivationIntent intent=SshActivationIntent::SelectedPolicies);
+        SshActivationIntent intent=SshActivationIntent::SelectedPolicies,
+        const SshMfaReference* mfa=nullptr);
     // Planning only: no selected-policy semantics/runtime proof or mutation.
     // Uses the same closed input graph and trust checks as release capture.
     static SshPortSourceMap capturePortSources(const std::string& expectedMainSha,
-        const std::set<std::string>& previouslyOwnedFiles={});
+        const std::set<std::string>& previouslyOwnedFiles={},const SshMfaReference* mfa=nullptr);
     static void validatePortPlan(const SshPortSourceMap&,const std::map<std::string,std::string>& targets,
         const std::map<std::string,std::string>& policies,SshActivationIntent);
     static bool sameAuthorizedPortGeneration(const SshVerifiedActivationRequest& before,
@@ -91,7 +97,8 @@ public:
         const SshVerifiedActivationRequest&,const SshReleaseAdmission&,const std::string& plannedMain);
     static SshConfigurationValidationResult validateMfaPlan(
         const SshVerifiedActivationRequest&, const SshReleaseAdmission&, const std::string& plannedMain,
-        std::optional<SshVerifiedActivationRequest::MfaRequirement> proposed);
+        std::optional<SshVerifiedActivationRequest::MfaRequirement> proposed,
+        const fic::identity::pam::PamSshMfaCandidate* candidate = nullptr);
     static SshVerifiedActivationResult releaseConfiguration(
         const SshVerifiedActivationRequest&,const SshReleaseAdmission&);
     static bool sameInputGeneration(const SshVerifiedActivationRequest& before,

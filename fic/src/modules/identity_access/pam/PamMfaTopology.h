@@ -18,6 +18,7 @@ inline constexpr char mfaGoogleOptions[] =
 inline const std::string mfaRequiredSlot =
     std::string(mfaIdentityGuard) + "auth [success=ok default=die] " + mfaGoogleOptions + "\n";
 inline constexpr char mfaSshService[] = "fic-sshd-mfa";
+inline constexpr char mfaSshAuthSlot[] = "fic-mfa-ssh-auth";
 
 // Bind parsed graph entries to the exact slot language. Reused by D13-1 so
 // the independent blank-password proof can traverse a future MFA substack.
@@ -50,6 +51,17 @@ struct PamMfaTopology {
     std::string attachment;
 };
 
+struct PamSshMfaCandidate {
+    std::string service;
+    std::string authSlot;
+};
+
+// Read the trusted Debian sshd PAM service and render the two dedicated
+// files for first publication. Existing targets are a conflict.
+bool buildDebian13SshMfaCandidate(const fic::platform::PlatformProfile& platform,
+    bool sssd, std::optional<fic::platform::PamFaillockStrategy> faillock,
+    PamSshMfaCandidate& candidate, std::string& error);
+
 // Text only. The caller owns publication and must establish provenance.
 bool buildDebian13MfaTopology(const std::vector<PamMfaFactor>& factors,
                              PamMfaTopology& topology, std::string& error);
@@ -78,7 +90,8 @@ bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
 bool verifyDebian13SshMfaInputs(const fic::platform::PlatformProfile& platform, bool sssd,
                                std::optional<fic::platform::PamFaillockStrategy> faillock,
                                const std::map<std::string, std::string>& inputs,
-                               std::string& error);
+                               std::string& error,
+                               const PamSshMfaCandidate* candidate = nullptr);
 
 } // namespace fic::identity::pam
 #endif

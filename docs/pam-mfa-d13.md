@@ -206,6 +206,12 @@ slot retains its handling after final authentication. The SSH proof
 requires the legacy and dedicated account/session routes and the incident
 account gate on the target. `authsucc` remains unsupported.
 
+The Debian 13 FIC package includes `pam_fic_ssh_stage.so` in the platform
+PAM module directory. First-activation preflight can validate the rendered
+`fic-sshd-mfa` service and `fic-mfa-ssh-auth` slot in memory before either
+file is published. It uses the trusted stock `sshd` PAM service as the
+source of the inherited account, password and session routes.
+
 The adapter accepts an explicit request with caller-authorized digests.
 General policy wiring still needs the authoritative obligation to carry
 that request through apply, periodic apply, rollback and release, including

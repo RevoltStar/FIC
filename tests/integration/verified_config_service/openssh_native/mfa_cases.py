@@ -36,7 +36,7 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
                             text=True, capture_output=True, timeout=80).stdout)
         (root / ("cutover-" + (label or action) + ".json")).write_text(json.dumps(value, indent=2))
         assert "harness_error" not in value, value
-        if action in ("mfa-plan", "mfa-cas"):
+        if action in ("mfa-plan", "mfa-cas", "mfa-reference"):
             assert bool(value.get("success")) == expected, value
         return value
 
@@ -83,13 +83,32 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
 
     local = (pam / "sshd").read_text()
     assert local.count("@include common-auth") == 1
-    service.write_text(local.replace("@include common-auth", "auth substack fic-mfa-ssh-auth"))
-    slot.write_text(run("/usr/local/bin/d13-mfa-proof", "required", family, primary).stdout)
-    run("/usr/local/bin/d13-mfa-proof", "installed", family, primary, "fic-sshd-mfa")
     Path("/etc/default/ssh").write_text("SSHD_OPTS=\n")
     run("systemctl", "enable", "--now", "ssh.service")
     run("systemctl", "is-active", "ssh.service")
     run("systemctl", "restart", "ssh.service")
+    generation_before_plan = run("systemctl", "show", "-p", "InvocationID", "-p", "MainPID",
+                                 "ssh.service").stdout
+    projection = refs()
+    projection.update(main_before=sha(snapshot), project_pam=True, sssd=sssd)
+    invoke("mfa-plan", projection, label="before-pam-publication")
+    invoke("mfa-plan", dict(projection, mutate_candidate=True), expected=False,
+           label="refuse-mutated-pam-candidate")
+    assert main.read_bytes() == snapshot and not service.exists() and not slot.exists()
+    assert run("systemctl", "show", "-p", "InvocationID", "-p", "MainPID",
+               "ssh.service").stdout == generation_before_plan
+    rendered_slot = run("/usr/local/bin/d13-mfa-proof", "required", family, primary).stdout
+    slot.write_text(rendered_slot)
+    try:
+        collision = dict(refs(), main_before=sha(snapshot), project_pam=True, sssd=sssd)
+        result = invoke("mfa-plan", collision, expected=False, label="refuse-identical-foreign-pam-slot")
+        assert "already exists" in result["diagnostic"], result
+        assert main.read_bytes() == snapshot and not service.exists() and slot.read_text() == rendered_slot
+    finally:
+        slot.unlink()
+    service.write_text(local.replace("@include common-auth", "auth substack fic-mfa-ssh-auth"))
+    slot.write_text(rendered_slot)
+    run("/usr/local/bin/d13-mfa-proof", "installed", family, primary, "fic-sshd-mfa")
 
     def systemd_identity():
         return run("systemctl", "show", "-p", "InvocationID", "-p", "MainPID",
@@ -163,6 +182,11 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
                 assert select.select([session.stdout], [], [], 15)[0]
                 assert session.stdout.readline().strip() == "FIC_READY"
                 expected = install(True, False)
+                invoke("mfa-reference", expected, label="independent-reference")
+                drifted = dict(expected, paths=[
+                    dict(path, sha256="0" * 64) if path["path"] == "/etc/nsswitch.conf" else path
+                    for path in expected["paths"]])
+                invoke("mfa-reference", drifted, expected=False, label="refuse-drifted-pam-reference")
                 launch("password", True)
                 result = invoke("adapter", expected, label="activation")
                 print("C++ verified adapter result", result.get("adapter_status"), result.get("adapter_diagnostic"), flush=True)

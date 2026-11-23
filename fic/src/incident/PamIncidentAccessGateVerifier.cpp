@@ -1,6 +1,7 @@
 #include "incident/PamIncidentAccessGateVerifier.h"
 
 #include "modules/identity_access/pam/PamConfiguration.h"
+#include "modules/identity_access/pam/PamMfaTopology.h"
 
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -82,7 +83,8 @@ bool mayEraseGateFailure(const std::string& control) {
 
 bool proveStack(const ::fic::identity::pam::PamEffectiveStack& stack,
                 uid_t expectedOwner,
-                std::string& diagnostic) {
+                std::string& diagnostic,
+                const std::filesystem::path& projectedSource) {
     std::vector<const PamStackEntry*> rules;
     flatten(stack.entries, rules);
     std::size_t gateIndex = rules.size();
@@ -115,7 +117,8 @@ bool proveStack(const ::fic::identity::pam::PamEffectiveStack& stack,
         }
     }
     for (const auto& source : stack.sourceFiles) {
-        if (!trustedRegularFile(source, expectedOwner, diagnostic)) return false;
+        if (source != projectedSource &&
+            !trustedRegularFile(source, expectedOwner, diagnostic)) return false;
     }
     return true;
 }
@@ -412,7 +415,8 @@ bool proveImpl(
     uid_t expectedOwner,
     bool checkLoadable,
     std::string& diagnostic,
-    const std::string& requiredService = {}) {
+    const std::string& requiredService = {},
+    const std::string* projectedService = nullptr) {
     bool moduleProven = false;
     dev_t moduleDevice = 0;
     ino_t moduleInode = 0;
@@ -464,6 +468,12 @@ bool proveImpl(
         }
     }
     ::fic::identity::pam::PamConfiguration configuration(platform);
+    std::filesystem::path projectedSource;
+    if (projectedService) {
+        if (!configuration.projectService(requiredService, *projectedService, diagnostic))
+            return false;
+        projectedSource = platform.configDirectories.front() / requiredService;
+    }
     std::vector<std::string> installedServices;
     if (!configuration.existingServices(
             platform.incidentAccessGate.controlledServices,
@@ -477,7 +487,7 @@ bool proveImpl(
         if (!configuration.buildEffectiveStack(
                 service, ::fic::identity::pam::PamManagementGroup::Account,
                 stack, diagnostic)) return false;
-        if (!proveStack(stack, expectedOwner, diagnostic)) return false;
+        if (!proveStack(stack, expectedOwner, diagnostic, projectedSource)) return false;
     }
     diagnostic = "installed controlled PAM services reach the incident gate";
     return true;
@@ -489,9 +499,10 @@ bool PamIncidentAccessGateVerifier::prove(
     return proveImpl(platform, 0, true, diagnostic);
 }
 
-bool PamIncidentAccessGateVerifier::proveRequiredService(
+static bool proveRequiredServiceImpl(
     const ::fic::platform::PamPlatformConfig& platform,
-    const std::string& service, std::string& diagnostic) {
+    const std::string& service, std::string& diagnostic,
+    const std::string* projectedService) {
     const auto& controlled = platform.incidentAccessGate.controlledServices;
     if (service.empty() || std::find(controlled.begin(), controlled.end(), service) == controlled.end()) {
         diagnostic = "service absent from the incident gate profile";
@@ -499,7 +510,19 @@ bool PamIncidentAccessGateVerifier::proveRequiredService(
     }
     auto target = platform;
     target.incidentAccessGate.controlledServices = {service};
-    return proveImpl(target, 0, true, diagnostic, service);
+    return proveImpl(target, 0, true, diagnostic, service, projectedService);
+}
+
+bool PamIncidentAccessGateVerifier::proveRequiredService(
+    const ::fic::platform::PamPlatformConfig& platform,
+    const std::string& service, std::string& diagnostic) {
+    return proveRequiredServiceImpl(platform, service, diagnostic, nullptr);
+}
+
+bool PamIncidentAccessGateVerifier::proveProjectedSshMfaService(
+    const ::fic::platform::PamPlatformConfig& platform,
+    const std::string& content, std::string& diagnostic) {
+    return proveRequiredServiceImpl(platform, fic::identity::pam::mfaSshService, diagnostic, &content);
 }
 
 bool PamIncidentAccessGateVerifier::proveForTests(

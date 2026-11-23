@@ -22,6 +22,8 @@ public:
                       std::string& diagnostic);
     static bool proveRequiredService(const ::fic::platform::PamPlatformConfig& platform,
                                      const std::string& service, std::string& diagnostic);
+    static bool proveProjectedSshMfaService(const ::fic::platform::PamPlatformConfig& platform,
+                                            const std::string& content, std::string& diagnostic);
     static bool proveForTests(
         const ::fic::platform::PamPlatformConfig& platform,
         uid_t expectedOwner, std::string& diagnostic);

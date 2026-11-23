@@ -1,39 +1,38 @@
-# Debian 13 D13-3B SSH MFA faillock follow-up
+# Debian 13 D13-3C SSH MFA
 
-Branch `main`. The follow-up starts from `edab51dffc83ab6a38c58028fb2cafdfd1fea275`.
+Branch `main`. Base `f858cf843cdf6f53dc0ecda6a2124e1dc811c92c`.
+D13-3C is in progress.
 
-The explicit Debian 13 backend projects the managed block before CAS,
-checks the exact two SSH authentication chains and the dedicated PAM
-service, and binds PAM and SSH reference digests to the verified
-systemd invocation and main PID. It verifies the actual incident PAM
-module controls `fic-sshd-mfa`. MFA activation repeats the verified
-runtime operation when checking a reference again. The existing FIC
-faillock slots compose with `preauth_required` and
-`preauth_requisite`. Both SSH stages must now pass a strict preauth
-check. The OTP stage terminates within its substack and has a fail-closed
-barrier before the password branch. Password failures use the owned
-authfail slot and the existing account phase keeps tally reset after
-completed authentication. `authsucc` remains unsupported.
+The SSH adapter can validate a first-activation plan before either PAM file
+exists. It projects the canonical `fic-sshd-mfa` and `fic-mfa-ssh-auth` bytes
+into the authorized input graph, including the protected preflight snapshot.
+Existing targets are a conflict. Reference capture and Port planning accept an
+explicit `SshMfaReference` and check its authorized PAM inputs alongside the
+SSH sources. The Debian 13 FIC package stages `pam_fic_ssh_stage.so`.
 
-The Debian 13 DEBs and six focused CTests passed in
-`faillock-guard-build.log`. The standalone SSH adapter CTest passed
-in `faillock-guard-ssh.log`. The follow-up native gates use OpenSSH
-`1:10.0p1-7+deb13u4`. The `faillock-guard-preauth-*.log` cases exercise
-UNIX and LDAP/SSSD for both strategies, all tally assertions, the
-preauth I/O error, invalid selector evidence and the incident account
-denial. The `faillock-guard-verified-*.log` cases exercise cutover and
-rollback with the verified listener. The D13-2/D13-3A PAM and SSH
-regression matrix is in `faillock-guard-regression.log`.
+The production entry points are `Ssh::apply()` for ordinary and periodic
+apply, `SshPortTransaction` for the multi-file Port graph, and the verified
+release path through `RollbackExecutor` and `SshRollback`. The latter is
+also used by the disable flow before the DISABLE setting is saved.
 
-Evidence is under `build-d13-3b/` and the reported directories under
-`build-package-lifecycle/`. See the [MFA contract](pam-mfa-d13.md),
-[SSH adapter](ssh-verified-activation-adapter.md), and
-[native gate](../tests/integration/pam-mfa-d13/README.md).
+The next change needs to register `NET/SshEdit/ssh_mfa_required` and bind
+those entry points to one trusted `NET.conf` generation and durable
+MutationJournal ownership. The adapter snapshot and activation receipt
+supply input and runtime evidence only. They cannot supply desired policy
+intent or prove ownership. Persistent publication needs staged PAM creation
+ahead of SSH CAS and activation. Explicit MFA release must verify SSH
+activation without the dedicated service, then prove PAM detach safe before
+removing the exact owned files. Ambiguous effect or ownership must retain
+journal evidence and report recovery required.
 
-The independent regular and periodic apply, rollback and release
-callers still need a single authorized source of the mandatory
-contract. A process-local activation receipt and the current disk
-configuration cannot supply that authority after a daemon restart or
-drift. Production policy registration, PAM artifact publication,
-MutationJournal ownership, recovery and package lifecycle remain
-outside this backend.
+Debian 13 DEBs, the topology, stage selector, incident PAM gate and verified
+SSH adapter CTest targets passed. The SSH and periodic apply static checks
+passed. The native adapter cutover and rollback passed with both local UNIX
+and LDAP/SSSD accounts. Both fixtures covered pre-publication proof, a
+modified candidate, a byte-identical foreign slot, and reference capture
+and Port planning with a pinned MFA contract. Evidence is under
+`build-d13-3b/d13-3c-reviewed-*.log` and the native directories named there.
+See the [MFA contract](pam-mfa-d13.md) and
+[SSH adapter](ssh-verified-activation-adapter.md). Policy lifecycle native
+coverage, fault injection across publication stages and uninstall admission
+for MFA ownership remain open.

@@ -9,6 +9,7 @@
 #include "daemon/PolicyDisableFlow.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
 #include "modules/net/ssh/SshResourceLock.h"
+#include "modules/identity_access/pam/PamMfaTopology.h"
 #include <fic/core/config/ModuleConfigFileHandler.h>
 #include <fic/core/logging/Logger.h>
 #include "service/ssh/SshVerifiedActivationTestAccess.h"
@@ -118,7 +119,34 @@ int main(int argc, char** argv) {
             r.paths.push_back(c);
         }
         const std::string action = argv[1];
-        if (action == "mfa-plan" || action == "mfa-cas") {
+        if (action == "mfa-reference") {
+            namespace ssh = fic::service::ssh;
+            ssh::SshMfaReference mfa{{input.value("sssd", false),
+                fic::platform::PamFaillockStrategy::PreauthRequired}, {}};
+            for (const auto& path : r.paths)
+                if (path.path.string().rfind("/etc/ssh/", 0) != 0 && path.path != "/etc/default/ssh")
+                    mfa.pamInputs.push_back(path);
+            const auto sha = input.at("main_after").get<std::string>();
+            try {
+                const auto port = ssh::SshVerifiedActivationAdapter::capturePortSources(sha, {}, &mfa);
+                ssh::SshVerifiedActivationAdapter::validatePortPlan(
+                    port, {}, {}, ssh::SshActivationIntent::ConfigurationRelease);
+                SshConfigFileHandler candidate(mainPath);
+                bool changed = false;
+                check(candidate.loadConfig(), "Port candidate source unavailable");
+                check(upsertSshManagedPolicyBlock(candidate.lines(), "ssh_port", "Port 2222",
+                                                  changed, error) && changed, error);
+                ssh::SshVerifiedActivationAdapter::validatePortPlan(
+                    port, {{mainPath, candidate.pendingContent()}}, {{"ssh_port", "2222"}},
+                    ssh::SshActivationIntent::SelectedPolicies);
+                const auto selected = ssh::SshVerifiedActivationAdapter::captureReference(
+                    {{"ssh_use_pam", "yes"}}, sha, ssh::SshActivationIntent::SelectedPolicies, &mfa);
+                output["success"] = selected.mfa.has_value() && port.reference.mfa == selected.mfa;
+            } catch (const std::exception& failure) {
+                output["success"] = false;
+                output["diagnostic"] = failure.what();
+            }
+        } else if (action == "mfa-plan" || action == "mfa-cas") {
             const std::lock_guard<std::mutex> lock(sshResourceMutex());
             SshConfigFileHandler handler(mainPath);
             check(profile.id == "debian-13" && handler.loadConfig() && handler.loadSnapshot(),
@@ -139,8 +167,21 @@ int main(int argc, char** argv) {
                 input.value("sssd", false), fic::platform::PamFaillockStrategy::PreauthRequired};
             if (previouslyOwned) current.mfa = fixture;
             const auto admission = ssh::SshVerifiedActivationAdapter::admitMfaPlan(current);
+            std::optional<fic::identity::pam::PamSshMfaCandidate> candidate;
+            if (input.value("project_pam", false)) {
+                check(action == "mfa-plan", "PAM projection is a read-only test");
+                candidate.emplace();
+                if (!fic::identity::pam::buildDebian13SshMfaCandidate(
+                        profile, fixture.sssd, fixture.faillock, *candidate, error)) {
+                    std::cout << J{{"success", false}, {"diagnostic", error}}.dump() << '\n';
+                    return 0;
+                }
+                if (input.value("mutate_candidate", false))
+                    candidate->authSlot += "auth sufficient pam_permit.so\n";
+            }
             const auto validation = ssh::SshVerifiedActivationAdapter::validateMfaPlan(
-                current, admission, planned, enable ? std::optional{fixture} : std::nullopt);
+                current, admission, planned, enable ? std::optional{fixture} : std::nullopt,
+                candidate ? &*candidate : nullptr);
             output["success"] = validation.success();
             output["diagnostic"] = validation.diagnostic;
             if (validation.success()) {

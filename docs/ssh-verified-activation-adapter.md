@@ -737,6 +737,14 @@ checks caller-supplied provenance before changing any reserved block.
 The existing activation path then rechecks inputs before publication, in
 the published snapshot, and after startup and cleanup.
 
+For first activation, the caller can supply a `PamSshMfaCandidate` to
+`validateMfaPlan`. The two paths must be absent from the trusted PAM
+configuration and its closed reference manifest. The adapter renders the
+canonical files from the inherited `sshd` PAM service and the staged
+topology. It compares the requested bytes with that rendering before
+proving the projected auth graph, inherited non-auth graphs and incident
+gate. It repeats the proof inside the protected baseline snapshot.
+
 The MFA requirement uses the same reference graph and runtime generation
 as the SSH adapter. In addition to the normal SSH inputs it requires the
 actual PAM source files, resolved modules, NSS inputs and effective SSSD
@@ -754,6 +762,12 @@ inventory. For the SSSD route the SSH snapshot can pin `sssd.conf` and
 the exact `conf.d` tree as separate roots. This also proves the absence
 of an unlisted drop-in when `conf.d` is empty. The existing SSH snapshot
 path and size limits apply.
+
+Ordinary reference capture and Port graph planning accept a typed
+`SshMfaReference` with the requirement and the caller-authorized PAM
+references. Those inputs participate in the same snapshot and generation
+checks as the SSH files. The production caller supplies the obligation
+and establishes ownership before deriving the references.
 
 The daemon still needs an authoritative source of the mandatory MFA
 requirement for independent ordinary apply, periodic apply, rollback,

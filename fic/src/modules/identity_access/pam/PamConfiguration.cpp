@@ -353,6 +353,12 @@ bool PamConfiguration::resolveServicePath(
         error = "invalid PAM service name: " + service;
         return false;
     }
+    const auto cached = cache_.find(service);
+    if (cached != cache_.end() && cached->second.projected) {
+        resolved.exists = true;
+        resolved.path = cached->second.path;
+        return true;
+    }
     for (const auto& directory : platformConfig_.configDirectories) {
         const std::filesystem::path candidate = directory / service;
         struct stat info {};
@@ -465,6 +471,20 @@ bool PamConfiguration::resolveServicePath(
         return true;
     }
     error.clear();
+    return true;
+}
+
+bool PamConfiguration::projectService(const std::string& service, const std::string& content,
+                                      std::string& error) {
+    if (!validServiceName(service) || platformConfig_.configDirectories.empty()) {
+        error = "invalid projected PAM service: " + service;
+        return false;
+    }
+    ParsedService projected;
+    projected.path = platformConfig_.configDirectories.front() / service;
+    projected.projected = true;
+    if (!parseRulesContent(projected.path, content, projected.rules, error)) return false;
+    cache_.insert_or_assign(service, std::move(projected));
     return true;
 }
 

@@ -256,7 +256,8 @@ Capture capture(const ActivationRequest& request, bool published = false, bool p
     }
     return out;
 }
-void validateCaptured(const SshVerifiedActivationRequest& request, const Capture& observed) {
+void validateCaptured(const SshVerifiedActivationRequest& request, const Capture& observed,
+                      const fic::identity::pam::PamSshMfaCandidate* candidate = nullptr) {
     if(request.allowReleasedPortSet&&(request.intent!=SshActivationIntent::ConfigurationRelease||request.policies.count("ssh_port")))
         unsupported("released Port set is not a selected policy contract");
     const auto closure = detail::validateClosure(request.reference, observed.bytes, request.policies,
@@ -290,7 +291,7 @@ void validateCaptured(const SshVerifiedActivationRequest& request, const Capture
             unsupported("SSH MFA requires a closed SSSD drop-in directory");
         std::string error;
         if (!fic::identity::pam::verifyDebian13SshMfaInputs(fic::platform::makeBuildPlatformProfile(),
-                request.mfa->sssd, request.mfa->faillock, observed.bytes, error))
+                request.mfa->sssd, request.mfa->faillock, observed.bytes, error, candidate))
             throw d::Failure(ActivationStatus::UnsupportedConfiguration, error);
     }
 }
@@ -603,7 +604,8 @@ void SshVerifiedActivationAdapter::prepareRuntimeProbe(const SshVerifiedActivati
     detail::listener::effectiveEndpoints(runtime);
 }
 SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
-    const std::map<std::string,std::string>& policies,const std::string& expectedMainSha,SshActivationIntent intent) {
+    const std::map<std::string,std::string>& policies,const std::string& expectedMainSha,SshActivationIntent intent,
+    const SshMfaReference* mfa) {
     if(::geteuid()!=0||!fic::core::ContentDigest::isCanonicalSha256Hex(expectedMainSha))
         unsupported("trusted reference requires root and explicit expected main-file identity");
     detail::validatePolicies(policies,intent);
@@ -612,6 +614,7 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
        !fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))
         unsupported("trusted SSH reference supports Debian12/13, Ubuntu24/26 or ALT p11 only");
     SshVerifiedActivationRequest out;out.intent=intent;out.policies=policies;out.reference.unit=detail::inputProfile().unit;
+    if (mfa) out.mfa=mfa->requirement;
     out.reference.timeout=std::chrono::seconds(60);
     detail::InputBytes bytes;detail::PersistentMetadata initial;
     std::uint64_t budget=out.reference.maxSnapshotBytes;
@@ -640,8 +643,18 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     if(::lstat(input.fragments.c_str(),&fragments)==0) add(input.fragments,ControlledPathKind::Directory);
     else if(errno!=ENOENT||!input.alt) unsupported("SSH fragment directory unavailable");
     add(input.environment,ControlledPathKind::File);
-    const auto keys=detail::discoverHostKeys(out.reference,bytes,policies,intent);
+    const auto keys=detail::discoverHostKeys(out.reference,bytes,policies,intent,out.mfa.has_value());
     for(const auto& key:keys) {add(key,ControlledPathKind::File);add(key+".pub",ControlledPathKind::File);}
+    if (mfa) {
+        auto pam=out.reference;
+        pam.paths=mfa->pamInputs;
+        d::validateRequest(pam);
+        out.reference.paths.insert(out.reference.paths.end(),pam.paths.begin(),pam.paths.end());
+        d::validateRequest(out.reference);
+        const auto authorized=capture(pam);
+        initial.roots.insert(authorized.roots.begin(),authorized.roots.end());
+        initial.attributes.insert(authorized.attributes.begin(),authorized.attributes.end());
+    }
     // Re-read through the actual adapter's metadata/manifest checks. A changed
     // source is refused; discovery is never authority to bless later bytes.
     const auto observed=capture(out.reference);
@@ -651,11 +664,12 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     return out;
 }
 SshPortSourceMap SshVerifiedActivationAdapter::capturePortSources(const std::string& mainSha,
-    const std::set<std::string>& previouslyOwnedFiles) {
+    const std::set<std::string>& previouslyOwnedFiles,const SshMfaReference* mfa) {
     SshPortSourceMap out;
-    out.reference=captureReference({},mainSha,SshActivationIntent::ConfigurationRelease);
+    out.reference=captureReference({},mainSha,SshActivationIntent::ConfigurationRelease,mfa);
     const auto observed=capture(out.reference.reference);validateCaptured(out.reference,observed);
-    out.graph=detail::validateClosure(out.reference.reference,observed.bytes,{},detail::inputProfile(),SshActivationIntent::ConfigurationRelease);
+    out.graph=detail::validateClosure(out.reference.reference,observed.bytes,{},detail::inputProfile(),
+                                      SshActivationIntent::ConfigurationRelease,out.reference.mfa.has_value());
     std::set<std::string> paths(out.graph.order.begin(),out.graph.order.end());
     const auto profile=detail::inputProfile();
     for(const auto& path:previouslyOwnedFiles) {
@@ -677,7 +691,7 @@ SshPortSourceMap SshVerifiedActivationAdapter::capturePortSources(const std::str
             throw d::Failure(ActivationStatus::InterferenceDetected,"SSH Port physical source identity changed/aliased");
         out.files.emplace(path,std::move(state));
     }
-    const auto final=captureReference({},mainSha,SshActivationIntent::ConfigurationRelease);
+    const auto final=captureReference({},mainSha,SshActivationIntent::ConfigurationRelease,mfa);
     if(!sameInputGeneration(out.reference,final,false))
         throw d::Failure(ActivationStatus::InterferenceDetected,"SSH Port graph changed during source mapping");
     return out;
@@ -722,7 +736,8 @@ void SshVerifiedActivationAdapter::validatePortPlan(const SshPortSourceMap& sour
     }
     // This is bounded structural preflight, not native execution over old Includes.
     validateCaptured(request,projected);
-    const auto graph=detail::validateClosure(request.reference,projected.bytes,policies,detail::inputProfile(),intent);
+    const auto graph=detail::validateClosure(request.reference,projected.bytes,policies,detail::inputProfile(),
+                                             intent,request.mfa.has_value());
     if(intent==SshActivationIntent::SelectedPolicies) {
         std::size_t count=0;for(const auto& path:graph.order)if(auto found=graph.globalPorts.find(path);found!=graph.globalPorts.end())count+=found->second.size();
         if(count!=1||!graph.globalPorts.count(main))unsupported("Port target must have exactly one effective global source");
@@ -803,7 +818,8 @@ SshReleaseAdmission SshVerifiedActivationAdapter::admitMfaPlan(SshVerifiedActiva
 }
 static SshConfigurationValidationResult validateProjectedPlan(
     const SshVerifiedActivationRequest& request,const SshReleaseAdmission& expected,const std::string& plannedMain,
-    const std::optional<SshVerifiedActivationRequest::MfaRequirement>* proposed) {
+    const std::optional<SshVerifiedActivationRequest::MfaRequirement>* proposed,
+    const fic::identity::pam::PamSshMfaCandidate* pamCandidate = nullptr) {
     const std::lock_guard<std::mutex> lock(receiptMutex);
     SshConfigurationValidationResult result;
     try {
@@ -817,7 +833,7 @@ static SshConfigurationValidationResult validateProjectedPlan(
             throw d::Failure(ActivationStatus::InterferenceDetected,"release service changed before planned validation");
         const auto observed=capture(request.reference);validateCaptured(request,observed);
         const auto input=detail::inputProfile();
-        auto planned=request;auto projected=observed;
+        auto planned=request;
         if (proposed) {
             if (!input.debian13 || expected.offline || (!planned.mfa && !*proposed))
                 unsupported("MFA transition requires authorized Debian 13 inputs and an active service");
@@ -825,10 +841,44 @@ static SshConfigurationValidationResult validateProjectedPlan(
         } else if (planned.mfa && expected.offline) {
             unsupported("required SSH MFA has no verified runtime");
         }
-        projected.bytes.at(input.mainFile)=plannedMain;
         for(auto& path:planned.reference.paths)if(path.path==input.mainFile)
             path.sha256=fic::core::ContentDigest::sha256Hex(plannedMain);
-        validateCaptured(planned,projected);
+        if (pamCandidate) {
+            if (!planned.mfa || request.mfa)
+                unsupported("projected PAM files require a first SSH MFA activation");
+            const auto& platform = fic::platform::makeBuildPlatformProfile();
+            if (platform.pam.configDirectories.empty()) unsupported("no primary PAM configuration directory");
+            const auto root = platform.pam.configDirectories.front();
+            auto directory = std::find_if(planned.reference.paths.begin(), planned.reference.paths.end(),
+                [&](const auto& path) { return path.path == root && path.kind == ControlledPathKind::Directory; });
+            if (directory == planned.reference.paths.end())
+                unsupported("first SSH MFA activation requires a closed PAM configuration directory");
+            using namespace fic::identity::pam;
+            if (!directory->manifest.emplace(mfaSshService,
+                    fic::core::ContentDigest::sha256Hex(pamCandidate->service)).second ||
+                !directory->manifest.emplace(mfaSshAuthSlot,
+                    fic::core::ContentDigest::sha256Hex(pamCandidate->authSlot)).second)
+                unsupported("cannot project over an existing SSH MFA PAM file");
+        }
+        const auto validateCandidate = [&](Capture projected) {
+            projected.bytes.at(input.mainFile)=plannedMain;
+            if (pamCandidate) {
+                using namespace fic::identity::pam;
+                const auto platform = fic::platform::makeBuildPlatformProfile();
+                PamSshMfaCandidate canonical;
+                std::string error;
+                if (!buildDebian13SshMfaCandidate(platform, planned.mfa->sssd, planned.mfa->faillock,
+                                                 canonical, error))
+                    throw d::Failure(ActivationStatus::UnsupportedConfiguration, error);
+                if (canonical.service != pamCandidate->service || canonical.authSlot != pamCandidate->authSlot)
+                    unsupported("PAM candidate differs from canonical SSH MFA rendering");
+                const auto root = platform.pam.configDirectories.front();
+                projected.bytes.emplace((root / mfaSshService).string(), pamCandidate->service);
+                projected.bytes.emplace((root / mfaSshAuthSlot).string(), pamCandidate->authSlot);
+            }
+            validateCaptured(planned, projected, pamCandidate);
+        };
+        validateCandidate(observed);
         const auto profile=fic::platform::makeBuildPlatformProfile();
         fic::platform::PlatformExecutableResolver resolver(profile.executables);std::string error;
         std::filesystem::path binary;
@@ -860,7 +910,7 @@ static SshConfigurationValidationResult validateProjectedPlan(
         proof.validate=[&](auto) {
             d::verifySshUnitReferences(*expected.unitReferences,deadline);
             const auto protectedInputs=capture(request.reference,true);validateCaptured(request,protectedInputs);
-            auto candidate=protectedInputs;candidate.bytes.at(input.mainFile)=plannedMain;validateCaptured(planned,candidate);
+            validateCandidate(protectedInputs);
             checkBinary();
             if(!runtime.validateSyntax(error)||!runtime.validateConfiguration(error))throw SemanticFailure(false);
             if (planned.mfa) {
@@ -901,8 +951,9 @@ SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePl
 }
 SshConfigurationValidationResult SshVerifiedActivationAdapter::validateMfaPlan(
     const SshVerifiedActivationRequest& request, const SshReleaseAdmission& expected, const std::string& plannedMain,
-    std::optional<SshVerifiedActivationRequest::MfaRequirement> proposed) {
-    return validateProjectedPlan(request, expected, plannedMain, &proposed);
+    std::optional<SshVerifiedActivationRequest::MfaRequirement> proposed,
+    const fic::identity::pam::PamSshMfaCandidate* candidate) {
+    return validateProjectedPlan(request, expected, plannedMain, &proposed, candidate);
 }
 SshVerifiedActivationResult SshVerifiedActivationAdapter::releaseConfiguration(
     const SshVerifiedActivationRequest& request,const SshReleaseAdmission& admission) {

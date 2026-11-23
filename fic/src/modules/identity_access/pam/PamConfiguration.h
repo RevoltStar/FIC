@@ -61,6 +61,11 @@ class PamConfiguration {
 public:
     explicit PamConfiguration(fic::platform::PamPlatformConfig platformConfig);
 
+    // Parse a proposed file in the primary PAM directory without publishing it.
+    // Sources without a proposal still go through the usual filesystem checks.
+    bool projectService(const std::string& service, const std::string& content,
+                        std::string& error);
+
     bool serviceExists(const std::string& service) const;
     bool existingServices(const std::vector<std::string>& services,
                           std::vector<std::string>& existing,
@@ -96,6 +101,7 @@ private:
     struct ParsedService {
         std::filesystem::path path;
         std::vector<PamRule> rules;
+        bool projected = false;
     };
 
     fic::platform::PamPlatformConfig platformConfig_;

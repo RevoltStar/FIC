@@ -114,6 +114,7 @@ if(FIC_TARGET_PLATFORM STREQUAL "debian-13")
     set_target_properties(pam_fic_ssh_stage PROPERTIES PREFIX "" C_VISIBILITY_PRESET hidden)
     target_include_directories(pam_fic_ssh_stage PRIVATE "${FIC_ACCESS_PAM_INCLUDE_DIR}")
     target_link_libraries(pam_fic_ssh_stage PRIVATE "${FIC_ACCESS_PAM_LIBRARY}")
+    add_dependencies(fic pam_fic_ssh_stage)
 endif()
 
 add_library(pam_fic_access MODULE
@@ -197,6 +198,10 @@ else()
 endif()
 install(TARGETS pam_fic_access LIBRARY DESTINATION
     "${FIC_ACCESS_PAM_MODULE_DIR}" COMPONENT fic)
+if(TARGET pam_fic_ssh_stage)
+    install(TARGETS pam_fic_ssh_stage LIBRARY DESTINATION
+        "${FIC_ACCESS_PAM_MODULE_DIR}" COMPONENT fic)
+endif()
 if(FIC_PAM_PASSWORD_TRANSACTION_MODULE)
     install(TARGETS pam_fic_pwtxn LIBRARY DESTINATION "/lib64/security"
             COMPONENT fic)
