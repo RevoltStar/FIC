@@ -3188,6 +3188,80 @@ void testSshReleaseRequiresDisableAcknowledgement() {
     auto doc=nlohmann::json::parse(file.read());doc["records"][0]["undo"]["transition"]["target"]=nlohmann::json::object();
     file.write(doc.dump());MutationJournal malformed(file.path);require(!malformed.load(e),"release accepted non-null ownership target");
 }
+
+void testSshMfaPublicationAndReleaseOrder() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.initializeOrLoad(error), error);
+    const auto sha = fic::core::ContentDigest::sha256Hex;
+    AtomicTargetState slot{{1, 11}, "staged auth", 0644, 0, 0};
+    AtomicTargetState service{{1, 12}, "staged service", 0644, 0, 0};
+    AtomicTargetState installed{{1, 13}, "SSH with MFA", 0644, 0, 0};
+    AtomicTargetState released{{1, 14}, "SSH without MFA", 0644, 0, 0};
+    UndoReleaseSshMfa intent;
+    intent.service.targetSha256 = sha(service.content);
+    intent.authSlot.targetSha256 = sha(slot.content);
+    intent.beforeSshSha256 = sha(released.content);
+    intent.targetSshSha256 = sha(installed.content);
+    MutationId id = 0;
+    require(journal.prepareSshMfa(intent, id, error) && journal.abortSshMfaNoEffect(id, error), error);
+    require(journal.prepareSshMfa(intent, id, error), error);
+    require(!journal.noteSshMfaPublication(id, installed, true, error), "SSH published before PAM");
+    require(!journal.noteSshMfaPamReceipt(id, true, service, false, error), "service prepared before slot");
+    require(journal.noteSshMfaPamReceipt(id, false, slot, false, error), error);
+    require(!journal.abortSshMfaNoEffect(id, error) && !journal.discard(id, error),
+            "prepared inode authority lost");
+    MutationJournal afterCrash(file.path);
+    require(afterCrash.initializeOrLoad(error), error);
+    const auto& recovered = std::get<UndoReleaseSshMfa>(afterCrash.records().front().undo.payload);
+    require(recovered.authSlot.receipt && recovered.authSlot.receipt->inode == slot.identity.inode &&
+            !recovered.authSlot.receipt->durable, "prepared inode receipt changed across restart");
+    auto foreign = slot;
+    ++foreign.identity.inode;
+    require(!journal.noteSshMfaPamReceipt(id, false, foreign, true, error), "foreign PAM inode adopted");
+    require(journal.noteSshMfaPamReceipt(id, false, slot, true, error), error);
+    require(journal.noteSshMfaPamReceipt(id, true, service, false, error), error);
+    require(journal.noteSshMfaPamReceipt(id, true, service, true, error), error);
+    MutationJournal afterPam(file.path);
+    require(afterPam.initializeOrLoad(error) && !afterPam.prepareSshMfa(intent, id, error),
+            "repeat enable adopted partially published PAM ownership");
+    std::map<std::string, std::string> facts{{"inputs", "Proven"}, {"semantics", "Proven"},
+        {"persistent", "Proven"}, {"readiness", "true"}, {"status", "Success"}, {"unit", "ssh.service"},
+        {"InvocationID", std::string(32, 'a')}, {"MainPID", "42"}, {"mfa_reference", std::string(64, 'b')}};
+    require(!journal.commitSshMfaEnable(id, facts, error) && !journal.setStatus(id, MutationStatus::Applied, error),
+            "enabled ownership without SSH publication");
+    require(journal.noteSshMfaPublication(id, installed, true, error), error);
+    const auto pending = file.read();
+    breakPersist(file);
+    require(!journal.commitSshMfaEnable(id, facts, error), "failed finalization accepted");
+    restorePersist(file);
+    require(file.read() == pending &&
+            std::get<UndoReleaseSshMfa>(journal.records().front().undo.payload).phase == SshMfaPhase::PreparingEnable,
+            "journal finalization failure lost durable work");
+    require(!journal.commitSshMfaEnable(id, {}, error) && journal.commitSshMfaEnable(id, facts, error), error);
+    require(journal.proveCurrentSshMfaAuthority(error), error);
+    const auto applied = file.read();
+    auto modified = nlohmann::json::parse(applied);
+    modified["records"] = nlohmann::json::array();
+    file.write(modified.dump());
+    require(!journal.proveCurrentSshMfaAuthority(error), "running daemon accepted substituted ownership journal");
+    file.write("corrupt journal");
+    require(!journal.proveCurrentSshMfaAuthority(error), "running daemon accepted corrupt ownership journal");
+    file.write(applied);
+    require(journal.beginSshMfaRelease(id, sha(installed.content), sha(released.content), error), error);
+    require(!journal.finishSshMfaRelease(id, error) && !journal.acknowledgeSshMfaDisable(id, error),
+            "PAM released before SSH detachment");
+    require(journal.noteSshMfaPublication(id, released, true, error), error);
+    require(!journal.noteSshMfaRuntimeReleased(id, facts, error), "accepted MFA runtime as released");
+    facts.erase("mfa_reference");
+    require(journal.noteSshMfaRuntimeReleased(id, facts, error), error);
+    require(journal.finishSshMfaRelease(id, error), error);
+    require(journal.acknowledgeSshMfaDisable(id, error), error);
+    MutationJournal finished(file.path);
+    require(finished.initializeOrLoad(error) && finished.records().front().status == MutationStatus::RolledBack,
+            "verified release did not persist");
+}
 void testSshReleaseOfflineAndNoEffectAbort() {
     TempFile file;MutationJournal j(file.path);std::string e;require(j.initializeOrLoad(e),e);
     auto r=preparedSshRecord();MutationId id=0;require(j.prepareMutation(r,id,e)&&j.setStatusWithMessage(id,MutationStatus::RollbackFailed,"older failure",e),e);
@@ -3250,6 +3324,7 @@ int main() {
         const char* name;
         void (*test)();
     } tests[] = {
+        {"SSH MFA journal publication and release ordering", testSshMfaPublicationAndReleaseOrder},
         {"SSH multi-file journal publication",testSshMultiFilePublicationContract},
         {"failed SSH transition cannot promote",testFailedSshTransitionCannotBePromoted},
         {"SSH release waits for DISABLE",testSshReleaseRequiresDisableAcknowledgement},

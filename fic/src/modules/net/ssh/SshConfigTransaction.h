@@ -29,7 +29,8 @@ SshRestoreOutcome restoreSshConfigContentIfCurrentState(
     const std::filesystem::path& path,
     const std::string& content,
     const AtomicTargetState& expectedTargetState,
-    std::string& error);
+    std::string& error,
+    const std::function<bool(const AtomicTargetState&, std::string&)>& beforePublish = {});
 
 // Confirms the crash-durability of an already installed FIC state: first
 // re-proves that the target still is exactly the installed state, then

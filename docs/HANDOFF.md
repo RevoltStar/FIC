@@ -1,38 +1,35 @@
 # Debian 13 D13-3C SSH MFA
 
-Branch `main`. Base `f858cf843cdf6f53dc0ecda6a2124e1dc811c92c`.
-D13-3C is in progress.
+Branch `main`. The production integration follows the first-publication
+preflight in `0043d6e3c78b5a22faecf6ad9f1c36726c94f1b7`.
 
-The SSH adapter can validate a first-activation plan before either PAM file
-exists. It projects the canonical `fic-sshd-mfa` and `fic-mfa-ssh-auth` bytes
-into the authorized input graph, including the protected preflight snapshot.
-Existing targets are a conflict. Reference capture and Port planning accept an
-explicit `SshMfaReference` and check its authorized PAM inputs alongside the
-SSH sources. The Debian 13 FIC package stages `pam_fic_ssh_stage.so`.
+`NET/SshEdit/ssh_mfa_required` is registered on Debian 13 and ships disabled.
+`SshMfaPolicy` proves the desired status in the trusted `NET.conf` generation.
+Ordinary and periodic apply, Port and verified release share that requirement
+and the `release_ssh_mfa` ownership record. The daemon re-proves the persistent
+journal and witness against its live records. Adapter receipts supply
+runtime evidence only. The selector ships in the Debian 13 DEB.
 
-The production entry points are `Ssh::apply()` for ordinary and periodic
-apply, `SshPortTransaction` for the multi-file Port graph, and the verified
-release path through `RollbackExecutor` and `SshRollback`. The latter is
-also used by the disable flow before the DISABLE setting is saved.
+First activation preflights the projected PAM and SSH configuration, prepares
+the journal, publishes the dedicated auth slot and service, then commits the
+SSH image and verifies listener activation. Disable proves an explicit
+release against the same configuration generation. It verifies SSH with the
+ordinary policy blocks preserved, checks for SSH children and foreign PAM
+references and removes only the exact owned PAM files. Final acknowledgement
+requires durable DISABLE. A clean initial no-effect failure may discard
+its intent. Ambiguous effect retains ownership and requires recovery.
 
-The next change needs to register `NET/SshEdit/ssh_mfa_required` and bind
-those entry points to one trusted `NET.conf` generation and durable
-MutationJournal ownership. The adapter snapshot and activation receipt
-supply input and runtime evidence only. They cannot supply desired policy
-intent or prove ownership. Persistent publication needs staged PAM creation
-ahead of SSH CAS and activation. Explicit MFA release must verify SSH
-activation without the dedicated service, then prove PAM detach safe before
-removing the exact owned files. Ambiguous effect or ownership must retain
-journal evidence and report recovery required.
+Active or unresolved SSH MFA ownership refuses prepare-uninstall before the
+irreversible lifecycle fence. D13-3D covers full package-manager integration
+for MFA ownership. Prerequisites and current operator behavior are in
+[pam-mfa-d13.md](pam-mfa-d13.md). The SSH adapter and rollback contracts
+describe the proof boundaries.
 
-Debian 13 DEBs, the topology, stage selector, incident PAM gate and verified
-SSH adapter CTest targets passed. The SSH and periodic apply static checks
-passed. The native adapter cutover and rollback passed with both local UNIX
-and LDAP/SSSD accounts. Both fixtures covered pre-publication proof, a
-modified candidate, a byte-identical foreign slot, and reference capture
-and Port planning with a pinned MFA contract. Evidence is under
-`build-d13-3b/d13-3c-reviewed-*.log` and the native directories named there.
-See the [MFA contract](pam-mfa-d13.md) and
-[SSH adapter](ssh-verified-activation-adapter.md). Policy lifecycle native
-coverage, fault injection across publication stages and uninstall admission
-for MFA ownership remain open.
+Debian 13 build and unit/static evidence is under
+`build-d13-3b/d13-3c-complete-{build,adapter}.log`. Native production
+results for local UNIX and LDAP/SSSD are in `d13-3c-port-{local,sssd}.log`.
+The fixtures exercised an actual port change to 2222 and independent
+release in both directions. The local run also verified periodic apply.
+PAM observer and faillock evidence is in `d13-3c-pam-preauth-*.log` and the
+native directories named there. Package lifecycle end-to-end and the
+distro matrix are outside this gate.

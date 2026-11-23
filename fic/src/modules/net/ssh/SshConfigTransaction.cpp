@@ -5,7 +5,8 @@ SshRestoreOutcome restoreSshConfigContentIfCurrentState(
     const std::filesystem::path& path,
     const std::string& content,
     const AtomicTargetState& expectedTargetState,
-    std::string& error) {
+    std::string& error,
+    const std::function<bool(const AtomicTargetState&, std::string&)>& beforePublish) {
     // Conditional restore: the replacement happens only when the target is
     // still exactly the state FIC proved to install (expectedTargetState —
     // the state captured at rename time, never a fresh capture, which could
@@ -15,6 +16,7 @@ SshRestoreOutcome restoreSshConfigContentIfCurrentState(
     options.rejectSymlink = true;
     options.metadataPolicy = FileMetadataPolicy::PreserveExisting;
     options.expectedTargetState = expectedTargetState;
+    options.beforePublish = beforePublish;
     SshRestoreOutcome outcome;
     AtomicWriteResult result;
     if (!AtomicFileWriter::writeWithResult(

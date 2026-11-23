@@ -52,7 +52,8 @@ def exercise_ssh(run, subject, password, valid_code, wrong_code, registration, s
         run(PROOF, "installed", family, mode, SERVICE, expected=False)
         service.write_text(original.replace("@include common-auth", attachment.rstrip()))
 
-        with tempfile.TemporaryDirectory(prefix="fic-native-ssh-") as path:
+        # The lifecycle runner mounts /tmp noexec. ssh must execute askpass.
+        with tempfile.TemporaryDirectory(prefix="fic-native-ssh-", dir="/var/tmp") as path:
             run_matrix(run, Path(path), subject, password, valid_code, wrong_code,
                        registration, mode, faillock)
     finally:
@@ -161,7 +162,9 @@ AuthenticationMethods {CHAINS}
                 if line.startswith(("Accepted ", "Failed ", "PAM:")):
                     # Discard any optional key fingerprint suffix.
                     print(line.split(" ssh2:")[0], file=log)
-        assert outcome == success and observed == prompts, (mode, label, client.returncode, observed)
+        assert outcome == success and observed == prompts, (
+            mode, label, client.returncode, observed, client.stderr,
+            (directory / "sshd.log").read_text().splitlines()[-20:])
         assert all(line.startswith(SERVICE + " ") for line in calls), (mode, label, calls)
         if success:
             for phase in ("start flags=0 rc=0", "account flags=0 rc=0", "setcred flags=2 rc=0",

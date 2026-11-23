@@ -130,6 +130,29 @@ struct SshPublicationProof {
     std::string sha256;
     bool durable=false;
 };
+
+// The only PAM paths in this contract are fixed by the Debian 13 SSH
+// coordinator. Receipts bind the future publication to a prepared inode.
+inline constexpr char sshMfaPolicy[] = "ssh_mfa_required";
+inline constexpr char sshMfaResource[] = "ssh:/etc/ssh/sshd_config:fic-sshd-mfa";
+enum class SshMfaPhase {
+    PreparingEnable, Applied, PreparingRelease, SshReleased, AwaitingDisable, Released
+};
+struct SshMfaPamFile {
+    std::string targetSha256;
+    std::optional<SshPublicationProof> receipt;
+};
+struct UndoReleaseSshMfa {
+    SshMfaPhase phase = SshMfaPhase::PreparingEnable;
+    bool sssd = false;
+    std::string faillock;
+    SshMfaPamFile service;
+    SshMfaPamFile authSlot;
+    std::string beforeSshSha256;
+    std::string targetSshSha256;
+    std::optional<SshPublicationProof> sshPublication;
+    std::map<std::string, std::string> runtimeFacts;
+};
 struct SshPlannedFilePublication {
     SshPublicationProof before;
     std::string targetSha256;
@@ -537,6 +560,7 @@ using UndoPayload = std::variant<
     UndoReleaseSudoScopedDefaults,
     UndoReleaseSudoAuthentication,
     UndoRemoveSshManagedPolicy,
+    UndoReleaseSshMfa,
     UndoRemoveUserCreationManagedPolicy,
     UndoRemoveFirewallPolicy,
     UndoRemoveGrubManagedSetting,

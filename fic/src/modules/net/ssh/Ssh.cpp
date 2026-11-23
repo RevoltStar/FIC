@@ -7,6 +7,7 @@
 #include "modules/net/ssh/SshRollback.h"
 #include "modules/net/ssh/SshRuntime.h"
 #include "modules/net/ssh/SshResourceLock.h"
+#include "modules/net/ssh/SshMfaPolicy.h"
 #include "service/ssh/SshVerifiedActivationAdapter.h"
 #include <fic/core/integrity/ContentDigest.h>
 
@@ -152,6 +153,7 @@ bool Ssh::apply() {
     const std::lock_guard<std::mutex> lock(sshResourceMutex());
     const bool verified = platformConfig_.applyContract != fic::platform::SshApplyContract::Legacy;
     std::optional<AtomicTargetState> configuredGeneration;
+    fic::rollback::MutationJournal* mfaJournal = nullptr;
     std::string configuredPath;
     if(verified) {
         AtomicTargetState state;std::string error;
@@ -162,7 +164,8 @@ bool Ssh::apply() {
         configuredGeneration=std::move(state);
     }
     const auto currentConfiguredIntent=[&](std::string& error) {
-        return !verified||AtomicFileWriter::targetStateMatches(configuredPath,*configuredGeneration,&error);
+        return !verified || (AtomicFileWriter::targetStateMatches(configuredPath,*configuredGeneration,&error) &&
+            (!mfaJournal || mfaJournal->proveCurrentSshMfaAuthority(error)));
     };
 
     const std::optional valueOpt = this->getValue();
@@ -226,6 +229,13 @@ bool Ssh::apply() {
         return false;
     }
     activeRecords = journal->activeRecords(this->policyRef());
+    std::optional<fic::service::ssh::SshMfaReference> mfa;
+    if (verified) {
+        try { mfa = fic::ssh::requiredMfaForOperation(*journal, configuredPath, *configuredGeneration); }
+        catch (const std::exception& error) { log(error.what(), logLevel::ERROR); return false; }
+    }
+    const auto* mfaReference = mfa ? &*mfa : nullptr;
+    if (mfaReference) mfaJournal = journal;
 
     // Schema 2 cannot distinguish a safe interrupted apply from a failed
     // compensation or an uncertain service effect. Gate the shared file,
@@ -408,7 +418,7 @@ bool Ssh::apply() {
     }
     if(verified&&semantics==SshDirectiveSemantics::MultiValue) {
         const auto result=applySshPortGraph(*journal,this->policyRef(),expectedValue,*this->sshConfig_->loadSnapshot(),
-            serviceBaseline,additionalPolicies,currentConfiguredIntent,beforeWriteHook_);
+            serviceBaseline,additionalPolicies,currentConfiguredIntent,beforeWriteHook_,mfaReference);
         this->log(result.message,result.ok?logLevel::INFO:logLevel::ERROR);return result.ok;
     }
     const std::map<std::string,std::string> selected{{this->policyName, expectedValue}};
@@ -416,7 +426,8 @@ bool Ssh::apply() {
         try {
             if (!this->sshConfig_->loadSnapshot()) throw std::runtime_error("SSH main snapshot unavailable");
             baseline = Adapter::captureReference(selected,
-                fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content));
+                fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content),
+                fic::service::ssh::SshActivationIntent::SelectedPolicies,mfaReference);
             baseline.expectedService = serviceBaseline;
             baseline.additionalPolicies = additionalPolicies;
             Adapter::prepareRuntimeProbe(baseline);
@@ -572,7 +583,8 @@ bool Ssh::apply() {
                 if(!currentConfiguredIntent(error))return false;
                 if (Adapter::serviceAdmission() != serviceBaseline) throw std::runtime_error("SSH runtime/launch changed before CAS");
                 const auto current = Adapter::captureReference(selected,
-                    fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content));
+                    fic::core::ContentDigest::sha256Hex(this->sshConfig_->loadSnapshot()->content),
+                    fic::service::ssh::SshActivationIntent::SelectedPolicies,mfaReference);
                 if (!Adapter::sameInputGeneration(baseline,current,false)) throw std::runtime_error("SSH inputs changed before CAS");
                 return true;
             } catch (const std::exception& e) { error=e.what(); return false; }
@@ -583,7 +595,8 @@ bool Ssh::apply() {
                 if (!AtomicFileWriter::targetStateMatches(sshPath, installed, &error)) return false;
                 if(!currentConfiguredIntent(error))return false;
                 if (Adapter::serviceAdmission()!=serviceBaseline) throw std::runtime_error("SSH runtime/launch changed after save");
-                auto next = Adapter::captureReference(selected, fic::core::ContentDigest::sha256Hex(installed.content));
+                auto next = Adapter::captureReference(selected, fic::core::ContentDigest::sha256Hex(installed.content),
+                    fic::service::ssh::SshActivationIntent::SelectedPolicies,mfaReference);
                 if (!Adapter::sameInputGeneration(baseline,next,true)) throw std::runtime_error("foreign SSH input changed after save; provenance retained");
                 if (!AtomicFileWriter::targetStateMatches(sshPath, installed, &error)) return false;
                 next.expectedService=serviceBaseline;

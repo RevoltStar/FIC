@@ -1,4 +1,5 @@
 #include "modules/net/ssh/SshResourceLock.h"
+#include "modules/net/ssh/SshMfaPolicy.h"
 #include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
 #include "rollback/UnrecordedResourceInspection.h"
 #include "rollback/RollbackExecutor.h"
@@ -823,7 +824,7 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
         // No default-positive enrollment for unknown SSH policies: the shared
         // main sshd_config must only be rolled back through the recorded
         // reverse delta of an integrated policy.
-        return isSupportedSshPolicy(policy.policyName)
+        return (isSupportedSshPolicy(policy.policyName) || policy.policyName == sshMfaPolicy)
             ? RollbackEnrollment::Supported
             : RollbackEnrollment::Unsupported;
     }
@@ -1297,6 +1298,30 @@ RollbackReport rollbackPolicyBeforeDisable(
         return report;
     }
 
+    if (policy == PolicyRef{"NET", "SshEdit", sshMfaPolicy}) {
+        RollbackReport report;
+        if ((deps.sshReleaseContext == SshReleaseContext::Uninstall &&
+             !journal->activeRecords(policy).empty()) || !deps.sshRequestedState || !deps.sshRegistry) {
+            report.status = RollbackStatus::Unsupported;
+            report.message = "SSH MFA requires explicit policy disable before uninstall";
+            return report;
+        }
+        fic::ssh::SshMfaDisableIntent intent;
+        const auto* configured = deps.sshRegistry->findPolicy(policy);
+        if (!configured ||
+            !configured->captureConfigurationVersion(intent.path, intent.generation, report.message) ||
+            !deps.sshRequestedState(sshMfaPolicy, intent.survivingPolicies, report.message) ||
+            !AtomicFileWriter::targetStateMatches(intent.path, intent.generation, &report.message)) {
+            report.status = RollbackStatus::Failed;
+            return report;
+        }
+        const auto result = fic::ssh::releaseSshMfaForDisable(*journal, intent);
+        report.status = result.ok ? RollbackStatus::Success :
+            result.nothingToDo ? RollbackStatus::NothingToDo : RollbackStatus::Failed;
+        report.message = result.message;
+        return report;
+    }
+
     if(policy.moduleName=="IDENTITY_ACCESS"&&policy.submoduleName=="SSSD") {
         namespace s=fic::service::sssd;
         RollbackReport report;report.status=RollbackStatus::Failed;
@@ -1517,7 +1542,8 @@ RollbackExecutorDeps productionRollbackDeps(
     };
 
     const fic::platform::SshPlatformConfig sshConfig = platform.ssh;
-    deps.sshOptions = [sshConfig, &executables]() {
+    deps.sshRegistry = registry;
+    deps.sshOptions = [sshConfig, platformId=platform.id, &executables]() {
         SshRollbackOptions options;
         options.verifiedRelease=sshConfig.applyContract!=fic::platform::SshApplyContract::Legacy;
         options.offlineRelease=sshConfig.applyContract==fic::platform::SshApplyContract::AltVerified?SshOfflineReleaseProfile::AltService:
@@ -1527,6 +1553,21 @@ RollbackExecutorDeps productionRollbackDeps(
         options.includeDirectory = sshConfig.verifiedIncludeDirectory;
         options.serviceUnits = sshConfig.serviceUnits;
         options.executables = &executables;
+        if (platformId == "debian-13") {
+            options.requiredMfa = [generation=std::optional<AtomicTargetState>{}]() mutable {
+                std::string error;
+                const auto path = (fic::core::FicRuntimePaths::get().configDir / "NET.conf").string();
+                if (!generation) {
+                    AtomicTargetState first;
+                    if (!AtomicFileWriter::captureTargetState(path, first, &error) || first.owner != 0 || (first.mode & 0022))
+                        throw std::runtime_error("trusted SSH MFA obligation unavailable: " + error);
+                    generation = std::move(first);
+                }
+                auto* journal = DaemonMutationJournal::instance().tryGet(error);
+                if (!journal) throw std::runtime_error(error);
+                return fic::ssh::requiredMfaForOperation(*journal, path, *generation);
+            };
+        }
         return options;
     };
     if(registry)deps.sshRequestedState=[registry](const std::string& excluded,auto& selected,std::string& error) {
@@ -1542,7 +1583,8 @@ RollbackExecutorDeps productionRollbackDeps(
         ConfigFileHandler current(path,"=",readonly);
         if(!current.loadConfig()){error="current NET configuration unreadable";return false;}
         for(const auto& ref:registry->policyRefs()) {
-            if(ref.moduleName!="NET"||ref.submoduleName!="SshEdit"||ref.policyName==excluded)continue;
+            if(ref.moduleName!="NET"||ref.submoduleName!="SshEdit"||ref.policyName==excluded||
+               ref.policyName==sshMfaPolicy)continue;
             auto* policy=registry->findPolicy(ref);if(!policy){error="remaining SSH policy unavailable";return false;}
             const auto statusKey=ref.policyName+".status";
             const auto status=current.isParameterExists(statusKey)?current.getValue(statusKey):"DISABLE";

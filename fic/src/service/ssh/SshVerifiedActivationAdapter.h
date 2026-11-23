@@ -83,6 +83,14 @@ public:
         const std::map<std::string,std::string>& policies,const std::string& expectedMainSha,
         SshActivationIntent intent=SshActivationIntent::SelectedPolicies,
         const SshMfaReference* mfa=nullptr);
+    // First-activation source generation. The dedicated PAM files must be
+    // absent and will be projected by validateMfaPlan before publication.
+    static SshVerifiedActivationRequest captureFirstMfaReference(
+        const std::map<std::string, std::string>& policies, const std::string& expectedMainSha,
+        const SshMfaReference& mfa);
+    // Read the exact known PAM/NSS sources in the supported Debian 13 profile.
+    // The caller establishes desired intent and checks the owned PAM receipts.
+    static SshMfaReference captureMfaPamSources(const SshVerifiedActivationRequest::MfaRequirement&);
     // Planning only: no selected-policy semantics/runtime proof or mutation.
     // Uses the same closed input graph and trust checks as release capture.
     static SshPortSourceMap capturePortSources(const std::string& expectedMainSha,

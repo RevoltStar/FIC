@@ -493,6 +493,82 @@ SshPublicationProof deserializeSshPublication(const json& j) {
         throw std::runtime_error("invalid SSH file receipt metadata");
     return {j.at("device"),j.at("inode"),j.at("mode"),j.at("owner"),j.at("group"),j.at("sha256"),j.at("durable")};
 }
+constexpr const char* sshMfaPhases[] = {
+    "preparing_enable", "applied", "preparing_release", "ssh_released",
+    "awaiting_disable", "released"
+};
+json serializeSshMfaPamFile(const SshMfaPamFile& file) {
+    return {{"target_sha256", file.targetSha256},
+            {"receipt", file.receipt ? serializeSshPublication(*file.receipt) : json(nullptr)}};
+}
+SshMfaPamFile deserializeSshMfaPamFile(const json& file) {
+    SshMfaPamFile result;
+    result.targetSha256 = file.at("target_sha256");
+    if (!file.at("receipt").is_null()) result.receipt = deserializeSshPublication(file.at("receipt"));
+    return result;
+}
+
+bool validSshMfaRecord(const MutationRecord& record, const UndoReleaseSshMfa& mfa,
+                       std::string& error) {
+    const auto sha = fic::core::ContentDigest::isCanonicalSha256Hex;
+    const auto validReceipt = [&](const auto& receipt, const std::string& target) {
+        return !receipt || (receipt->inode && receipt->owner == 0 &&
+            (receipt->mode & 0022) == 0 && receipt->mode <= 07777 && receipt->sha256 == target);
+    };
+    const auto validPam = [&](const SshMfaPamFile& file) {
+        return sha(file.targetSha256) && validReceipt(file.receipt, file.targetSha256) &&
+            (!file.receipt || (file.receipt->mode == 0644 && file.receipt->group == 0));
+    };
+    const bool pamDurable = mfa.service.receipt && mfa.service.receipt->durable &&
+        mfa.authSlot.receipt && mfa.authSlot.receipt->durable;
+    const bool sshDurable = mfa.sshPublication && mfa.sshPublication->durable;
+    const auto fact = [&](const char* key, const char* expected) {
+        const auto found = mfa.runtimeFacts.find(key);
+        return found != mfa.runtimeFacts.end() && found->second == expected;
+    };
+    const auto present = [&](const char* key) {
+        const auto found = mfa.runtimeFacts.find(key);
+        return found != mfa.runtimeFacts.end() && !found->second.empty();
+    };
+    const bool runtimeVerified = fact("unit", "ssh.service") && fact("inputs", "Proven") &&
+        fact("semantics", "Proven") && fact("persistent", "Proven") && fact("status", "Success") &&
+        fact("readiness", "true") && present("InvocationID") && present("MainPID");
+    bool stageValid = false;
+    switch (mfa.phase) {
+    case SshMfaPhase::PreparingEnable:
+        stageValid = record.status == MutationStatus::Prepared && (!mfa.sshPublication || pamDurable) &&
+            (!mfa.service.receipt || (mfa.authSlot.receipt && mfa.authSlot.receipt->durable)) &&
+            mfa.runtimeFacts.empty();
+        break;
+    case SshMfaPhase::Applied:
+        stageValid = record.status == MutationStatus::Applied && pamDurable && sshDurable &&
+            runtimeVerified && present("mfa_reference") && sha(mfa.runtimeFacts.at("mfa_reference"));
+        break;
+    case SshMfaPhase::PreparingRelease:
+        stageValid = record.status == MutationStatus::Prepared && pamDurable && mfa.runtimeFacts.empty();
+        break;
+    case SshMfaPhase::SshReleased:
+    case SshMfaPhase::AwaitingDisable:
+        stageValid = record.status == MutationStatus::Prepared && pamDurable && sshDurable &&
+            runtimeVerified && !mfa.runtimeFacts.count("mfa_reference");
+        break;
+    case SshMfaPhase::Released:
+        stageValid = record.status == MutationStatus::RolledBack && pamDurable && sshDurable &&
+            runtimeVerified && !mfa.runtimeFacts.count("mfa_reference");
+        break;
+    }
+    if (!stageValid || record.undo.backend != MutationBackend::Ssh ||
+        record.policy != PolicyRef{"NET", "SshEdit", sshMfaPolicy} || record.resource != sshMfaResource ||
+        (!mfa.faillock.empty() && mfa.faillock != "preauth_required" && mfa.faillock != "preauth_requisite") ||
+        !validPam(mfa.service) || !validPam(mfa.authSlot) || mfa.runtimeFacts.size() > 32 ||
+        !sha(mfa.beforeSshSha256) || !sha(mfa.targetSshSha256) ||
+        mfa.beforeSshSha256 == mfa.targetSshSha256 || !validReceipt(mfa.sshPublication, mfa.targetSshSha256)) {
+        error = "invalid Debian 13 SSH MFA journal ownership or phase";
+        return false;
+    }
+    return true;
+}
+
 json serializeSshTransition(const SshOwnershipTransition& t) {
     json publication=nullptr;
     if(t.publication) {const auto& p=*t.publication;publication={{"device",p.device},{"inode",p.inode},
@@ -607,6 +683,8 @@ bool validSysctlRecord(const MutationRecord& record,std::string& error) {
 }
 
 bool validSshRecord(const MutationRecord& record,std::string& error) {
+    if (const auto* mfa = std::get_if<UndoReleaseSshMfa>(&record.undo.payload))
+        return validSshMfaRecord(record, *mfa, error);
     if(record.undo.backend!=MutationBackend::Ssh)return true;
     const auto* p=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);
     if(!p||!validSshProjection(sshOwnedProjection(*p),error))return false;
@@ -801,6 +879,16 @@ json serializeUndoAction(const UndoAction& action) {
         };
         value["previous_proofs"] = proofs(scopedDefaults->previousProofs);
         value["target_proofs"] = proofs(scopedDefaults->targetProofs);
+    } else if (const auto* mfa = std::get_if<UndoReleaseSshMfa>(&action.payload)) {
+        value["phase"] = sshMfaPhases[static_cast<std::size_t>(mfa->phase)];
+        value["sssd"] = mfa->sssd;
+        value["faillock"] = mfa->faillock;
+        value["service"] = serializeSshMfaPamFile(mfa->service);
+        value["auth_slot"] = serializeSshMfaPamFile(mfa->authSlot);
+        value["before_ssh_sha256"] = mfa->beforeSshSha256;
+        value["target_ssh_sha256"] = mfa->targetSshSha256;
+        value["ssh_publication"] = mfa->sshPublication ? serializeSshPublication(*mfa->sshPublication) : json(nullptr);
+        value["runtime_facts"] = mfa->runtimeFacts;
     } else if (const auto* sshPolicy =
                    std::get_if<UndoRemoveSshManagedPolicy>(&action.payload)) {
         value["policy"] = sshPolicy->policyName;
@@ -1762,6 +1850,30 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         action.payload = std::move(payload);
         return true;
     }
+    if (actionName == "release_ssh_mfa" && backend == MutationBackend::Ssh) {
+        try {
+            UndoReleaseSshMfa mfa;
+            const auto phase = value.at("phase").get<std::string>();
+            const auto stage = std::find(std::begin(sshMfaPhases), std::end(sshMfaPhases), phase);
+            if (stage == std::end(sshMfaPhases) || !value.at("sssd").is_boolean())
+                throw std::runtime_error("invalid SSH MFA phase or primary provider");
+            mfa.phase = static_cast<SshMfaPhase>(stage - std::begin(sshMfaPhases));
+            mfa.sssd = value.at("sssd");
+            mfa.faillock = value.at("faillock");
+            mfa.service = deserializeSshMfaPamFile(value.at("service"));
+            mfa.authSlot = deserializeSshMfaPamFile(value.at("auth_slot"));
+            mfa.beforeSshSha256 = value.at("before_ssh_sha256");
+            mfa.targetSshSha256 = value.at("target_ssh_sha256");
+            if (!value.at("ssh_publication").is_null())
+                mfa.sshPublication = deserializeSshPublication(value.at("ssh_publication"));
+            mfa.runtimeFacts = value.at("runtime_facts").get<std::map<std::string, std::string>>();
+            action.payload = std::move(mfa);
+            return true;
+        } catch (const std::exception&) {
+            error = "malformed Debian 13 SSH MFA journal ownership";
+            return false;
+        }
+    }
     if (actionName == "remove_ssh_managed_policy" &&
         backend == MutationBackend::Ssh) {
         // The legacy reverse-mutation SSH payload (restore_ssh_directive) is
@@ -2493,6 +2605,7 @@ std::string undoActionTypeName(const UndoAction& action) {
     if (std::holds_alternative<UndoReleaseSudoScopedDefaults>(action.payload)) {
         return "release_sudo_scoped_defaults";
     }
+    if (std::holds_alternative<UndoReleaseSshMfa>(action.payload)) return "release_ssh_mfa";
     if (std::holds_alternative<UndoRemoveSshManagedPolicy>(action.payload)) {
         return "remove_ssh_managed_policy";
     }
@@ -3123,6 +3236,8 @@ bool MutationJournal::loadImpl(MissingJournalPolicy policy,
     if(schemaIt->get<std::uint32_t>()==2)for(const auto& record:parsed) {
         if(std::holds_alternative<SssdJournalOwnership>(record.undo.payload))
             return failLoad("SSSD typed operations require journal schema 3",error);
+        if (std::holds_alternative<UndoReleaseSshMfa>(record.undo.payload))
+            return failLoad("SSH MFA ownership requires journal schema 3",error);
         if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&
            (ssh->ownershipVersion||ssh->operationSequence||ssh->transition))
             return failLoad("SSH typed operations require journal schema 3",error);
@@ -3354,6 +3469,10 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
         error="SSSD I4 ownership requires typed transaction API";return false;
     }
     if (!validateSudoGlobalRecord(record, error)||!validSshRecord(record,error)||!validSysctlRecord(record,error)) return false;
+    if (std::holds_alternative<UndoReleaseSshMfa>(record.undo.payload) && !sshInitial) {
+        error = "SSH MFA ownership requires the typed journal API";
+        return false;
+    }
     if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);ssh&&(ssh->transition||!ssh->includedWrappers.empty())&&!sshInitial) {
         error="SSH transitions require the typed journal API";return false;
     }
@@ -4677,6 +4796,168 @@ bool MutationJournal::setStatus(MutationId id, MutationStatus status,
     return setStatusWithMessage(id, status, std::string(), error);
 }
 
+bool MutationJournal::prepareSshMfa(UndoReleaseSshMfa mfa, MutationId& id, std::string& error) {
+    const PolicyRef policy{"NET", "SshEdit", sshMfaPolicy};
+    if (!usable() || !lifecycleInitialized_ || !activeRecords(policy).empty() ||
+        mfa.phase != SshMfaPhase::PreparingEnable || mfa.service.receipt ||
+        mfa.authSlot.receipt || mfa.sshPublication) {
+        error = "SSH MFA requires healthy journal and a new intent without ownership";
+        return false;
+    }
+    MutationRecord record;
+    record.policy = policy;
+    record.resource = sshMfaResource;
+    record.undo = {MutationBackend::Ssh, std::move(mfa)};
+    return prepareMutationImpl(std::move(record), id, error, true);
+}
+
+bool MutationJournal::proveCurrentSshMfaAuthority(std::string& error) const {
+    if (!usable() || !lifecycleInitialized_) {
+        error = "SSH MFA ownership journal unavailable";
+        return false;
+    }
+    MutationJournal observed(path_);
+    if (!observed.validatePersistentStateReadOnly(error)) return false;
+    const auto sameRecord = [](const MutationRecord& a, const MutationRecord& b) {
+        return serializeRecord(a) == serializeRecord(b);
+    };
+    if (nextId_ != observed.nextId_ ||
+        !std::equal(records_.begin(), records_.end(), observed.records_.begin(), observed.records_.end(), sameRecord)) {
+        error = "SSH MFA journal generation differs from durable ownership";
+        return false;
+    }
+    return true;
+}
+
+namespace {
+SshPublicationProof mfaReceipt(const AtomicTargetState& state, bool durable) {
+    return {state.identity.device, state.identity.inode, static_cast<std::uint32_t>(state.mode),
+            state.owner, state.group, fic::core::ContentDigest::sha256Hex(state.content), durable};
+}
+
+UndoReleaseSshMfa* mfaPayload(MutationRecord* record) {
+    return record && record->error.empty() ? std::get_if<UndoReleaseSshMfa>(&record->undo.payload) : nullptr;
+}
+}
+
+bool MutationJournal::noteSshMfaPamReceipt(MutationId id, bool service, const AtomicTargetState& state,
+                                        bool durable, std::string& error) {
+    auto* record = find(id);
+    auto* mfa = mfaPayload(record);
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::PreparingEnable) {
+        error = "SSH MFA PAM receipt requires a prepared enable";
+        return false;
+    }
+    auto& file = service ? mfa->service : mfa->authSlot;
+    const auto receipt = mfaReceipt(state, durable);
+    auto prepared = receipt;
+    prepared.durable = false;
+    if ((durable && (!file.receipt || serializeSshPublication(*file.receipt) != serializeSshPublication(prepared))) ||
+        (!durable && file.receipt)) {
+        error = "SSH MFA PAM publication differs from its prepared inode";
+        return false;
+    }
+    const auto previous = *record;
+    file.receipt = receipt;
+    return persistRecordChange(previous, error);
+}
+
+bool MutationJournal::noteSshMfaPublication(MutationId id, const AtomicTargetState& state,
+                                          bool durable, std::string& error) {
+    auto* record = find(id);
+    auto* mfa = mfaPayload(record);
+    if (!usable() || !mfa || (mfa->phase != SshMfaPhase::PreparingEnable &&
+                             mfa->phase != SshMfaPhase::PreparingRelease) || mfa->sshPublication) {
+        error = "SSH MFA publication has no prepared transition";
+        return false;
+    }
+    const auto previous = *record;
+    mfa->sshPublication = mfaReceipt(state, durable);
+    return persistRecordChange(previous, error);
+}
+
+bool MutationJournal::commitSshMfaEnable(MutationId id, const std::map<std::string, std::string>& runtimeFacts,
+                                         std::string& error) {
+    auto* record = find(id);
+    auto* mfa = mfaPayload(record);
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::PreparingEnable) {
+        error = "SSH MFA finalization has no prepared enable";
+        return false;
+    }
+    const auto previous = *record;
+    mfa->phase = SshMfaPhase::Applied;
+    mfa->runtimeFacts = runtimeFacts;
+    record->status = MutationStatus::Applied;
+    return persistRecordChange(previous, error);
+}
+
+bool MutationJournal::beginSshMfaRelease(MutationId id, const std::string& beforeSha,
+                                       const std::string& targetSha, std::string& error) {
+    auto* record = find(id);
+    auto* mfa = mfaPayload(record);
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::Applied) {
+        error = "SSH MFA release requires applied ownership";
+        return false;
+    }
+    const auto previous = *record;
+    mfa->phase = SshMfaPhase::PreparingRelease;
+    mfa->beforeSshSha256 = beforeSha;
+    mfa->targetSshSha256 = targetSha;
+    mfa->sshPublication.reset();
+    mfa->runtimeFacts.clear();
+    record->status = MutationStatus::Prepared;
+    return persistRecordChange(previous, error);
+}
+
+bool MutationJournal::noteSshMfaRuntimeReleased(MutationId id,
+    const std::map<std::string, std::string>& runtimeFacts, std::string& error) {
+    auto* record = find(id);
+    auto* mfa = mfaPayload(record);
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::PreparingRelease) {
+        error = "SSH MFA runtime release has no prepared transition";
+        return false;
+    }
+    const auto previous = *record;
+    mfa->phase = SshMfaPhase::SshReleased;
+    mfa->runtimeFacts = runtimeFacts;
+    return persistRecordChange(previous, error);
+}
+
+bool MutationJournal::finishSshMfaRelease(MutationId id, std::string& error) {
+    auto* record = find(id);
+    auto* mfa = mfaPayload(record);
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::SshReleased) {
+        error = "SSH MFA PAM release requires verified SSH detachment";
+        return false;
+    }
+    const auto previous = *record;
+    mfa->phase = SshMfaPhase::AwaitingDisable;
+    return persistRecordChange(previous, error);
+}
+
+bool MutationJournal::acknowledgeSshMfaDisable(MutationId id, std::string& error) {
+    auto* record = find(id);
+    auto* mfa = mfaPayload(record);
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::AwaitingDisable) {
+        error = "SSH MFA disable has no verified physical release";
+        return false;
+    }
+    const auto previous = *record;
+    mfa->phase = SshMfaPhase::Released;
+    record->status = MutationStatus::RolledBack;
+    return persistRecordChange(previous, error);
+}
+
+bool MutationJournal::abortSshMfaNoEffect(MutationId id, std::string& error) {
+    const auto* mfa = mfaPayload(find(id));
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::PreparingEnable ||
+        mfa->service.receipt || mfa->authSlot.receipt || mfa->sshPublication) {
+        error = "SSH MFA publication may have effects; ownership must be retained";
+        return false;
+    }
+    return discardImpl(id, error, true);
+}
+
 bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
                                            const std::string& message,
                                            std::string& error) {
@@ -4691,6 +4972,10 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
         return false;
     }
     MutationRecord* record = find(id);
+    if (record && std::holds_alternative<UndoReleaseSshMfa>(record->undo.payload)) {
+        error = "SSH MFA disposition requires the typed journal API";
+        return false;
+    }
     if (record && std::holds_alternative<SssdJournalOwnership>(record->undo.payload)) {
         error="SSSD I4 disposition requires typed lifecycle API";return false;
     }
@@ -4766,6 +5051,10 @@ bool MutationJournal::discardImpl(MutationId id,std::string& error,bool provenIn
     }
     for (std::size_t index = 0; index < records_.size(); ++index) {
         if (records_[index].id == id) {
+            if (std::holds_alternative<UndoReleaseSshMfa>(records_[index].undo.payload) && !provenInitialNoEffect) {
+                error = "SSH MFA disposition requires the typed journal API";
+                return false;
+            }
             if(const auto* ssh=std::get_if<UndoRemoveSshManagedPolicy>(&records_[index].undo.payload);ssh&&sshTransitionPending(*ssh)&&!provenInitialNoEffect) {
                 error="cannot discard unresolved SSH ownership transition";return false;
             }

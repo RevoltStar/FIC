@@ -23,13 +23,14 @@ SshPortOperationResult applySshPortGraph(fic::rollback::MutationJournal&,const P
     const std::map<std::string,std::string>& expectedService,
     const std::map<std::string,std::string>& additionalPolicies,
     const std::function<bool(std::string&)>& currentIntent,
-    const std::function<void()>& beforeWrite);
+    const std::function<void()>& beforeWrite, const fic::service::ssh::SshMfaReference* mfa = nullptr);
 // Publishes a complete, already Prepared plan. No service action or compensation.
 // Every file has its own CAS and durable receipt; possible effects retain intent.
 bool publishSshPortPlan(fic::rollback::MutationJournal&,fic::rollback::MutationId,
     const SshPortMutationPlan&,const std::function<bool(std::string&)>& admission,
     const std::function<void()>& beforeWrite,
-    std::map<std::string,AtomicTargetState>& installed,std::set<std::string>& notInstalled,std::string& error);
+    std::map<std::string,AtomicTargetState>& installed,std::set<std::string>& notInstalled,std::string& error,
+    const fic::service::ssh::SshMfaReference* mfa = nullptr);
 bool verifySshPortReleasedFiles(const fic::rollback::SshOwnershipTransition&,std::string& error);
 struct SshRollbackOptions;
 struct SshRollbackResult;

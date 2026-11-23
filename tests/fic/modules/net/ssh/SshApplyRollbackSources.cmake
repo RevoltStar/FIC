@@ -4,6 +4,7 @@ set(FIC_SSH_APPLY_ROLLBACK_SOURCES
     ${FIC_SSH_TEST_ROOT}/tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/NET.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/Ssh.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshMfaPolicy.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshConfigAudit.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshConfigFile.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/net/ssh/SshManagedBlock.cpp

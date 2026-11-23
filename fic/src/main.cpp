@@ -1411,6 +1411,13 @@ std::string handle_client_packet(
         if (command == "prepare_uninstall") {
             if (!peer.available || peer.uid != 0)
                 return finish(fic::ipc::make_error_response("prepare-uninstall requires root"));
+            if (platform.id == "debian-13" && lifecycle.state == fic::core::PackageState::Installed) {
+                const auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
+                if (!journal) return finish(fic::ipc::make_error_response(error));
+                if (!journal->activeRecords({"NET", "SshEdit", fic::rollback::sshMfaPolicy}).empty())
+                    return finish(fic::ipc::make_error_response(
+                        "SSH MFA ownership must be released by explicit policy disable before uninstall"));
+            }
             // Drain trust-sync under its existing resource lock. Once the state
             // is published, new trust-sync operations refuse inside this lock.
             const auto& paths = fic::core::FicRuntimePaths::get();

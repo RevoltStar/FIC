@@ -3360,6 +3360,11 @@ foreach(ssh_caller IN LISTS FIC_LOCAL_TEST_TARGETS)
     get_target_property(ssh_sources ${ssh_caller} SOURCES)
     if("${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/Ssh.cpp" IN_LIST ssh_sources OR
        "${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp" IN_LIST ssh_sources)
+        foreach(mfa_source IN ITEMS modules/net/NET.cpp modules/net/ssh/SshMfaPolicy.cpp)
+            if(NOT "${CMAKE_SOURCE_DIR}/fic/src/${mfa_source}" IN_LIST ssh_sources)
+                target_sources(${ssh_caller} PRIVATE "${CMAKE_SOURCE_DIR}/fic/src/${mfa_source}")
+            endif()
+        endforeach()
         target_sources(${ssh_caller} PRIVATE ${FIC_VERIFIED_CONFIG_SOURCES} ${FIC_SSH_MFA_PROOF_SOURCES}
             ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
             ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp

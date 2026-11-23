@@ -9,6 +9,7 @@
 #include "rollback/MutationJournal.h"
 #include "rollback/DaemonMutationJournal.h"
 #include "modules/net/ssh/SshResourceLock.h"
+#include "modules/net/ssh/SshMfaPolicy.h"
 #include "policy/registry/PolicyRegistry.h"
 #include <fic/core/integrity/ContentDigest.h>
 #include <fic/core/runtime/FicRuntimePaths.h>
@@ -130,7 +131,9 @@ SshRollbackResult runVerifiedRelease(const SshRollbackOptions& options,
         SshConfigFileHandler image(handler);image.lines()=planned;
         const auto target=hasArtifacts?image.pendingContent():before.content;
         const bool replacing=target!=before.content;
-        auto baseline=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(before.content),Intent::ConfigurationRelease);
+        const auto mfa = options.requiredMfa ? options.requiredMfa() : std::nullopt;
+        const auto* reference = mfa ? &*mfa : nullptr;
+        auto baseline=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(before.content),Intent::ConfigurationRelease,reference);
         const auto admission=Adapter::releaseAdmission(baseline);
         if(!retry) {
             if(!journal->beginSshRelease(options.mutationId,fic::core::ContentDigest::sha256Hex(before.content),
@@ -151,7 +154,8 @@ SshRollbackResult runVerifiedRelease(const SshRollbackOptions& options,
         SshConfigTransactionHooks hooks;hooks.beforeWrite=options.beforeWrite;hooks.offlineOwnershipRelease=admission.offline;
         hooks.verifiedAdmission=[&](std::string& detail) {
             if(!sameIntent(detail))return false;
-            const auto current=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(before.content),Intent::ConfigurationRelease);
+            if(options.requiredMfa) options.requiredMfa();
+            const auto current=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(before.content),Intent::ConfigurationRelease,reference);
             if(!Adapter::sameInputGeneration(baseline,current,false)){detail="SSH inputs changed before release CAS";return false;}
             const auto service=Adapter::releaseAdmission(current);
             if(service.offline!=admission.offline||service.service!=admission.service){detail="SSH service changed before release CAS";return false;}
@@ -160,11 +164,13 @@ SshRollbackResult runVerifiedRelease(const SshRollbackOptions& options,
         hooks.verifiedActivation=[&](const AtomicTargetState& installed,std::string& detail) {
             if(!retry&&!journal->noteSshPublication(options.mutationId,installed,true,detail))return false;
             if(!sameIntent(detail)||!AtomicFileWriter::targetStateMatches(options.configPath.string(),installed,&detail))return false;
-            auto next=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(installed.content),Intent::ConfigurationRelease);
+            if(options.requiredMfa) options.requiredMfa();
+            auto next=Adapter::captureReference(selected,fic::core::ContentDigest::sha256Hex(installed.content),Intent::ConfigurationRelease,reference);
             if(!Adapter::sameInputGeneration(baseline,next,replacing)){detail="foreign SSH input changed during release";return false;}
             const auto activated=Adapter::releaseConfiguration(next,admission);
             if(!journal->noteSshRuntime(options.mutationId,activated.success(),activated.observedFacts(),detail))return false;
             if(!activated.success()){detail="saved release; runtime/persistent result unproven: "+activated.diagnostic;return false;}
+            if(options.requiredMfa) options.requiredMfa();
             return sameIntent(detail);
         };
         std::optional<AtomicTargetState> installed;
@@ -424,6 +430,10 @@ bool acknowledgeSshPolicyDisable(const PolicyRef& policy,const PolicyRegistry& r
     }
     const auto main=fic::platform::makeBuildPlatformProfile().ssh.configPath;
     for(const auto& record:active) {
+        if (policy.policyName == sshMfaPolicy) {
+            if (!fic::ssh::acknowledgeSshMfaDisable(*journal, record, error)) return false;
+            continue;
+        }
         const auto* p=std::get_if<UndoRemoveSshManagedPolicy>(&record.undo.payload);
         if(!p||!sshReleaseAwaitingDisable(*p)||record.status!=MutationStatus::Prepared||
            record.resource!="ssh:"+main.string()+":"+p->directive||!p->transition->publication||!record.error.empty()) {

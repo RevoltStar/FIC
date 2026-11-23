@@ -1368,6 +1368,27 @@ void testVerifiedTransactionRetainsFacts() {
     }
 }
 
+void testMfaPolicyGenerationChangeRefusesSshPublication() {
+    TempTree tree("/tmp/fic-ssh-mfa-intent-XXXXXX");
+    const auto config = tree.root / "NET.conf";
+    const auto ssh = tree.root / "sshd_config";
+    writeFile(config, "ssh_mfa_required.status=ENABLE\n");
+    writeFile(ssh, "Port 22\n");
+    AtomicTargetState generation, before;
+    std::string error;
+    require(AtomicFileWriter::captureTargetState(config.string(), generation, &error) &&
+            AtomicFileWriter::captureTargetState(ssh.string(), before, &error), error);
+    bool publicationAdmissionCalled = false;
+    const auto result = restoreSshConfigContentIfCurrentState(ssh, "Port 2222\n", before, error,
+        [&](const AtomicTargetState&, std::string& detail) {
+            publicationAdmissionCalled = true;
+            writeFile(config, "ssh_mfa_required.status=DISABLE\n");
+            return AtomicFileWriter::targetStateMatches(config.string(), generation, &detail);
+        });
+    require(publicationAdmissionCalled && !result.installed && readFile(ssh) == before.content,
+            "changed authoritative SSH MFA intent reached SSH publication");
+}
+
 void testTypedTransactionFaultMatrix() {
     using P=SshPersistentEffect; using C=SshCompensationEffect; using R=SshRuntimeReconciliation;
     for (const std::string fault : {"success","CAS","restore-CAS","rename-fsync","restore-fsync",
@@ -2122,6 +2143,7 @@ int main() {
         {"R1b refresh preinstall failure retains Applied", testAppliedRefreshPreinstallFailure},
         {"R1b refresh postinstall failure retains Applied", testAppliedRefreshPostinstallFailure},
         {"multi-file Port planner",testMultiFilePortPlanner},
+        {"MFA policy generation change refuses SSH publication", testMfaPolicyGenerationChangeRefusesSshPublication},
         {"typed SSH transaction fault matrix", testTypedTransactionFaultMatrix},
         {"verified SSH transaction preserves facts without compensation",testVerifiedTransactionRetainsFacts},
         {"unknown installed receipt keeps Prepared", testPolicyInstalledReceiptUnknownRetainsPrepared},

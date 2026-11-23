@@ -14,11 +14,22 @@ PolicyMutationResult disablePolicyAfterLookup(
     const std::string& resourceHint,
     const fic::rollback::RollbackExecutorDeps& rollbackDeps) {
     const bool sssd=policy.moduleName=="IDENTITY_ACCESS"&&policy.submoduleName=="SSSD";
+    const bool sshMfa = policy == PolicyRef{"NET", "SshEdit", fic::rollback::sshMfaPolicy};
     const auto failed=[&](std::string detail,std::optional<bool> saved=std::nullopt) {
         auto result=PolicyMutationResult::failure(std::move(detail));
         if(sssd){result.saved=saved;result.applied=false;}
         return result;
     };
+    std::optional<AtomicTargetState> sshMfaGeneration;
+    if (sshMfa) {
+        const auto* configured = rollbackDeps.sshRegistry ? rollbackDeps.sshRegistry->findPolicy(policy) : nullptr;
+        std::string path, error;
+        AtomicTargetState generation;
+        if (!configured || !configured->captureConfigurationVersion(path, generation, error) ||
+            path != (fic::core::FicRuntimePaths::get().configDir / "NET.conf").string())
+            return failed("authoritative SSH MFA configuration unavailable: " + error, false);
+        sshMfaGeneration = std::move(generation);
+    }
     const fic::rollback::RollbackReport rollbackReport =
         fic::rollback::rollbackPolicyBeforeDisable(
             policy, resourceHint, rollbackDeps);
@@ -45,6 +56,7 @@ PolicyMutationResult disablePolicyAfterLookup(
         [](const auto& outcome){return outcome.awaitingPolicyDisable;});
     FileHandlerOptions options;
     if(ssh||sssd){options.writeOptions.createIfMissing=false;options.writeOptions.rejectSymlink=true;}
+    if (sshMfaGeneration) options.writeOptions.expectedTargetState = *sshMfaGeneration;
     if(sssd) {
         auto* current=rollbackDeps.sssdRegistry?rollbackDeps.sssdRegistry->findPolicy(policy):nullptr;
         std::string path,error;AtomicTargetState snapshot;

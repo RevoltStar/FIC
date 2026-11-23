@@ -488,7 +488,9 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
 #ifdef FIC_ACTIVATOR_TESTING
         if (tests && tests->beforeActivation) tests->beforeActivation();
 #endif
-        if(receiptEligible) awaitRestartBudget(service,launch,true);
+        // MFA always re-verifies the listener. Its mandatory restarts still
+        // share the same service start-limit budget as receipt-eligible calls.
+        if (receiptEligible || request.mfa) awaitRestartBudget(service,launch,true);
         auto activationRequest = request.reference;
         activationRequest.timeout = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
         if (activationRequest.timeout.count() <= 0) throw d::Failure(ActivationStatus::TimedOut, "SSH proof deadline exceeded");
@@ -603,9 +605,9 @@ void SshVerifiedActivationAdapter::prepareRuntimeProbe(const SshVerifiedActivati
     SshRuntime runtime(options,resolver);
     detail::listener::effectiveEndpoints(runtime);
 }
-SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
+static SshVerifiedActivationRequest captureSshReference(
     const std::map<std::string,std::string>& policies,const std::string& expectedMainSha,SshActivationIntent intent,
-    const SshMfaReference* mfa) {
+    const SshMfaReference* mfa, bool firstMfaActivation) {
     if(::geteuid()!=0||!fic::core::ContentDigest::isCanonicalSha256Hex(expectedMainSha))
         unsupported("trusted reference requires root and explicit expected main-file identity");
     detail::validatePolicies(policies,intent);
@@ -614,7 +616,7 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
        !fic::platform::validateHostCompatibility(profile,"/etc/os-release",error))
         unsupported("trusted SSH reference supports Debian12/13, Ubuntu24/26 or ALT p11 only");
     SshVerifiedActivationRequest out;out.intent=intent;out.policies=policies;out.reference.unit=detail::inputProfile().unit;
-    if (mfa) out.mfa=mfa->requirement;
+    if (mfa && !firstMfaActivation) out.mfa=mfa->requirement;
     out.reference.timeout=std::chrono::seconds(60);
     detail::InputBytes bytes;detail::PersistentMetadata initial;
     std::uint64_t budget=out.reference.maxSnapshotBytes;
@@ -652,6 +654,10 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
         out.reference.paths.insert(out.reference.paths.end(),pam.paths.begin(),pam.paths.end());
         d::validateRequest(out.reference);
         const auto authorized=capture(pam);
+        if (firstMfaActivation &&
+            (authorized.bytes.count("/etc/pam.d/fic-sshd-mfa") ||
+             authorized.bytes.count("/etc/pam.d/fic-mfa-ssh-auth")))
+            unsupported("first SSH MFA reference has an existing PAM target");
         initial.roots.insert(authorized.roots.begin(),authorized.roots.end());
         initial.attributes.insert(authorized.attributes.begin(),authorized.attributes.end());
     }
@@ -662,6 +668,68 @@ SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
     d::validatePublicationEnvironment(out.reference, nullptr, d::PublicationPropagationPolicy::AllowKnownShared);
     out.observedMetadata=metadataIdentities(observed);
     return out;
+}
+
+SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureReference(
+    const std::map<std::string, std::string>& policies, const std::string& expectedMainSha,
+    SshActivationIntent intent, const SshMfaReference* mfa) {
+    return captureSshReference(policies, expectedMainSha, intent, mfa, false);
+}
+
+SshVerifiedActivationRequest SshVerifiedActivationAdapter::captureFirstMfaReference(
+    const std::map<std::string, std::string>& policies, const std::string& expectedMainSha,
+    const SshMfaReference& mfa) {
+    if (!detail::inputProfile().debian13) unsupported("first SSH MFA activation requires Debian 13");
+    return captureSshReference(policies, expectedMainSha, SshActivationIntent::ConfigurationRelease, &mfa, true);
+}
+
+SshMfaReference SshVerifiedActivationAdapter::captureMfaPamSources(
+    const SshVerifiedActivationRequest::MfaRequirement& requirement) {
+    using Path = std::filesystem::path;
+    using Kind = ControlledPathKind;
+    const auto platform = fic::platform::makeBuildPlatformProfile();
+    if (platform.id != "debian-13" || platform.pam.configDirectories.empty())
+        unsupported("Debian 13 PAM source capture required");
+    SshMfaReference result{requirement, {}};
+    std::uint64_t budget = ActivationRequest{}.maxSnapshotBytes;
+    const auto add = [&](const Path& path, Kind kind) {
+        std::string error;
+        if (!fic::ssh::trustedSshInput(path, kind == Kind::Directory, false, error))
+            throw d::Failure(ActivationStatus::UnsupportedConfiguration, error);
+        auto fd = d::openAbsolute(path, O_RDONLY);
+        const auto tree = d::readTree(fd.get(), kind, budget);
+        ControlledPath input;
+        input.path = path;
+        input.kind = kind;
+        for (const auto& [name, content] : tree.files) {
+            const auto digest = fic::core::ContentDigest::sha256Hex(content);
+            if (kind == Kind::File) input.sha256 = digest;
+            else input.manifest.emplace(name, digest);
+        }
+        if (kind == Kind::Directory)
+            for (const auto& [name, metadata] : tree.attributes)
+                if (!name.empty() && S_ISDIR(metadata.st_mode)) input.directories.insert(name);
+        result.pamInputs.push_back(std::move(input));
+    };
+    add(platform.pam.configDirectories.front(), Kind::Directory);
+    std::set<Path> moduleRoots;
+    for (const auto& candidate : platform.pam.moduleDirectories) {
+        std::error_code error;
+        const auto resolved = std::filesystem::canonical(candidate, error);
+        if (error == std::errc::no_such_file_or_directory) continue;
+        if (error) unsupported("unable to resolve Debian 13 PAM module directory");
+        if (moduleRoots.insert(resolved).second) add(resolved, Kind::Directory);
+    }
+    if (moduleRoots.empty()) unsupported("Debian 13 PAM module directory unavailable");
+    add("/etc/security/fic-mfa", Kind::Directory);
+    add("/etc/passwd", Kind::File);
+    add("/etc/nsswitch.conf", Kind::File);
+    if (requirement.faillock) add("/etc/security/faillock.conf", Kind::File);
+    if (requirement.sssd) {
+        add("/etc/sssd/sssd.conf", Kind::File);
+        add("/etc/sssd/conf.d", Kind::Directory);
+    }
+    return result;
 }
 SshPortSourceMap SshVerifiedActivationAdapter::capturePortSources(const std::string& mainSha,
     const std::set<std::string>& previouslyOwnedFiles,const SshMfaReference* mfa) {

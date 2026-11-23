@@ -230,6 +230,18 @@ public:
     // Only the caller proving durable DISABLE + successful registry rebuild,
     // or the admitted UNINSTALLING coordinator, may acknowledge this intent.
     bool commitSshRelease(MutationId,std::string&);
+    bool prepareSshMfa(UndoReleaseSshMfa, MutationId&, std::string&);
+    bool proveCurrentSshMfaAuthority(std::string& error) const;
+    bool noteSshMfaPamReceipt(MutationId, bool service, const AtomicTargetState&,
+                              bool durable, std::string&);
+    bool noteSshMfaPublication(MutationId, const AtomicTargetState&, bool durable, std::string&);
+    bool commitSshMfaEnable(MutationId, const std::map<std::string, std::string>& runtimeFacts, std::string&);
+    bool beginSshMfaRelease(MutationId, const std::string& beforeSha,
+                            const std::string& targetSha, std::string&);
+    bool noteSshMfaRuntimeReleased(MutationId, const std::map<std::string, std::string>& runtimeFacts, std::string&);
+    bool finishSshMfaRelease(MutationId, std::string&);
+    bool acknowledgeSshMfaDisable(MutationId, std::string&);
+    bool abortSshMfaNoEffect(MutationId, std::string&);
     bool setStatus(MutationId id, MutationStatus status, std::string& error);
     bool setStatusWithMessage(MutationId id, MutationStatus status,
                               const std::string& message, std::string& error);

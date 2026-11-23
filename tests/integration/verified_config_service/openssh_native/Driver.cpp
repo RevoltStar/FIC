@@ -123,11 +123,15 @@ int main(int argc, char** argv) {
             namespace ssh = fic::service::ssh;
             ssh::SshMfaReference mfa{{input.value("sssd", false),
                 fic::platform::PamFaillockStrategy::PreauthRequired}, {}};
-            for (const auto& path : r.paths)
-                if (path.path.string().rfind("/etc/ssh/", 0) != 0 && path.path != "/etc/default/ssh")
-                    mfa.pamInputs.push_back(path);
             const auto sha = input.at("main_after").get<std::string>();
             try {
+                if (input.value("discover_pam", false)) {
+                    mfa = ssh::SshVerifiedActivationAdapter::captureMfaPamSources(mfa.requirement);
+                } else {
+                    for (const auto& path : r.paths)
+                        if (path.path.string().rfind("/etc/ssh/", 0) != 0 && path.path != "/etc/default/ssh")
+                            mfa.pamInputs.push_back(path);
+                }
                 const auto port = ssh::SshVerifiedActivationAdapter::capturePortSources(sha, {}, &mfa);
                 ssh::SshVerifiedActivationAdapter::validatePortPlan(
                     port, {}, {}, ssh::SshActivationIntent::ConfigurationRelease);
@@ -166,6 +170,11 @@ int main(int argc, char** argv) {
             const ssh::SshVerifiedActivationRequest::MfaRequirement fixture{
                 input.value("sssd", false), fic::platform::PamFaillockStrategy::PreauthRequired};
             if (previouslyOwned) current.mfa = fixture;
+            if (input.value("discover_pam", false)) {
+                current = ssh::SshVerifiedActivationAdapter::captureFirstMfaReference(
+                    current.policies, input.at("main_before"),
+                    ssh::SshVerifiedActivationAdapter::captureMfaPamSources(fixture));
+            }
             const auto admission = ssh::SshVerifiedActivationAdapter::admitMfaPlan(current);
             std::optional<fic::identity::pam::PamSshMfaCandidate> candidate;
             if (input.value("project_pam", false)) {

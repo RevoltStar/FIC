@@ -789,6 +789,16 @@ I/O), это ошибка загрузки — fail closed. Существующ
   included-файлы и строки вне FIC-артефактов никогда не изменяются;
   full-file snapshot не хранится и не восстанавливается.
 
+  The Debian 13 `release_ssh_mfa` record binds the dedicated PAM service
+  and authentication slot to their target digests and prepared inode
+  receipts. Durable PAM publication precedes SSH CAS. The journal keeps
+  the target SSH digest, publication receipt and verified runtime facts.
+  Explicit MFA disable first releases the MFA SSH blocks and proves the
+  new listener active. It checks for remaining SSH children and foreign
+  PAM references, then removes exactly the two owned PAM files. The
+  final acknowledgement requires durable DISABLE. Incomplete or
+  ambiguous effect retains the record and requires recovery.
+
   **Ownership-release semantics**: SSH rollback does not reconstruct a
   historical pre-FIC configuration. It releases all currently existing
   artifacts that can be proven to be owned by the mutation: managed

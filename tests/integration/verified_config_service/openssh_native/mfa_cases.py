@@ -4,16 +4,21 @@ import itertools
 import json
 import os
 import pwd
+import re
 import select
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 
 def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
     main = Path("/etc/ssh/sshd_config")
-    host_key = "/etc/ssh/ssh_host_ed25519_key"
-    snapshot = f"PasswordAuthentication yes\nHostKey {host_key}\n".encode() + main.read_bytes()
+    production = os.environ.get("FIC_D13_SSH_CUTOVER_PRODUCTION") == "1"
+    algorithms = ("rsa", "ecdsa", "ed25519") if production and sssd else ("ed25519",)
+    host_keys = [f"/etc/ssh/ssh_host_{algorithm}_key" for algorithm in algorithms]
+    explicit_keys = "".join(f"HostKey {key}\n" for key in host_keys)
+    snapshot = f"PasswordAuthentication yes\n{explicit_keys}".encode() + main.read_bytes()
     main.write_bytes(snapshot)
     unix = pwd.getpwnam(user)
     Path(unix.pw_dir).mkdir(exist_ok=True)
@@ -60,7 +65,8 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
 
     def refs():
         paths = [file(main), directory("/etc/ssh/sshd_config.d"), file("/etc/default/ssh")]
-        paths.extend((file(host_key), file(host_key + ".pub")))
+        for key in host_keys:
+            paths.extend((file(key), file(key + ".pub")))
         module = next(Path("/usr/lib").glob("*/security/pam_fic_ssh_stage.so")).parent
         paths += [directory(pam), directory(module), directory("/etc/security/fic-mfa"),
                   file("/etc/security/faillock.conf"), file("/etc/passwd"), file("/etc/nsswitch.conf")]
@@ -91,7 +97,7 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
                                  "ssh.service").stdout
     projection = refs()
     projection.update(main_before=sha(snapshot), project_pam=True, sssd=sssd)
-    invoke("mfa-plan", projection, label="before-pam-publication")
+    invoke("mfa-plan", dict(projection, discover_pam=True), label="before-pam-publication")
     invoke("mfa-plan", dict(projection, mutate_candidate=True), expected=False,
            label="refuse-mutated-pam-candidate")
     assert main.read_bytes() == snapshot and not service.exists() and not slot.exists()
@@ -106,9 +112,10 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
         assert main.read_bytes() == snapshot and not service.exists() and slot.read_text() == rendered_slot
     finally:
         slot.unlink()
-    service.write_text(local.replace("@include common-auth", "auth substack fic-mfa-ssh-auth"))
-    slot.write_text(rendered_slot)
-    run("/usr/local/bin/d13-mfa-proof", "installed", family, primary, "fic-sshd-mfa")
+    if not production:
+        service.write_text(local.replace("@include common-auth", "auth substack fic-mfa-ssh-auth"))
+        slot.write_text(rendered_slot)
+        run("/usr/local/bin/d13-mfa-proof", "installed", family, primary, "fic-sshd-mfa")
 
     def systemd_identity():
         return run("systemctl", "show", "-p", "InvocationID", "-p", "MainPID",
@@ -143,11 +150,12 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
         authorized.chmod(0o600)
         os.chown(authorized, unix.pw_uid, unix.pw_gid)
         sources = itertools.count(2)
+        port = 22
 
         def ssh_args(method, command, use_key):
             # Isolate authentication cases from per-source penalties accrued
             # by other negative cases on this local listener.
-            options = ["ssh", "-b", f"127.0.0.{next(sources)}", "-o", "StrictHostKeyChecking=no", "-o",
+            options = ["ssh", "-p", str(port), "-b", f"127.0.0.{next(sources)}", "-o", "StrictHostKeyChecking=no", "-o",
                 "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o",
                 f"PreferredAuthentications={method}", "-o", "NumberOfPasswordPrompts=1"]
             if use_key:
@@ -165,6 +173,127 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
 
         # Test image has stock PasswordAuthentication and the original PAM service.
         launch("password", True)
+        if production:
+            cli = "/opt/fic/bin/fic-cli"
+            mfa = "ssh_mfa_required"
+            def policy(command, name, expected=True):
+                call = run(cli, "policy", command, "NET", name, expected=expected)
+                print(f"production {command} {name}: {call.stdout.strip()}", flush=True)
+
+            def verify_pair():
+                launch("password", False)
+                launch("password,keyboard-interactive", True)
+                launch("publickey,keyboard-interactive", True, use_key=True)
+                launch("publickey", False, use_key=True)
+
+            assert not service.exists() and not slot.exists()
+            policy("isdisable", mfa)
+            policy("enable", mfa)
+            slot.write_text(rendered_slot)
+            try:
+                policy("apply", mfa, expected=False)
+                assert not service.exists() and main.read_bytes() == snapshot and slot.read_text() == rendered_slot
+            finally:
+                slot.unlink()
+            with subprocess.Popen(ssh_args("password", "echo FIC_READY; read -r line; echo FIC_STILL_OPEN", False),
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                  text=True, env=env) as session:
+                try:
+                    assert select.select([session.stdout], [], [], 15)[0]
+                    assert session.stdout.readline().strip() == "FIC_READY"
+                    policy("apply", mfa)
+                    stdout, _ = session.communicate("continue\n", timeout=15)
+                    assert session.returncode == 0 and stdout == "FIC_STILL_OPEN\n"
+                finally:
+                    if session.poll() is None:
+                        session.kill()
+            assert service.is_file() and slot.is_file()
+            uninstall = run(cli, "prepare-uninstall", expected=False)
+            assert "SSH MFA ownership" in uninstall.stdout + uninstall.stderr
+            verify_pair()
+            run("faillock", "--user", user, "--reset")
+            for _ in range(3):
+                launch("password,keyboard-interactive", False, primary_password="invalid fixture password")
+            launch("password,keyboard-interactive", False)
+            launch("publickey,keyboard-interactive", False, use_key=True)
+            run("faillock", "--user", user, "--reset")
+            run(cli, "policy", "set", "NET", "ssh_port", "2222")
+            policy("enable", "ssh_port")
+            policy("apply", "ssh_port")
+            port = 2222
+            verify_pair()
+            policy("apply", "ssh_use_pam")
+            verify_pair()
+            policy("enable", "ssh_pubkey_auth")
+            policy("apply", "ssh_pubkey_auth")
+            verify_pair()
+            policy("apply", mfa)
+            verify_pair()
+            policy("apply", "all")
+            verify_pair()
+            if not sssd:
+                run(cli, "policy", "set", "GLOBAL", "check_interval", "60")
+            run("systemctl", "restart", "fic.service")
+            policy("apply", "ssh_port")
+            verify_pair()
+            if not sssd:
+                generation_before_periodic = systemd_identity()
+                deadline = time.monotonic() + 100
+                while systemd_identity() == generation_before_periodic and time.monotonic() < deadline:
+                    time.sleep(1)
+                assert systemd_identity() != generation_before_periodic, "no verified periodic SSH activation"
+                # IPC and periodic apply share the daemon event loop. Once it
+                # responds, the restarts for the observed pass have completed.
+                policy("isenable", mfa)
+                verify_pair()
+                print("Periodic apply retained SSH MFA", flush=True)
+            old_slot = slot.read_bytes()
+            slot.write_bytes(old_slot + b"# fixture drift\n")
+            try:
+                policy("apply", "ssh_port", expected=False)
+                policy("disable", mfa, expected=False)
+            finally:
+                slot.write_bytes(old_slot)
+            saved_ssh = main.read_bytes()
+            modified_ssh, count = re.subn(
+                rb"(?im)^(pamservicename[ \t]+)fic-sshd-mfa$", rb"\g<1>sshd", saved_ssh)
+            assert count == 1
+            main.write_bytes(modified_ssh)
+            try:
+                policy("apply", "ssh_port", expected=False)
+                assert main.read_bytes() == modified_ssh
+            finally:
+                main.write_bytes(saved_ssh)
+            journal = Path("/opt/fic/db/mutation-journal.json")
+            saved_journal = journal.read_bytes()
+            try:
+                journal.write_bytes(b"invalid fixture journal\n")
+                policy("apply", "ssh_port", expected=False)
+            finally:
+                journal.write_bytes(saved_journal)
+            held_journal = journal.with_name("mutation-journal.json.fixture")
+            journal.rename(held_journal)
+            try:
+                policy("apply", "ssh_port", expected=False)
+            finally:
+                held_journal.rename(journal)
+            verify_pair()
+            policy("disable", "ssh_port")
+            port = 22
+            verify_pair()
+            policy("enable", "ssh_port")
+            policy("apply", "ssh_port")
+            port = 2222
+            policy("disable", mfa)
+            assert not service.exists() and not slot.exists()
+            assert "#@FIC_POLICY_BEGIN name=ssh_port@\nPort 2222\n#@FIC_POLICY_END name=ssh_port@" in main.read_text()
+            launch("password", True)
+            policy("disable", mfa)
+            policy("enable", mfa)
+            policy("apply", mfa)
+            verify_pair()
+            policy("disable", mfa)
+            return
         conflict = Path("/etc/ssh/sshd_config.d/19-fixture-conflict.conf")
         conflict.write_text("PasswordAuthentication no\n")
         try:
@@ -182,7 +311,7 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
                 assert select.select([session.stdout], [], [], 15)[0]
                 assert session.stdout.readline().strip() == "FIC_READY"
                 expected = install(True, False)
-                invoke("mfa-reference", expected, label="independent-reference")
+                invoke("mfa-reference", dict(expected, discover_pam=True), label="independent-reference")
                 drifted = dict(expected, paths=[
                     dict(path, sha256="0" * 64) if path["path"] == "/etc/nsswitch.conf" else path
                     for path in expected["paths"]])

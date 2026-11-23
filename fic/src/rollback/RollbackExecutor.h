@@ -96,6 +96,7 @@ struct RollbackExecutorDeps {
     // SSH backend configuration: shared main sshd_config, service units and
     // the executable resolver used for sshd -T validation and service reload.
     std::function<SshRollbackOptions()> sshOptions;
+    const PolicyRegistry* sshRegistry = nullptr;
     std::function<bool(const std::string& excluded,std::map<std::string,std::string>&,std::string&)> sshRequestedState;
     SshReleaseContext sshReleaseContext=SshReleaseContext::PolicyDisable;
     // GRUB backend configuration: the platform profile GRUB topology is the

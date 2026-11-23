@@ -212,8 +212,32 @@ PAM module directory. First-activation preflight can validate the rendered
 file is published. It uses the trusted stock `sshd` PAM service as the
 source of the inherited account, password and session routes.
 
-The adapter accepts an explicit request with caller-authorized digests.
-General policy wiring still needs the authoritative obligation to carry
-that request through apply, periodic apply, rollback and release, including
-daemon restart and drift. Publication of PAM attachments, MutationJournal
-ownership and recovery, and MFA package lifecycle gates belong to D13-3C/D.
+### Production SSH policy
+
+`NET/SshEdit/ssh_mfa_required` is registered on Debian 13 and starts in
+`DISABLE`. Its enabled status comes from the trusted working `NET.conf`.
+Apply requires an active stock `ssh.service` admitted by the verified
+adapter and the PAM modules and identity sources listed above. Provision
+`libpam-google-authenticator` and the root-private TOTP store before
+enabling the policy. Users without an approved registration lose access
+to new SSH sessions when MFA is active. FIC does not install prerequisites
+or enroll users.
+
+Use the normal `fic-cli policy enable NET ssh_mfa_required` and
+`fic-cli policy apply NET ssh_mfa_required` operations. The first apply
+proves the complete target and prepares the journal before writing. It
+installs the dedicated auth slot and service in that order, then updates
+`sshd_config` and activates the verified runtime.
+
+Explicit `fic-cli policy disable NET ssh_mfa_required` requires the
+controlled SSH listener and its authentication children to be drained
+of existing sessions. It verifies the active configuration after removing
+the owned SSH blocks and then conditionally removes the two owned PAM
+files. Other SSH policy blocks survive. The journal finalizes release
+after a durable DISABLE and registry reload. Before uninstall, release
+active MFA ownership through that same administrative operation.
+
+An interrupted publication or mismatched ownership can require manual
+recovery. The daemon retains the journal receipts and refuses to treat a
+changed PAM file or a manually saved DISABLE as release. The existing
+package lifecycle does not automatically unwind active SSH MFA.

@@ -2,6 +2,7 @@
 #define SSHROLLBACK_H
 
 #include "modules/net/ssh/SshRuntime.h"
+#include "service/ssh/SshVerifiedActivationAdapter.h"
 #include "rollback/MutationRecord.h"
 
 #include <fic/core/fs/AtomicFileWriter.h>
@@ -39,6 +40,7 @@ struct SshRollbackOptions {
     fic::rollback::MutationId mutationId=0;
     SshReleaseContext releaseContext=SshReleaseContext::PolicyDisable;
     std::function<bool(std::map<std::string,std::string>&,std::string&)> remainingRequestedState;
+    std::function<std::optional<fic::service::ssh::SshMfaReference>()> requiredMfa;
 };
 
 struct SshRollbackResult {

@@ -80,6 +80,7 @@ if [[ -n "${FIC_D13_SSH_CUTOVER_DRIVER:-}" ]]; then
     docker cp "$FIC_D13_INCIDENT_PAM_MODULE" "$name:/var/tmp/pam_fic_access-cutover.so"
     docker cp "$repo/tests/integration/verified_config_service/openssh_native/mfa_cases.py" "$name:/usr/local/bin/mfa_cases.py"
     docker exec -e FIC_D13_SSH_CUTOVER="$cutover_scope" -e FIC_OPENSSH_DISPOSABLE="$token" \
+        -e FIC_D13_SSH_CUTOVER_PRODUCTION="${FIC_D13_SSH_CUTOVER_PRODUCTION:-}" \
         -e FIC_OPENSSH_HOST_MNT="$(stat -Lc '%d:%i' /proc/self/ns/mnt)" \
         -e FIC_OPENSSH_HOST_ROOT="$(stat -Lc '%d:%i' /)" \
         "$name" python3 /usr/local/bin/deb-native.py

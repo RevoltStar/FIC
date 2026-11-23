@@ -760,8 +760,10 @@ receipt because a reload can retain the systemd invocation and main PID.
 The TOTP directory is an exact snapshot input, including an empty
 inventory. For the SSSD route the SSH snapshot can pin `sssd.conf` and
 the exact `conf.d` tree as separate roots. This also proves the absence
-of an unlisted drop-in when `conf.d` is empty. The existing SSH snapshot
-path and size limits apply.
+of an unlisted drop-in when `conf.d` is empty. An SSH request carrying both
+the SSSD drop-in root and TOTP root has a limit of 17 controlled roots to
+cover the three stock host-key pairs, faillock and SSSD. The remaining SSH
+snapshot size and topology limits apply.
 
 Ordinary reference capture and Port graph planning accept a typed
 `SshMfaReference` with the requirement and the caller-authorized PAM
@@ -769,7 +771,10 @@ references. Those inputs participate in the same snapshot and generation
 checks as the SSH files. The production caller supplies the obligation
 and establishes ownership before deriving the references.
 
-The daemon still needs an authoritative source of the mandatory MFA
-requirement for independent ordinary apply, periodic apply, rollback,
-and release after drift or daemon restart. Publication, policy wiring,
-and persistent authority are outside this backend entry point.
+The Debian 13 daemon captures the MFA obligation from the trusted
+`NET.conf` generation and checks the corresponding journal ownership.
+The requirement flows through ordinary and periodic apply, Port graph
+publication, ordinary rollback and release. Runtime re-verification for
+MFA accounts for starts in the adapter's bounded systemd restart budget.
+Only explicit disable of the MFA policy derives a release plan without
+the mandatory MFA requirement.

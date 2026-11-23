@@ -90,6 +90,13 @@ methods, target incident PAM decisions, pinned input drift and a
 stopped service. The separate runtime logs include the verified
 generation and reference digest without credentials.
 
+Set `FIC_D13_SSH_CUTOVER_PRODUCTION=1` with DEBs built from D13-3C to
+exercise the same listener through the production daemon and `fic-cli`.
+This gate covers policy registration, independent SSH policies, daemon
+restart, ownership drift, guarded uninstall admission and explicit
+release. The local account run also waits for a scheduled periodic
+apply. The LDAP/SSSD run pins all three stock host-key pairs.
+
 To exercise tally accounting and lockout with the existing owned PAM
 slots, omit the cutover driver and set `FIC_D13_SSH_FAILLOCK` to
 `preauth-required` or `preauth-requisite`. Those PAM/SSH tests can

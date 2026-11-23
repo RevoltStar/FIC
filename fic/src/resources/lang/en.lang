@@ -303,6 +303,8 @@ Where possible, a lock against modification is applied
 [module:NET][policy:ssh_pubkey_auth]=SSH public-key authentication
 [module:NET][policy:ssh_pubkey_auth][description]=Enforces the global PubkeyAuthentication yes value and rejects conditional Match overrides that disable public-key authentication. It does not disable password authentication. On ALT p11, the stock SSH service must be enabled and running. FIC does not start a stopped service. Stop SSH before rollback; rollback does not start the service.
 [module:NET][policy:ssh_use_pam]=SSH PAM integration
+[module:NET][policy:ssh_mfa_required]=Require SSH multi-factor authentication
+[module:NET][policy:ssh_mfa_required][description]=On Debian 13, new SSH sessions require a password or public key followed by a registered TOTP code.
 [module:NET][policy:ssh_use_pam][description]=Enables PAM in OpenSSH. Required for FIC IncidentAccessGate coverage of SSH logins, including public-key authentication. On ALT p11, the stock SSH service must be enabled and running. FIC does not start a stopped service. Stop SSH before rollback; rollback does not start the service.
 [module:NET][submodule:SshEdit][message:parameter_not_configured_part1]=SSH parameter is not configured for policy '
 [module:NET][submodule:SshEdit][message:parameter_not_configured_part2]='

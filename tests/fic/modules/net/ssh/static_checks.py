@@ -38,6 +38,13 @@ def main():
 
     config = parse_properties(root / "fic/src/resources/config/NET.conf")
     require(
+        re.search(r'if\s*\(\s*platform\.id\s*==\s*"debian-13"\s*\)\s*'
+                  r'cafArr\.push_back\(std::make_unique<fic::ssh::SshMfaPolicy>\(', registry),
+        "ssh_mfa_required must be registered only for Debian 13",
+    )
+    require(config.get("ssh_mfa_required.status") == "DISABLE",
+            "ssh_mfa_required must be shipped disabled by default")
+    require(
         config.get("ssh_pubkey_auth.status") == "DISABLE",
         "ssh_pubkey_auth must be shipped disabled by default",
     )

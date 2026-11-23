@@ -265,7 +265,16 @@ void requireSafePublicationParent(const std::filesystem::path& target, bool miss
 }
 void validateRequest(const ActivationRequest& r) {
     const auto invalid = [](const std::string& s) { throw Failure(ActivationStatus::UnsupportedConfiguration, s); };
-    if (r.paths.empty() || r.paths.size() > 16 || r.timeout.count() <= 0 || r.timeout > std::chrono::minutes(5) ||
+    // Debian SSH MFA with all three stock host-key pairs, faillock and SSSD
+    // needs both the main SSSD configuration and a closed drop-in root.
+    const bool sshSssd = r.unit == "ssh.service" && r.paths.size() == 17 &&
+        std::any_of(r.paths.begin(), r.paths.end(), [](const auto& p) {
+            return p.path == "/etc/sssd/conf.d" && p.kind == ControlledPathKind::Directory;
+        }) && std::any_of(r.paths.begin(), r.paths.end(), [](const auto& p) {
+            return p.path == "/etc/security/fic-mfa" && p.kind == ControlledPathKind::Directory;
+        });
+    if (r.paths.empty() || (r.paths.size() > 16 && !sshSssd) ||
+        r.timeout.count() <= 0 || r.timeout > std::chrono::minutes(5) ||
         !r.maxSnapshotBytes || r.maxSnapshotBytes > 64*1024*1024) invalid("invalid request limits");
     if (r.unit.size() <= 8 || r.unit.size() > 240 || r.unit.substr(r.unit.size()-8) != ".service" ||
         r.unit.front() == '-' || !std::all_of(r.unit.begin(), r.unit.end(), [](unsigned char c) {

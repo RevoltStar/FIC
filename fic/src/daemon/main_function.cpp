@@ -649,6 +649,8 @@ bool initPolicyRegistry(
     cafArr.push_back(std::make_unique<OSS_fstab_opt_profile>());
 
     //Сетевые настройки
+    if (platform.id == "debian-13")
+        cafArr.push_back(std::make_unique<fic::ssh::SshMfaPolicy>());
     cafArr.push_back(std::make_unique<NET_ssh_port>(
         platform.ssh, executables));
     cafArr.push_back(std::make_unique<NET_ssh_max_auth_tries>(

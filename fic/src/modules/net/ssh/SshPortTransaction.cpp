@@ -108,14 +108,15 @@ SshPortMutationPlan planSshPortMutation(fic::service::ssh::SshPortSourceMap sour
 
 bool publishSshPortPlan(fic::rollback::MutationJournal& journal,fic::rollback::MutationId id,
     const SshPortMutationPlan& plan,const std::function<bool(std::string&)>& admission,
-    const std::function<void()>& beforeWrite,std::map<std::string,AtomicTargetState>& installed,std::set<std::string>& notInstalled,std::string& error) {
+    const std::function<void()>& beforeWrite,std::map<std::string,AtomicTargetState>& installed,std::set<std::string>& notInstalled,std::string& error,
+    const fic::service::ssh::SshMfaReference* mfa) {
     const auto main=fic::service::ssh::detail::inputProfile().mainFile;
     try {
         if(beforeWrite)beforeWrite();
         for(const auto& [path,before]:plan.source.files) {
             require(admission(error),error);
             const auto mainSha=installed.count(main)?digest(installed.at(main).content):digest(plan.source.files.at(main).content);
-            const auto fresh=Adapter::capturePortSources(mainSha);
+            const auto fresh=Adapter::capturePortSources(mainSha,{},mfa);
             require(Adapter::sameAuthorizedPortGeneration(plan.source.reference,fresh.reference,installed),"SSH graph/foreign generation changed before per-file CAS");
             require(AtomicFileWriter::targetStateMatches(path,before,&error),error);
             require(journal.noteSshFileAttempt(id,path,error),error);
@@ -159,7 +160,7 @@ bool publishSshPortPlan(fic::rollback::MutationJournal& journal,fic::rollback::M
 SshPortOperationResult applySshPortGraph(fic::rollback::MutationJournal& journal,const PolicyRef& policy,
     const std::string& value,const AtomicTargetState& mainSnapshot,const std::map<std::string,std::string>& expectedService,
     const std::map<std::string,std::string>& additionalPolicies,const std::function<bool(std::string&)>& currentIntent,
-    const std::function<void()>& beforeWrite) {
+    const std::function<void()>& beforeWrite,const fic::service::ssh::SshMfaReference* mfa) {
     SshPortOperationResult result;MutationId id=0;bool pending=false;
     try {
         const auto records=journal.activeRecords(policy);
@@ -170,7 +171,7 @@ SshPortOperationResult applySshPortGraph(fic::rollback::MutationJournal& journal
                 records[0].policy==policy&&records[0].resource=="ssh:"+main+":Port","exact Applied Port resource ownership required");
             old=std::get_if<UndoRemoveSshManagedPolicy>(&records[0].undo.payload);require(old,"Port undo payload missing");id=records[0].id;
         }
-        auto source=Adapter::capturePortSources(digest(mainSnapshot.content),ownedPaths(old));
+        auto source=Adapter::capturePortSources(digest(mainSnapshot.content),ownedPaths(old),mfa);
         auto plan=planSshPortMutation(std::move(source),old,value);
         const std::map<std::string,std::string> selected{{"ssh_port",value}};
         Adapter::validatePortPlan(plan.source,plan.targets,selected,Intent::SelectedPolicies);
@@ -178,7 +179,7 @@ SshPortOperationResult applySshPortGraph(fic::rollback::MutationJournal& journal
         require(Adapter::serviceAdmission()==expectedService,"SSH service changed during Port planning");
         if(!plan.changed) {
             require(old,"initial Port apply did not establish ownership");
-            auto request=Adapter::captureReference(selected,digest(mainSnapshot.content));
+            auto request=Adapter::captureReference(selected,digest(mainSnapshot.content),Intent::SelectedPolicies,mfa);
             require(Adapter::sameAuthorizedPortGeneration(plan.source.reference,request,{}),"SSH graph changed before owned Port no-op");
             request.expectedService=expectedService;request.additionalPolicies=additionalPolicies;
             const auto activated=Adapter::activate(request);require(activated.success(),activated.diagnostic);
@@ -191,13 +192,13 @@ SshPortOperationResult applySshPortGraph(fic::rollback::MutationJournal& journal
         }
         pending=true;std::map<std::string,AtomicTargetState> installed;std::set<std::string> notInstalled;
         const auto admission=[&](std::string& detail){return currentIntent(detail)&&Adapter::serviceAdmission()==expectedService;};
-        if(!publishSshPortPlan(journal,id,plan,admission,beforeWrite,installed,notInstalled,error)) {
+        if(!publishSshPortPlan(journal,id,plan,admission,beforeWrite,installed,notInstalled,error,mfa)) {
             std::string abort;if(journal.abortSshPortNoEffect(id,notInstalled,abort))pending=false;
             throw std::runtime_error(error+(pending?"; no-effect abort unavailable: "+abort:"; proven no effect; intent aborted"));
         }
         require(admission(error),error);
         const auto main=fic::service::ssh::detail::inputProfile().mainFile;
-        auto request=Adapter::captureReference(selected,digest(installed.at(main).content));
+        auto request=Adapter::captureReference(selected,digest(installed.at(main).content),Intent::SelectedPolicies,mfa);
         require(Adapter::sameAuthorizedPortGeneration(plan.source.reference,request,installed),"SSH foreign inputs changed after Port publication");
         request.expectedService=expectedService;request.additionalPolicies=additionalPolicies;
         const auto activated=Adapter::activate(request);
@@ -256,12 +257,15 @@ SshRollbackResult releaseSshPortGraph(const SshRollbackOptions& options,
         std::map<std::string,std::string> selected;std::string error;
         require(options.remainingRequestedState(selected,error),error);
         require(!selected.count("ssh_port"),"released Port still selected");
+        const auto mfa = options.requiredMfa ? options.requiredMfa() : std::nullopt;
+        const auto* reference = mfa ? &*mfa : nullptr;
         const auto sameIntent=[&](std::string& detail) {
+            if(options.requiredMfa) options.requiredMfa();
             std::map<std::string,std::string> now;
             if(!options.remainingRequestedState(now,detail)||now!=selected){detail="remaining SSH selections changed";return false;}return true;
         };
-        auto source=Adapter::capturePortSources(digest(mainSnapshot.content),ownedPaths(owned));
-        auto baseline=Adapter::captureReference(selected,digest(mainSnapshot.content),Intent::ConfigurationRelease);
+        auto source=Adapter::capturePortSources(digest(mainSnapshot.content),ownedPaths(owned),reference);
+        auto baseline=Adapter::captureReference(selected,digest(mainSnapshot.content),Intent::ConfigurationRelease,reference);
         require(Adapter::sameAuthorizedPortGeneration(source.reference,baseline,{}),"Port release capture changed");
         baseline.allowReleasedPortSet=true;
         const auto admission=Adapter::releaseAdmission(baseline);
@@ -290,12 +294,12 @@ SshRollbackResult releaseSshPortGraph(const SshRollbackOptions& options,
             const auto admissionBeforePublication=[&](std::string& detail){return sameIntent(detail);};
             require(recheck(error),error);
             std::map<std::string,AtomicTargetState> installed;std::set<std::string> notInstalled;
-            if(!publishSshPortPlan(journal,options.mutationId,plan,admissionBeforePublication,options.beforeWrite,installed,notInstalled,error)) {
+            if(!publishSshPortPlan(journal,options.mutationId,plan,admissionBeforePublication,options.beforeWrite,installed,notInstalled,error,reference)) {
                 std::string abort;if(journal.abortSshPortNoEffect(options.mutationId,notInstalled,abort))pending=false;
                 throw std::runtime_error(error+(pending?"; no-effect abort unavailable: "+abort:"; proven no effect; intent aborted"));
             }
             require(sameIntent(error),error);
-            auto next=Adapter::captureReference(selected,digest(installed.at(main).content),Intent::ConfigurationRelease);
+            auto next=Adapter::captureReference(selected,digest(installed.at(main).content),Intent::ConfigurationRelease,reference);
             next.allowReleasedPortSet=true;
             require(Adapter::sameAuthorizedPortGeneration(plan.source.reference,next,installed),"foreign SSH inputs changed during release");
             const auto activated=Adapter::releaseConfiguration(next,admission);
