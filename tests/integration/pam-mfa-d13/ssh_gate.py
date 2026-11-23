@@ -102,7 +102,8 @@ AuthenticationMethods {CHAINS}
     trace.touch(mode=0o600)
 
     def attempt(label, method, prompts, *, success=False, identity=subject, key=None,
-                bad_password=False, bad_otp=False, retry=None, fault=None, no_registration=False):
+                bad_password=False, bad_otp=False, retry=None, fault=None, no_registration=False,
+                auth_rc=None, account_rc=None):
         (directory / "prompts").write_text("")
         (directory / "password").write_text(("wrong-fixture-password" if bad_password else password)+"\n")
         (directory / "bad-password").write_text("wrong-fixture-password\n")
@@ -177,6 +178,10 @@ AuthenticationMethods {CHAINS}
             assert any("setcred flags=2 rc=6" in line for line in calls), calls
         if fault in ("publish", "remove"):
             assert any(f" {fault}-fault " in line for line in calls), (label, calls)
+        if auth_rc is not None:
+            assert any(f" auth flags=1 rc={auth_rc} " in line for line in calls), (label, calls)
+        if account_rc is not None:
+            assert any(f" account flags=0 rc={account_rc} " in line for line in calls), (label, calls)
 
     pwd_method = "password,keyboard-interactive"
     key_method = "publickey,keyboard-interactive"
@@ -194,9 +199,16 @@ AuthenticationMethods {CHAINS}
             attempt(f"{faillock} wrong OTP after valid password", pwd_method, ["password", "otp"],
                     bad_otp=True)
             assert tally() == 2
+            attempt(f"{faillock} wrong OTP after valid key", key_method, ["otp"],
+                    key="valid-key", bad_otp=True)
+            assert tally() == 2
             attempt(f"{faillock} reaches threshold", pwd_method, ["password"], bad_password=True)
             assert tally() == 3
             attempt(f"{faillock} locked despite valid factors", pwd_method, ["password"])
+            for _ in range(2):
+                attempt(f"{faillock} locked despite valid key and OTP", key_method, [],
+                        key="valid-key", auth_rc=7)
+                assert tally() == 3
             run("faillock", "--user", subject, "--reset")
             attempt(f"{faillock} password and OTP after reset", pwd_method, ["password", "otp"], success=True)
             attempt(f"{faillock} wrong password after reset", pwd_method, ["password"], bad_password=True)
@@ -204,8 +216,42 @@ AuthenticationMethods {CHAINS}
             attempt(f"{faillock} complete authentication clears the tally", pwd_method,
                     ["password", "otp"], success=True)
             assert tally() == 0
-            attempt(f"{faillock} key and OTP after reset", key_method, ["otp"], success=True, key="valid-key")
+            attempt(f"{faillock} wrong password before key login", pwd_method, ["password"], bad_password=True)
+            assert tally() == 1
+            attempt(f"{faillock} key and OTP clears the tally", key_method, ["otp"], success=True, key="valid-key")
             assert tally() == 0
+            config_file = Path("/etc/security/faillock.conf")
+            original = config_file.read_bytes()
+            try:
+                # Force a real tally I/O error (ENOTDIR), as opposed to an absent tally.
+                config_file.write_text("dir = /dev/null/fic-ssh-faillock\n")
+                attempt(f"{faillock} preauth I/O error in OTP stage", key_method, [],
+                        key="valid-key", auth_rc=4)
+                attempt(f"{faillock} preauth I/O error in password stage", pwd_method,
+                        ["password"], auth_rc=4)
+            finally:
+                config_file.write_bytes(original)
+            assert tally() == 0
+            attempt("missing evidence with faillock", key_method, [], key="valid-key", fault="publish")
+            attempt("malformed evidence with faillock", key_method, [], key="valid-key", fault="malformed")
+            mode_file = Path("/opt/fic/config/GLOBAL.conf")
+            original_mode = mode_file.read_text()
+            assert "incident_response_mode.status=" in original_mode
+            assert "incident_response_mode.value=" in original_mode
+            active_mode = "\n".join(
+                "incident_response_mode.status=ENABLE" if line.startswith("incident_response_mode.status=")
+                else "incident_response_mode.value=ACTIVE" if line.startswith("incident_response_mode.value=")
+                else line for line in original_mode.split("\n"))
+            run("systemctl", "stop", "fic.service")
+            try:
+                mode_file.write_text(active_mode)
+                attempt("incident ACTIVE after valid password and OTP", pwd_method, ["password", "otp"],
+                        auth_rc=0, account_rc=6)
+                attempt("incident ACTIVE after valid key and OTP", key_method, ["otp"], key="valid-key",
+                        auth_rc=0, account_rc=6)
+            finally:
+                mode_file.write_text(original_mode)
+                run("systemctl", "start", "fic.service")
             print(f"{mode} {faillock} SSH faillock passed", flush=True)
         finally:
             run("faillock", "--user", subject, "--reset")

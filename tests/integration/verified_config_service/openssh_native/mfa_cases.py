@@ -216,6 +216,16 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
         launch("publickey,keyboard-interactive", True, use_key=True)
         print("Incident account decision followed the mode for both MFA pairs", flush=True)
 
+        run("faillock", "--user", user, "--reset")
+        for _ in range(3):
+            launch("password,keyboard-interactive", False, primary_password="invalid fixture password")
+        launch("password,keyboard-interactive", False)
+        launch("publickey,keyboard-interactive", False, use_key=True)
+        run("faillock", "--user", user, "--reset")
+        launch("password,keyboard-interactive", True)
+        launch("publickey,keyboard-interactive", True, use_key=True)
+        print("Verified listener enforced faillock for both MFA chains", flush=True)
+
         # No recovery uses the saved MFA result after a source has drifted.
         approved = refs()
         approved["mfa"] = expected["mfa"]

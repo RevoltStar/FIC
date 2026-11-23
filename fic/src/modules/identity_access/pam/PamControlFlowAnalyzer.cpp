@@ -86,6 +86,7 @@ struct Evidence {
     bool mfaFactorVerified = false;
     bool mfaForwardedToken = false;
     bool mfaSelectorReached = false;
+    bool mfaPreauthFailed = false;
     bool providerReached = false;
     bool providerSucceeded = false;
     bool preauthSucceeded = false;
@@ -681,6 +682,7 @@ bool sameState(const ExecutionState& left, const ExecutionState& right) {
         a.mfaSelectorReached == b.mfaSelectorReached &&
         a.providerReached == b.providerReached &&
         a.providerSucceeded == b.providerSucceeded &&
+        a.mfaPreauthFailed == b.mfaPreauthFailed &&
         a.preauthSucceeded == b.preauthSucceeded &&
         a.preauthDenied == b.preauthDenied &&
         a.preauthFailedClosed == b.preauthFailedClosed &&
@@ -809,15 +811,19 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                 (rule.module == "pam_unix.so" || rule.module == "pam_sss.so");
             const bool factor = budget.mfaFactorSource && rule.source == *budget.mfaFactorSource &&
                 rule.module == "pam_google_authenticator.so";
+            const bool mfaPreauth = budget.sshStage != SshMfaStage::None &&
+                rule.module == "pam_faillock.so" && hasArgument(rule, "preauth");
+            const bool authfail = rule.module == "pam_faillock.so" && hasArgument(rule, "authfail");
             if ((budget.sshStage == SshMfaStage::Password && factor) ||
-                (budget.sshStage == SshMfaStage::Totp && primary)) {
+                (budget.sshStage == SshMfaStage::Totp && (primary || authfail))) {
                 error = "incorrect module reached for the declared SSH PAM stage";
                 return false;
             }
-            const auto results = selector
+            auto results = selector
                 ? std::vector<std::string>{budget.sshStage == SshMfaStage::Password ? "success" :
                     budget.sshStage == SshMfaStage::Totp ? "auth_err" : "service_err"}
                 : moduleOutcomes(rule, service, platformConfig);
+            if (mfaPreauth) results.push_back("system_err");
             for (const auto& result : results) {
                 if (++budget.transitions > kMaximumSymbolicTransitions) {
                     error = "PAM symbolic transition limit exceeded";
@@ -841,6 +847,7 @@ bool executeStack(const std::vector<PamStackEntry>& entries,
                     state.evidence.unixSucceeded = true;
                 }
                 if (selector) state.evidence.mfaSelectorReached = true;
+                if (mfaPreauth && result != "success") state.evidence.mfaPreauthFailed = true;
                 if (budget.mfaPrimarySource && result == "success") {
                     if (rule.module == "pam_unix.so" &&
                         (state.subject == IdentitySubject::NonLocal ||
@@ -1754,7 +1761,8 @@ bool proveMfaAuthenticationPaths(
     const fic::platform::PamPlatformConfig& platformConfig,
     const std::filesystem::path& primarySource,
     const std::filesystem::path& factorSource,
-    bool hasSssdPasswordRoute, std::string& error, PamMfaForm form) {
+    bool hasSssdPasswordRoute, std::string& error, PamMfaForm form,
+    bool requireSshPreauth) {
     const auto proveSubject = [&](IdentitySubject subject, bool blank, SshMfaStage stage) {
         ExecutionState initial;
         initial.subject = subject;
@@ -1786,6 +1794,10 @@ bool proveMfaAuthenticationPaths(
                 break;
             case SshMfaStage::Invalid:
                 break;
+            }
+            if (requireSshPreauth && (!e.preauthSucceeded || e.mfaPreauthFailed)) {
+                error = "SSH MFA success without successful faillock preauth";
+                return false;
             }
             if (blank || !verified) {
                 error = blank ? "empty local password can reach authentication success"

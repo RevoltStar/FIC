@@ -228,6 +228,14 @@ def exercise_sssd():
     key, registration = prepare_secret(domain)
     nss = Path("/etc/nsswitch.conf")
     original_nss = nss.read_text()
+    ssh_faillock = os.environ.get("FIC_D13_SSH_FAILLOCK")
+    if ssh_faillock:
+        try:
+            exercise_ssh(run, domain, primary, lambda: totp(key), lambda: wrong_totp(key),
+                         registration, True, ssh_faillock)
+        finally:
+            registration.unlink()
+        return
     if os.environ.get("FIC_D13_SSH_CUTOVER") == "sssd":
         from mfa_cases import exercise_verified_cutover
         try:
@@ -383,6 +391,7 @@ def main():
     if ssh_faillock:
         exercise_ssh(run, user, password, lambda: totp(key), lambda: wrong_totp(key),
                      registration, False, ssh_faillock)
+        run_sssd_fixture(nss_file)
         return
     structural("candidate")
     slot.write_text(required)

@@ -7,14 +7,14 @@ using namespace fic::identity::pam;
 
 namespace {
 
-bool proveRenderedGraph(PamMfaForm form, bool sssd, const std::string& body) {
+bool proveRenderedGraph(PamMfaForm form, bool sssd, const std::string& body, bool faillock = false) {
     PamEffectiveStack stack;
     stack.service = mfaSshService;
     std::vector<PamRule> rules;
     std::string error;
     if (!PamConfiguration::parseRulesContent("slot", body, rules, error)) return false;
     for (auto& rule : rules) stack.entries.push_back({std::move(rule), {}});
-    return proveMfaAuthenticationPaths(stack, {}, "slot", "slot", sssd, error, form);
+    return proveMfaAuthenticationPaths(stack, {}, "slot", "slot", sssd, error, form, faillock);
 }
 
 bool replaceOnce(std::string& body, const std::string& from, const std::string& to) {
@@ -56,6 +56,30 @@ bool selfTest() {
                 return false;
             }
         }
+    }
+    for (const bool sssd : {false, true}) {
+        constexpr auto form = PamMfaForm::SshStagedAuthentication;
+        if (!buildDebian13MfaTopology(form, sssd, rendered, error, true)) return false;
+        auto graph = rendered.requiredSlot;
+        if (!replaceOnce(graph, "auth include fic-faillock-authfail\n",
+                         "auth [default=die] pam_faillock.so authfail\n") ||
+            !proveRenderedGraph(form, sssd, graph, true)) return false;
+        const std::string preauth = "[success=ok default=die] pam_faillock.so preauth";
+        for (const auto* replacement : {"required pam_permit.so", "required pam_faillock.so preauth",
+                                       "[success=ok default=bad ignore=ignore] pam_faillock.so preauth"}) {
+            auto otp = graph;
+            auto password = graph;
+            const auto pos = password.rfind(preauth);
+            if (pos == std::string::npos) return false;
+            password.replace(pos, preauth.size(), replacement);
+            if (!replaceOnce(otp, preauth, replacement) ||
+                proveRenderedGraph(form, sssd, otp, true) ||
+                proveRenderedGraph(form, sssd, password, true)) return false;
+        }
+        auto fallthrough = graph;
+        if (!replaceOnce(fallthrough, preauth, "required pam_faillock.so preauth") ||
+            !replaceOnce(fallthrough, "auth requisite pam_deny.so", "auth optional pam_deny.so") ||
+            proveRenderedGraph(form, sssd, fallthrough, true)) return false;
     }
     return true;
 }

@@ -189,14 +189,22 @@ in either alternative order. It requires `UsePAM yes`,
 of these fields and conflicting Includes before `sshd -t` and
 `sshd -T -C`. See the [SSH adapter contract](ssh-verified-activation-adapter.md).
 
-The staged service can use the existing FIC-owned `preauth_required` and
-`preauth_requisite` graphs. It invokes the current preauth and authfail
-slots only on the password stage. A password success does not clear the
-tally while OTP is outstanding. The active account slot retains the
-existing account-phase handling after final authentication. The SSH
-proof requires the real legacy and dedicated account/session routes and
-the incident account gate on the target. `authsucc` remains unsupported
-by the composed proof pending an independent native compatibility gate.
+The staged service supports the FIC-owned `preauth_required` and
+`preauth_requisite` strategies. It verifies the owned preauth slot and
+calls the same provider with the same configuration in both SSH auth
+stages. The SSH-specific control `[success=ok default=die]` also rejects
+`PAM_IGNORE`. The dispatcher keeps an earlier failure when a later
+control returns `done`. Within the auth substack the password jump
+skips four instructions: the name guard, OTP preauth, Google TOTP,
+and a terminal deny that prevents fallthrough into the password branch.
+The symbolic proof requires successful preauth on each successful stage.
+
+Only the password branch reaches the existing authfail slot. An OTP
+failure leaves the password tally intact, and a password-stage success
+does not clear the tally while OTP is outstanding. The existing account
+slot retains its handling after final authentication. The SSH proof
+requires the legacy and dedicated account/session routes and the incident
+account gate on the target. `authsucc` remains unsupported.
 
 The adapter accepts an explicit request with caller-authorized digests.
 General policy wiring still needs the authoritative obligation to carry

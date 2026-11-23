@@ -129,7 +129,8 @@ bool proveMfaAuthenticationPaths(
     const std::filesystem::path& primarySource,
     const std::filesystem::path& factorSource,
     bool hasSssdPasswordRoute, std::string& error,
-    PamMfaForm form = PamMfaForm::InteractiveTwoPrompt);
+    PamMfaForm form = PamMfaForm::InteractiveTwoPrompt,
+    bool requireSshPreauth = false);
 
 // Classifies the pam_faillock topology of an expanded authentication stack
 // into one of the supported integration strategies. Returns nullopt and sets
