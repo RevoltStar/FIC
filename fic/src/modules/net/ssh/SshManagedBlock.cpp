@@ -2,6 +2,7 @@
 #include "modules/net/ssh/SshManagedBlock.h"
 
 #include "modules/net/ssh/SshConfigSyntax.h"
+#include "modules/net/ssh/SshPolicySemantics.h"
 
 #include <algorithm>
 #include <atomic>
@@ -551,6 +552,54 @@ bool removeSshManagedPolicyBlock(std::vector<std::string>& lines,
         return true;
     }
     return true; // nothing owned for this policy
+}
+
+bool planSshMfaManagedBlock(std::vector<std::string>& lines, bool previouslyOwned,
+                           bool enable, std::string& error) {
+    constexpr std::string_view prefix = "d13_mfa_";
+    std::map<std::string, std::string> expected;
+    for (const auto& [keyword, value] : kSshMfaValues)
+        expected.emplace(std::string(prefix) + std::string(keyword),
+                         sshManagedDirectiveLine(std::string(keyword), std::string(value)));
+    expected.emplace("d13_mfa_authenticationmethods", sshManagedDirectiveLine("authenticationmethods",
+                     std::string(kSshMfaKeyChain) + " " + std::string(kSshMfaPasswordChain)));
+
+    SshManagedModel model;
+    if (parseSshManagedModel(lines, model, error) != SshManagedParseStatus::Ok) return false;
+    std::size_t owned = 0;
+    for (const auto& block : model.policies) {
+        if (block.name.compare(0, prefix.size(), prefix) == 0) {
+            const auto known = expected.find(block.name);
+            if (!previouslyOwned || known == expected.end() || known->second != block.directiveLine) {
+                error = "unauthorized or modified SSH MFA block";
+                return false;
+            }
+            ++owned;
+        } else if (enable) {
+            const auto parsed = parseSshConfigLine(block.directiveLine).directive;
+            const auto key = normalizeSshKeyword(parsed.keyword);
+            const auto protectedBlock = expected.find(std::string(prefix) + key);
+            if (protectedBlock != expected.end() &&
+                sshManagedDirectiveLine(key, joinSshArguments(parsed.arguments)) != protectedBlock->second) {
+                error = "existing managed policy conflicts with SSH MFA: " + block.name;
+                return false;
+            }
+        }
+    }
+    if (previouslyOwned && owned != expected.size()) {
+        error = "authorized SSH MFA block is incomplete";
+        return false;
+    }
+    if (previouslyOwned == enable) return true;
+    auto planned = lines;
+    for (const auto& [id, directive] : expected) {
+        bool changed = false;
+        if (enable ? !upsertSshManagedPolicyBlock(planned, id, directive, changed, error)
+                   : !removeSshManagedPolicyBlock(planned, id, directive, changed, error))
+            return false;
+    }
+    lines.swap(planned);
+    return true;
 }
 
 void disableSshLine(std::vector<std::string>& lines,

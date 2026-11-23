@@ -1,6 +1,7 @@
 #include "service/ssh/SshVerifiedActivationAdapter.h"
 #include "service/ssh/SshVerifiedInputClosure.h"
 #include "modules/net/ssh/SshPolicySemantics.h"
+#include "modules/net/ssh/SshManagedBlock.h"
 #include "service/ssh/SshPersistentMetadata.h"
 #include "service/ssh/SshListenerProof.h"
 #include "service/ssh/SshServiceAdmission.h"
@@ -48,6 +49,86 @@ int main() {
     deny([&]{d::validatePolicies({{"ssh_root_login","yes"}},s::SshActivationIntent::ConfigurationRelease);});
     deny([&]{d::validatePolicies({},static_cast<s::SshActivationIntent>(99));});
     {
+        auto mfaInput = debianInput;
+        mfaInput.debian13 = true;
+        Fixture mfa;
+        const std::string chains = "password,keyboard-interactive:pam\tpublickey,keyboard-interactive:pam";
+        const std::string fields = "UsePAM yes\nPasswordAuthentication yes\nPubkeyAuthentication yes\n"
+            "KbdInteractiveAuthentication yes\nPermitEmptyPasswords no\nPAMServiceName fic-sshd-mfa\n";
+        const auto check = [&](const d::InputProfile& profile, bool enabled) {
+            mfa.sync();
+            return d::validateClosure(mfa.reference, mfa.bytes, {{"ssh_root_login", "no"}},
+                                    profile, s::SshActivationIntent::SelectedPolicies, enabled);
+        };
+        const std::string base = mfa.bytes[mainFile];
+        mfa.bytes[mainFile] = fields + "AuthenticationMethods " + chains + "\n" + base +
+                             "KbdInteractiveAuthentication no\nMatch User guest\nX11Forwarding no\n";
+        check(mfaInput, true); ++checks;
+        deny([&]{check(mfaInput, false);});
+        deny([&]{check(debianInput, true);});
+        {
+            const std::string root = "/etc/security/fic-mfa";
+            const std::string leaf = "totp-user@realm";
+            auto reference = mfa.reference;
+            auto bytes = mfa.bytes;
+            bytes.emplace(root + "/" + leaf, "fixture");
+            reference.paths.push_back({root, ControlledPathKind::Directory, "", {{leaf, sha("fixture")}}});
+            d::validateClosure(reference, bytes, {{"ssh_root_login", "no"}}, mfaInput,
+                               s::SshActivationIntent::SelectedPolicies, true);
+            ++checks;
+            deny([&]{d::validateClosure(reference, bytes, {{"ssh_root_login", "no"}}, debianInput,
+                                          s::SshActivationIntent::SelectedPolicies, true);});
+        }
+        for (const auto* wrong : {"any", "password", "publickey", "keyboard-interactive:pam",
+                 "keyboard-interactive:pam,password publickey,keyboard-interactive:pam",
+                 "password,keyboard-interactive:pam publickey,keyboard-interactive:pam hostbased",
+                 "password,keyboard-interactive:pam password,keyboard-interactive:pam"}) {
+            mfa.bytes[mainFile] = fields + "AuthenticationMethods " + wrong + "\n" + base;
+            deny([&]{check(mfaInput, true);});
+        }
+        const std::string valid = fields + "AuthenticationMethods " + chains + "\n" + base;
+        for (const auto* override : {"Match User other\nAuthenticationMethods any\n",
+                 "Match Group other\nKbdInteractiveAuthentication no\n",
+                 "Match Address 192.0.2.1\nPermitEmptyPasswords yes\n",
+                 "PAMServiceName sshd\n"}) {
+            mfa.bytes[mainFile] = valid + override;
+            deny([&]{check(mfaInput, true);});
+        }
+        mfa.bytes[mainFile] = valid;
+        mfa.bytes[dir + "/conflict.conf"] = "PasswordAuthentication no\n";
+        deny([&]{check(mfaInput, true);});
+        mfa.bytes[dir + "/conflict.conf"] = "Include " + dir + "/nested.inc\n";
+        mfa.bytes[dir + "/nested.inc"] = "Match User other\nPubkeyAuthentication no\n";
+        deny([&]{check(mfaInput, true);});
+
+        const std::vector<std::string> original{"Include sshd_config.d/*.conf", "UsePAM yes"};
+        auto planned = original;
+        std::string error;
+        require(planSshMfaManagedBlock(planned, false, true, error), "MFA managed plan refused");
+        const auto installed = planned;
+        require(!planSshMfaManagedBlock(planned, false, true, error) && planned == installed,
+                "foreign MFA-looking markers were adopted");
+        require(planSshMfaManagedBlock(planned, true, true, error) && planned == installed,
+                "MFA managed reapply changed canonical bytes");
+        require(planSshMfaManagedBlock(planned, true, false, error) && planned == original,
+                "MFA release failed to preserve foreign configuration");
+        planned = installed;
+        const auto key = std::find(planned.begin(), planned.end(), "pubkeyauthentication yes");
+        require(key != planned.end(), "managed public key directive missing");
+        *key = "pubkeyauthentication no";
+        const auto drifted = planned;
+        require(!planSshMfaManagedBlock(planned, true, false, error) && planned == drifted,
+                "MFA release modified drifted configuration");
+        planned = original;
+        bool changed = false;
+        require(upsertSshManagedPolicyBlock(planned, "ssh_pubkey_auth", "PubkeyAuthentication no", changed, error),
+                "conflicting policy fixture failed");
+        const auto conflicting = planned;
+        require(!planSshMfaManagedBlock(planned, false, true, error) && planned == conflicting,
+                "MFA planning changed a conflicting existing policy");
+        ++checks;
+    }
+    {
         Fixture released;released.bytes[mainFile]="HostKey "+host+"\nPermitRootLogin yes\n";released.sync();
         deny([&]{released.closure({});});
         d::validateClosure(released.reference,released.bytes,{},debianInput,s::SshActivationIntent::ConfigurationRelease);++checks;
@@ -80,6 +161,42 @@ int main() {
         output+="port 22\n";deny([&]{d::listener::effectiveEndpoints(runtime,true);});
         output="port 22\nlistenaddress 127.0.0.1:22\nlistenaddress 127.0.0.1:22\n";deny([&]{d::listener::effectiveEndpoints(runtime,true);});
         output="port 22\nlistenaddress 127.0.0.1:2222\n";deny([&]{d::listener::effectiveEndpoints(runtime,true);});
+    }
+    {
+        fic::platform::PlatformExecutables executables;
+        executables.entries = {{fic::platform::ExecutableId::Sshd, {std::filesystem::canonical("/usr/bin/true")}}};
+        fic::platform::PlatformExecutableResolverOptions trust;
+        trust.enforceTrustedOwnership = false;
+        fic::platform::PlatformExecutableResolver resolver(std::move(executables), trust);
+        const std::string effective = "usepam yes\npasswordauthentication yes\n"
+            "pubkeyauthentication yes\nkbdinteractiveauthentication yes\npermitemptypasswords no\n"
+            "pamservicename fic-sshd-mfa\nauthenticationmethods publickey,keyboard-interactive:pam "
+            "password,keyboard-interactive:pam\n";
+        bool modifiedContext = false;
+        bool syntaxFailed = false;
+        std::vector<std::vector<std::string>> probes;
+        SshRuntime runtime({}, resolver, [&](const auto&, const auto& argv, const auto&) {
+            probes.push_back(argv);
+            ProcessResult result;
+            result.started = true;
+            result.exitCode = argv.front() == "-t" && syntaxFailed ? 1 : 0;
+            result.standardOutput = effective;
+            if (modifiedContext && std::find(argv.begin(), argv.end(), "-C") != argv.end())
+                result.standardOutput += "pamservicename sshd\n";
+            return result;
+        });
+        require(runtime.mfaConfigurationCompliance().compliance == SshCompliance::Compliant,
+                "exact MFA effective settings rejected");
+        require(probes.size() == 4 && probes.at(0).front() == "-t" &&
+                probes.at(2).at(1) == "-C" && probes.at(3).at(1) == "-C",
+                "MFA runtime proof skipped syntax or context probes");
+        modifiedContext = true;
+        require(runtime.mfaConfigurationCompliance().compliance == SshCompliance::NonCompliant,
+                "unexpected service in context was accepted");
+        syntaxFailed = true;
+        require(runtime.mfaConfigurationCompliance().compliance == SshCompliance::Unknown,
+                "configuration syntax failure was reported as proved semantics");
+        ++checks;
     }
     using J = nlohmann::json;
     std::map<std::string,std::string> launch;

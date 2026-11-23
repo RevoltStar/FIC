@@ -411,7 +411,8 @@ bool proveImpl(
     const ::fic::platform::PamPlatformConfig& platform,
     uid_t expectedOwner,
     bool checkLoadable,
-    std::string& diagnostic) {
+    std::string& diagnostic,
+    const std::string& requiredService = {}) {
     bool moduleProven = false;
     dev_t moduleDevice = 0;
     ino_t moduleInode = 0;
@@ -446,9 +447,19 @@ bool proveImpl(
             return false;
         }
         const bool hasAccountEntry = ::dlsym(handle, "pam_sm_acct_mgmt") != nullptr;
+        bool requiredServiceControlled = true;
+        if (!requiredService.empty()) {
+            const auto controls = reinterpret_cast<int (*)(const char*)>(
+                ::dlsym(handle, "fic_pam_access_controls_service"));
+            requiredServiceControlled = controls && controls(requiredService.c_str()) == 1;
+        }
         ::dlclose(handle);
         if (!hasAccountEntry) {
             diagnostic = "incident PAM module has no account entry point";
+            return false;
+        }
+        if (!requiredServiceControlled) {
+            diagnostic = "installed incident PAM module does not control " + requiredService;
             return false;
         }
     }
@@ -457,6 +468,10 @@ bool proveImpl(
     if (!configuration.existingServices(
             platform.incidentAccessGate.controlledServices,
             installedServices, diagnostic)) return false;
+    if (!requiredService.empty() && installedServices.empty()) {
+        diagnostic = "required incident PAM service is absent: " + requiredService;
+        return false;
+    }
     for (const auto& service : installedServices) {
         ::fic::identity::pam::PamEffectiveStack stack;
         if (!configuration.buildEffectiveStack(
@@ -472,6 +487,19 @@ bool PamIncidentAccessGateVerifier::prove(
     const ::fic::platform::PamPlatformConfig& platform,
     std::string& diagnostic) {
     return proveImpl(platform, 0, true, diagnostic);
+}
+
+bool PamIncidentAccessGateVerifier::proveRequiredService(
+    const ::fic::platform::PamPlatformConfig& platform,
+    const std::string& service, std::string& diagnostic) {
+    const auto& controlled = platform.incidentAccessGate.controlledServices;
+    if (service.empty() || std::find(controlled.begin(), controlled.end(), service) == controlled.end()) {
+        diagnostic = "service absent from the incident gate profile";
+        return false;
+    }
+    auto target = platform;
+    target.incidentAccessGate.controlledServices = {service};
+    return proveImpl(target, 0, true, diagnostic, service);
 }
 
 bool PamIncidentAccessGateVerifier::proveForTests(

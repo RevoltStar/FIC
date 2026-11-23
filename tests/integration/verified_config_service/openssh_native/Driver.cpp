@@ -8,6 +8,7 @@
 #include "policy/registry/PolicyRegistry.h"
 #include "daemon/PolicyDisableFlow.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
+#include "modules/net/ssh/SshResourceLock.h"
 #include <fic/core/config/ModuleConfigFileHandler.h>
 #include <fic/core/logging/Logger.h>
 #include "service/ssh/SshVerifiedActivationTestAccess.h"
@@ -113,10 +114,45 @@ int main(int argc, char** argv) {
             c.kind = p.value("directory", false) ? ControlledPathKind::Directory : ControlledPathKind::File;
             c.sha256 = p.value("sha256", "");
             if (p.contains("manifest")) c.manifest = p.at("manifest").get<FileManifest>();
+            if (p.contains("directories")) c.directories = p.at("directories").get<std::set<std::string>>();
             r.paths.push_back(c);
         }
         const std::string action = argv[1];
-        if(action=="module") {
+        if (action == "mfa-plan" || action == "mfa-cas") {
+            const std::lock_guard<std::mutex> lock(sshResourceMutex());
+            SshConfigFileHandler handler(mainPath);
+            check(profile.id == "debian-13" && handler.loadConfig() && handler.loadSnapshot(),
+                  "Debian 13 SSH snapshot unavailable");
+            const auto& before = *handler.loadSnapshot();
+            check(fic::core::ContentDigest::sha256Hex(before.content) == input.at("main_before"),
+                  "MFA plan input drifted");
+            const bool enable = input.value("enable", true);
+            const bool previouslyOwned = input.value("previously_owned", false);
+            check(planSshMfaManagedBlock(handler.lines(), previouslyOwned, enable, error), error);
+            const auto planned = handler.pendingContent();
+            namespace ssh = fic::service::ssh;
+            ssh::SshVerifiedActivationRequest current;
+            current.reference = r;
+            current.intent = ssh::SshActivationIntent::ConfigurationRelease;
+            current.policies = input.at("policies").get<std::map<std::string, std::string>>();
+            const ssh::SshVerifiedActivationRequest::MfaRequirement fixture{
+                input.value("sssd", false), fic::platform::PamFaillockStrategy::PreauthRequired};
+            if (previouslyOwned) current.mfa = fixture;
+            const auto admission = ssh::SshVerifiedActivationAdapter::admitMfaPlan(current);
+            const auto validation = ssh::SshVerifiedActivationAdapter::validateMfaPlan(
+                current, admission, planned, enable ? std::optional{fixture} : std::nullopt);
+            output["success"] = validation.success();
+            output["diagnostic"] = validation.diagnostic;
+            if (validation.success()) {
+                const auto digest = fic::core::ContentDigest::sha256Hex(planned);
+                output["sha256"] = digest;
+                if (action == "mfa-cas") {
+                    check(digest == input.at("main_after"), "MFA plan changed since validation");
+                    const auto outcome = restoreSshConfigContentIfCurrentState(mainPath, planned, before, error);
+                    check(outcome.installed && outcome.durable, error);
+                }
+            }
+        } else if(action=="module") {
             if(alt)std::locale::global(std::locale("ru_RU.UTF-8")); // production daemon locale, not only C fixture
             auto& journalOwner=fic::rollback::DaemonMutationJournal::instance();
             fs::create_directories(work+"/module-state");
@@ -580,6 +616,16 @@ int main(int argc, char** argv) {
                 request.observedMetadata=input.value("observed_metadata",std::map<std::string,std::string>{});
                 request.expectedService=input.value("expected_service",std::map<std::string,std::string>{});
                 request.policies = input.value("policies", std::map<std::string,std::string>{{"ssh_root_login","no"},{"ssh_pubkey_auth","yes"},{"ssh_use_pam","yes"},{"ssh_max_auth_tries","3"},{"ssh_port","2222"}});
+                if (input.contains("mfa")) {
+                    const auto& supplied = input.at("mfa");
+                    ssh::SshVerifiedActivationRequest::MfaRequirement mfa;
+                    mfa.sssd = supplied.value("sssd", false);
+                    if (supplied.contains("faillock")) {
+                        mfa.faillock = fic::platform::parsePamFaillockStrategy(supplied.at("faillock").get<std::string>());
+                        check(mfa.faillock.has_value(), "invalid native MFA faillock input");
+                    }
+                    request.mfa = mfa;
+                }
                 ssh::SshVerifiedActivationResult verified;
                 if (action == "adapter") verified = ssh::SshVerifiedActivationAdapter::activate(request);
                 else {
@@ -622,6 +668,7 @@ int main(int argc, char** argv) {
                 };
                 output["adapter_success"] = verified.success(); output["adapter_status"] = int(verified.status);
                 output["activation_invoked"] = verified.activationAttempted;
+                if (request.mfa) output["adapter_runtime"] = verified.runtimeEvidence;
                 output["A"] = proof(verified.inputs); output["C"] = proof(verified.semantics); output["P"] = proof(verified.persistent);
                 output["adapter_diagnostic"] = verified.diagnostic;
                 result = verified.activation;

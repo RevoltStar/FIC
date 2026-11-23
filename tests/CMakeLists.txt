@@ -3251,7 +3251,26 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(openssh_native_harness_contract PROPERTIES LABELS "unit;integration")
 endif()
 
-set(FIC_SSH_VERIFIED_SOURCES
+set(FIC_SSH_MFA_PROOF_SOURCES
+    ${CMAKE_SOURCE_DIR}/fic/src/incident/PamIncidentAccessGateVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamMfaTopology.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwhistoryConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp)
+set(FIC_SSH_VERIFIED_SOURCES ${FIC_SSH_MFA_PROOF_SOURCES}
     ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp
@@ -3341,7 +3360,7 @@ foreach(ssh_caller IN LISTS FIC_LOCAL_TEST_TARGETS)
     get_target_property(ssh_sources ${ssh_caller} SOURCES)
     if("${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/Ssh.cpp" IN_LIST ssh_sources OR
        "${CMAKE_SOURCE_DIR}/fic/src/modules/net/ssh/SshRollback.cpp" IN_LIST ssh_sources)
-        target_sources(${ssh_caller} PRIVATE ${FIC_VERIFIED_CONFIG_SOURCES}
+        target_sources(${ssh_caller} PRIVATE ${FIC_VERIFIED_CONFIG_SOURCES} ${FIC_SSH_MFA_PROOF_SOURCES}
             ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
             ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
             ${CMAKE_SOURCE_DIR}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp
@@ -3644,6 +3663,7 @@ if(FIC_TARGET_PLATFORM STREQUAL "debian-13")
         ${empty_password_pam_sources}
         ${mfa_sssd_sources}
         ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamMfaTopology.cpp
+        ${CMAKE_SOURCE_DIR}/fic/src/incident/PamIncidentAccessGateVerifier.cpp
     )
     target_include_directories(d13_mfa_probe PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
     target_link_libraries(d13_mfa_probe PRIVATE fic-core fic-platform fic-policy)

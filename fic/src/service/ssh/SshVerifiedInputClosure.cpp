@@ -19,10 +19,21 @@ bool path(const std::string& name) {
         name.back() != '/' && name.find_first_not_of("/abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-+") == std::string::npos &&
         std::none_of(p.begin(), p.end(), [](const auto& c) { return c == ".." || c == "."; });
 }
+bool mfaRegistrationPath(const std::string& name) {
+    constexpr std::string_view prefix = "/etc/security/fic-mfa/totp-";
+    if (name.compare(0, prefix.size(), prefix) != 0) return false;
+    const auto at = name.find('@', prefix.size());
+    if (at == std::string::npos || at == prefix.size() || at + 1 == name.size() ||
+        name.find('@', at + 1) != std::string::npos ||
+        name.find('/', prefix.size()) != std::string::npos) return false;
+    auto portable = name;
+    portable[at] = '_';
+    return path(portable);
+}
 }
 InputProfile inputProfile() {
     const auto profile=fic::platform::makeBuildPlatformProfile();const auto& ssh=profile.ssh;
-    return {ssh.serviceUnits.at(0),ssh.configPath.string(),ssh.includeBasePath.string(),ssh.verifiedIncludeDirectory.string(),ssh.optionFile.string(),ssh.optionVariable,profile.id=="alt-p11"};
+    return {ssh.serviceUnits.at(0),ssh.configPath.string(),ssh.includeBasePath.string(),ssh.verifiedIncludeDirectory.string(),ssh.optionFile.string(),ssh.optionVariable,profile.id=="alt-p11",profile.id=="debian-13"};
 }
 void validatePolicies(const std::map<std::string, std::string>& policies,SshActivationIntent intent) {
     if(intent!=SshActivationIntent::SelectedPolicies&&intent!=SshActivationIntent::ConfigurationRelease)unsupported("unknown SSH activation intent");
@@ -74,8 +85,9 @@ void validateEmptyOptions(const std::string& bytes, const std::string& variable)
     }
     if (assignments != 1) unsupported("explicit empty "+variable+" required");
 }
-static Closure classifyClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies, bool requireKeys, const InputProfile& profile,SshActivationIntent intent) {
+static Closure classifyClosure(const ActivationRequest& r, const InputBytes& bytes, const std::map<std::string, std::string>& policies, bool requireKeys, const InputProfile& profile,SshActivationIntent intent,bool requireMfa) {
     validatePolicies(policies,intent);
+    if (requireMfa && !profile.debian13) unsupported("verified SSH MFA requires Debian 13");
     fic::service::detail::validateRequest(r);
     if (r.unit != profile.unit) unsupported("canonical platform SSH unit required");
     std::set<std::string> directories;
@@ -92,7 +104,8 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
     std::uint64_t used = 0;
     for (const auto& [name, content] : bytes) {
         used += content.size();
-        if (!path(name) || !expected.count(name) || used > r.maxSnapshotBytes ||
+        if ((!path(name) && !(profile.debian13 && mfaRegistrationPath(name))) ||
+            !expected.count(name) || used > r.maxSnapshotBytes ||
             fic::core::ContentDigest::sha256Hex(content) != expected.at(name))
             throw fic::service::detail::Failure(ActivationStatus::ChecksumMismatch, "SSH reference bytes mismatch");
     }
@@ -100,12 +113,14 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
     std::size_t visits = 0, lines = 0;
     std::map<std::string,std::string> selected;
     for (const auto& [id, value] : policies) selected.emplace(normalizeSshKeyword(sshPolicyDirectiveKeyword(id)),value);
-    const std::set<std::string> supported{
+    std::set<std::string> supported{
         "permitrootlogin", "pubkeyauthentication", "usepam", "maxauthtries", "port",
         "match", "include", "listenaddress", "addressfamily", "hostkey", "pidfile", "loglevel",
         "versionaddendum", "permittty", "passwordauthentication", "kbdinteractiveauthentication",
         "printmotd", "x11forwarding", "acceptenv", "subsystem", "authorizedkeysfile",
         "usedns", "permitemptypasswords", "strictmodes", "logingracetime"};
+    std::set<std::string> establishedMfaValues;
+    if (requireMfa) supported.insert({"pamservicename", "authenticationmethods"});
     std::function<void(const std::string&, unsigned, bool)> visit = [&](const std::string& name, unsigned depth, bool conditional) {
         if (depth > 16 || ++visits > 256 || !active.insert(name).second) unsupported("SSH Include recursion/depth/visit bound exceeded");
         const auto found = bytes.find(name);
@@ -131,6 +146,21 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
                 std::string error;
                 if (!sshSupportedMatch(args,error)) unsupported(error);
                 conditional = true; continue;
+            }
+            const auto mfaValue = std::find_if(kSshMfaValues.begin(), kSshMfaValues.end(),
+                [&](const auto& value) { return value.first == key; });
+            if (requireMfa && (mfaValue != kSshMfaValues.end() || key == "authenticationmethods")) {
+                if (conditional) unsupported("conditional SSH MFA directive: "+key);
+                const bool matches = key == "authenticationmethods"
+                    ? sshMfaAuthenticationMethods(joinSshArguments(args))
+                    : args.size() == 1 && (key == "pamservicename" ? args.front()
+                                             : normalizeSshKeyword(args.front())) == mfaValue->second;
+                const bool first = establishedMfaValues.insert(key).second;
+                // Stock main-file defaults may be shadowed by the FIC block.
+                // A conflicting Include is rejected even when shadowed.
+                if (!matches && (first || name != profile.mainFile ||
+                                 key == "authenticationmethods" || key == "pamservicename"))
+                    unsupported("conflicting SSH MFA directive: "+key);
             }
             if (key=="port") {
                 if(conditional || args.size()!=1) unsupported("Port in conditional/ambiguous Include context");
@@ -197,6 +227,8 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
         active.erase(name);
     };
     visit(profile.mainFile, 0, false);
+    if (requireMfa && establishedMfaValues.size() != kSshMfaValues.size() + 1)
+        unsupported("missing explicit global SSH MFA directive");
     if (result.hostKeys.empty() || profile.alt) {
         // Native default key set. ALT also needs every stock keygen -A target
         // even with explicit HostKey: the vendor Pre hook must remain a no-op.
@@ -208,10 +240,10 @@ static Closure classifyClosure(const ActivationRequest& r, const InputBytes& byt
         if(!bytes.count(key)||!bytes.count(key+".pub"))unsupported("HostKey inputs require complete trusted reference coverage");
     return result;
 }
-Closure validateClosure(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies,const InputProfile& profile,SshActivationIntent intent) {
-    return classifyClosure(r,bytes,policies,true,profile,intent);
+Closure validateClosure(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies,const InputProfile& profile,SshActivationIntent intent,bool requireMfa) {
+    return classifyClosure(r,bytes,policies,true,profile,intent,requireMfa);
 }
-std::set<std::string> discoverHostKeys(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies,SshActivationIntent intent) {
-    return classifyClosure(r,bytes,policies,false,inputProfile(),intent).hostKeys;
+std::set<std::string> discoverHostKeys(const ActivationRequest& r,const InputBytes& bytes,const std::map<std::string,std::string>& policies,SshActivationIntent intent,bool requireMfa) {
+    return classifyClosure(r,bytes,policies,false,inputProfile(),intent,requireMfa).hostKeys;
 }
 } // namespace fic::service::ssh::detail

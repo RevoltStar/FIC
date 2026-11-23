@@ -726,3 +726,36 @@ SSSD retained source-bound I3/I4/I5 и historical I6 gates PASS без новы�
 SSSD native запусков. PAM I6 current-source evidence gate корректно отказывает:
 его receipts не соответствовали уже I1 base. Старые hashes/results и gates
 не менялись; I1 не объявляет историческую матрицу проверкой текущего HEAD.
+## Debian 13 staged MFA
+
+An explicit `SshVerifiedActivationRequest::MfaRequirement` activates the
+Debian 13 MFA checks. `admitMfaPlan` binds metadata to caller-supplied
+byte references on an active service. `validateMfaPlan` projects the new
+main file in the existing snapshot verifier and checks the candidate before
+CAS. The managed block planner edits its complete MFA set in memory and
+checks caller-supplied provenance before changing any reserved block.
+The existing activation path then rechecks inputs before publication, in
+the published snapshot, and after startup and cleanup.
+
+The MFA requirement uses the same reference graph and runtime generation
+as the SSH adapter. In addition to the normal SSH inputs it requires the
+actual PAM source files, resolved modules, NSS inputs and effective SSSD
+configuration when applicable, TOTP credentials, and faillock configuration
+for the declared strategy. The proof checks the dedicated authentication graph,
+preserved non-auth graphs and target incident account gate. SSH semantics
+require the closed global MFA directive set plus `sshd -t`, global `sshd -T`,
+and contextual `sshd -T -C`. Receipt evidence includes the composite
+reference identity and the confirmed systemd invocation and main PID.
+Requests with MFA repeat verified activation instead of reusing a cached
+receipt because a reload can retain the systemd invocation and main PID.
+
+The TOTP directory is an exact snapshot input, including an empty
+inventory. For the SSSD route the SSH snapshot can pin `sssd.conf` and
+the exact `conf.d` tree as separate roots. This also proves the absence
+of an unlisted drop-in when `conf.d` is empty. The existing SSH snapshot
+path and size limits apply.
+
+The daemon still needs an authoritative source of the mandatory MFA
+requirement for independent ordinary apply, periodic apply, rollback,
+and release after drift or daemon restart. Publication, policy wiring,
+and persistent authority are outside this backend entry point.

@@ -119,7 +119,7 @@ PlatformProfile makeBuildPlatformProfile() {
         {PamScope::EffectivePasswordStack, {"passwd", "common-password"}}
     };
     profile.pam.incidentAccessGate.controlledServices = {
-        "login", "sshd", "sddm", "sddm-autologin",
+        "login", "sshd", "fic-sshd-mfa", "sddm", "sddm-autologin",
         "gdm-password", "gdm-autologin", "gdm-fingerprint",
         "gdm-smartcard-pkcs11-exclusive",
         "gdm-smartcard-sssd-exclusive",

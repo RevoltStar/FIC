@@ -1,6 +1,7 @@
 #pragma once
 #include "service/VerifiedConfigServiceActivator.h"
 #include "service/ssh/SshVerifiedInputClosure.h"
+#include "platform/PlatformProfile.h"
 #include <memory>
 #include <fic/core/fs/AtomicFileWriter.h>
 namespace fic::service::detail {struct SshUnitReferences;}
@@ -33,6 +34,17 @@ struct SshVerifiedActivationRequest {
     // Only multi-file Port release may restore a bounded, duplicate-free set.
     // SelectedPolicies and other policy callers keep the single-port contract.
     bool allowReleasedPortSet=false;
+    struct MfaRequirement {
+        bool sssd=false;
+        std::optional<fic::platform::PamFaillockStrategy> faillock;
+        bool operator==(const MfaRequirement& other) const {
+            return sssd == other.sssd && faillock == other.faillock;
+        }
+        bool operator!=(const MfaRequirement& other) const { return !(*this == other); }
+    };
+    // Explicit caller authority. PAM paths and expected digests belong to the
+    // same reference snapshot as SSH files and are never inferred from markers.
+    std::optional<MfaRequirement> mfa;
 };
 struct SshVerifiedActivationResult {
     SshActivationStatus status = SshActivationStatus::Refused;
@@ -56,6 +68,9 @@ class SshVerifiedActivationAdapter {
 public:
     static std::map<std::string,std::string> serviceAdmission();
     static SshReleaseAdmission releaseAdmission(const SshVerifiedActivationRequest&);
+    // Bind metadata to already authorized byte references for a Debian 13
+    // MFA transition. No source is discovered or enrolled by this method.
+    static SshReleaseAdmission admitMfaPlan(SshVerifiedActivationRequest&);
     // Read-only platform input capture. Caller MUST first prove journal/managed
     // ownership and supply the expected main-file digest. Foreign root-owned
     // configuration is referenced, never enrolled as policy ownership.
@@ -74,6 +89,9 @@ public:
     static SshVerifiedActivationResult activate(const SshVerifiedActivationRequest&);
     static SshConfigurationValidationResult validateReleasePlan(
         const SshVerifiedActivationRequest&,const SshReleaseAdmission&,const std::string& plannedMain);
+    static SshConfigurationValidationResult validateMfaPlan(
+        const SshVerifiedActivationRequest&, const SshReleaseAdmission&, const std::string& plannedMain,
+        std::optional<SshVerifiedActivationRequest::MfaRequirement> proposed);
     static SshVerifiedActivationResult releaseConfiguration(
         const SshVerifiedActivationRequest&,const SshReleaseAdmission&);
     static bool sameInputGeneration(const SshVerifiedActivationRequest& before,

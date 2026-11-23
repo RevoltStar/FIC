@@ -64,4 +64,26 @@ if [[ "$driver" == d13_mfa_native.py ]]; then
         docker cp "$repo/tests/integration/sssd-research/$fixture" "$name:/usr/local/bin/$fixture"
     done
 fi
-docker exec -e FIC_A2_TEST_GROUP="${FIC_STARTUP_TEST_GROUP:-all}" "$name" python3 /usr/local/bin/deb-native.py "${extra[@]}"
+if [[ -n "${FIC_D13_SSH_CUTOVER_DRIVER:-}" ]]; then
+    [[ "$driver" == d13_mfa_native.py && -f "$FIC_D13_SSH_CUTOVER_DRIVER" &&
+        -f "${FIC_D13_INCIDENT_PAM_MODULE:-}" ]] || exit 2
+    token=$(cat /proc/sys/kernel/random/uuid)
+    cutover_scope=${FIC_D13_SSH_CUTOVER_SCOPE:-local}
+    [[ "$cutover_scope" == local || "$cutover_scope" == sssd ]] || exit 2
+    docker exec -e FIC_OPENSSH_DISPOSABLE="$token" "$name" sh -ec '
+        test -e /.dockerenv
+        test "$(readlink /proc/self/ns/user)" = "user:[4026531837]"
+        mkdir -m 700 /run/fic-openssh-work
+        printf %s "$FIC_OPENSSH_DISPOSABLE" > /run/fic-openssh-work/runner-marker
+    '
+    docker cp "$FIC_D13_SSH_CUTOVER_DRIVER" "$name:/usr/local/bin/fic-openssh-driver"
+    docker cp "$FIC_D13_INCIDENT_PAM_MODULE" "$name:/var/tmp/pam_fic_access-cutover.so"
+    docker cp "$repo/tests/integration/verified_config_service/openssh_native/mfa_cases.py" "$name:/usr/local/bin/mfa_cases.py"
+    docker exec -e FIC_D13_SSH_CUTOVER="$cutover_scope" -e FIC_OPENSSH_DISPOSABLE="$token" \
+        -e FIC_OPENSSH_HOST_MNT="$(stat -Lc '%d:%i' /proc/self/ns/mnt)" \
+        -e FIC_OPENSSH_HOST_ROOT="$(stat -Lc '%d:%i' /)" \
+        "$name" python3 /usr/local/bin/deb-native.py
+    exit
+fi
+docker exec -e FIC_A2_TEST_GROUP="${FIC_STARTUP_TEST_GROUP:-all}" \
+    -e FIC_D13_SSH_FAILLOCK="${FIC_D13_SSH_FAILLOCK:-}" "$name" python3 /usr/local/bin/deb-native.py "${extra[@]}"

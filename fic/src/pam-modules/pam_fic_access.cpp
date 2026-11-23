@@ -44,3 +44,10 @@ extern "C" int pam_sm_acct_mgmt(pam_handle_t* pamh, int,
         return PAM_PERM_DENIED;
     }
 }
+extern "C" int fic_pam_access_controls_service(const char* service) noexcept {
+    try {
+        return service && fic::incident::isProductionControlledIncidentService(service);
+    } catch (...) {
+        return 0;
+    }
+}

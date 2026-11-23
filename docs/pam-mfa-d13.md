@@ -178,11 +178,28 @@ does not authenticate an SSH key or verify the server process.
   other distributions, mixed NSS routes rejected in D13-2, alternative
   providers and HOTP/scratch paths.
 
-D13-3B owns the verified SSH input closure and activation: exact
-`PAMServiceName` and `AuthenticationMethods` under effective
-`sshd -t`/`sshd -T -C` validation, rejection of competing or conditional
-routes, verified activation receipts, apply/reapply/rollback guards, and
-native switch/reload/drift tests. Its combined proof must bind the
-conditional PAM proof to the effective running SSH instance. Policy wiring,
-publication of PAM attachments, MutationJournal ownership and release,
-recovery, and MFA package lifecycle gates belong to D13-3C/D.
+### Debian 13 verified SSH backend
+
+The explicit MFA request verifies exactly the two ordered chains
+`publickey,keyboard-interactive:pam` and `password,keyboard-interactive:pam`
+in either alternative order. It requires `UsePAM yes`,
+`PasswordAuthentication yes`, `PubkeyAuthentication yes`,
+`KbdInteractiveAuthentication yes`, `PermitEmptyPasswords no` and
+`PAMServiceName fic-sshd-mfa`. The closure refuses conditional settings
+of these fields and conflicting Includes before `sshd -t` and
+`sshd -T -C`. See the [SSH adapter contract](ssh-verified-activation-adapter.md).
+
+The staged service can use the existing FIC-owned `preauth_required` and
+`preauth_requisite` graphs. It invokes the current preauth and authfail
+slots only on the password stage. A password success does not clear the
+tally while OTP is outstanding. The active account slot retains the
+existing account-phase handling after final authentication. The SSH
+proof requires the real legacy and dedicated account/session routes and
+the incident account gate on the target. `authsucc` remains unsupported
+by the composed proof pending an independent native compatibility gate.
+
+The adapter accepts an explicit request with caller-authorized digests.
+General policy wiring still needs the authoritative obligation to carry
+that request through apply, periodic apply, rollback and release, including
+daemon restart and drift. Publication of PAM attachments, MutationJournal
+ownership and recovery, and MFA package lifecycle gates belong to D13-3C/D.

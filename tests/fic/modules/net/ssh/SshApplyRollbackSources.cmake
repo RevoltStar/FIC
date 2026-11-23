@@ -82,6 +82,9 @@ set(FIC_SSH_APPLY_ROLLBACK_SOURCES
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/modules/identity_access/pam/PamEmptyPasswordLogin.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/modules/identity_access/pam/PamMfaTopology.cpp
+    ${FIC_SSH_TEST_ROOT}/fic/src/incident/PamIncidentAccessGateVerifier.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
     ${FIC_SSH_TEST_ROOT}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp

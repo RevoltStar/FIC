@@ -112,6 +112,11 @@ bool removeSshManagedPolicyBlock(std::vector<std::string>& lines,
                                  bool& removed,
                                  std::string& error);
 
+// Planning only. The caller supplies the authoritative ownership expectation
+// and must bind the complete plan to its configuration snapshot before CAS.
+bool planSshMfaManagedBlock(std::vector<std::string>& lines, bool previouslyOwned,
+                           bool enable, std::string& error);
+
 // True when the parsed model contains a managed sub-block for the policy.
 bool sshManagedModelHasPolicy(const SshManagedModel& model,
                               const std::string& policyName);

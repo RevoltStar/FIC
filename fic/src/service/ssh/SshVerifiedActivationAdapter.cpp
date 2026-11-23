@@ -16,6 +16,7 @@
 #include "modules/net/ssh/SshRuntime.h"
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/net/ssh/SshConfigSyntax.h"
+#include "modules/identity_access/pam/PamMfaTopology.h"
 #include "platform/PlatformCompatibility.h"
 #include <fic/core/integrity/CommandHashStore.h>
 #include <fic/core/integrity/ContentDigest.h>
@@ -258,7 +259,8 @@ Capture capture(const ActivationRequest& request, bool published = false, bool p
 void validateCaptured(const SshVerifiedActivationRequest& request, const Capture& observed) {
     if(request.allowReleasedPortSet&&(request.intent!=SshActivationIntent::ConfigurationRelease||request.policies.count("ssh_port")))
         unsupported("released Port set is not a selected policy contract");
-    const auto closure = detail::validateClosure(request.reference, observed.bytes, request.policies,detail::inputProfile(),request.intent);
+    const auto closure = detail::validateClosure(request.reference, observed.bytes, request.policies,
+                                                  detail::inputProfile(), request.intent, request.mfa.has_value());
     for (const auto& [root, entries] : observed.attributes) {
         for (const auto& [name, st] : entries) {
             if (st.st_uid != 0 || (st.st_mode & 0022)) unsupported("SSH tree requires root-controlled metadata");
@@ -274,6 +276,23 @@ void validateCaptured(const SshVerifiedActivationRequest& request, const Capture
     const auto env = observed.bytes.find(input.environment);
     if (env == observed.bytes.end()) unsupported("explicit EnvironmentFile reference required");
     detail::validateEmptyOptions(env->second,input.optionVariable);
+    if (request.mfa) {
+        const auto coversDirectory = [&](const char* directory) {
+            return std::any_of(request.reference.paths.begin(), request.reference.paths.end(),
+                [directory](const auto& path) {
+                    return path.kind == ControlledPathKind::Directory && path.path == directory;
+                });
+        };
+        if (!coversDirectory("/etc/security/fic-mfa"))
+            unsupported("SSH MFA requires a closed TOTP registration directory");
+        if (request.mfa->sssd && !coversDirectory("/etc/sssd/conf.d") &&
+            !coversDirectory("/etc/sssd"))
+            unsupported("SSH MFA requires a closed SSSD drop-in directory");
+        std::string error;
+        if (!fic::identity::pam::verifyDebian13SshMfaInputs(fic::platform::makeBuildPlatformProfile(),
+                request.mfa->sssd, request.mfa->faillock, observed.bytes, error))
+            throw d::Failure(ActivationStatus::UnsupportedConfiguration, error);
+    }
 }
 // One bounded process-local receipt; it grants no persistent ownership and is
 // discarded on any detected interference/failure. No cache survives daemon restart.
@@ -286,7 +305,12 @@ std::mutex receiptMutex;
 std::string referenceIdentity(const SshVerifiedActivationRequest& request, const Capture& observed) {
     Json paths=Json::array();
     paths.push_back(Json{{"intent",static_cast<int>(request.intent)},{"released_port_set",request.allowReleasedPortSet}});
-    for(const auto& p:request.reference.paths) paths.push_back({p.path.string(),static_cast<int>(p.kind),p.sha256,p.manifest});
+    if (request.mfa) {
+        const auto& mfa = *request.mfa;
+        paths.push_back(Json{{"mfa", true}, {"sssd", mfa.sssd},
+            {"faillock", mfa.faillock ? static_cast<int>(*mfa.faillock) : -1}});
+    }
+    for(const auto& p:request.reference.paths) paths.push_back({p.path.string(),static_cast<int>(p.kind),p.sha256,p.manifest,p.directories});
     auto boot=d::openAbsolute("/proc/sys/kernel/random/boot_id",O_RDONLY);
     // procfs virtual files have zero st_size; bounded descriptor read, no path fallback.
     char bytes[80]; const auto count=::read(boot.get(),bytes,sizeof(bytes));
@@ -307,7 +331,9 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
     SshVerifiedActivationRequest request=supplied;
     SshVerifiedActivationResult result;
     std::string receiptKey;
-    bool receiptEligible=!request.expectedService.empty()&&!request.observedMetadata.empty();
+    // The stock sshd HUP path may re-exec without changing systemd's
+    // InvocationID or MainPID. Re-establish MFA by verified activation.
+    bool receiptEligible=!request.mfa&&!request.expectedService.empty()&&!request.observedMetadata.empty();
 #ifdef FIC_ACTIVATOR_TESTING
     if(tests) receiptEligible=false;
 #endif
@@ -401,6 +427,13 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
         });
         const auto semantics = [&] {
             checkBinary();
+            if (request.mfa) {
+                const auto result = runtime.mfaConfigurationCompliance();
+                if (result.compliance != SshCompliance::Compliant)
+                    throw d::Failure(result.compliance == SshCompliance::NonCompliant
+                        ? ActivationStatus::UnsupportedConfiguration : ActivationStatus::SnapshotFailed,
+                        result.error);
+            }
             if ((request.policies.count("ssh_port")||request.allowReleasedPortSet)&&!runtime.validateSyntax(error))throw SemanticFailure(false);
             if (!runtime.validateConfiguration(error)) throw SemanticFailure(false);
             for (const auto& [id, expected] : request.policies) {
@@ -490,6 +523,12 @@ SshVerifiedActivationResult perform(const SshVerifiedActivationRequest& supplied
                 throw d::Failure(ActivationStatus::InterferenceDetected,"runtime changed before receipt publication");
             if(socket)socket->confirm(receiptState);
             if(alt)alt->confirm(receiptState);
+            if(request.mfa) {
+                const auto current = capture(request.reference, false, true);
+                validateCaptured(request, current);
+                detail::requireStableMetadata(observed, current);
+                result.runtimeEvidence["mfa_reference"] = referenceIdentity(request, current);
+            }
             if(receiptEligible) runtimeReceipt={receiptKey,combined(receiptState),provenPolicies};
         }
         if (std::chrono::steady_clock::now() >= deadline) {
@@ -748,8 +787,23 @@ SshReleaseAdmission releaseAdmissionImpl(const SshVerifiedActivationRequest& req
 SshReleaseAdmission SshVerifiedActivationAdapter::releaseAdmission(const SshVerifiedActivationRequest& request) {
     const std::lock_guard<std::mutex> lock(receiptMutex);return releaseAdmissionImpl(request);
 }
-SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePlan(
-    const SshVerifiedActivationRequest& request,const SshReleaseAdmission& expected,const std::string& plannedMain) {
+SshReleaseAdmission SshVerifiedActivationAdapter::admitMfaPlan(SshVerifiedActivationRequest& request) {
+    const std::lock_guard<std::mutex> lock(receiptMutex);
+    if (!detail::inputProfile().debian13 || request.intent != SshActivationIntent::ConfigurationRelease)
+        unsupported("MFA plan admission requires an explicit Debian 13 transition");
+    const auto captured = capture(request.reference);
+    validateCaptured(request, captured);
+    const auto metadata = metadataIdentities(captured);
+    if (!request.observedMetadata.empty() && request.observedMetadata != metadata)
+        throw d::Failure(ActivationStatus::InterferenceDetected, "MFA plan input metadata changed");
+    request.observedMetadata = metadata;
+    auto admission = releaseAdmissionImpl(request);
+    if (admission.offline) unsupported("MFA plan requires an active SSH service");
+    return admission;
+}
+static SshConfigurationValidationResult validateProjectedPlan(
+    const SshVerifiedActivationRequest& request,const SshReleaseAdmission& expected,const std::string& plannedMain,
+    const std::optional<SshVerifiedActivationRequest::MfaRequirement>* proposed) {
     const std::lock_guard<std::mutex> lock(receiptMutex);
     SshConfigurationValidationResult result;
     try {
@@ -764,6 +818,13 @@ SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePl
         const auto observed=capture(request.reference);validateCaptured(request,observed);
         const auto input=detail::inputProfile();
         auto planned=request;auto projected=observed;
+        if (proposed) {
+            if (!input.debian13 || expected.offline || (!planned.mfa && !*proposed))
+                unsupported("MFA transition requires authorized Debian 13 inputs and an active service");
+            planned.mfa = *proposed;
+        } else if (planned.mfa && expected.offline) {
+            unsupported("required SSH MFA has no verified runtime");
+        }
         projected.bytes.at(input.mainFile)=plannedMain;
         for(auto& path:planned.reference.paths)if(path.path==input.mainFile)
             path.sha256=fic::core::ContentDigest::sha256Hex(plannedMain);
@@ -802,6 +863,11 @@ SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePl
             auto candidate=protectedInputs;candidate.bytes.at(input.mainFile)=plannedMain;validateCaptured(planned,candidate);
             checkBinary();
             if(!runtime.validateSyntax(error)||!runtime.validateConfiguration(error))throw SemanticFailure(false);
+            if (planned.mfa) {
+                const auto compliance = runtime.mfaConfigurationCompliance();
+                if (compliance.compliance != SshCompliance::Compliant)
+                    throw d::Failure(ActivationStatus::UnsupportedConfiguration, compliance.error);
+            }
             for(const auto& [id,value]:request.policies) {
                 const auto compliance=runtime.policyValueCompliance(sshPolicyDirectiveKeyword(id),value);
                 if(compliance.compliance!=SshCompliance::Compliant)throw SemanticFailure(compliance.compliance==SshCompliance::NonCompliant);
@@ -824,9 +890,19 @@ SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePl
             throw d::Failure(ActivationStatus::InterferenceDetected,"service changed during planned validation");
         d::verifySshUnitReferences(*expected.unitReferences,deadline);
         checkBinary();result.validated=true;
-        result.diagnostic="planned release syntax/effective remaining policies validated before CAS; no activation";
+        result.diagnostic=proposed ? "planned SSH MFA transition validated before CAS" :
+            "planned release syntax/effective remaining policies validated before CAS; no activation";
     } catch(const std::exception& error) {result.diagnostic=error.what();}
     return result;
+}
+SshConfigurationValidationResult SshVerifiedActivationAdapter::validateReleasePlan(
+    const SshVerifiedActivationRequest& request, const SshReleaseAdmission& expected, const std::string& plannedMain) {
+    return validateProjectedPlan(request, expected, plannedMain, nullptr);
+}
+SshConfigurationValidationResult SshVerifiedActivationAdapter::validateMfaPlan(
+    const SshVerifiedActivationRequest& request, const SshReleaseAdmission& expected, const std::string& plannedMain,
+    std::optional<SshVerifiedActivationRequest::MfaRequirement> proposed) {
+    return validateProjectedPlan(request, expected, plannedMain, &proposed);
 }
 SshVerifiedActivationResult SshVerifiedActivationAdapter::releaseConfiguration(
     const SshVerifiedActivationRequest& request,const SshReleaseAdmission& admission) {
@@ -877,7 +953,7 @@ std::map<std::string,std::string> SshVerifiedActivationResult::observedFacts() c
 }
 bool SshVerifiedActivationAdapter::sameInputGeneration(const SshVerifiedActivationRequest& before,
     const SshVerifiedActivationRequest& after,bool mainMayDiffer) {
-    if(before.allowReleasedPortSet!=after.allowReleasedPortSet||before.intent!=after.intent||before.policies!=after.policies||before.reference.unit!=after.reference.unit||
+    if(before.mfa!=after.mfa||before.allowReleasedPortSet!=after.allowReleasedPortSet||before.intent!=after.intent||before.policies!=after.policies||before.reference.unit!=after.reference.unit||
        before.reference.paths.empty()||before.observedMetadata.empty()||
        before.reference.paths.size()!=after.reference.paths.size())return false;
     auto expected=before.observedMetadata,actual=after.observedMetadata;const auto main=detail::inputProfile().mainFile;
@@ -885,7 +961,8 @@ bool SshVerifiedActivationAdapter::sameInputGeneration(const SshVerifiedActivati
     if(expected!=actual)return false;
     for(std::size_t i=0;i<before.reference.paths.size();++i) {
         const auto& a=before.reference.paths[i];const auto& b=after.reference.paths[i];
-        if(a.path!=b.path||a.kind!=b.kind||a.manifest!=b.manifest||(!(mainMayDiffer&&a.path==main)&&a.sha256!=b.sha256))return false;
+        if(a.path!=b.path||a.kind!=b.kind||a.manifest!=b.manifest||a.directories!=b.directories||
+           (!(mainMayDiffer&&a.path==main)&&a.sha256!=b.sha256))return false;
     }
     return true;
 }

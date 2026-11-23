@@ -1,7 +1,37 @@
 #pragma once
 #include "modules/net/ssh/SshConfigSyntax.h"
 #include <charconv>
+#include <array>
 #include <set>
+#include <string_view>
+
+inline constexpr std::string_view kSshMfaPamService = "fic-sshd-mfa";
+inline constexpr std::string_view kSshMfaKeyChain = "publickey,keyboard-interactive:pam";
+inline constexpr std::string_view kSshMfaPasswordChain = "password,keyboard-interactive:pam";
+inline constexpr std::array<std::pair<std::string_view, std::string_view>, 6> kSshMfaValues{{
+    {"usepam", "yes"}, {"passwordauthentication", "yes"}, {"pubkeyauthentication", "yes"},
+    {"kbdinteractiveauthentication", "yes"}, {"permitemptypasswords", "no"},
+    {"pamservicename", kSshMfaPamService}
+}};
+
+// Whitespace separates alternatives. Match each complete ordered chain.
+inline bool sshMfaAuthenticationMethods(std::string_view arguments) {
+    constexpr std::string_view spaces = " \t";
+    if (arguments.size() > 256) return false;
+    bool key = false;
+    bool password = false;
+    for (auto start = arguments.find_first_not_of(spaces);
+         start != std::string_view::npos;) {
+        const auto end = arguments.find_first_of(spaces, start);
+        const auto chain = arguments.substr(start, end == std::string_view::npos ? end : end - start);
+        if (chain == kSshMfaKeyChain && !key) key = true;
+        else if (chain == kSshMfaPasswordChain && !password) password = true;
+        else return false;
+        if (end == std::string_view::npos) break;
+        start = arguments.find_first_not_of(spaces, end);
+    }
+    return key && password;
+}
 
 // One policy order for runtime audit and the verified immutable input closure.
 // Global values remain exact; this order is only for conditional restrictions.

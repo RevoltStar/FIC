@@ -74,9 +74,15 @@ int main(int argc, char** argv) {
 
     PamMfaForm form = PamMfaForm::InteractiveTwoPrompt;
     bool sssd = false;
+    std::optional<fic::platform::PamFaillockStrategy> faillock;
     if (argc >= 4) {
         const std::string family(argv[2]);
         if (family == "ssh") form = PamMfaForm::SshStagedAuthentication;
+        else if (family == "ssh-preauth-required" || family == "ssh-preauth-requisite") {
+            form = PamMfaForm::SshStagedAuthentication;
+            faillock = family == "ssh-preauth-required" ? fic::platform::PamFaillockStrategy::PreauthRequired
+                                                        : fic::platform::PamFaillockStrategy::PreauthRequisite;
+        }
         else if (family == "forward") form = PamMfaForm::SingleInputForwardPass;
         else return 2;
         const std::string primary(argv[3]);
@@ -85,7 +91,7 @@ int main(int argc, char** argv) {
     }
     if (argc == 2 || argc == 4) {
         PamMfaTopology topology;
-        if (!buildDebian13MfaTopology(form, sssd, topology, error)) return 1;
+        if (!buildDebian13MfaTopology(form, sssd, topology, error, faillock.has_value())) return 1;
         if (mode == "profile") std::cout << topology.profile;
         else if (mode == "neutral") std::cout << topology.neutralSlot;
         else if (mode == "required") std::cout << topology.requiredSlot;
@@ -98,7 +104,7 @@ int main(int argc, char** argv) {
     if (mode != "candidate" && mode != "installed") return 2;
     const auto target = mode == "candidate" ? PamMfaProofTarget::Candidate : PamMfaProofTarget::Installed;
     if (!verifyDebian13Mfa(fic::platform::makeBuildPlatformProfile(),
-                         argv[argc - 1], target, form, sssd, error)) {
+                         argv[argc - 1], target, form, sssd, error, faillock)) {
         std::cerr << error << '\n';
         return 1;
     }

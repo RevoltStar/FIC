@@ -3,6 +3,7 @@
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 #include "modules/identity_access/sssd/SssdConfiguration.h"
+#include "incident/PamIncidentAccessGateVerifier.h"
 
 #include <fic/core/fs/RootControlledDirectory.h>
 #include <fic/core/fs/SecureStateFile.h>
@@ -42,7 +43,7 @@ fic::core::SecureStateReadResult readTrusted(const fs::path& file, mode_t mode,
 }
 
 bool trustedModule(const fic::platform::PamPlatformConfig& pam,
-                   const std::string& module, std::string& error) {
+                   const std::string& module, std::string& error, fs::path* resolved = nullptr) {
     for (const auto& directory : pam.moduleDirectories) {
         std::error_code ec;
         const auto real = fs::canonical(directory, ec);
@@ -54,7 +55,10 @@ bool trustedModule(const fic::platform::PamPlatformConfig& pam,
         const int saved = errno;
         ::close(fd);
         if (rc == 0 && S_ISREG(info.st_mode) && info.st_uid == 0 &&
-            (info.st_mode & 0022) == 0) return true;
+            (info.st_mode & 0022) == 0) {
+            if (resolved) *resolved = real / module;
+            return true;
+        }
         if (rc == 0 || saved != ENOENT) break;
     }
     return reject(error, "missing or untrusted PAM module: " + module);
@@ -195,7 +199,7 @@ bool matchesScope(const fic::platform::PamPlatformConfig& pam, const std::string
 
 bool proveSources(const PamEffectiveStack& stack, const fs::path& pamDir,
                   const fs::path& service, std::string& error,
-                  const std::string& dedicatedSlot = {}) {
+                  const std::string& dedicatedSlot = {}, bool sshFaillock = false) {
     const std::set<std::string> inertSources{"common-account", "common-password", "common-session"};
     bool commonIncluded = false;
     for (const auto& file : stack.sourceFiles) {
@@ -204,7 +208,9 @@ bool proveSources(const PamEffectiveStack& stack, const fs::path& pamDir,
             ? (name == "common-auth" || name == mfaSlotName || name == "fic-empty-password" ||
                name == "fic-faillock-preauth" || name == "fic-faillock-authfail" ||
                name == "fic-faillock-authsucc")
-            : name == dedicatedSlot;
+            : name == dedicatedSlot || (sshFaillock &&
+                (name == "fic-faillock-preauth" || name == "fic-faillock-authfail" ||
+                 name == "fic-faillock-authsucc"));
         if (file.parent_path() != pamDir ||
             (file != service && !authSource && inertSources.count(name) == 0))
             return reject(error, "unexpected MFA PAM include source: " + file.string());
@@ -237,6 +243,9 @@ bool proveSources(const PamEffectiveStack& stack, const fs::path& pamDir,
                   (rule.includeTarget == "fic-faillock-preauth" ||
                    rule.includeTarget == "fic-faillock-authfail" ||
                    rule.includeTarget == "fic-faillock-authsucc")))) continue;
+            if (sshFaillock && name == dedicatedSlot && rule.includeKind == PamIncludeKind::Include &&
+                (rule.includeTarget == "fic-faillock-preauth" || rule.includeTarget == "fic-faillock-authfail" ||
+                 rule.includeTarget == "fic-faillock-authsucc")) continue;
             return reject(error, "unexpected MFA PAM include directive");
         }
     }
@@ -292,6 +301,52 @@ bool provePasswordIdentities(bool sssd, std::string& error) {
     return true;
 }
 
+bool sameEffectiveRules(const std::vector<PamStackEntry>& entries, const std::vector<PamRule>& rules) {
+    if (entries.size() != rules.size()) return false;
+    for (std::size_t i = 0; i < rules.size(); ++i) {
+        const auto& actual = entries[i].rule;
+        const auto& expected = rules[i];
+        if (entries[i].isSubstack() || actual.source != expected.source ||
+            actual.includeKind != PamIncludeKind::None || actual.module != expected.module ||
+            actual.group != expected.group || actual.control != expected.control ||
+            actual.arguments != expected.arguments) return false;
+    }
+    return true;
+}
+
+bool expandMfaFaillockSlots(const fs::path& dir, fic::platform::PamFaillockStrategy strategy,
+                            std::vector<PamRule>& rules, std::string& error) {
+    using fic::platform::PamFaillockStrategy;
+    if (strategy != PamFaillockStrategy::PreauthRequisite && strategy != PamFaillockStrategy::PreauthRequired)
+        return reject(error, "unsupported SSH MFA faillock strategy");
+    std::vector<PamRule> expanded;
+    for (const auto& rule : rules) {
+        if (rule.includeKind == PamIncludeKind::None) {
+            expanded.push_back(rule);
+            continue;
+        }
+        const auto path = dir / rule.includeTarget;
+        const auto source = readTrusted(path, 0, 4096, error);
+        std::vector<PamRule> children;
+        if (source.status != SecureStateReadStatus::Proven ||
+            !PamConfiguration::parseRulesContent(path, source.content, children, error) ||
+            children.size() != 1 || children[0].group != PamManagementGroup::Auth ||
+            children[0].includeKind != PamIncludeKind::None)
+            return reject(error, "unexpected SSH MFA faillock slot: " + rule.includeTarget);
+        const auto& child = children.front();
+        const bool matches = rule.includeTarget == "fic-faillock-authsucc"
+            ? child.module == "pam_deny.so" && child.arguments.empty() && child.control == "optional"
+            : child.module == "pam_faillock.so" && (rule.includeTarget == "fic-faillock-preauth"
+                ? child.arguments == std::vector<std::string>{"preauth"} &&
+                    child.control == (strategy == PamFaillockStrategy::PreauthRequisite ? "requisite" : "required")
+                : child.arguments == std::vector<std::string>{"authfail"} && child.control == "[default=die]");
+        if (!matches) return reject(error, "incompatible SSH MFA faillock slot: " + rule.includeTarget);
+        expanded.push_back(child);
+    }
+    rules.swap(expanded);
+    return true;
+}
+
 } // namespace
 
 bool buildDebian13MfaTopology(const std::vector<PamMfaFactor>& factors,
@@ -304,8 +359,10 @@ bool buildDebian13MfaTopology(const std::vector<PamMfaFactor>& factors,
 }
 
 bool buildDebian13MfaTopology(PamMfaForm form, bool hasSssdPasswordRoute,
-                             PamMfaTopology& topology, std::string& error) {
+                             PamMfaTopology& topology, std::string& error, bool sshFaillock) {
     topology = {};
+    if (sshFaillock && form != PamMfaForm::SshStagedAuthentication)
+        return reject(error, "faillock attachment requires the staged SSH topology");
     topology.neutralSlot = mfaNeutralSlot;
     switch (form) {
     case PamMfaForm::InteractiveTwoPrompt:
@@ -323,24 +380,30 @@ bool buildDebian13MfaTopology(PamMfaForm form, bool hasSssdPasswordRoute,
         topology.slotName = "fic-mfa-ssh-auth";
         // First password stage jumps over the two OTP rules. The OTP
         // branch finishes the substack without prompting for a password.
-        topology.requiredSlot =
-            "auth [success=2 auth_err=ignore ignore=ignore default=die] pam_fic_ssh_stage.so\n";
-        topology.requiredSlot += std::string(mfaIdentityGuard) +
-            "auth [success=done default=die] " + mfaGoogleOptions + "\n";
+        topology.requiredSlot = std::string("auth [success=") + (sshFaillock ? "4" : "2") +
+            " auth_err=ignore ignore=ignore default=die] pam_fic_ssh_stage.so\n";
+        topology.requiredSlot += std::string(mfaIdentityGuard) + (sshFaillock
+            ? "auth [success=ok default=die] " : "auth [success=done default=die] ") + mfaGoogleOptions + "\n";
+        if (sshFaillock)
+            topology.requiredSlot += "auth include fic-faillock-authsucc\n"
+                "auth [success=done default=die] pam_permit.so\nauth include fic-faillock-preauth\n";
         break;
     default:
         return reject(error, "unsupported Debian 13 MFA topology");
     }
     topology.attachment = "auth substack " + topology.slotName + "\n";
     if (form != PamMfaForm::InteractiveTwoPrompt) {
-        topology.requiredSlot += hasSssdPasswordRoute ? "auth [success=2 default=ignore] "
-                                                      : "auth [success=1 default=ignore] ";
+        const int afterUnix = 1 + static_cast<int>(hasSssdPasswordRoute) + static_cast<int>(sshFaillock);
+        topology.requiredSlot += "auth [success=" + std::to_string(afterUnix) + " default=ignore] ";
         topology.requiredSlot += "pam_unix.so";
         if (form == PamMfaForm::SingleInputForwardPass)
             topology.requiredSlot += " use_first_pass";
         topology.requiredSlot += '\n';
         if (hasSssdPasswordRoute)
-            topology.requiredSlot += "auth [success=1 default=ignore] pam_sss.so use_first_pass\n";
+            topology.requiredSlot += sshFaillock
+                ? "auth [success=2 default=ignore] pam_sss.so use_first_pass\n"
+                : "auth [success=1 default=ignore] pam_sss.so use_first_pass\n";
+        if (sshFaillock) topology.requiredSlot += "auth include fic-faillock-authfail\n";
         topology.requiredSlot += "auth requisite pam_deny.so\nauth required pam_permit.so\n";
     }
     error.clear();
@@ -417,7 +480,10 @@ bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
 
 bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
                       const std::string& service, PamMfaProofTarget target,
-                      PamMfaForm form, bool hasSssdPasswordRoute, std::string& error) {
+                      PamMfaForm form, bool hasSssdPasswordRoute, std::string& error,
+                      std::optional<fic::platform::PamFaillockStrategy> sshFaillock) {
+    if (sshFaillock && form != PamMfaForm::SshStagedAuthentication)
+        return reject(error, "faillock attachment requires staged SSH");
     if (form == PamMfaForm::InteractiveTwoPrompt)
         return verifyDebian13Mfa(platform, service, target, error);
     const auto& pam = platform.pam;
@@ -426,7 +492,7 @@ bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
         service != (ssh ? mfaSshService : "xrdp-sesman"))
         return reject(error, "unsupported dedicated Debian 13 MFA PAM service");
     PamMfaTopology topology;
-    if (!buildDebian13MfaTopology(form, hasSssdPasswordRoute, topology, error)) return false;
+    if (!buildDebian13MfaTopology(form, hasSssdPasswordRoute, topology, error, sshFaillock.has_value())) return false;
     const auto directory = pam.configDirectories.front();
     const auto serviceFile = directory / service;
     const auto slot = directory / topology.slotName;
@@ -439,16 +505,19 @@ bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
     PamConfiguration configuration(pam);
     PamEffectiveStack stack;
     if (!configuration.buildEffectiveStack(service, PamManagementGroup::Auth, stack, error) ||
-        !proveSources(stack, directory, serviceFile, error, topology.slotName)) return false;
+        !proveSources(stack, directory, serviceFile, error, topology.slotName, sshFaillock.has_value())) return false;
     if (stack.entries.size() != 1 || !stack.entries.front().isSubstack() ||
         stack.entries.front().rule.source != serviceFile ||
-        stack.entries.front().rule.includeTarget != topology.slotName ||
-        !matchesMfaSlotRules(stack.entries.front().substack, slot, actual.content))
+        stack.entries.front().rule.includeTarget != topology.slotName)
         return reject(error, "dedicated MFA service must have one exact auth substack");
 
     std::vector<PamRule> rules;
     if (!PamConfiguration::parseRulesContent(slot, topology.requiredSlot, rules, error))
         return false;
+    if (sshFaillock && !expandMfaFaillockSlots(directory, *sshFaillock, rules, error)) return false;
+    const auto& installed = stack.entries.front().substack;
+    if (candidate ? !matchesMfaSlotRules(installed, slot, actual.content) : !sameEffectiveRules(installed, rules))
+        return reject(error, "dedicated MFA service does not reach the expected rules");
     for (const auto& rule : rules) {
         if (!trustedModule(pam, rule.module, error)) return false;
     }
@@ -460,6 +529,92 @@ bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
     return provePasswordIdentities(hasSssdPasswordRoute, error) &&
            proveTotpStore(error) &&
            proveMfaAuthenticationPaths(stack, pam, slot, slot, hasSssdPasswordRoute, error, form);
+}
+
+bool verifyDebian13SshMfaInputs(const fic::platform::PlatformProfile& platform, bool sssd,
+                               std::optional<fic::platform::PamFaillockStrategy> faillock,
+                               const std::map<std::string, std::string>& inputs, std::string& error) {
+    const auto& pam = platform.pam;
+    const auto covered = [&](const fs::path& path) {
+        return inputs.count(path.string()) != 0 ||
+            reject(error, "SSH MFA activation lacks authorized PAM input: " + path.string());
+    };
+    if (platform.id != "debian-13" || pam.configDirectories.empty())
+        return reject(error, "unsupported SSH MFA activation platform");
+    if (!covered("/etc/nsswitch.conf") || !covered("/etc/passwd") ||
+        (faillock && !covered("/etc/security/faillock.conf"))) return false;
+    if (sssd) {
+        if (!covered("/etc/sssd/sssd.conf")) return false;
+        std::error_code ec;
+        for (fs::directory_iterator it("/etc/sssd/conf.d", ec), end; !ec && it != end; it.increment(ec))
+            if (it->path().extension() == ".conf" && !covered(it->path())) return false;
+        if (ec) return reject(error, "cannot establish SSSD drop-in coverage");
+    }
+    std::error_code ec;
+    for (fs::directory_iterator it(store, ec), end; !ec && it != end; it.increment(ec))
+        if (!covered(it->path())) return false;
+    if (ec) return reject(error, "cannot establish SSH MFA registration coverage");
+
+    PamConfiguration config(pam);
+    const auto pinStack = [&](const PamEffectiveStack& stack) {
+        for (const auto& source : stack.sourceFiles) if (!covered(source)) return false;
+        std::vector<const PamStackEntry*> pending;
+        for (const auto& entry : stack.entries) pending.push_back(&entry);
+        while (!pending.empty()) {
+            const auto& entry = *pending.back();
+            pending.pop_back();
+            if (entry.isSubstack()) {
+                for (const auto& child : entry.substack) pending.push_back(&child);
+                continue;
+            }
+            fs::path module;
+            if (fs::path(entry.rule.module).filename() != entry.rule.module ||
+                !trustedModule(pam, entry.rule.module, error, &module) || !covered(module)) return false;
+        }
+        return true;
+    };
+    PamEffectiveStack auth;
+    if (!config.buildEffectiveStack(mfaSshService, PamManagementGroup::Auth, auth, error) ||
+        !pinStack(auth)) return false;
+    PamEffectiveStack legacyAuth;
+    if (!config.buildEffectiveStack("sshd", PamManagementGroup::Auth, legacyAuth, error) ||
+        !pinStack(legacyAuth)) return false;
+    const auto hasLegacyFaillock = [](const auto& self, const auto& entries) -> bool {
+        return std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
+            return entry.rule.module == "pam_faillock.so" || self(self, entry.substack);
+        });
+    };
+    if (hasLegacyFaillock(hasLegacyFaillock, legacyAuth.entries) != faillock.has_value())
+        return reject(error, "SSH MFA faillock reference disagrees with the existing sshd authentication stack");
+    if (faillock && detectPamFaillockStrategy(legacyAuth, error) != faillock)
+        return reject(error, "SSH MFA and existing sshd require the same faillock strategy");
+    for (const auto group : {PamManagementGroup::Account, PamManagementGroup::Password,
+                             PamManagementGroup::Session}) {
+        PamEffectiveStack legacy, dedicated;
+        if (!config.buildEffectiveStack("sshd", group, legacy, error) ||
+            !config.buildEffectiveStack(mfaSshService, group, dedicated, error) ||
+            !pinStack(legacy) || !pinStack(dedicated)) return false;
+        std::vector<PamRule> expected;
+        for (const auto& entry : legacy.entries) {
+            auto rule = entry.rule;
+            if (rule.source.filename() == "sshd") rule.source.replace_filename(mfaSshService);
+            expected.push_back(std::move(rule));
+        }
+        if (!sameEffectiveRules(dedicated.entries, expected))
+            return reject(error, "dedicated SSH MFA changes a non-auth PAM stack");
+        if (group == PamManagementGroup::Account && faillock) {
+            const auto count = std::count_if(dedicated.entries.begin(), dedicated.entries.end(), [&](const auto& entry) {
+                return entry.rule.source == pam.configDirectories.front() / "fic-faillock-account" &&
+                    entry.rule.module == "pam_faillock.so" && entry.rule.control == "required" &&
+                    entry.rule.arguments.empty();
+            });
+            if (count != 1) return reject(error, "SSH MFA lacks the required faillock account rule");
+        }
+    }
+    // Verify the actual target, using the same incident account gate proof.
+    return verifyDebian13Mfa(platform, mfaSshService, PamMfaProofTarget::Installed,
+                            PamMfaForm::SshStagedAuthentication, sssd, error, faillock) &&
+           fic::incident::PamIncidentAccessGateVerifier::proveRequiredService(pam, mfaSshService, error);
 }
 
 } // namespace fic::identity::pam

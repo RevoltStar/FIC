@@ -4,6 +4,7 @@
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 
 #include <string>
+#include <map>
 #include <vector>
 
 namespace fic::identity::pam {
@@ -54,7 +55,8 @@ bool buildDebian13MfaTopology(const std::vector<PamMfaFactor>& factors,
                              PamMfaTopology& topology, std::string& error);
 
 bool buildDebian13MfaTopology(PamMfaForm form, bool hasSssdPasswordRoute,
-                             PamMfaTopology& topology, std::string& error);
+                             PamMfaTopology& topology, std::string& error,
+                             bool sshFaillock = false);
 
 // StructuralEffective proof of a declared Debian 13 PAM service at the
 // configuration snapshot. Candidate substitutes the canonical neutral slot
@@ -68,7 +70,15 @@ bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
 // effective AuthenticationMethods and runtime activation belong to D13-3B.
 bool verifyDebian13Mfa(const fic::platform::PlatformProfile& platform,
                       const std::string& service, PamMfaProofTarget target,
-                      PamMfaForm form, bool hasSssdPasswordRoute, std::string& error);
+                      PamMfaForm form, bool hasSssdPasswordRoute, std::string& error,
+                      std::optional<fic::platform::PamFaillockStrategy> sshFaillock = {});
+
+// Pinned input paths must be covered by the caller-authorized activation
+// snapshot. This function checks necessary coverage and effective PAM graphs.
+bool verifyDebian13SshMfaInputs(const fic::platform::PlatformProfile& platform, bool sssd,
+                               std::optional<fic::platform::PamFaillockStrategy> faillock,
+                               const std::map<std::string, std::string>& inputs,
+                               std::string& error);
 
 } // namespace fic::identity::pam
 #endif

@@ -62,3 +62,35 @@ uses the production selector and real Google Authenticator. The gate
 reuses the online TLS/LDAP test fixture for both SSH authentication
 chains and the forward-pass conversation. The latter uses a PAM probe
 and reports lifecycle success, with no claim of an xrdp client session.
+## Verified SSH cutover
+
+Use the same Debian 13 runtime image and real DEBs with the production
+PAM modules. Build the `openssh_native_driver` target from
+`tests/integration/verified_config_service/openssh_native` with
+`FIC_TARGET_PLATFORM=debian-13`. Verified activation needs rootful
+Docker in the initial user namespace to prove complete xattr visibility.
+The runner creates a disposable systemd container with isolated mounts
+and loopback networking.
+
+```sh
+FIC_D13_MFA_PROBE=/path/to/d13_mfa_probe \
+FIC_D13_MFA_SSH_MODULE=/path/to/pam_fic_ssh_stage.so \
+FIC_D13_INCIDENT_PAM_MODULE=/path/to/pam_fic_access.so \
+FIC_D13_SSH_CUTOVER_DRIVER=/path/to/openssh_native_driver \
+FIC_D13_SSH_CUTOVER_SCOPE=local \
+  bash tests/integration/package-lifecycle/run-deb.sh \
+  DEBIAN13_RUNTIME_IMAGE /path/to/DEBS d13_mfa_native.py
+```
+
+Run again with `FIC_D13_SSH_CUTOVER_SCOPE=sssd` for the LDAP-backed
+account. The C++ driver uses the managed block planner, snapshot
+validation, CAS and verified activation for the switch and rollback.
+The fixture checks both factor combinations, rejection of single
+methods, target incident PAM decisions, pinned input drift and a
+stopped service. The separate runtime logs include the verified
+generation and reference digest without credentials.
+
+To exercise tally accounting and lockout with the existing owned PAM
+slots, omit the cutover driver and set `FIC_D13_SSH_FAILLOCK` to
+`preauth-required` or `preauth-requisite`. Those PAM/SSH tests can
+also run under rootless Podman.

@@ -12,6 +12,24 @@ add_executable(verified_config_service_native_tests
     ${FIC_ROOT}/fic/src/service/VerifiedConfigServiceActivator.cpp
     ${FIC_ROOT}/fic/src/service/VerifiedConfigMountSupport.cpp
     ${FIC_ROOT}/fic/src/service/ssh/SshVerifiedActivationAdapter.cpp
+    ${FIC_ROOT}/fic/src/incident/PamIncidentAccessGateVerifier.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamMfaTopology.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PwhistoryConfigFile.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/sssd/SssdConfiguration.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${FIC_ROOT}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
     ${FIC_ROOT}/fic/src/service/ssh/SshVerifiedInputClosure.cpp
     ${FIC_ROOT}/fic/src/service/ssh/UbuntuSshSocketFlow.cpp
     ${FIC_ROOT}/fic/src/service/ssh/SshListenerProof.cpp

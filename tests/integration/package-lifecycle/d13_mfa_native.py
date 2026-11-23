@@ -228,6 +228,13 @@ def exercise_sssd():
     key, registration = prepare_secret(domain)
     nss = Path("/etc/nsswitch.conf")
     original_nss = nss.read_text()
+    if os.environ.get("FIC_D13_SSH_CUTOVER") == "sssd":
+        from mfa_cases import exercise_verified_cutover
+        try:
+            exercise_verified_cutover(run, domain, primary, lambda: totp(key), lambda: wrong_totp(key), True)
+        finally:
+            registration.unlink()
+        return
 
     def matrix(label):
         for name, provider in ((user, "files"), (empty, "files"), (domain, "sss")):
@@ -289,6 +296,17 @@ def exercise_sssd():
         registration.unlink()
 
 
+def run_sssd_fixture(nss_file):
+    run("pam-auth-update", "--enable", "sss")
+    (out / "common-auth.sssd").write_bytes(common.read_bytes())
+    nss = re.sub(r"(?m)^passwd:.*$", "passwd: files sss", nss_file.read_text())
+    nss_file.write_text(re.sub(r"(?m)^shadow:.*$", "shadow: files", nss))
+    env = dict(os.environ, FIC_SSSD_RESEARCH="1",
+               FIC_FIXTURE_LOCAL_PASSWORD=password,
+               FIC_SSSD_HOST_MNT=os.environ["FIC_HOST_MNT_INODE"])
+    run("python3", "/usr/local/bin/r2_auth.py", "debian-13", "--mfa-only", env=env, timeout=420)
+
+
 def main():
     run("mount", "--rbind", "/sys", "/sys")
     run("mount", "-o", "remount,bind,ro", "/sys")
@@ -306,6 +324,9 @@ def main():
     packages = Path("/var/tmp/fic-packages")
     run("dpkg", "-i", *(str(next(packages.glob(name + "_*.deb")))
                        for name in ("fic-dick", "fic", "fic-cli")), timeout=180)
+    cutover = os.environ.get("FIC_D13_SSH_CUTOVER")
+    if cutover:
+        run("install", "-m", "0644", "/var/tmp/pam_fic_access-cutover.so", module_dir / "pam_fic_access.so")
     assert not slot.exists() and not Path("/usr/share/pam-configs/fic-mfa-hook").exists()
     run("pam-auth-update", "--disable", "sss")
     # libnss-sss edits both databases during installation. The password
@@ -344,9 +365,25 @@ def main():
     common.write_text(generated)
     lockout = "enable_authentication_lockout"
     deny_empty = "deny_empty_password_login"
+    ssh_faillock = os.environ.get("FIC_D13_SSH_FAILLOCK")
+    if ssh_faillock:
+        assert ssh_faillock in ("preauth-required", "preauth-requisite")
+        run("/opt/fic/bin/fic-cli", "policy", "set", "IDENTITY_ACCESS", lockout,
+            ssh_faillock.replace("-", "_"))
     for name in (lockout, deny_empty):
         policy("enable", name)
         policy("apply", name)
+    if cutover == "sssd":
+        run_sssd_fixture(nss_file)
+        return
+    if cutover == "local":
+        from mfa_cases import exercise_verified_cutover
+        exercise_verified_cutover(run, user, password, lambda: totp(key), lambda: wrong_totp(key))
+        return
+    if ssh_faillock:
+        exercise_ssh(run, user, password, lambda: totp(key), lambda: wrong_totp(key),
+                     registration, False, ssh_faillock)
+        return
     structural("candidate")
     slot.write_text(required)
     structural("installed")
@@ -409,14 +446,7 @@ def main():
     policy("apply", deny_empty)
     assert (pam / "fic-empty-password").read_bytes() == existing_guard
     policy("apply", lockout)
-    run("pam-auth-update", "--enable", "sss")
-    (out / "common-auth.sssd").write_bytes(common.read_bytes())
-    nss = re.sub(r"(?m)^passwd:.*$", "passwd: files sss", nss_file.read_text())
-    nss_file.write_text(re.sub(r"(?m)^shadow:.*$", "shadow: files", nss))
-    env = dict(os.environ, FIC_SSSD_RESEARCH="1",
-               FIC_FIXTURE_LOCAL_PASSWORD=password,
-               FIC_SSSD_HOST_MNT=os.environ["FIC_HOST_MNT_INODE"])
-    run("python3", "/usr/local/bin/r2_auth.py", "debian-13", "--mfa-only", env=env, timeout=420)
+    run_sssd_fixture(nss_file)
     print("D13-2 real PAM and StructuralEffective passed", flush=True)
 
 

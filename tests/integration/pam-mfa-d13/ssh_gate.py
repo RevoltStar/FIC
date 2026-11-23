@@ -29,10 +29,11 @@ fi
 """
 
 
-def exercise_ssh(run, subject, password, valid_code, wrong_code, registration, sssd):
+def exercise_ssh(run, subject, password, valid_code, wrong_code, registration, sssd, faillock=None):
     mode = "sssd" if sssd else "local"
+    family = "ssh" if faillock is None else f"ssh-{faillock}"
     def render(part):
-        return run(PROOF, part, "ssh", mode).stdout
+        return run(PROOF, part, family, mode).stdout
 
     attachment = render("attachment")
     slot = PAM / render("slot-name").strip()
@@ -43,23 +44,23 @@ def exercise_ssh(run, subject, password, valid_code, wrong_code, registration, s
     service.write_text(original.replace("@include common-auth", attachment.rstrip()))
     slot.write_text(render("neutral"))
     try:
-        run(PROOF, "candidate", "ssh", mode, SERVICE)
+        run(PROOF, "candidate", family, mode, SERVICE)
         body = render("required")
         slot.write_text(body)
-        run(PROOF, "installed", "ssh", mode, SERVICE)
+        run(PROOF, "installed", family, mode, SERVICE)
         service.write_text(service.read_text() + "auth sufficient pam_permit.so\n")
-        run(PROOF, "installed", "ssh", mode, SERVICE, expected=False)
+        run(PROOF, "installed", family, mode, SERVICE, expected=False)
         service.write_text(original.replace("@include common-auth", attachment.rstrip()))
 
         with tempfile.TemporaryDirectory(prefix="fic-native-ssh-") as path:
             run_matrix(run, Path(path), subject, password, valid_code, wrong_code,
-                       registration, mode)
+                       registration, mode, faillock)
     finally:
         service.unlink()
         slot.unlink()
 
 
-def run_matrix(run, directory, subject, password, valid_code, wrong_code, registration, mode):
+def run_matrix(run, directory, subject, password, valid_code, wrong_code, registration, mode, faillock):
     account = pwd.getpwnam(subject)
     home = Path(account.pw_dir)
     home.mkdir(exist_ok=True)
@@ -179,6 +180,36 @@ AuthenticationMethods {CHAINS}
 
     pwd_method = "password,keyboard-interactive"
     key_method = "publickey,keyboard-interactive"
+    if faillock is not None:
+        def tally():
+            raw = run("faillock", "--user", subject).stdout
+            return sum(line.rstrip().endswith("V") for line in raw.splitlines())
+
+        try:
+            run("faillock", "--user", subject, "--reset")
+            assert tally() == 0
+            for n in range(2):
+                attempt(f"{faillock} wrong password", pwd_method, ["password"], bad_password=True)
+                assert tally() == n + 1
+            attempt(f"{faillock} wrong OTP after valid password", pwd_method, ["password", "otp"],
+                    bad_otp=True)
+            assert tally() == 2
+            attempt(f"{faillock} reaches threshold", pwd_method, ["password"], bad_password=True)
+            assert tally() == 3
+            attempt(f"{faillock} locked despite valid factors", pwd_method, ["password"])
+            run("faillock", "--user", subject, "--reset")
+            attempt(f"{faillock} password and OTP after reset", pwd_method, ["password", "otp"], success=True)
+            attempt(f"{faillock} wrong password after reset", pwd_method, ["password"], bad_password=True)
+            assert tally() == 1
+            attempt(f"{faillock} complete authentication clears the tally", pwd_method,
+                    ["password", "otp"], success=True)
+            assert tally() == 0
+            attempt(f"{faillock} key and OTP after reset", key_method, ["otp"], success=True, key="valid-key")
+            assert tally() == 0
+            print(f"{mode} {faillock} SSH faillock passed", flush=True)
+        finally:
+            run("faillock", "--user", subject, "--reset")
+        return
     attempt("valid password and OTP", pwd_method, ["password", "otp"], success=True)
     attempt("valid key and OTP", key_method, ["otp"], success=True, key="valid-key")
     attempt("wrong password", pwd_method, ["password"], bad_password=True)

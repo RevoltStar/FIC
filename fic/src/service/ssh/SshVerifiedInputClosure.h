@@ -10,6 +10,7 @@ namespace fic::service::ssh::detail {
 struct InputProfile {
     std::string unit, mainFile, base, fragments, environment, optionVariable;
     bool alt=false;
+    bool debian13=false;
 };
 InputProfile inputProfile();
 using InputBytes = std::map<std::string, std::string>;
@@ -21,11 +22,11 @@ struct Closure {
     // in order, while each physical Port is planned once by the caller.
     std::map<std::string,std::set<std::size_t>> globalPorts;
 };
-Closure validateClosure(const ActivationRequest&, const InputBytes&, const std::map<std::string, std::string>& policies, const InputProfile& profile=inputProfile(), SshActivationIntent intent=SshActivationIntent::SelectedPolicies);
+Closure validateClosure(const ActivationRequest&, const InputBytes&, const std::map<std::string, std::string>& policies, const InputProfile& profile=inputProfile(), SshActivationIntent intent=SshActivationIntent::SelectedPolicies, bool requireMfa=false);
 void validateCompatibleDropIn(const std::string& bytes);
 void validateEmptyOptions(const std::string& bytes, const std::string& variable="SSHD_OPTS");
 void validateLaunchProfile(const std::map<std::string, std::string>& launch, const InputProfile&, bool socketProfile);
 std::set<std::string> discoverHostKeys(const ActivationRequest&, const InputBytes&,
-    const std::map<std::string,std::string>& policies,SshActivationIntent intent=SshActivationIntent::SelectedPolicies);
+    const std::map<std::string,std::string>& policies,SshActivationIntent intent=SshActivationIntent::SelectedPolicies,bool requireMfa=false);
 void validatePolicies(const std::map<std::string, std::string>& policies,SshActivationIntent intent=SshActivationIntent::SelectedPolicies);
 } // namespace fic::service::ssh::detail

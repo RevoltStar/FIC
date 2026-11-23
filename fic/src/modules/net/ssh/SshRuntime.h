@@ -73,6 +73,9 @@ public:
     // semantically accepted by sshd.
     bool validateConfiguration(std::string& error) const;
     bool validateSyntax(std::string& error) const;
+    // Requires a separately trusted configuration closure which excludes
+    // conditional overrides of the protected authentication directives.
+    SshComplianceResult mfaConfigurationCompliance() const;
     SshActivationResult activateIfRunning() const;
 
 private:
@@ -81,10 +84,11 @@ private:
     SshRuntimeOptions options_;
     const fic::platform::PlatformExecutableResolver& executables_;
     SshCommandRunner runner_;
-    bool configurationProbe(const std::string& mode,ProcessResult&,std::string&) const;
+    bool configurationProbe(const std::string& mode,ProcessResult&,std::string&,
+                            const std::string& context = {}) const;
 
     bool loadEffectiveConfiguration(EffectiveConfiguration& configuration,
-                                    std::string& error) const;
+                                    std::string& error, const std::string& context = {}) const;
     SshComplianceResult verifyLoadedConfiguration(
         const EffectiveConfiguration& configuration,
         const std::string& parameter, const std::string& expectedValue) const;

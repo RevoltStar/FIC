@@ -114,7 +114,8 @@ SshRuntime::SshRuntime(
     }
 }
 
-bool SshRuntime::configurationProbe(const std::string& mode,ProcessResult& result,std::string& error) const {
+bool SshRuntime::configurationProbe(const std::string& mode,ProcessResult& result,std::string& error,
+                                   const std::string& context) const {
     std::filesystem::path sshd;
     if (!executables_.resolve(
             fic::platform::ExecutableId::Sshd, sshd, error)) {
@@ -125,6 +126,7 @@ bool SshRuntime::configurationProbe(const std::string& mode,ProcessResult& resul
     ProcessOptions processOptions;
     processOptions.clearEnvironment = true;
     std::vector<std::string> arguments{mode};
+    if (!context.empty()) arguments.insert(arguments.end(), {"-C", context});
     if(options_.plannedMain) {
         if(!options_.launchArguments.empty()) {error="stdin configuration proof requires empty stock launch options";return false;}
         arguments.insert(arguments.end(),{"-f","/dev/stdin"});processOptions.standardInput=*options_.plannedMain;
@@ -145,8 +147,9 @@ bool SshRuntime::configurationProbe(const std::string& mode,ProcessResult& resul
 bool SshRuntime::validateSyntax(std::string& error) const {
     ProcessResult result;return configurationProbe("-t",result,error);
 }
-bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuration,std::string& error) const {
-    ProcessResult result;if(!configurationProbe("-T",result,error))return false;
+bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuration,std::string& error,
+                                            const std::string& context) const {
+    ProcessResult result;if(!configurationProbe("-T",result,error,context))return false;
     configuration.clear();
     std::istringstream lines(result.standardOutput);
     std::string line;
@@ -162,6 +165,27 @@ bool SshRuntime::loadEffectiveConfiguration(EffectiveConfiguration& configuratio
     }
     error.clear();
     return true;
+}
+
+SshComplianceResult SshRuntime::mfaConfigurationCompliance() const {
+    std::string error;
+    if (!validateSyntax(error)) return {SshCompliance::Unknown, error};
+    for (const auto* context : {"", "user=root,host=localhost,addr=127.0.0.1",
+                               "user=fic-mfa-probe,host=localhost,addr=::1"}) {
+        EffectiveConfiguration settings;
+        if (!loadEffectiveConfiguration(settings, error, context))
+            return {SshCompliance::Unknown, error};
+        const auto methods = settings.find("authenticationmethods");
+        if (methods == settings.end() || methods->second.size() != 1 ||
+            !sshMfaAuthenticationMethods(methods->second.front()))
+            return {SshCompliance::NonCompliant, "effective SSH AuthenticationMethods differ from MFA contract"};
+        for (const auto& [name, expected] : kSshMfaValues) {
+            const auto value = settings.find(std::string(name));
+            if (value == settings.end() || value->second.size() != 1 || value->second.front() != expected)
+                return {SshCompliance::NonCompliant, "effective SSH MFA setting differs: " + std::string(name)};
+        }
+    }
+    return {SshCompliance::Compliant, {}};
 }
 
 bool SshRuntime::effectiveValues(const std::string& parameter,
