@@ -35,12 +35,15 @@ but never blocks the dependent if MFA fails, and never appears in
 remain enabled is still allowed. `Required` would create the unacceptable
 regression of blocking MFA disable.
 
-**Why `BackendRequiresCapability("ssh_mfa")` condition:** When
-`ssh_mfa_required.status=DISABLE`, the condition evaluates to false
-(`Ssh::requiresDependencyCapability("ssh_mfa")` returns false), so the
-dependency is skipped entirely — no execution, no warning. When MFA is
-enabled or its status is unknown (fail closed), the condition matches and
-MFA is applied first.
+**Why `BackendRequiresCapability("ssh_mfa")` condition:** The condition decides
+whether the dependency is still required. `Ssh::requiresDependencyCapability`
+("ssh_mfa") reads the RAW `ssh_mfa_required.status` key via
+`ConfigFileHandler::getValue` — `getPolicyStatus()` normalizes every
+non-`ENABLE` value to `DISABLE`, so it must not be used here. Only the
+literal `DISABLE` value skips the dependency (no execution, no warning).
+A missing key, an empty value and an unknown token (`BROKEN`, ...) keep the
+dependency active (fail closed). Old configs without the MFA status key keep
+the dependency and are not rewritten by this change.
 
 **Why not single-apply expansion:** The dependency is evaluated by the planner
 for any apply path that includes an ordinary SSH policy as a root, including
@@ -49,17 +52,36 @@ ownership `Ssh::apply()` fails with `RecoveryRequired`; applying MFA first lets
 the operation succeed in one pass instead of failing.
 
 **Tests:** `testSshMfaOrdering` in
-`tests/fic/policy/PolicyExecutionPlannerTests.cpp` covers: (A) batch apply with
-MFA enabled — MFA applied first, all policies Applied in one pass; (B) MFA
-disabled — SSH policies apply independently, no MFA activation; (C) MFA fails —
-Recommended does not block dependent, failure visible as warning, not masked;
-(D) `enabledRequiredDependents()` returns empty — MFA disable is not blocked.
-Additional regression tests in the same file: `testSshPlatformConfigMfaField`
-(sshMfaRequiredSupported defaults to false / settable to true),
-`testSshMfaBackendCapabilityCondition` (condition matches when MFA enabled,
-skipped when disabled with no warning),
-`testSshMfaRecommendedDoesNotBlockDisable` (Recommended dependents don't block
-MFA disable).
+`tests/fic/policy/PolicyExecutionPlannerTests.cpp` covers the planner
+scenarios with explicit dependencies: (A) batch apply with MFA enabled — MFA
+applied first, all policies Applied in one pass; (B) MFA disabled — SSH
+policies apply independently, no MFA activation; (C) MFA fails — Recommended
+does not block dependent, failure visible as warning, not masked; (D)
+`enabledRequiredDependents()` returns empty — MFA disable is not blocked.
+
+Production-class regression tests live in the dedicated
+`ssh_mfa_dependency_tests` target
+(`tests/fic/modules/net/ssh/SshMfaDependencyTests.cpp`, registered in
+`tests/CMakeLists.txt`). It compiles the REAL ordinary SSH policy classes
+plus BOTH real Debian 12/13 profile sources (each profile source is compiled
+with `-DmakeBuildPlatformProfile=makeDebian{12,13}ProfileForTest`, so one
+binary covers both distros regardless of the build platform) and drives the
+production registry/planner with a recording executor (no real apply runs):
+`testSshMfaStatusSemantics` — the exact five-status table of
+`Ssh::requiresDependencyCapability` on all five real policies;
+`testSshMfaDisabledSkipsDependencyWithoutWarning` — literal DISABLE skips the
+conditional dependency with no MFA result and no WARN;
+`testSshMfaDebian12ProfileDependencies` — Debian 12 keeps DebianVerified with
+`sshMfaRequiredSupported == false`, no policy depends on the unregistered
+MFA, `buildPolicyRegistry` + `validatePolicyDependencyGraph` succeed and a
+batch apply runs all five roots in one pass;
+`testSshMfaDebian13ProfileDependencies` — Debian 13 declares the exact
+Recommended `BackendRequiresCapability("ssh_mfa")` edge on every ordinary
+SSH policy, the graph validates with `SshMfaPolicy` registered,
+`enabledRequiredDependents()` is empty and batch apply executes MFA first in
+one pass. Both original defects were reproduced under these tests by
+temporarily re-applying the `DebianVerified` guard and the normalizing
+status accessor; the tests failed on both and pass on the fixed code.
 
 First activation preflights the projected PAM and SSH configuration, prepares
 the journal, publishes the dedicated auth slot and service, then commits the

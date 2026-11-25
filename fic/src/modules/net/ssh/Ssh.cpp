@@ -118,13 +118,14 @@ bool Ssh::requiresDependencyCapability(const std::string& capability) const {
     if (capability != "ssh_mfa") {
         return true;
     }
-    // Неизвестное или недоказанное состояние MFA не интерпретируется как
-    // DISABLE: зависимость остаётся (fail closed). Зависимость пропускается
-    // только когда ssh_mfa_required явно имеет статус DISABLE.
-    if (!moduleConf->hasPolicyStatus("ssh_mfa_required")) {
-        return true;
-    }
-    return moduleConf->getPolicyStatus("ssh_mfa_required") == "ENABLE";
+    // Только буквальное значение DISABLE пропускает зависимость. Истина
+    // означает "зависимость ещё обязательна": getPolicyStatus() нормализует
+    // любое значение, отличное от ENABLE, в DISABLE, поэтому недоказанное
+    // состояние MFA (отсутствующий ключ, пустое значение, неизвестный
+    // токен) читается напрямую из ключа .status и оставляет зависимость
+    // активной (fail closed).
+    return moduleConf->ConfigFileHandler::getValue(
+        "ssh_mfa_required.status") != "DISABLE";
 }
 
 Ssh::Ssh(fic::platform::SshPlatformConfig platformConfig,

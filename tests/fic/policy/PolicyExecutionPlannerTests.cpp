@@ -7,9 +7,6 @@
 #include "policy/registry/PolicyRegistryJson.h"
 #include "policy/registry/PolicyRegistryInitialization.h"
 
-#include "modules/net/ssh/Ssh.h"
-#include "platform/PlatformProfile.h"
-
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
@@ -80,14 +77,10 @@ public:
     }
 
     bool supportsDependencyCapability(const std::string& capability) const override {
-        return capability == "exempt_group" || capability == "ssh_mfa";
+        return capability == "exempt_group";
     }
-    bool requiresDependencyCapability(const std::string& capability) const override {
-        if (capability == "ssh_mfa") return sshMfaRequired;
-        return backendRequires;
-    }
+    bool requiresDependencyCapability(const std::string&) const override { return backendRequires; }
     bool backendRequires = true;
-    bool sshMfaRequired = true;
 
 private:
     PolicyBehavior& behavior_;
@@ -1489,107 +1482,6 @@ void testSshMfaOrdering(const std::filesystem::path& root) {
     }
 }
 
-// =====================================================================
-// Real SSH policy tests (Debian 12 / Debian 13 / MFA disabled)
-// =====================================================================
-
-namespace {
-
-fic::platform::SshPlatformConfig makeSshSshPlatformConfig(
-    bool mfaSupported, const std::filesystem::path& root) {
-    fic::platform::SshPlatformConfig config;
-    config.configPath = root / "sshd_config";
-    config.includeBasePath = root;
-    config.sshMfaRequiredSupported = mfaSupported;
-    config.serviceUnits = {"ssh.service", "sshd.service"};
-    config.socketUnits = {"ssh.socket", "sshd.socket"};
-    return config;
-}
-
-}
-
-// =====================================================================
-// SSH MFA ordering tests (platform config + BackendRequiresCapability)
-// =====================================================================
-
-// Verifies that sshMfaRequiredSupported defaults to false (Debian 12) and
-// can be set to true (Debian 13). No SSH policy instantiation is needed,
-// avoiding the need to compile the full SSH module in this test target.
-void testSshPlatformConfigMfaField() {
-    fic::platform::SshPlatformConfig config;
-    require(!config.sshMfaRequiredSupported,
-            "sshMfaRequiredSupported must default to false");
-    config.sshMfaRequiredSupported = true;
-    require(config.sshMfaRequiredSupported,
-            "sshMfaRequiredSupported must be settable to true");
-}
-
-// Verifies that the BackendRequiresCapability("ssh_mfa") condition works
-// correctly: when MFA is enabled, the dependency is active; when MFA is
-// disabled, the dependency is skipped (no warning).
-void testSshMfaBackendCapabilityCondition(const std::filesystem::path& root) {
-    for (const bool mfaEnabled : {true, false}) {
-        writeModuleConfig(root, "AUDIT", {
-            {"a", true}, {"b", mfaEnabled}
-        });
-        PolicyBehavior a;
-        PolicyBehavior b;
-        std::vector<std::string> order;
-        PolicyList policies;
-        auto owner = std::make_unique<TestPolicy>(
-            ref("a"), a, order,
-            std::vector<PolicyDependency>{
-                recommended(ref("b"), whenBackendRequiresCapability("ssh_mfa"))});
-        owner->sshMfaRequired = mfaEnabled;
-        policies.push_back(std::move(owner));
-        policies.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
-        PolicyRegistry registry = buildRegistry(std::move(policies));
-        const PolicyApplySummary summary =
-            PolicyExecutionPlanner(registry).execute({{ref("a")}, {}});
-
-        require(a.calls == 1, "dependent must be applied regardless of MFA");
-        require(result(summary, ref("a")).status == PolicyApplyStatus::Applied,
-                "dependent status must be Applied");
-
-        if (mfaEnabled) {
-            const auto& bResult = result(summary, ref("b"));
-            require(bResult.status == PolicyApplyStatus::Applied,
-                    "MFA dependency must be Applied when enabled");
-        } else {
-            // When MFA is disabled, BackendRequiresCapability condition
-            // doesn't match, so dependency is skipped entirely:
-            // no execution, no result, no warning.
-            require(!hasResult(summary, ref("b")),
-                    "disabled MFA dependency must not be executed");
-            require(!hasDiagnostic(
-                        result(summary, ref("a")), "WARN", "ssh_mfa"),
-                    "no WARN about skipped MFA dependency");
-        }
-    }
-}
-
-// Verifies that Recommended MFA dependents do not block MFA disable
-// (enabledRequiredDependents returns empty).
-void testSshMfaRecommendedDoesNotBlockDisable(const std::filesystem::path& root) {
-    writeModuleConfig(root, "AUDIT", {
-        {"a", true}, {"b", true}
-    });
-    PolicyBehavior a;
-    PolicyBehavior b;
-    std::vector<std::string> order;
-    PolicyList policies;
-    policies.push_back(std::make_unique<TestPolicy>(
-        ref("a"), a, order,
-        std::vector<PolicyDependency>{
-            recommended(ref("b"), whenBackendRequiresCapability("ssh_mfa"))}));
-    policies.push_back(std::make_unique<TestPolicy>(ref("b"), b, order));
-    PolicyRegistry registry = buildRegistry(std::move(policies));
-
-    PolicyRef mfa{"AUDIT", "test", "b"};
-    const auto dependents = enabledRequiredDependents(registry, mfa);
-    require(dependents.empty(),
-            "Recommended MFA dependents must not block disabling MFA");
-}
 
 int main() {
     namespace fs = std::filesystem;
@@ -1629,9 +1521,6 @@ int main() {
         testDisabledPolicyDoesNotRaise();
         testIncidentModeDependency(root);
         testSshMfaOrdering(root);
-        testSshPlatformConfigMfaField();
-        testSshMfaBackendCapabilityCondition(root);
-        testSshMfaRecommendedDoesNotBlockDisable(root);
     } catch (...) {
         fs::remove_all(root);
         throw;

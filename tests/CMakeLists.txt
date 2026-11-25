@@ -2718,6 +2718,44 @@ target_link_libraries(ssh_apply_rollback_tests PRIVATE
 target_compile_definitions(ssh_apply_rollback_tests PRIVATE FIC_SSH_TRANSACTION_TESTING=1)
 add_test(NAME ssh_apply_rollback_tests COMMAND ssh_apply_rollback_tests)
 
+# Production SSH MFA dependency-contract tests: the real ordinary Ssh policy
+# classes and BOTH real Debian 12/13 profile sources against the production
+# PolicyRegistry build/graph validation and PolicyExecutionPlanner.
+set(FIC_SSH_MFA_DEP_SOURCES ${FIC_SSH_APPLY_ROLLBACK_SOURCES})
+list(REMOVE_ITEM FIC_SSH_MFA_DEP_SOURCES
+    "${FIC_SSH_TEST_ROOT}/tests/fic/modules/net/ssh/SshApplyRollbackTests.cpp")
+list(APPEND FIC_SSH_MFA_DEP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/fic/modules/net/ssh/SshMfaDependencyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryInitialization.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyDependencyGraph.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyExecutionPlanner.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/Debian12Profile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/Debian13Profile.cpp
+)
+# Both Debian profiles define makeBuildPlatformProfile(); rename each
+# compiled profile source so one test binary can use both real profiles
+# regardless of the FIC_TARGET_PLATFORM this build was configured with.
+set_source_files_properties(
+    "${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/Debian12Profile.cpp"
+    PROPERTIES COMPILE_DEFINITIONS
+        "makeBuildPlatformProfile=makeDebian12ProfileForTest")
+set_source_files_properties(
+    "${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/Debian13Profile.cpp"
+    PROPERTIES COMPILE_DEFINITIONS
+        "makeBuildPlatformProfile=makeDebian13ProfileForTest")
+add_executable(ssh_mfa_dependency_tests ${FIC_SSH_MFA_DEP_SOURCES})
+target_include_directories(ssh_mfa_dependency_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+)
+target_compile_definitions(ssh_mfa_dependency_tests PRIVATE FIC_SSH_TRANSACTION_TESTING=1)
+target_link_libraries(ssh_mfa_dependency_tests PRIVATE
+    fic-core
+    fic-policy
+    fic-platform
+    Threads::Threads
+)
+add_test(NAME ssh_mfa_dependency_tests COMMAND ssh_mfa_dependency_tests)
+
 add_executable(platform_profile_tests
     fic/platform/PlatformProfileTests.cpp
 )
@@ -3080,6 +3118,7 @@ set(FIC_UNIT_TESTS
     identity_concrete_policies_tests
     ssh_runtime_tests
     ssh_apply_rollback_tests
+    ssh_mfa_dependency_tests
     platform_profile_tests
     command_hash_security_tests
     verified_process_executor_tests
