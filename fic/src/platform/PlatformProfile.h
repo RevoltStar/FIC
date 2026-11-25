@@ -89,6 +89,7 @@ enum class SshApplyContract { Legacy, DebianVerified, UbuntuSocketVerified, AltV
 
 struct SshPlatformConfig {
     SshApplyContract applyContract = SshApplyContract::Legacy;
+    bool sshMfaRequiredSupported = false;
     std::filesystem::path configPath;
     std::filesystem::path includeBasePath;
     std::filesystem::path verifiedIncludeDirectory;

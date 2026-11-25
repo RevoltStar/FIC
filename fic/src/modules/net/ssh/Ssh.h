@@ -37,6 +37,8 @@ public:
         const fic::platform::PlatformExecutableResolver& executables);
     bool apply() override;
     virtual ~Ssh();
+    bool supportsDependencyCapability(const std::string& capability) const override;
+    bool requiresDependencyCapability(const std::string& capability) const override;
 
     void setBeforeRestoreHook(std::function<void()> hook) {
         beforeRestoreHook_ = std::move(hook);

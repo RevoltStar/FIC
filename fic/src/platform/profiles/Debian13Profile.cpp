@@ -87,6 +87,7 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.ssh.includeBasePath = "/etc/ssh";
     profile.ssh.verifiedIncludeDirectory = "/etc/ssh/sshd_config.d";
     profile.ssh.applyContract = SshApplyContract::DebianVerified;
+    profile.ssh.sshMfaRequiredSupported = true;
     profile.ssh.serviceUnits = {"ssh.service", "sshd.service"};
     profile.ssh.socketUnits = {"ssh.socket", "sshd.socket"};
     profile.ssh.optionVariable = "SSHD_OPTS";

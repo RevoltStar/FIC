@@ -110,6 +110,23 @@ bool verifyEffectiveValue(SshRuntime& runtime,
 
 Ssh::~Ssh() = default;
 
+bool Ssh::supportsDependencyCapability(const std::string& capability) const {
+    return capability == "ssh_mfa";
+}
+
+bool Ssh::requiresDependencyCapability(const std::string& capability) const {
+    if (capability != "ssh_mfa") {
+        return true;
+    }
+    // Неизвестное или недоказанное состояние MFA не интерпретируется как
+    // DISABLE: зависимость остаётся (fail closed). Зависимость пропускается
+    // только когда ssh_mfa_required явно имеет статус DISABLE.
+    if (!moduleConf->hasPolicyStatus("ssh_mfa_required")) {
+        return true;
+    }
+    return moduleConf->getPolicyStatus("ssh_mfa_required") == "ENABLE";
+}
+
 Ssh::Ssh(fic::platform::SshPlatformConfig platformConfig,
          const fic::platform::PlatformExecutableResolver& executables)
     : Net(),
@@ -123,15 +140,17 @@ Ssh::Ssh(fic::platform::SshPlatformConfig platformConfig,
       sshConfig_(std::make_unique<SshConfigFileHandler>(
           platformConfig_.configPath.string())) {
     this->submoduleName = "SshEdit";
-    // На Debian 13 SSH MFA (`ssh_mfa_required`) должна применяться до
-    // обычных SSH-политик, которые полагаются на её установленный контракт.
+    // SSH MFA (ssh_mfa_required) применяется до обычных SSH-политик только
+    // на Debian 13, где политика ssh_mfa_required действительно зарегистрирована.
     // Recommended (не Required): не блокирует зависимую при неудаче MFA и
     // не попадает в enabledRequiredDependents(), поэтому отключение MFA при
     // включённых обычных SSH-политиках остаётся возможным.
-    if (platformConfig_.applyContract ==
-        fic::platform::SshApplyContract::DebianVerified) {
+    // Условие BackendRequiresCapability("ssh_mfa") отключает зависимость,
+    // когда MFA явно отключена в конфигурации, устраняя ложные предупреждения.
+    if (platformConfig_.sshMfaRequiredSupported) {
         addRecommendedDependency(
-            {"NET", "SshEdit", "ssh_mfa_required"});
+            {"NET", "SshEdit", "ssh_mfa_required"},
+            whenBackendRequiresCapability("ssh_mfa"));
     }
 }
 

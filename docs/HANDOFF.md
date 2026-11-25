@@ -16,13 +16,31 @@ runtime evidence only. The selector ships in the Debian 13 DEB.
 `Recommended` dependency on `NET/SshEdit/ssh_mfa_required` for every ordinary
 SSH policy (`ssh_port`, `ssh_max_auth_tries`, `ssh_root_login`,
 `ssh_pubkey_auth`, `ssh_use_pam`), but only when
-`SshPlatformConfig::applyContract == SshApplyContract::DebianVerified` (Debian 13).
+`SshPlatformConfig::sshMfaRequiredSupported == true` (Debian 13 only,
+set in `Debian13Profile.cpp`). The dependency carries a
+`BackendRequiresCapability("ssh_mfa")` condition so it is skipped when MFA
+is explicitly disabled in `NET.conf`, eliminating false warnings.
+
+**Why `sshMfaRequiredSupported` not `SshApplyContract::DebianVerified`:**
+`SshApplyContract::DebianVerified` is shared by Debian 12 and Debian 13, but
+`ssh_mfa_required` is registered only on Debian 13. Using the contract as the
+guard caused Debian 12 to declare a dependency on a non-existent policy, which
+failed `validatePolicyDependencyGraph()` and blocked daemon initialization.
+The new field is set to `true` only in `Debian13Profile.cpp`, so Debian 12
+never declares the dependency.
 
 **Why `Recommended` not `Required`:** `Recommended` orders execution (MFA first)
 but never blocks the dependent if MFA fails, and never appears in
 `enabledRequiredDependents()`, so disabling MFA while ordinary SSH policies
 remain enabled is still allowed. `Required` would create the unacceptable
 regression of blocking MFA disable.
+
+**Why `BackendRequiresCapability("ssh_mfa")` condition:** When
+`ssh_mfa_required.status=DISABLE`, the condition evaluates to false
+(`Ssh::requiresDependencyCapability("ssh_mfa")` returns false), so the
+dependency is skipped entirely — no execution, no warning. When MFA is
+enabled or its status is unknown (fail closed), the condition matches and
+MFA is applied first.
 
 **Why not single-apply expansion:** The dependency is evaluated by the planner
 for any apply path that includes an ordinary SSH policy as a root, including
@@ -36,6 +54,12 @@ MFA enabled — MFA applied first, all policies Applied in one pass; (B) MFA
 disabled — SSH policies apply independently, no MFA activation; (C) MFA fails —
 Recommended does not block dependent, failure visible as warning, not masked;
 (D) `enabledRequiredDependents()` returns empty — MFA disable is not blocked.
+Additional regression tests in the same file: `testSshPlatformConfigMfaField`
+(sshMfaRequiredSupported defaults to false / settable to true),
+`testSshMfaBackendCapabilityCondition` (condition matches when MFA enabled,
+skipped when disabled with no warning),
+`testSshMfaRecommendedDoesNotBlockDisable` (Recommended dependents don't block
+MFA disable).
 
 First activation preflights the projected PAM and SSH configuration, prepares
 the journal, publishes the dedicated auth slot and service, then commits the
