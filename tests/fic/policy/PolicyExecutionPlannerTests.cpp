@@ -1362,6 +1362,127 @@ void testBatchOwnExecutorPropagation(const std::filesystem::path& root) {
             "infrastructure failure must not suppress policy incident activation");
 }
 
+void testSshMfaOrdering(const std::filesystem::path& root) {
+    const PolicyRef mfa{"NET", "SshEdit", "ssh_mfa_required"};
+    const PolicyRef maxTries{"NET", "SshEdit", "ssh_max_auth_tries"};
+    const PolicyRef rootLogin{"NET", "SshEdit", "ssh_root_login"};
+    const PolicyRef port{"NET", "SshEdit", "ssh_port"};
+
+    // Scenario A: MFA enabled, SSH policies enabled -- MFA first in batch.
+    writeModuleConfig(root, "NET", {
+        {"ssh_mfa_required", true},
+        {"ssh_max_auth_tries", true},
+        {"ssh_root_login", true},
+        {"ssh_port", true}
+    });
+    {
+        PolicyBehavior mfaBehavior, maxTriesBehavior, rootLoginBehavior, portBehavior;
+        std::vector<std::string> order;
+        PolicyList policies;
+        policies.push_back(std::make_unique<TestPolicy>(mfa, mfaBehavior, order));
+        policies.push_back(std::make_unique<TestPolicy>(maxTries, maxTriesBehavior, order,
+            std::vector<PolicyDependency>{recommended(mfa)}));
+        policies.push_back(std::make_unique<TestPolicy>(rootLogin, rootLoginBehavior, order,
+            std::vector<PolicyDependency>{recommended(mfa)}));
+        policies.push_back(std::make_unique<TestPolicy>(port, portBehavior, order,
+            std::vector<PolicyDependency>{recommended(mfa)}));
+        PolicyRegistry registry = buildRegistry(std::move(policies));
+        const PolicyApplySummary summary = applyModulePolicies(registry, "NET");
+        require(order == std::vector<std::string>({
+            "ssh_mfa_required", "ssh_max_auth_tries", "ssh_port", "ssh_root_login"}),
+            "SSH MFA must be applied before ordinary SSH policies in batch");
+        require(mfaBehavior.calls == 1 && maxTriesBehavior.calls == 1 &&
+                    rootLoginBehavior.calls == 1 && portBehavior.calls == 1,
+            "all SSH policies must be applied");
+        require(result(summary, mfa).status == PolicyApplyStatus::Applied &&
+                    result(summary, maxTries).status == PolicyApplyStatus::Applied &&
+                    result(summary, rootLogin).status == PolicyApplyStatus::Applied &&
+                    result(summary, port).status == PolicyApplyStatus::Applied,
+            "all SSH policies must report Applied");
+        require(summary.requestedRootsApplied(),
+            "batch apply must succeed when MFA is applied first");
+    }
+
+    // Scenario B: MFA disabled -- SSH policies apply independently.
+    writeModuleConfig(root, "NET", {
+        {"ssh_mfa_required", false},
+        {"ssh_max_auth_tries", true},
+        {"ssh_root_login", true}
+    });
+    {
+        PolicyBehavior mfaBehavior, maxTriesBehavior, rootLoginBehavior;
+        std::vector<std::string> order;
+        PolicyList policies;
+        policies.push_back(std::make_unique<TestPolicy>(mfa, mfaBehavior, order));
+        policies.push_back(std::make_unique<TestPolicy>(maxTries, maxTriesBehavior, order,
+            std::vector<PolicyDependency>{recommended(mfa)}));
+        policies.push_back(std::make_unique<TestPolicy>(rootLogin, rootLoginBehavior, order,
+            std::vector<PolicyDependency>{recommended(mfa)}));
+        PolicyRegistry registry = buildRegistry(std::move(policies));
+        const PolicyApplySummary summary = applyModulePolicies(registry, "NET");
+        require(mfaBehavior.calls == 0, "disabled MFA policy must not be applied");
+        require(maxTriesBehavior.calls == 1 && rootLoginBehavior.calls == 1,
+            "ordinary SSH policies must apply when MFA is disabled");
+        require(result(summary, mfa).status == PolicyApplyStatus::Disabled,
+            "disabled MFA status must be preserved");
+        require(result(summary, maxTries).status == PolicyApplyStatus::Applied &&
+                    result(summary, rootLogin).status == PolicyApplyStatus::Applied,
+            "SSH policies must report Applied when MFA is disabled");
+        require(summary.requestedRootsWithoutFailures(),
+            "batch apply must succeed when MFA is disabled");
+    }
+
+    // Scenario C: MFA fails -- Recommended does not block dependent.
+    writeModuleConfig(root, "NET", {
+        {"ssh_mfa_required", true},
+        {"ssh_max_auth_tries", true}
+    });
+    {
+        PolicyBehavior mfaBehavior{false}, maxTriesBehavior;
+        std::vector<std::string> order;
+        PolicyList policies;
+        policies.push_back(std::make_unique<TestPolicy>(mfa, mfaBehavior, order));
+        policies.push_back(std::make_unique<TestPolicy>(maxTries, maxTriesBehavior, order,
+            std::vector<PolicyDependency>{recommended(mfa)}));
+        PolicyRegistry registry = buildRegistry(std::move(policies));
+        const PolicyApplySummary summary =
+            PolicyExecutionPlanner(registry).execute({{maxTries}, {}});
+        require(mfaBehavior.calls == 1, "MFA dependency must be executed even when it fails");
+        require(maxTriesBehavior.calls == 1, "Recommended dependency must not block dependent");
+        require(result(summary, mfa).status == PolicyApplyStatus::Failed,
+            "MFA failure status must be visible");
+        require(result(summary, maxTries).status == PolicyApplyStatus::Applied,
+            "dependent must still be Applied when Recommended dependency fails");
+        require(hasDiagnostic(result(summary, maxTries), "WARN",
+                    "dependency status=failed"),
+            "dependent must warn about Recommended dependency failure");
+        require(summary.requestedRootsApplied(),
+            "root must be Applied despite Recommended dependency failure");
+    }
+
+    // Scenario D: Recommended never blocks MFA disable.
+    writeModuleConfig(root, "NET", {
+        {"ssh_mfa_required", true},
+        {"ssh_max_auth_tries", true},
+        {"ssh_root_login", true}
+    });
+    {
+        PolicyBehavior mfaBehavior, maxTriesBehavior, rootLoginBehavior;
+        std::vector<std::string> order;
+        PolicyList policies;
+        policies.push_back(std::make_unique<TestPolicy>(mfa, mfaBehavior, order));
+        policies.push_back(std::make_unique<TestPolicy>(maxTries, maxTriesBehavior, order,
+            std::vector<PolicyDependency>{recommended(mfa)}));
+        policies.push_back(std::make_unique<TestPolicy>(rootLogin, rootLoginBehavior, order,
+            std::vector<PolicyDependency>{recommended(mfa)}));
+        PolicyRegistry registry = buildRegistry(std::move(policies));
+        const auto dependents = enabledRequiredDependents(registry, mfa);
+        require(dependents.empty(),
+            "Recommended dependents must not block disabling MFA");
+    }
+}
+
+
 int main() {
     namespace fs = std::filesystem;
     const fs::path root = fs::temp_directory_path() /
@@ -1399,6 +1520,7 @@ int main() {
         testFullRequiredDependencyMatrix();
         testDisabledPolicyDoesNotRaise();
         testIncidentModeDependency(root);
+        testSshMfaOrdering(root);
     } catch (...) {
         fs::remove_all(root);
         throw;

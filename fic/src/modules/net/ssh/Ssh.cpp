@@ -123,6 +123,16 @@ Ssh::Ssh(fic::platform::SshPlatformConfig platformConfig,
       sshConfig_(std::make_unique<SshConfigFileHandler>(
           platformConfig_.configPath.string())) {
     this->submoduleName = "SshEdit";
+    // На Debian 13 SSH MFA (`ssh_mfa_required`) должна применяться до
+    // обычных SSH-политик, которые полагаются на её установленный контракт.
+    // Recommended (не Required): не блокирует зависимую при неудаче MFA и
+    // не попадает в enabledRequiredDependents(), поэтому отключение MFA при
+    // включённых обычных SSH-политиках остаётся возможным.
+    if (platformConfig_.applyContract ==
+        fic::platform::SshApplyContract::DebianVerified) {
+        addRecommendedDependency(
+            {"NET", "SshEdit", "ssh_mfa_required"});
+    }
 }
 
 SshRollbackOptions Ssh::makeRollbackOptions() const {
