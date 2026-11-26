@@ -76,20 +76,26 @@ def main():
         assert 'write_system_integration_symlink_postinst ' in function(deb, 'build_fic_package')
         assert '"$(system_integration_symlink_post_script)"' in function(rpm, 'build_fic_package')
         if shutil.which('dpkg-deb'):
-            stage = temp / 'deb'
-            (stage / 'DEBIAN').mkdir(parents=True)
-            (stage / 'DEBIAN/control').write_text('Package: fic\nVersion: 0.1\nArchitecture: all\n'
-                                                'Maintainer: FIC tests <fic@example.invalid>\n'
-                                                'Description: packaging contract fixture\n')
-            run(['bash', '-eu', '-c', function(deb, 'write_system_integration_symlink_postinst') +
-                 '\nROOT_DIR=$1\nwrite_system_integration_symlink_postinst "$2"',
-                 'bash', str(ROOT), str(stage)])
-            archive = temp / 'fic.deb'
-            run(['dpkg-deb', '--build', str(stage), str(archive)])
-            control = temp / 'control'
-            run(['dpkg-deb', '--control', str(archive), str(control)])
-            check_script((control / 'postinst').read_text(), temp)
-            checked.append('DEB')
+            for platform in ('debian-12', 'debian-13'):
+                deb_temp = temp / platform
+                stage = deb_temp / 'deb'
+                (stage / 'DEBIAN').mkdir(parents=True)
+                (stage / 'DEBIAN/control').write_text('Package: fic\nVersion: 0.1\nArchitecture: all\n'
+                                                    'Maintainer: FIC tests <fic@example.invalid>\n'
+                                                    'Description: packaging contract fixture\n')
+                run(['bash', '-eu', '-c', function(deb, 'write_system_integration_symlink_postinst') +
+                     '\nROOT_DIR=$1\nwrite_system_integration_symlink_postinst "$2"',
+                     'bash', str(ROOT), str(stage)],
+                     env=dict(os.environ, FIC_PACKAGING_TARGET_PLATFORM=platform))
+                archive = deb_temp / 'fic.deb'
+                run(['dpkg-deb', '--build', str(stage), str(archive)])
+                control = deb_temp / 'control'
+                run(['dpkg-deb', '--control', str(archive), str(control)])
+                script = (control / 'postinst').read_text()
+                d13_hook = 'yes' if platform == 'debian-13' else 'no'
+                assert f"if [ '{d13_hook}' = yes ]; then" in script, platform
+                check_script(script, deb_temp)
+                checked.append(f'DEB ({platform})')
         if shutil.which('rpmbuild') and shutil.which('rpm'):
             for name in ('BUILD', 'BUILDROOT', 'RPMS', 'SOURCES', 'SPECS', 'SRPMS'):
                 (temp / name).mkdir()

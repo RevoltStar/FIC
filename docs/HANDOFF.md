@@ -73,3 +73,11 @@ list including `fic-sshd-mfa`. A clean Debian 13 configuration built `fic` and
 all six profile-library consumers in one directory. All six CTests passed.
 The compile database and `nm -C` confirmed isolated test factory names and
 the original production factory. Logs are under `build-profile-link-fix/`.
+
+## Hardware inventory packaging check
+
+The isolated DEB generator receives `FIC_PACKAGING_TARGET_PLATFORM` explicitly
+for Debian 12 and Debian 13. Both fixtures build a DEB, verify the selected
+postinst branch and run the existing startup assertions. Both DEB cases and
+the RPM case passed with the variable unset and with an unrelated external
+value. The focused CTest passed in `build-d13-empty-password`.
