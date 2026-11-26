@@ -83,11 +83,13 @@ cli("policy", "set", "GLOBAL", "periodic_apply_min_pause", "0")
 cli("policy", "set", "GLOBAL", "check_interval", "60")
 run("systemctl", "restart", "fic.service")
 late.write_text("localadmins:video\n")
+role.write_text("localadmins:video\n")
 deadline = time.monotonic() + 90
-while not late.is_symlink() and time.monotonic() < deadline:
+while (not late.is_symlink() or role.read_text() != "localadmins:audio\n") and time.monotonic() < deadline:
     time.sleep(0.5)
 assert late.readlink() == Path(late_backup.name)
-print("PASS periodic apply neutralized a new role file", flush=True)
+assert role.read_text() == "localadmins:audio\n"
+print("PASS periodic apply neutralized a new role file and repaired /etc/role drift", flush=True)
 saved = config.read_bytes()
 
 # Bulk release leaves other domains able to complete when one ALT owner conflicts.

@@ -27,7 +27,8 @@ policy ID, межполитической зависимости или snapshot
 
 Расширенная ALT p11 проверка использует тот же `user_creation_native_driver`
 и [alt-groups-native-gate.sh](../tests/integration/user_creation/alt-groups-native-gate.sh).
-Передайте драйвер и путь к штатному RPM `alterator-roles-common` в одноразовом
+Передайте драйвер и пути к штатным RPM `alterator-roles-common` и
+`alterator-ldap-users` в одноразовом
 Docker с установленными `alterator-ldap-users`, `libnss-role` и
 `alterator-roles-common`. Проверка меняет файлы, создаёт тестовые учётные записи,
 переустанавливает role RPM и удаляет RPM Alterator внутри контейнера.

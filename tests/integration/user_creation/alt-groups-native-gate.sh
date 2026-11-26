@@ -4,6 +4,7 @@ set -euo pipefail
 [[ $(id -u) == 0 && ( -f /run/.containerenv || -f /.dockerenv ) ]] || exit 77
 driver=${1:?native driver}
 role_rpm=${2:?RPM alterator-roles-common}
+ldap_rpm=${3:?RPM alterator-ldap-users}
 backend=/usr/lib/alterator/backend3/ldap-users
 ldap=alt_ldap_users_default_groups
 role=alt_role_groups
@@ -47,6 +48,13 @@ reject_apply() {
     fi
 }
 
+reject_release() {
+    if "$driver" release "$1"; then
+        echo "Expected rollback to refuse: $1" >&2
+        exit 1
+    fi
+}
+
 cp -p "$backend" "$work/original-ldap"
 for group in ficldapone ficldaptwo ficouter ficinner ficinherited ficmaximum ficnew ficforeign; do
     groupadd "$group"
@@ -78,6 +86,57 @@ create_alterator_user ficldapempty
 "$driver" release "$ldap"
 cmp "$backend" "$work/original-ldap"
 rpm -V --nomtime alterator-ldap-users
+
+# Exercise true package publication and a fresh ownership cycle on that inode.
+ldap_value='["ficldapone","ficldaptwo"]'
+for phase in direct between before after; do
+    # Give the old cycle a different baseline even when both RPM operations
+    # use the same official build. Restoring it would resurrect stale content.
+    sed -i 's/^default_groups=.*/default_groups="ficforeign"/' "$backend"
+    "$driver" apply "$ldap" "$ldap_value"
+    prior_inode=$(stat -c '%d:%i' "$backend")
+    rpm -U --replacepkgs "$ldap_rpm"
+    [[ $(stat -c '%d:%i' "$backend") != "$prior_inode" ]]
+    cp -p "$backend" "$work/stock-after-rpm"
+    cmp "$backend" "$work/original-ldap"
+    if [[ $phase == direct ]]; then
+        stock=$(stamp "$backend")
+        "$driver" release "$ldap"
+        [[ $(stamp "$backend") == "$stock" ]]
+    else
+        crash_apply "$ldap" "$ldap_value" "$phase"
+        if [[ $phase == between ]]; then
+            cmp "$backend" "$work/stock-after-rpm"
+            "$driver" release "$ldap"
+            cmp "$backend" "$work/stock-after-rpm"
+        fi
+        "$driver" apply "$ldap" "$ldap_value"
+        grep -Fx 'default_groups="ficldapone ficldaptwo"' "$backend"
+        cmp <(without_assignment "$backend") <(without_assignment "$work/stock-after-rpm")
+        "$driver" release "$ldap"
+        cmp "$backend" "$work/stock-after-rpm"
+    fi
+done
+"$driver" apply "$ldap" "$ldap_value"
+cp -p "$work/original-ldap" "$backend.foreign"
+printf '\n# foreign bytes\n' >> "$backend.foreign"
+mv -f "$backend.foreign" "$backend"
+foreign=$(stamp "$backend")
+reject_apply "$ldap" "$ldap_value"
+reject_release "$ldap"
+[[ $(stamp "$backend") == "$foreign" ]]
+rpm -U --replacepkgs "$ldap_rpm"
+# Exact stock bytes are insufficient when there is no installed package owner.
+rpm -e --justdb alterator-ldap-users
+stock=$(stamp "$backend")
+reject_apply "$ldap" "$ldap_value"
+reject_release "$ldap"
+[[ $(stamp "$backend") == "$stock" ]]
+rpm -U "$ldap_rpm"
+"$driver" release "$ldap"
+cmp "$backend" "$work/original-ldap"
+echo 'PASS RPM ownership and digest, cycle renewal, no-write release and crash recovery'
+
 rpm -e alterator-ldap-users
 "$driver" apply "$ldap" '[]'
 "$driver" release "$ldap"
@@ -104,7 +163,7 @@ has_group ficrolemember ficmaximum
 # A matching-looking third-party relative symlink and target have no provenance.
 printf 'ficouter:ficforeign\n' > exterior.fic
 ln -s exterior.fic exterior.role
-foreign=$(stamp exterior.role exterior.fic)
+exterior_stamp=$(stamp exterior.role exterior.fic)
 printf 'ficouter:ficforeign\n' > conflict.role
 printf 'foreign reservation\n' > conflict.fic
 conflict=$(stamp conflict.role conflict.fic)
@@ -140,6 +199,48 @@ has_group ficrolemember ficinherited
 lacks_group ficpkgmember wheel
 lacks_group ficrolemember ficmaximum
 lacks_group ficrolemember ficforeign
+
+# Drift is writable through exclusive apply, while rollback retains the
+# initial snapshot and refuses foreign bytes or an unproven inode.
+role_inode=$(stat -c '%d:%i' /etc/role)
+printf 'ficouter:ficforeign\n' > /etc/role
+[[ $(stat -c '%d:%i' /etc/role) == "$role_inode" ]]
+has_group ficrolemember ficforeign
+reject_release "$role"
+"$driver" apply "$role" "$rules"
+has_group ficrolemember ficinherited
+lacks_group ficrolemember ficforeign
+
+printf 'ficouter:ficforeign\n' > /etc/role.fixture
+mv -f /etc/role.fixture /etc/role
+has_group ficrolemember ficforeign
+crash_apply "$role" "$rules" config-before
+foreign=$(stamp /etc/role)
+reject_release "$role"
+[[ $(stamp /etc/role) == "$foreign" ]]
+"$driver" apply "$role" "$rules"
+has_group ficrolemember ficinherited
+
+rm /etc/role
+crash_apply "$role" "$rules" config-after
+published=$(stamp /etc/role)
+"$driver" apply "$role" "$rules"
+[[ $(stamp /etc/role) == "$published" ]]
+has_group ficrolemember ficinherited
+
+mv /etc/role /etc/role.fixture
+cp -p /etc/role.fixture /etc/role
+foreign=$(stamp /etc/role)
+"$driver" apply "$role" "$rules"
+reject_release "$role"
+[[ $(stamp /etc/role) == "$foreign" ]]
+rm /etc/role
+ln -s /etc/role.fixture /etc/role
+reject_apply "$role" "$rules"
+reject_release "$role"
+[[ $(readlink /etc/role) == /etc/role.fixture ]]
+mv -f /etc/role.fixture /etc/role
+echo 'PASS exclusive /etc/role drift repair, NSS, recovery, strict rollback and no-op'
 
 before=$(stamp /etc/role "$long_name" "$long_backup" localadmins.role localadmins.fic)
 "$driver" apply "$role" "$rules"
@@ -180,7 +281,7 @@ for original in "$work/original-role.d/"*.role; do
 done
 cmp "$long_name" "$work/original-long"
 [[ -f late.role && ! -L late.role ]]
-[[ $(stamp exterior.role exterior.fic) == "$foreign" ]]
+[[ $(stamp exterior.role exterior.fic) == "$exterior_stamp" ]]
 has_group ficpkgmember wheel
 has_group ficrolemember ficmaximum
 has_group ficrolemember ficnew
@@ -188,6 +289,9 @@ lacks_group ficrolemember ficinherited
 echo 'PASS libnss-role native inheritance, NAME_MAX, nested rules, reinstall, conflicts, recovery and rollback'
 
 mv /etc/role "$work/previous-main"
+"$driver" apply "$role" '{}'
+[[ -f /etc/role && ! -s /etc/role ]]
+printf 'ficouter:ficforeign\n' > /etc/role
 "$driver" apply "$role" '{}'
 [[ -f /etc/role && ! -s /etc/role ]]
 "$driver" release "$role"

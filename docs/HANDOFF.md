@@ -124,3 +124,35 @@ Evidence: `build-package-lifecycle/native-fic-alt-groups-lifecycle:p11-20261126T
 - The stock local route passed for nonempty and empty lists. Kerberos and AD
   were not tested. FIC manages the assignment without detecting or restricting
   the Alterator mode. The diagnostic change is outside FIC production code.
+
+### P1/P2 follow-up
+
+Base `30d3b692`. Exclusive apply for `/etc/role` repairs trusted drift under
+CAS and retains the original snapshot. A drifted pre-publication snapshot
+has `before_owned=false`, so Prepared recovery cannot use it as rollback
+authority. Older records retain their previous interpretation. Rollback
+still checks the last owned state. The staging window for `.role` links
+remains unchanged.
+
+P2 was reproduced on the base revision with a real RPM reinstall of
+`alterator-ldap-users 0.8.6-alt3`: the inode changed, stock defaults returned,
+and both apply and rollback then refused. Only on ownership conflict, FIC
+now resolves the trusted package query executable, checks exact file ownership
+and the RPM database digest against the captured bytes, and rechecks the
+snapshot. A proven stock file allows no-write release or a new journal cycle
+with the stock assignment as its baseline. A failed proof retains the conflict.
+
+Docker native checks passed with `shadow-utils 4.17.4-alt4`,
+`libnss-role 0.5.6-alt4`, `alterator-roles-common 0.55-alt1` and
+`alterator-ldap-users 0.8.6-alt3`. They cover NSS drift repair, strict rollback,
+missing original files, RPM reinstallation, missing or mismatched RPM proof,
+and process interruption between journal cycles and around publication.
+The old journal cycle in the reinstall test starts from a different assignment
+to prove that rollback uses the new package baseline. No second official p11
+RPM was available from the checked archive paths, so a version-to-version
+upgrade was not tested. Evidence: `p2-baseline.log`, `p1-p2-native.log` and
+`p1-p2-useradd.log` (119 checks) under `build-user-creation-native/alt-p11/`.
+The ALT build and the profile, journal and rollback unit binaries passed.
+The real FIC RPM `0.1.1` lifecycle gate passed periodic drift repair,
+independent rollback during a role-link conflict, and erase retry.
+Evidence: `build-package-lifecycle/native-fic-alt-groups-lifecycle:p11-20261126T121902Z-878060/`.

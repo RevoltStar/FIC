@@ -837,6 +837,7 @@ json serializeUndoAction(const UndoAction& action) {
         value["before"] = serializeAltGroupState(config->before);
         value["published"] = serializeAltGroupState(config->published);
         value["releasing"] = config->releasing;
+        if (!config->beforeOwned) value["before_owned"] = false;
     } else if (const auto* role = std::get_if<UndoAltRoleFile>(&action.payload)) {
         value["device"] = role->device;
         value["file_inode"] = role->fileInode;
@@ -1633,6 +1634,7 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
             !readAltGroupState(value.at("before"), config.before, error) ||
             !readAltGroupState(value.at("published"), config.published, error)) return false;
         config.releasing = value.at("releasing").get<bool>();
+        config.beforeOwned = value.value("before_owned", true);
         action.payload = std::move(config);
         return true;
     }
@@ -3947,12 +3949,17 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
                 const auto* next = std::get_if<UndoAltGroupConfig>(&record.undo.payload);
                 const auto* oldRole = std::get_if<UndoAltRoleFile>(&existing.undo.payload);
                 const auto* newRole = std::get_if<UndoAltRoleFile>(&record.undo.payload);
+                const bool ownedBefore = current && next &&
+                    (alt::sameState(current->published, next->before) ||
+                     (existing.status != MutationStatus::Applied && current->beforeOwned &&
+                      alt::sameState(current->before, next->before)));
                 const bool configTransition = current && next &&
                     alt::sameState(current->original, next->original) &&
                     (!current->releasing || next->releasing) &&
-                    (alt::sameState(current->published, next->before) ||
-                     (existing.status != MutationStatus::Applied &&
-                      alt::sameState(current->before, next->before)));
+                    ((next->beforeOwned && ownedBefore) ||
+                     (record.policy == alt::rolePolicy && record.resource == alt::rolePath &&
+                      !next->beforeOwned && !current->releasing && !next->releasing &&
+                      existing.status != MutationStatus::RollbackFailed && !ownedBefore));
                 const bool roleRelease = oldRole && newRole && newRole->releasing &&
                     oldRole->device == newRole->device && oldRole->fileInode == newRole->fileInode &&
                     oldRole->linkInode == newRole->linkInode;
@@ -4259,7 +4266,8 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
     }
 
     if (const auto* config = std::get_if<UndoAltGroupConfig>(&record.undo.payload);
-        config && (config->releasing || !alt::sameState(config->original, config->before))) {
+        config && (config->releasing || !config->beforeOwned ||
+                   !alt::sameState(config->original, config->before))) {
         error = "Fresh ALT group policy record has invalid original state";
         return false;
     }

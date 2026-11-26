@@ -1,13 +1,17 @@
 #include "modules/identity_access/alt_groups/AltGroupTransaction.h"
 
 #include "modules/identity_access/IdentityAccessPolicy.h"
+#include "platform/PlatformExecutableResolver.h"
 #include "rollback/MutationJournal.h"
 
+#include <fic/core/process/ProcessExecutor.h>
+#include <openssl/evp.h>
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <sstream>
 #include <utility>
 
 #include <fcntl.h>
@@ -133,9 +137,54 @@ bool syncConfig(const std::string& path, const Config& current, std::string& err
     return AtomicFileWriter::ensureTargetAbsentDurableIfCurrentState(path, &error);
 }
 
+bool proveStockAlterator(const Config& current, std::string& error) {
+    if (!current.full) return reject(error, "Alterator RPM backend is missing");
+    fic::platform::PlatformExecutableResolver resolver(
+        fic::platform::makeBuildPlatformProfile().executables);
+    fs::path rpm;
+    if (!resolver.resolve(fic::platform::ExecutableId::PackageQuery, rpm, error)) return false;
+    ProcessOptions options;
+    options.clearEnvironment = true;
+    options.environment = {{"LC_ALL", "C"}};
+    const auto query = ProcessExecutor::execute(rpm.string(),
+        {"-qf", "--qf", "%{NAME}\\n[%{FILENAMES}\\t%{FILEDIGESTS}\\n]", ldapPath}, options);
+    std::istringstream output(query.standardOutput);
+    std::string line;
+    if (!query.success() || !std::getline(output, line) || line != "alterator-ldap-users") {
+        return reject(error, "Cannot prove Alterator backend RPM ownership");
+    }
+    std::string expected;
+    while (std::getline(output, line)) {
+        const auto tab = line.find('\t');
+        if (tab == line.npos) return reject(error, "Ambiguous Alterator RPM ownership");
+        if (line.compare(0, tab, ldapPath) != 0) continue;
+        if (!expected.empty()) return reject(error, "Duplicate Alterator RPM file digest");
+        expected = line.substr(tab + 1);
+        if (expected.empty()) return reject(error, "Missing Alterator RPM file digest");
+    }
+    // ALT p11 currently ships legacy MD5 file digests. Select the same digest
+    // formats as PackageTrustSync, hashing the captured bytes used by CAS.
+    const EVP_MD* algorithm = nullptr;
+    switch (expected.size()) {
+    case 32: algorithm = EVP_md5(); break;
+    case 40: algorithm = EVP_sha1(); break;
+    case 64: algorithm = EVP_sha256(); break;
+    case 128: algorithm = EVP_sha512(); break;
+    default: return reject(error, "Unsupported Alterator RPM file digest");
+    }
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned size = 0;
+    const auto& bytes = current.full->content;
+    if (EVP_Digest(bytes.data(), bytes.size(), digest, &size, algorithm, nullptr) != 1 ||
+        hexEncode({reinterpret_cast<const char*>(digest), size}) != expected) {
+        return reject(error, "Alterator backend differs from installed RPM metadata");
+    }
+    return syncConfig(ldapPath, current, error);
+}
+
 bool writeConfig(const PolicyRef& policy, const std::string& path, const Config& current,
                  const std::optional<AtomicTargetState>& original, const std::string& desired,
-                 const bool releasing, MutationJournal& journal, MutationId& id,
+                 const bool releasing, const bool beforeOwned, MutationJournal& journal, MutationId& id,
                  std::string& error) {
     const bool ldap = policy == ldapPolicy;
     std::string content = desired;
@@ -151,6 +200,12 @@ bool writeConfig(const PolicyRef& policy, const std::string& path, const Config&
     options.fileOwner = 0;
     options.fileGroup = 0;
     options.fileMode = 0644;
+    if (!ldap && releasing && original) {
+        options.metadataPolicy = FileMetadataPolicy::EnforceProvided;
+        options.fileOwner = original->owner;
+        options.fileGroup = original->group;
+        options.fileMode = original->mode;
+    }
     std::optional<AtomicTargetState> published;
     options.beforePublish = [&](const AtomicTargetState& receipt, std::string& diagnostic) {
         published = receipt;
@@ -159,7 +214,7 @@ bool writeConfig(const PolicyRef& policy, const std::string& path, const Config&
         record.policy = policy;
         record.resource = path;
         record.undo = {MutationBackend::AltGroups,
-            UndoAltGroupConfig{original, current.projected, published, releasing}};
+            UndoAltGroupConfig{original, current.projected, published, releasing, beforeOwned}};
         return journal.prepareMutation(std::move(record), id, diagnostic);
     };
     if (!AtomicFileWriter::write(path, content, options, &error)) return false;
@@ -170,21 +225,21 @@ bool writeConfig(const PolicyRef& policy, const std::string& path, const Config&
          reject(error, "ALT group configuration changed after publication"));
 }
 
-bool proveConfigForApply(const MutationRecord& record, const Config& config,
-                         std::string& error) {
+bool ownsBefore(const MutationRecord& record, const Config& config) {
     const auto& undo = std::get<UndoAltGroupConfig>(record.undo.payload);
-    if (undo.releasing || record.status == MutationStatus::RollbackFailed) {
-        return reject(error, "ALT group policy has unresolved rollback");
-    }
+    const bool canRecoverBefore = record.status == MutationStatus::Prepared ||
+        (record.status == MutationStatus::RollbackFailed &&
+         (record.policy == ldapPolicy || undo.releasing));
     return sameState(config.projected, undo.published) ||
-        (record.status == MutationStatus::Prepared && sameState(config.projected, undo.before)) ||
-        reject(error, "ALT group configuration drift: " + record.resource);
+        (canRecoverBefore && undo.beforeOwned &&
+         sameState(config.projected, undo.before));
 }
 
 bool applyConfig(const PolicyRef& policy, const std::string& path, const std::string& desired,
                  const Config& current, const std::map<std::string, MutationRecord>& records,
                  MutationJournal& journal, std::string& error) {
     auto original = current.projected;
+    bool beforeOwned = true;
     const auto active = records.find(path);
     if (active != records.end()) {
         const auto& record = active->second;
@@ -196,11 +251,14 @@ bool applyConfig(const PolicyRef& policy, const std::string& path, const std::st
                  journal.setStatus(record.id, MutationStatus::Applied, error));
         }
         original = undo.original;
-    } else if (current.projected && current.projected->content == desired) {
+        beforeOwned = ownsBefore(record, current);
+    }
+    if (current.projected && current.projected->content == desired) {
+        // Matching bytes on an unproven inode do not renew rollback authority.
         return true;
     }
     MutationId id = 0;
-    return writeConfig(policy, path, current, original, desired, false, journal, id, error) &&
+    return writeConfig(policy, path, current, original, desired, false, beforeOwned, journal, id, error) &&
         journal.setStatus(id, MutationStatus::Applied, error);
 }
 
@@ -211,8 +269,8 @@ bool releaseConfig(const MutationRecord& record, const UndoAltGroupConfig& undo,
     if (!loadConfig(path, record.policy == ldapPolicy, current, error)) return false;
     const bool published = sameState(current.projected, undo.published);
     if (undo.releasing && published) return syncConfig(path, current, error);
-    if (!published && (record.status == MutationStatus::Applied ||
-                       !sameState(current.projected, undo.before))) {
+    if (!ownsBefore(record, current)) {
+        if (record.policy == ldapPolicy) return proveStockAlterator(current, error);
         return reject(error, "ALT group rollback ownership conflict: " + path);
     }
     if (!undo.releasing && sameState(current.projected, undo.original)) {
@@ -221,7 +279,7 @@ bool releaseConfig(const MutationRecord& record, const UndoAltGroupConfig& undo,
     MutationId id = 0;
     if (undo.original) {
         return writeConfig(record.policy, path, current, undo.original, undo.original->content,
-                           true, journal, id, error);
+                           true, true, journal, id, error);
     }
     MutationRecord intent;
     intent.policy = record.policy;
@@ -455,8 +513,19 @@ bool apply(const PolicyRef& policy, const std::string& desired,
     }
     if (ldap && !validAssignment(desired)) return reject(error, "Unsupported default_groups assignment");
     if (desired.size() > 1024 * 1024) return reject(error, "ALT group configuration is too large");
-    if (const auto active = records.find(path);
-        active != records.end() && !proveConfigForApply(active->second, current, error)) return false;
+    if (const auto active = records.find(path); active != records.end()) {
+        const auto& record = active->second;
+        if (ldap && !ownsBefore(record, current)) {
+            // Close the old cycle durably before preparing a fresh CAS.
+            // A crash here leaves the proven stock file untouched.
+            if (!proveStockAlterator(current, error) ||
+                !journal.setStatus(record.id, MutationStatus::RolledBack, error)) return false;
+            records.erase(active);
+        } else if (std::get<UndoAltGroupConfig>(record.undo.payload).releasing ||
+                   record.status == MutationStatus::RollbackFailed) {
+            return reject(error, "ALT group policy has unresolved rollback");
+        }
+    }
     return (ldap || applyDropIns(records, journal, error)) &&
         applyConfig(policy, path, desired, current, records, journal, error);
 }

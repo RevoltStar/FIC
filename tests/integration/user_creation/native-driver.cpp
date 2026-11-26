@@ -116,14 +116,17 @@ int main(int argc, char** argv) {
             });
             AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path) {
                 if (path == alt::ldapPath && cut == "after") ::_exit(86);
+                if (path == paths.mutationJournalFile && cut == "between") ::_exit(86);
                 return true;
             });
         } else {
             AtomicFileWriter::setPreInstallHookForTests([&, publications = 0](const std::string& path) mutable {
                 if (path == paths.mutationJournalFile && ++publications == 2 && cut == "after") ::_exit(86);
+                if (path == alt::rolePath && cut == "config-before") ::_exit(86);
             });
             AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path) {
                 if (path == paths.mutationJournalFile && cut == "before") ::_exit(86);
+                if (path == alt::rolePath && cut == "config-after") ::_exit(86);
                 return true;
             });
         }

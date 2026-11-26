@@ -561,6 +561,9 @@ struct UndoAltGroupConfig {
     std::optional<AtomicTargetState> before;
     std::optional<AtomicTargetState> published;
     bool releasing = false;
+    // Exclusive /etc/role apply may replace drift without acquiring rollback
+    // authority over the displaced foreign state.
+    bool beforeOwned = true;
 };
 
 // The backup and link are exchanged within /etc/role.d. No role bytes are

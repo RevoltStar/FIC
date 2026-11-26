@@ -96,6 +96,7 @@ inline bool validRecord(const MutationRecord& record, std::string& error) {
                     (!ldap || validAssignment(state->content)));
             };
             if ((ldap || role) && (!ldap || (config->original && config->before && config->published)) &&
+                (config->beforeOwned || (role && !config->releasing)) &&
                 validState(config->original) && validState(config->before) &&
                 validState(config->published) &&
                 (config->releasing
