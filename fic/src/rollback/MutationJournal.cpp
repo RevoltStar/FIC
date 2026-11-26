@@ -4948,6 +4948,46 @@ bool MutationJournal::acknowledgeSshMfaDisable(MutationId id, std::string& error
     return persistRecordChange(previous, error);
 }
 
+bool MutationJournal::commitSshMfaUninstallRelease(MutationId id, std::string& error) {
+    auto* record = find(id);
+    auto* mfa = mfaPayload(record);
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::SshReleased) {
+        error = "SSH MFA uninstall has no verified physical release";
+        return false;
+    }
+    const auto previous = *record;
+    mfa->phase = SshMfaPhase::Released;
+    record->status = MutationStatus::RolledBack;
+    return persistRecordChange(previous, error);
+}
+
+bool MutationJournal::abortSshMfaReleaseNoEffect(const MutationRecord& applied, std::string& error) {
+    auto* record = find(applied.id);
+    const auto* mfa = mfaPayload(record);
+    const auto* predecessor = std::get_if<UndoReleaseSshMfa>(&applied.undo.payload);
+    if (!usable() || !mfa || mfa->phase != SshMfaPhase::PreparingRelease || mfa->sshPublication ||
+        !predecessor || predecessor->phase != SshMfaPhase::Applied ||
+        !applied.error.empty() || !validSshMfaRecord(applied, *predecessor, error)) {
+        error = "SSH MFA release may have effects; ownership must be retained";
+        return false;
+    }
+    auto expected = applied;
+    auto& transition = std::get<UndoReleaseSshMfa>(expected.undo.payload);
+    transition.phase = SshMfaPhase::PreparingRelease;
+    transition.beforeSshSha256 = mfa->beforeSshSha256;
+    transition.targetSshSha256 = mfa->targetSshSha256;
+    transition.sshPublication.reset();
+    transition.runtimeFacts.clear();
+    expected.status = MutationStatus::Prepared;
+    if (serializeRecord(expected) != serializeRecord(*record)) {
+        error = "SSH MFA release predecessor differs from journal provenance";
+        return false;
+    }
+    const auto previous = *record;
+    *record = applied;
+    return persistRecordChange(previous, error);
+}
+
 bool MutationJournal::abortSshMfaNoEffect(MutationId id, std::string& error) {
     const auto* mfa = mfaPayload(find(id));
     if (!usable() || !mfa || mfa->phase != SshMfaPhase::PreparingEnable ||

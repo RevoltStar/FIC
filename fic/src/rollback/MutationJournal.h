@@ -241,6 +241,11 @@ public:
     bool noteSshMfaRuntimeReleased(MutationId, const std::map<std::string, std::string>& runtimeFacts, std::string&);
     bool finishSshMfaRelease(MutationId, std::string&);
     bool acknowledgeSshMfaDisable(MutationId, std::string&);
+    // Called after an authorized uninstall has proven physical release.
+    bool commitSshMfaUninstallRelease(MutationId, std::string&);
+    // The caller must prove that the SSH predecessor is still durable and no
+    // publication occurred, while holding the SSH resource lock.
+    bool abortSshMfaReleaseNoEffect(const MutationRecord& applied, std::string&);
     bool abortSshMfaNoEffect(MutationId, std::string&);
     bool setStatus(MutationId id, MutationStatus status, std::string& error);
     bool setStatusWithMessage(MutationId id, MutationStatus status,

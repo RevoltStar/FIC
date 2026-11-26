@@ -2,6 +2,7 @@
 
 #include "modules/identity_access/pam/PamMfaTopology.h"
 #include "modules/net/ssh/SshConfigTransaction.h"
+#include "modules/net/ssh/SshConfigSyntax.h"
 #include "modules/net/ssh/SshManagedBlock.h"
 #include "modules/net/ssh/SshResourceLock.h"
 #include "rollback/DaemonMutationJournal.h"
@@ -181,6 +182,33 @@ std::optional<fic::service::ssh::SshMfaReference> requiredMfaForOperation(
     require(config.loadConfig() && planSshMfaManagedBlock(config.lines(), true, true, error),
             "RecoveryRequired: SSH MFA managed blocks are unproven: " + error);
     return ownedMfaReference(*owned);
+}
+
+bool proveSshMfaPrepareUninstall(const MutationJournal& journal, std::string& error) {
+    if (!journal.proveCurrentSshMfaAuthority(error)) return false;
+    const auto active = journal.activeRecords(policy);
+    if (active.empty()) return true;
+    const auto* owned = std::get_if<UndoReleaseSshMfa>(&active.front().undo.payload);
+    if (active.size() != 1 || !owned || owned->phase != SshMfaPhase::Applied ||
+        !active.front().error.empty()) {
+        error = "RecoveryRequired: unfinished or ambiguous SSH MFA ownership";
+        return false;
+    }
+    return true;
+}
+
+void proveSshMfaUninstallReleased(const MutationJournal& journal,
+                                 std::optional<AtomicTargetState>& generation) {
+    require(journal.activeRecords(policy).empty(), "RecoveryRequired: SSH MFA ownership is still active");
+    const auto path = (fic::core::FicRuntimePaths::get().configDir / "NET.conf").string();
+    std::string error;
+    if (!generation) {
+        AtomicTargetState first;
+        require(AtomicFileWriter::captureTargetState(path, first, &error) &&
+                first.owner == 0 && (first.mode & 0022) == 0, "trusted NET.conf unavailable: " + error);
+        generation = std::move(first);
+    }
+    configuredMfa(path, *generation);
 }
 
 SshMfaPolicy::SshMfaPolicy() {
@@ -376,9 +404,10 @@ void proveNoForeignPamReferences(const fic::platform::PamPlatformConfig& pam) {
             std::string diagnostic;
             require(PamConfiguration::parseRulesContent(path, source.content, rules, diagnostic), diagnostic);
             for (const auto& rule : rules)
-                if (rule.includeKind != PamIncludeKind::None)
-                    require(rule.includeTarget != mfaSshAuthSlot && rule.includeTarget != mfaSshService,
-                            "foreign PAM source references dedicated SSH MFA configuration");
+                require(std::filesystem::path(rule.includeTarget).filename() != mfaSshAuthSlot &&
+                        std::filesystem::path(rule.includeTarget).filename() != mfaSshService &&
+                        std::filesystem::path(rule.module).filename() != "pam_fic_ssh_stage.so",
+                        "foreign PAM source references dedicated SSH MFA configuration");
         }
     }
 }
@@ -399,9 +428,10 @@ void proveReleasedImage(const UndoReleaseSshMfa& owned, const std::string& main)
 
 }
 
-SshRollbackResult releaseSshMfaForDisable(MutationJournal& journal, const SshMfaDisableIntent& intent) {
+SshRollbackResult releaseSshMfa(MutationJournal& journal, const SshMfaReleaseIntent& intent) {
     SshRollbackResult result;
     bool pending = false;
+    const bool uninstall = intent.context == SshReleaseContext::Uninstall;
     try {
         const auto platform = fic::platform::makeBuildPlatformProfile();
         const auto main = platform.ssh.configPath.string();
@@ -409,6 +439,10 @@ SshRollbackResult releaseSshMfaForDisable(MutationJournal& journal, const SshMfa
         const auto active = journal.activeRecords(policy);
         SshConfigFileHandler sshConfig(main);
         std::string error;
+        const auto proveFence = [&] (std::string& detail) {
+            return !uninstall || (intent.uninstallFence && intent.uninstallFence(detail));
+        };
+        require(proveFence(error), "SSH MFA uninstall fence unavailable: " + error);
         configuredMfa(intent.path, intent.generation, !active.empty());
         require(sshConfig.loadConfig() && sshConfig.loadSnapshot(), "SSH main configuration unavailable");
         if (active.empty()) {
@@ -424,18 +458,57 @@ SshRollbackResult releaseSshMfaForDisable(MutationJournal& journal, const SshMfa
         const auto* owned = std::get_if<UndoReleaseSshMfa>(&record.undo.payload);
         require(owned && record.error.empty(), "SSH MFA journal provenance unavailable");
         require(journal.proveCurrentSshMfaAuthority(error), "RecoveryRequired: SSH MFA journal is unproven: " + error);
-        if (owned->phase == SshMfaPhase::AwaitingDisable) {
+        const auto recheck = [&] {
+            require(proveFence(error) &&
+                    AtomicFileWriter::targetStateMatches(intent.path, intent.generation, &error),
+                    "SSH MFA release authority changed: " + error);
+            require(journal.proveCurrentSshMfaAuthority(error), "SSH MFA journal is unproven: " + error);
+        };
+        auto survivingPolicies = intent.survivingPolicies;
+        if (uninstall) {
+            // Saved values may differ from applied ownership. Verify the
+            // actual ordinary blocks that this MFA transaction preserves.
+            SshManagedModel model;
+            require(parseSshManagedModel(sshConfig.lines(), model, error) == SshManagedParseStatus::Ok, error);
+            for (const auto& block : model.policies) {
+                if (sshPolicyDirectiveSemantics(block.name) == SshDirectiveSemantics::Unsupported) continue;
+                const auto parsed = parseSshConfigLine(block.directiveLine);
+                require(parsed.ok && parsed.hasDirective &&
+                        normalizeSshKeyword(parsed.directive.keyword) ==
+                            normalizeSshKeyword(sshPolicyDirectiveKeyword(block.name)),
+                        "unproven surviving SSH block: " + block.name);
+                survivingPolicies.emplace(block.name, joinSshArguments(parsed.directive.arguments));
+            }
+            if (owned->phase == SshMfaPhase::SshReleased) {
+                pending = true;
+                proveReleasedImage(*owned, main);
+                auto source = Adapter::captureReference(survivingPolicies, owned->targetSshSha256,
+                                                               SshActivationIntent::ConfigurationRelease);
+                const auto admission = Adapter::admitMfaPlan(source);
+                const auto preview = Adapter::validateReleasePlan(source, admission, sshConfig.loadSnapshot()->content);
+                require(preview.success(), preview.diagnostic);
+                proveSshChildrenDrained(admission.service);
+                proveNoForeignPamReferences(platform.pam);
+                recheck();
+                const auto activated = Adapter::releaseConfiguration(source, admission);
+                require(activated.success(), activated.diagnostic);
+                proveSshChildrenDrained(activated.runtimeEvidence);
+                recheck();
+                proveNoForeignPamReferences(platform.pam);
+                proveReleasedImage(*owned, main);
+                require(journal.commitSshMfaUninstallRelease(record.id, error), error);
+                result.ok = true;
+                result.message = "verified SSH MFA package release acknowledged";
+                return result;
+            }
+        }
+        if (!uninstall && owned->phase == SshMfaPhase::AwaitingDisable) {
             proveReleasedImage(*owned, main);
             result.ok = true;
             result.message = "verified SSH MFA release awaits durable DISABLE";
             return result;
         }
         require(owned->phase == SshMfaPhase::Applied, "RecoveryRequired: unresolved SSH MFA transition");
-        const auto recheck = [&] {
-            require(AtomicFileWriter::targetStateMatches(intent.path, intent.generation, &error),
-                    "SSH MFA disable authority changed: " + error);
-            require(journal.proveCurrentSshMfaAuthority(error), "SSH MFA journal is unproven: " + error);
-        };
         for (const auto& other : journal.records())
             if (other.id != record.id && other.undo.backend == MutationBackend::Ssh && other.isActive())
                 require(other.status != MutationStatus::Prepared, "RecoveryRequired: another SSH operation is pending");
@@ -445,7 +518,7 @@ SshRollbackResult releaseSshMfaForDisable(MutationJournal& journal, const SshMfa
         const auto before = *sshConfig.loadSnapshot();
         require(planSshMfaManagedBlock(sshConfig.lines(), true, false, error), error);
         const auto planned = sshConfig.pendingContent();
-        auto baseline = Adapter::captureReference(intent.survivingPolicies, digest(before.content),
+        auto baseline = Adapter::captureReference(survivingPolicies, digest(before.content),
             SshActivationIntent::ConfigurationRelease, &mfa);
         const auto admission = Adapter::admitMfaPlan(baseline);
         proveSshChildrenDrained(admission.service);
@@ -453,18 +526,24 @@ SshRollbackResult releaseSshMfaForDisable(MutationJournal& journal, const SshMfa
         const auto preview = Adapter::validateMfaPlan(baseline, admission, planned, std::nullopt);
         require(preview.success(), preview.diagnostic);
         recheck();
-        auto fresh = Adapter::captureReference(intent.survivingPolicies, digest(before.content),
+        auto fresh = Adapter::captureReference(survivingPolicies, digest(before.content),
             SshActivationIntent::ConfigurationRelease, &mfa);
         require(Adapter::sameInputGeneration(baseline, fresh, false), "SSH MFA release sources changed before publication");
         require(journal.beginSshMfaRelease(record.id, digest(before.content), digest(planned), error), error);
         pending = true;
-        recheck();
         const auto written = restoreSshConfigContentIfCurrentState(main, planned, before, error,
             [&](const AtomicTargetState&, std::string& detail) {
-                return AtomicFileWriter::targetStateMatches(intent.path, intent.generation, &detail) &&
+                return proveFence(detail) && AtomicFileWriter::targetStateMatches(intent.path, intent.generation, &detail) &&
                        journal.proveCurrentSshMfaAuthority(detail);
             });
-        if (written.installed && written.installedState)
+        if (!written.installed) {
+            const auto failedWrite = error;
+            recheck();
+            if (AtomicFileWriter::ensureTargetDurableIfCurrentState(main, before, &error) &&
+                journal.abortSshMfaReleaseNoEffect(record, error)) pending = false;
+            throw std::runtime_error(failedWrite);
+        }
+        if (written.installedState)
             require(journal.noteSshMfaPublication(record.id, *written.installedState, written.durable, error), error);
         require(written.installed && written.durable && written.installedState, error);
         recheck();
@@ -496,9 +575,17 @@ SshRollbackResult releaseSshMfaForDisable(MutationJournal& journal, const SshMfa
         };
         remove(servicePath, service);
         remove(slotPath, slot);
-        require(journal.finishSshMfaRelease(record.id, error), error);
+        recheck();
+        proveNoForeignPamReferences(platform.pam);
+        const auto released = journal.activeRecords(policy);
+        require(released.size() == 1 && released.front().id == record.id,
+                "SSH MFA release provenance disappeared");
+        proveReleasedImage(std::get<UndoReleaseSshMfa>(released.front().undo.payload), main);
+        require(uninstall ? journal.commitSshMfaUninstallRelease(record.id, error)
+                          : journal.finishSshMfaRelease(record.id, error), error);
         result.ok = true;
-        result.message = "SSH MFA disabled in verified runtime; owned PAM files released";
+        result.message = uninstall ? "verified SSH MFA package release acknowledged"
+                                   : "SSH MFA disabled in verified runtime; owned PAM files released";
     } catch (const std::exception& error) {
         result.disposition = pending ? SshReleaseDisposition::RecoveryRequired : SshReleaseDisposition::None;
         result.message = (pending ? "RecoveryRequired: " : "") + std::string(error.what());

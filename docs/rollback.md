@@ -796,8 +796,15 @@ I/O), это ошибка загрузки — fail closed. Существующ
   Explicit MFA disable first releases the MFA SSH blocks and proves the
   new listener active. It checks for remaining SSH children and foreign
   PAM references, then removes exactly the two owned PAM files. The
-  final acknowledgement requires durable DISABLE. Incomplete or
-  ambiguous effect retains the record and requires recovery.
+  administrative acknowledgement requires durable DISABLE and a registry
+  reload. Under the daemon-owned UNINSTALLING fence, verified physical MFA
+  release commits directly to `released`/`rolled_back` with saved policy
+  selections intact. The following scalar and Port releases re-prove the
+  fence, NET.conf generation, journal/witness and MFA physical absence.
+  A retained `ssh_released` record can be acknowledged on uninstall retry
+  once the exact published SSH file, both PAM absences and fresh verified
+  runtime release are proven again. Unknown or partial publication keeps
+  its provenance and requires recovery.
 
   **Ownership-release semantics**: SSH rollback does not reconstruct a
   historical pre-FIC configuration. It releases all currently existing

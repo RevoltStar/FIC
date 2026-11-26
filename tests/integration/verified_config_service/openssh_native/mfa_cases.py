@@ -6,6 +6,7 @@ import os
 import pwd
 import re
 import select
+import shutil
 import subprocess
 import tempfile
 import time
@@ -15,6 +16,8 @@ from pathlib import Path
 def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
     main = Path("/etc/ssh/sshd_config")
     production = os.environ.get("FIC_D13_SSH_CUTOVER_PRODUCTION") == "1"
+    lifecycle = os.environ.get("FIC_D13_MFA_PACKAGE_LIFECYCLE") == "active"
+    assert not lifecycle or production
     algorithms = ("rsa", "ecdsa", "ed25519") if production and sssd else ("ed25519",)
     host_keys = [f"/etc/ssh/ssh_host_{algorithm}_key" for algorithm in algorithms]
     explicit_keys = "".join(f"HostKey {key}\n" for key in host_keys)
@@ -208,8 +211,6 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
                     if session.poll() is None:
                         session.kill()
             assert service.is_file() and slot.is_file()
-            uninstall = run(cli, "prepare-uninstall", expected=False)
-            assert "SSH MFA ownership" in uninstall.stdout + uninstall.stderr
             verify_pair()
             run("faillock", "--user", user, "--reset")
             for _ in range(3):
@@ -231,6 +232,28 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
             verify_pair()
             policy("apply", "all")
             verify_pair()
+            if lifecycle:
+                def baseline_ssh():
+                    nonlocal port
+                    port = 22
+                    launch("password", True)
+
+                def restored_mfa():
+                    nonlocal port
+                    port = 2222
+                    verify_pair()
+
+                def hold_session():
+                    (lab / "otp").write_text(otp() + "\n")
+                    return subprocess.Popen(
+                        ssh_args("publickey,keyboard-interactive",
+                                 "echo FIC_READY; read -r line; echo FIC_STILL_OPEN", True),
+                        stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, text=True, env=env)
+
+                exercise_package_lifecycle(run, user, main, service, slot, verify_pair,
+                                           baseline_ssh, restored_mfa, hold_session, sssd)
+                return
             if not sssd:
                 run(cli, "policy", "set", "GLOBAL", "check_interval", "60")
             run("systemctl", "restart", "fic.service")
@@ -421,3 +444,165 @@ def exercise_verified_cutover(run, user, password, otp, wrong_otp, sssd=False):
         plan.update(main_before=sha(snapshot), enable=True, previously_owned=False, sssd=sssd)
         invoke("mfa-plan", plan, expected=False, label="stopped-runtime")
         assert main.read_bytes() == snapshot
+
+def exercise_package_lifecycle(run, user, main, service, slot, verify_pair, baseline_ssh,
+                               restored_mfa, hold_session, sssd):
+    cli = "/opt/fic/bin/fic-cli"
+    net = Path("/opt/fic/config/NET.conf")
+    journal = Path("/opt/fic/db/mutation-journal.json")
+    witness = journal.with_suffix(".json.initialized")
+    state = Path("/var/lib/fic-lifecycle/status")
+    secret = Path("/etc/security/fic-mfa") / f"totp-{user}"
+    initial_secret = secret.read_bytes()
+    owned_pam_files = {path: (path.stat().st_ino, path.read_bytes()) for path in (service, slot)}
+    selector = next(Path("/usr/lib").glob("*/security/pam_fic_ssh_stage.so"))
+
+    def version(package):
+        return run("dpkg-query", "-W", "-f=${Version}", package).stdout
+
+    def installed(package):
+        result = subprocess.run(["dpkg-query", "-W", "-f=${db:Status-Status}", package],
+                                capture_output=True, text=True, timeout=15)
+        return result.stdout.strip() == "installed"
+
+    def mfa_records():
+        return [entry for entry in json.loads(journal.read_text())["records"]
+                if entry["resource"] == "ssh:/etc/ssh/sshd_config:fic-sshd-mfa"]
+
+    def selections():
+        return dict(line.split("=", 1) for line in net.read_text().splitlines()
+                    if line.startswith("ssh_") and "=" in line)
+
+    def remove(expected=True):
+        return run("apt-get", "-y", "remove", "fic", expected=expected, timeout=240)
+
+    def report(result):
+        start = result.stdout.index("\n{\n") + 1
+        return json.JSONDecoder().raw_decode(result.stdout[start:])[0]
+
+    saved = selections()
+    assert saved["ssh_mfa_required.status"] == saved["ssh_port.status"] == "ENABLE"
+    assert saved["ssh_port.value"] == "2222"
+    before = mfa_records()
+    assert len(before) == 1 and before[0]["undo"]["phase"] == "applied", before
+    assert before[0]["undo"]["sssd"] == sssd
+    previous_version = version("fic")
+    archives = [str(next(Path("/var/tmp/fic-upgrade-packages").glob(name + "_*.deb")))
+                for name in ("fic-dick", "fic", "fic-cli")]
+    new_version = run("dpkg-deb", "-f", archives[1], "Version").stdout.strip()
+    run("dpkg", "--compare-versions", previous_version, "lt", new_version)
+    upgraded = run("apt-get", "-y", "install", *archives, timeout=240)
+    assert "ownership rollback" not in upgraded.stdout + upgraded.stderr
+    assert version("fic") == new_version and state.read_text() == "INSTALLED\n"
+    assert mfa_records() == before and witness.is_file()
+    assert selections() == saved and secret.read_bytes() == initial_secret
+    assert owned_pam_files == {path: (path.stat().st_ino, path.read_bytes()) for path in (service, slot)}
+    assert selector.is_file()
+    verify_pair()
+    run(cli, "policy", "apply", "NET", "ssh_mfa_required")
+    assert mfa_records() == before and not run("dpkg", "--audit").stdout.strip()
+    print(f"native upgrade retained SSH MFA and ownership: {previous_version} -> {new_version}", flush=True)
+
+    # Pre-publication refusals retain ownership and ordinary SSH/PAM inputs.
+    # apt removes the dependent client before the main package's prerm.
+    # Preserve a fixture client to probe the live daemon after failed removal.
+    retry_cli = "/var/tmp/fic-lifecycle-client"
+    shutil.copy2(cli, retry_cli)
+    ssh_before = main.read_bytes()
+    slot_before = slot.read_bytes()
+    slot.write_bytes(slot_before + b"# fixture drift\n")
+    try:
+        failure = report(remove(False))
+        groups = {row["resource_group"]: row["status"] for row in failure["results"]
+                  if "resource_group" in row}
+        assert groups["NET:SshEdit:ssh_mfa_required"] == "FAILED", groups
+        assert any("ownership or content changed" in row.get("message", "")
+                   for row in failure["results"])
+        assert groups["NET:SshEdit:ssh_port"] == groups["PAM"] == "BLOCKED_BY_DEPENDENCY", groups
+        if sssd:
+            assert all(status == "BLOCKED_BY_DEPENDENCY" for group, status in groups.items()
+                       if group.startswith("IDENTITY_ACCESS:SSSD:"))
+        assert state.read_text() == "UNINSTALLING\n" and main.read_bytes() == ssh_before
+        assert mfa_records() == before and selector.exists() and installed("fic")
+        denied = run(retry_cli, "policy", "apply", "NET", "ssh_mfa_required", expected=False)
+        assert "в процессе удаления" in denied.stdout + denied.stderr
+    finally:
+        slot.write_bytes(slot_before)
+
+    journal_before = journal.read_bytes()
+    journal.write_text("invalid journal fixture\n")
+    try:
+        failure = report(remove(False))
+        assert failure["error_code"] == "ROLLBACK_STATE_UNPROVEN" and "results" not in failure
+        assert state.read_text() == "UNINSTALLING\n" and selector.exists()
+        assert main.read_bytes() == ssh_before and slot.read_bytes() == slot_before
+    finally:
+        journal.write_bytes(journal_before)
+
+    foreign = slot.parent / "mfa-lifecycle-foreign"
+    foreign.write_text("auth required pam_fic_ssh_stage.so\n")
+    try:
+        failure = report(remove(False))
+        assert any("foreign PAM source references" in row.get("message", "") for row in failure["results"]), failure
+        assert foreign.exists() and selector.exists() and mfa_records() == before
+    finally:
+        foreign.unlink()
+
+    with hold_session() as session:
+        try:
+            assert select.select([session.stdout], [], [], 15)[0]
+            assert session.stdout.readline().strip() == "FIC_READY"
+            failure = report(remove(False))
+            assert any("SSH sessions or authentication children" in row.get("message", "")
+                       for row in failure["results"]), failure
+            stdout, _ = session.communicate("continue\n", timeout=15)
+            assert session.returncode == 0 and stdout == "FIC_STILL_OPEN\n"
+        finally:
+            if session.poll() is None:
+                session.kill()
+
+    run("systemctl", "stop", "ssh.service")
+    try:
+        assert not report(remove(False))["ok"]
+        assert selector.exists() and mfa_records() == before
+    finally:
+        run("systemctl", "start", "ssh.service")
+
+    removed = report(remove())
+    assert removed["ok"], removed
+    groups = [row["resource_group"] for row in removed["results"]
+              if row.get("status") == "RELEASED" and "resource_group" in row]
+    mfa = groups.index("NET:SshEdit:ssh_mfa_required")
+    port = groups.index("NET:SshEdit:ssh_port")
+    assert mfa < groups.index("PAM") and mfa < port
+    assert all(mfa < index for index, group in enumerate(groups)
+               if group.startswith(("NET:SshEdit:", "IDENTITY_ACCESS:SSSD:" if sssd else "NET:SshEdit:"))
+               and group != "NET:SshEdit:ssh_mfa_required")
+    assert all(index < port for index, group in enumerate(groups)
+               if group.startswith("NET:SshEdit:") and group != "NET:SshEdit:ssh_port")
+
+    def prove_removed():
+        assert not installed("fic") and state.read_text() == "REMOVED\n"
+        assert not selector.exists() and not service.exists() and not slot.exists()
+        assert "d13_mfa_" not in main.read_text() and "#@FIC" not in main.read_text()
+        assert selections() == saved and secret.read_bytes() == initial_secret and witness.is_file()
+        assert all(record["status"] == "rolled_back" and record["undo"]["phase"] == "released"
+                   for record in mfa_records())
+        assert not run("dpkg", "--audit").stdout.strip()
+        baseline_ssh()
+
+    prove_removed()
+    print("native standard remove released active MFA, preserved saved selections and TOTP", flush=True)
+    run("apt-get", "-y", "install", *archives, timeout=240)
+    assert selections() == saved and service.is_file() and slot.is_file() and selector.is_file()
+    restored_mfa()
+    after = mfa_records()
+    assert len(after) == 2 and after[0]["id"] == before[0]["id"] and after[1]["id"] != before[0]["id"]
+    assert after[1]["undo"]["phase"] == "applied", after
+    assert report(remove())["ok"]
+    prove_removed()
+    run("apt-get", "-y", "purge", "fic", "fic-dick", timeout=180)
+    assert not net.exists() and not journal.exists() and not witness.exists()
+    assert not selector.exists() and secret.read_bytes() == initial_secret
+    assert not run("dpkg", "--audit").stdout.strip()
+    print("native reinstall restored MFA through startup apply, remove and late purge preserved TOTP", flush=True)

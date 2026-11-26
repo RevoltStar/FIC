@@ -1300,13 +1300,23 @@ RollbackReport rollbackPolicyBeforeDisable(
 
     if (policy == PolicyRef{"NET", "SshEdit", sshMfaPolicy}) {
         RollbackReport report;
-        if ((deps.sshReleaseContext == SshReleaseContext::Uninstall &&
-             !journal->activeRecords(policy).empty()) || !deps.sshRequestedState || !deps.sshRegistry) {
-            report.status = RollbackStatus::Unsupported;
-            report.message = "SSH MFA requires explicit policy disable before uninstall";
+        const bool uninstall = deps.sshReleaseContext == SshReleaseContext::Uninstall;
+        if (!deps.sshRequestedState || !deps.sshRegistry ||
+            (uninstall && (!deps.sshUninstallFence || !deps.sshUninstallFence(report.message)))) {
+            report.status = RollbackStatus::Failed;
+            report.message = "SSH MFA release authority unavailable: " + report.message;
             return report;
         }
-        fic::ssh::SshMfaDisableIntent intent;
+        if (uninstall && journal->activeRecords(policy).empty()) {
+            const auto proof = inspectUnrecordedResource(policy, deps, *journal, report.message,
+                                                         ResourceInspectionPhase::UninstallFinal);
+            report.status = proof == UnrecordedResourceState::ProvenEmpty
+                ? RollbackStatus::NothingToDo : RollbackStatus::Failed;
+            return report;
+        }
+        fic::ssh::SshMfaReleaseIntent intent;
+        intent.context = deps.sshReleaseContext;
+        intent.uninstallFence = deps.sshUninstallFence;
         const auto* configured = deps.sshRegistry->findPolicy(policy);
         if (!configured ||
             !configured->captureConfigurationVersion(intent.path, intent.generation, report.message) ||
@@ -1315,7 +1325,7 @@ RollbackReport rollbackPolicyBeforeDisable(
             report.status = RollbackStatus::Failed;
             return report;
         }
-        const auto result = fic::ssh::releaseSshMfaForDisable(*journal, intent);
+        const auto result = fic::ssh::releaseSshMfa(*journal, intent);
         report.status = result.ok ? RollbackStatus::Success :
             result.nothingToDo ? RollbackStatus::NothingToDo : RollbackStatus::Failed;
         report.message = result.message;
@@ -1543,6 +1553,8 @@ RollbackExecutorDeps productionRollbackDeps(
 
     const fic::platform::SshPlatformConfig sshConfig = platform.ssh;
     deps.sshRegistry = registry;
+    if (platform.ssh.sshMfaRequiredSupported)
+        deps.sshMfaPamDirectories = platform.pam.configDirectories;
     deps.sshOptions = [sshConfig, platformId=platform.id, &executables]() {
         SshRollbackOptions options;
         options.verifiedRelease=sshConfig.applyContract!=fic::platform::SshApplyContract::Legacy;

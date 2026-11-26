@@ -3249,15 +3249,26 @@ void testSshMfaPublicationAndReleaseOrder() {
     file.write("corrupt journal");
     require(!journal.proveCurrentSshMfaAuthority(error), "running daemon accepted corrupt ownership journal");
     file.write(applied);
+    const auto predecessor = journal.records().front();
     require(journal.beginSshMfaRelease(id, sha(installed.content), sha(released.content), error), error);
-    require(!journal.finishSshMfaRelease(id, error) && !journal.acknowledgeSshMfaDisable(id, error),
-            "PAM released before SSH detachment");
+    require(journal.abortSshMfaReleaseNoEffect(predecessor, error) && file.read() == applied, error);
+    require(journal.beginSshMfaRelease(id, sha(installed.content), sha(released.content), error), error);
+    require(!journal.finishSshMfaRelease(id, error) && !journal.acknowledgeSshMfaDisable(id, error) &&
+            !journal.commitSshMfaUninstallRelease(id, error), "PAM released before SSH detachment");
     require(journal.noteSshMfaPublication(id, released, true, error), error);
+    require(!journal.abortSshMfaReleaseNoEffect(predecessor, error), "published release was discarded");
     require(!journal.noteSshMfaRuntimeReleased(id, facts, error), "accepted MFA runtime as released");
     facts.erase("mfa_reference");
     require(journal.noteSshMfaRuntimeReleased(id, facts, error), error);
-    require(journal.finishSshMfaRelease(id, error), error);
-    require(journal.acknowledgeSshMfaDisable(id, error), error);
+    const auto sshReleased = file.read();
+    breakPersist(file);
+    require(!journal.commitSshMfaUninstallRelease(id, error), "failed uninstall commit was reported successful");
+    restorePersist(file);
+    require(file.read() == sshReleased &&
+            std::get<UndoReleaseSshMfa>(journal.records().front().undo.payload).phase == SshMfaPhase::SshReleased,
+            "failed uninstall commit lost release provenance");
+    require(!journal.acknowledgeSshMfaDisable(id, error), "uninstall was acknowledged by administrative API");
+    require(journal.commitSshMfaUninstallRelease(id, error), error);
     MutationJournal finished(file.path);
     require(finished.initializeOrLoad(error) && finished.records().front().status == MutationStatus::RolledBack,
             "verified release did not persist");

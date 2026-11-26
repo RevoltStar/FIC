@@ -315,16 +315,65 @@ def run_sssd_fixture(nss_file):
     run("python3", "/usr/local/bin/r2_auth.py", "debian-13", "--mfa-only", env=env, timeout=420)
 
 
+def exercise_minimal_package():
+    optional = ("openssh-server", "libpam-google-authenticator", "sssd", "sssd-common", "libpam-sss")
+    installed = lambda package: subprocess.run(
+        ["dpkg-query", "-W", "-f=${db:Status-Status}", package], capture_output=True,
+        text=True, timeout=10).stdout == "installed"
+    to_purge = [package for package in optional if installed(package)]
+    if to_purge:
+        run("apt-get", "-y", "purge", *to_purge)
+    assert not any(installed(package) for package in optional)
+    packages = Path("/var/tmp/fic-packages")
+    archives = [str(next(packages.glob(name + "_*.deb"))) for name in ("fic-dick", "fic", "fic-cli")]
+    cli = "/opt/fic/bin/fic-cli"
+    config = Path("/opt/fic/config/NET.conf")
+    state = Path("/var/lib/fic-lifecycle/status")
+    foreign = pam / "mfa-lifecycle-foreign"
+    for emergency in (None, "IGNORE_ERROR", "SKIP"):
+        run("dpkg", "-i", *archives, timeout=180)
+        assert "ssh_mfa_required.status=DISABLE" in config.read_text()
+        run(cli, "policy", "isdisable", "NET", "ssh_mfa_required")
+        assert not any(installed(package) for package in optional)
+        assert not Path("/etc/ssh/sshd_config").exists()
+        assert not (pam / "fic-sshd-mfa").exists() and not (pam / "fic-mfa-ssh-auth").exists()
+        selector = next(Path("/usr/lib").glob("*/security/pam_fic_ssh_stage.so"))
+        assert selector in [Path(path).resolve() for path in run("dpkg-query", "-L", "fic").stdout.splitlines()]
+        override = Path("/etc/fic-uninstall-overload")
+        if emergency:
+            override.write_text(f"ROLLBACK_TYPE={emergency}\n")
+            override.chmod(0o600)
+            foreign.write_text("auth required pam_fic_ssh_stage.so\n")
+            failed = run("apt-get", "-y", "remove", "fic", expected=False, timeout=180)
+            assert "FIC PAM package hooks remain selected/attached after removal" in failed.stdout + failed.stderr
+            assert selector.exists() and foreign.exists() and state.read_text() == "UNINSTALLING\n"
+            foreign.unlink()
+            # Same documented emergency retry after the writers are stopped.
+            override.write_text("ROLLBACK_TYPE=SKIP\nFIC_REQUIRED_UNINSTALL_STATUS=SKIP\nFIC_REQUIRED_STOP=SKIP\n")
+        done = run("apt-get", "-y", "remove", "fic", timeout=180)
+        if not emergency:
+            assert '"status": "NOTHING_TO_RELEASE"' in done.stdout
+        assert not selector.exists() and not installed("fic") and state.read_text() == "REMOVED\n"
+        assert not run("dpkg", "--audit").stdout.strip()
+        override.unlink(missing_ok=True)
+        print(f"native no-SSH removal: {emergency or 'STANDARD'}", flush=True)
+
+
 def main():
     run("mount", "--rbind", "/sys", "/sys")
     run("mount", "-o", "remount,bind,ro", "/sys")
     assert os.statvfs("/sys").f_flag & os.ST_RDONLY
+    scenario = os.environ.get("FIC_D13_MFA_PACKAGE_LIFECYCLE")
+    if scenario == "minimal":
+        exercise_minimal_package()
+        return
     run("gcc", "-Wall", "-Wextra", "/var/tmp/auth.c", "-lpam", "-o", auth)
     run("gcc", "-Wall", "-Wextra", "-shared", "-fPIC", "/var/tmp/outcome.c", "-lpam", "-o", mock)
     run("gcc", "-Wall", "-Wextra", "-Werror", "-shared", "-fPIC", "/var/tmp/ssh_observer.c",
         "-ldl", "-lpam", "-o", "/var/tmp/d13-ssh-observer.so")
     module_dir = next(Path("/usr/lib").glob("*/security/pam_google_authenticator.so")).parent
-    run("install", "-m", "0644", "/var/tmp/pam_fic_ssh_stage.so", module_dir)
+    if scenario != "active":
+        run("install", "-m", "0644", "/var/tmp/pam_fic_ssh_stage.so", module_dir)
     Path("/run/sshd").mkdir(exist_ok=True)
     run("ssh-keygen", "-A")
     run("dpkg-query", "-W", "openssh-server", "openssh-client", "libpam0g", "libpam-runtime", "libpam-google-authenticator",
@@ -333,7 +382,7 @@ def main():
     run("dpkg", "-i", *(str(next(packages.glob(name + "_*.deb")))
                        for name in ("fic-dick", "fic", "fic-cli")), timeout=180)
     cutover = os.environ.get("FIC_D13_SSH_CUTOVER")
-    if cutover:
+    if cutover and scenario != "active":
         run("install", "-m", "0644", "/var/tmp/pam_fic_access-cutover.so", module_dir / "pam_fic_access.so")
     assert not slot.exists() and not Path("/usr/share/pam-configs/fic-mfa-hook").exists()
     run("pam-auth-update", "--disable", "sss")
@@ -381,6 +430,12 @@ def main():
     for name in (lockout, deny_empty):
         policy("enable", name)
         policy("apply", name)
+    if scenario == "active":
+        # Drop the D13-2 research-only PAM fixture before exercising the
+        # production package detach proofs.
+        run("pam-auth-update", "--remove", "fic-mfa-hook")
+        (Path("/usr/share/pam-configs") / "fic-mfa-hook").unlink()
+        slot.unlink()
     if cutover == "sssd":
         run_sssd_fixture(nss_file)
         return

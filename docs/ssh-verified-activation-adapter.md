@@ -776,5 +776,8 @@ The Debian 13 daemon captures the MFA obligation from the trusted
 The requirement flows through ordinary and periodic apply, Port graph
 publication, ordinary rollback and release. Runtime re-verification for
 MFA accounts for starts in the adapter's bounded systemd restart budget.
-Only explicit disable of the MFA policy derives a release plan without
-the mandatory MFA requirement.
+Explicit policy disable and daemon-owned package removal can derive an MFA
+release plan. During package removal, ordinary SSH transactions derive their
+post-MFA reference only after confirming the UNINSTALLING generation,
+terminal or absent ownership and physical absence. Startup and periodic
+apply continue to require proven MFA for a saved ENABLE.

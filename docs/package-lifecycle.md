@@ -126,6 +126,46 @@ is retained as a `PAM_PASSWORD` / `FAILED` JSON result. Only the resolved native
 ALT p11 passwdqc/static + pwhistory/TCB pair makes the C2 domain
 `NOT_APPLICABLE`; its native release backends still run.
 
+### Debian 13 SSH MFA
+
+The Debian 13 DEB ships `pam_fic_ssh_stage.so`. Fresh configuration defaults
+`ssh_mfa_required` to DISABLE. The dedicated PAM service and auth slot are
+created by policy apply. OpenSSH, Google Authenticator and SSSD remain optional
+package prerequisites, required only by the applicable MFA backend paths.
+
+Compatible upgrade retains the dedicated PAM files, the SSH blocks, the saved
+policy selections and the journal/witness under the existing INSTALLING fence.
+The new daemon repeats MFA verification through startup apply. Failed upgrade
+retains the fence and follows the existing abort behavior.
+
+For standard remove, root `prepare-uninstall` admits a proven active MFA owner.
+The daemon-owned `rollback all` checks the durable UNINSTALLING generation and
+releases SSH MFA first. Its verified SSH transaction preserves ordinary managed
+blocks, confirms the new listener and safely detaches the two exact owned PAM
+files. The typed journal release commits with saved ENABLE/DISABLE intact.
+Ordinary SSH release then proves terminal or absent MFA ownership and
+physical absence. Port is last among SSH owners. The grouped PAM release waits
+for MFA because it can change common auth/account routes, faillock and the
+empty-password slot. The managed SSSD releases wait when the MFA record names
+the SSSD route, whose proof captures the SSSD configuration and drop-ins.
+A failed MFA release blocks those dependents and permits independent groups
+to proceed under the normal partial rollback contract.
+
+No-owner MFA release checks the main/verified Include and historical SSH paths,
+the dedicated PAM filenames, and references to the topology or selector.
+An absent OpenSSH setup can yield `NOTHING_TO_RELEASE`. Orphans or invalid
+ownership require administrator resolution. Active MFA requires a verified
+live listener with existing SSH sessions and authentication children drained.
+UNINSTALLING survives failed release. The infrastructure helper rechecks the
+actual writers and PAM references after daemon rollback, including under
+IGNORE_ERROR and SKIP. A remaining reference to a FIC PAM module or dedicated
+include prevents package payload removal.
+
+Remove retains the selected status and value, along with the journal/witness.
+Compatible reinstall can apply the retained ENABLE from a clean ownership state
+through normal startup. Remove and late purge preserve the administrator's
+TOTP store and registrations.
+
 ### Debian 13 upgrade with a locally managed common-auth
 
 D13-1 introduces the permanent `fic-empty-password-hook`. If local edits

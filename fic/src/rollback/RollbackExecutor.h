@@ -99,6 +99,8 @@ struct RollbackExecutorDeps {
     const PolicyRegistry* sshRegistry = nullptr;
     std::function<bool(const std::string& excluded,std::map<std::string,std::string>&,std::string&)> sshRequestedState;
     SshReleaseContext sshReleaseContext=SshReleaseContext::PolicyDisable;
+    std::vector<std::filesystem::path> sshMfaPamDirectories;
+    std::function<bool(std::string&)> sshUninstallFence;
     // GRUB backend configuration: the platform profile GRUB topology is the
     // single source of truth for the managed artifact location.
     std::function<GrubRollbackOptions()> grubOptions;

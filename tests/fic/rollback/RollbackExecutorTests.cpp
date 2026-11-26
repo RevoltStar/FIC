@@ -3060,6 +3060,41 @@ void testSshIncludePhysicalAbsence() {
     const auto stage=directory/".unused.conf.tmp.orphan";writeFile(stage,"");
     require(finalDomain("SSH",deps,tree.tree.root)!=UnrecordedResourceState::ProvenEmpty,"unresolved SSH staging artifact declared released");
 }
+void testSshMfaPhysicalAbsence() {
+    TempJournal j;JournalOverride override(j.tree.root/"journal.json");SshTree tree;
+    const auto directory=tree.configPath().parent_path()/"pam.d";
+    std::filesystem::create_directories(directory);
+    auto deps=tree.deps();
+    deps.sshMfaPamDirectories={directory};
+    std::filesystem::remove(tree.configPath());
+    const auto proof=[&]{return finalDomain("SSH_MFA",deps,tree.tree.root);};
+    require(proof()==UnrecordedResourceState::ProvenEmpty,
+            "unapplied MFA required SSH configuration or prerequisites");
+    const auto slot=directory/"fic-mfa-ssh-auth";
+    const auto foreign=directory/"foreign";
+    writeFile(slot,"");
+    require(proof()==UnrecordedResourceState::UnprovenOwnership&&std::filesystem::exists(slot),
+            "orphan MFA slot declared absent");
+    std::filesystem::remove(slot);
+    for(const std::string body : {"auth include fic-sshd-mfa\n",
+                                  "auth substack fic-mfa-ssh-auth\n",
+                                  "auth required /usr/lib/security/pam_fic_ssh_stage.so\n"}) {
+        writeFile(foreign,body);
+        require(proof()==UnrecordedResourceState::UnprovenOwnership&&readFile(foreign)==body,
+                "foreign MFA reference was ignored or changed");
+    }
+    std::filesystem::remove(foreign);
+    writeFile(tree.configPath(),"PamServiceName fic-sshd-mfa\n");
+    require(proof()==UnrecordedResourceState::UnprovenOwnership,"orphan SSH route declared absent");
+    writeFile(tree.configPath(),"#@FIC_POLICY_BEGIN name=d13_mfa_usepam@\nUsePAM yes\n");
+    require(proof()==UnrecordedResourceState::UnprovenOwnership,"orphan SSH MFA markers declared absent");
+    writeFile(tree.configPath(),"# administrator SSH\n");
+    const auto undo=tree.applyMutation("ssh_port","Port","2222");
+    tree.recordMutation({"NET","SshEdit","ssh_port"},tree.sshResource(),undo);
+    require(proof()==UnrecordedResourceState::ProvenEmpty,
+            "ordinary active SSH owner prevented independent MFA absence proof");
+}
+
 void testFinalMixedSshOwnership() {
     TempJournal j;JournalOverride override(j.tree.root/"journal.json");SshTree tree;
     writeFile(tree.configPath(),"# foreign bytes\n");
@@ -3232,6 +3267,7 @@ int main(int argc, char** argv) {
         {"final mixed SSH ownership",testFinalMixedSshOwnership},
         {"final mixed SUDO ownership",testFinalMixedSudoOwnership},
         {"optional resources require physical absence proof", testOptionalResourcesRequirePhysicalAbsenceProof},
+        {"SSH MFA independently proves physical absence", testSshMfaPhysicalAbsence},
         {"SYSCTL unresolved release survives executor failure",testSysctlPendingReleaseSurvivesExecutorFailure},
         {"sysctl rollback removes managed key and moves runtime",
          testSysctlRollbackRemovesManagedKeyAndMovesRuntime},

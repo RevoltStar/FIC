@@ -4,11 +4,19 @@
 #include <string>
 #include <vector>
 namespace fic::daemon {
-// Keep the Port override until every other SSH owner is released. Its final
-// release can restore several foreign ports, outside scalar callers' existing
-// single-port activation profile. This is an uninstall resource edge only;
-// policy ENABLE values and PolicyRegistry dependencies are not changed.
-inline void addSshPortReleaseOrdering(std::map<std::string,std::set<std::string>>& dependents) {
+// Preserve the PAM group and captured SSSD inputs until SSH detaches MFA.
+// Keep Port until the other SSH owners are released: its final release can
+// restore foreign ports outside the scalar single-port activation profile.
+// These edges apply only to uninstall resources.
+inline void addSshReleaseOrdering(std::map<std::string,std::set<std::string>>& dependents,
+                                  bool mfaUsesSssd) {
+    const std::string mfa="NET:SshEdit:ssh_mfa_required";
+    if(dependents.count(mfa)) {
+        for(auto& [name,edges]:dependents)
+            if((name!=mfa&&name.rfind("NET:SshEdit:",0)==0)||name=="PAM"||
+               (mfaUsesSssd&&name.rfind("IDENTITY_ACCESS:SSSD:",0)==0))
+                edges.insert(mfa);
+    }
     const std::string port="NET:SshEdit:ssh_port",prefix="NET:SshEdit:";
     if(!dependents.count(port))return;
     for(const auto& [name,_]:dependents)if(name!=port&&name.rfind(prefix,0)==0)dependents.at(port).insert(name);

@@ -8,6 +8,7 @@
 #include "modules/sysctl/Sysctl.h"
 #include "modules/dac/sudo/Sudo.h"
 #include "modules/net/ssh/Ssh.h"
+#include "modules/net/ssh/SshMfaPolicy.h"
 #include "modules/firewall/FirewallBackend.h"
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
 #include <fic/core/runtime/PackageState.h>
@@ -68,7 +69,8 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
             std::chrono::steady_clock::now()+std::chrono::seconds(30),error))
         return failure("auxiliary writer drain failed; no rollback attempted: "+error);
     auto* journal=DaemonMutationJournal::instance().tryGet(error);
-    if(!journal){auto result=failure("MutationJournal unavailable; no rollback attempted. Emergency SKIP requires explicit administrator configuration: "+error);
+    if(!journal || (platform.ssh.sshMfaRequiredSupported && !journal->proveCurrentSshMfaAuthority(error))){
+        auto result=failure("MutationJournal unavailable; no rollback attempted. Emergency SKIP requires explicit administrator configuration: "+error);
         result["error_code"]="ROLLBACK_STATE_UNPROVEN";return result;}
     if(registry.policyRefs().empty()){auto result=failure("PolicyRegistry unavailable; no rollback attempted");result["error_code"]="ROLLBACK_STATE_UNPROVEN";return result;}
     std::map<std::string,Node> nodes;
@@ -84,7 +86,12 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
     }
     std::map<std::string,std::set<std::string>> edges;
     for(const auto& [name,node]:nodes)edges[name]=node.dependents;
-    addSshPortReleaseOrdering(edges);
+    bool mfaUsesSssd = false;
+    for (const auto& record : journal->activeRecords({"NET", "SshEdit", sshMfaPolicy})) {
+        const auto* owned = std::get_if<UndoReleaseSshMfa>(&record.undo.payload);
+        mfaUsesSssd |= !owned || owned->sssd;
+    }
+    addSshReleaseOrdering(edges,mfaUsesSssd);
     for(const auto& [name,dependents]:edges)nodes.at(name).dependents=dependents;
     std::vector<std::string> releaseOrder;
     if(!uninstallReleaseOrder(edges,releaseOrder,error))return failure(error+"; no rollback attempted");
@@ -94,6 +101,29 @@ nlohmann::json rollbackAllForUninstall(PolicyRegistry& registry,const DaemonInst
     deps.pamPasswordRequestedState=[](bool& quality,bool& history,std::string&){quality=false;history=false;return true;};
     deps.sshRequestedState=[](const std::string&,auto& selected,std::string&){selected.clear();return true;};
     deps.sshReleaseContext=SshReleaseContext::Uninstall;
+    deps.sshUninstallFence = [&guard, &fence](std::string& detail) {
+        return guard.heldByCurrentProcess() &&
+            AtomicFileWriter::ensureTargetDurableIfCurrentState(
+                fic::core::PACKAGE_STATE_FILE, fence.file.targetState, &detail);
+    };
+    if (!deps.sshMfaPamDirectories.empty()) {
+        deps.sshOptions = [&, original = deps.sshOptions] {
+            auto options = original();
+            options.requiredMfa = [&, generation = std::optional<AtomicTargetState>{}]() mutable
+                -> std::optional<fic::service::ssh::SshMfaReference> {
+                std::string detail;
+                if (!deps.sshUninstallFence(detail))
+                    throw std::runtime_error("SSH uninstall fence changed: " + detail);
+                fic::ssh::proveSshMfaUninstallReleased(*journal, generation);
+                if (inspectUnrecordedResource({"NET", "SshEdit", sshMfaPolicy}, deps, *journal, detail,
+                                              ResourceInspectionPhase::UninstallFinal) !=
+                        UnrecordedResourceState::ProvenEmpty)
+                    throw std::runtime_error("SSH MFA physical absence unproven: " + detail);
+                return std::nullopt;
+            };
+            return options;
+        };
+    }
     deps.sssdUninstall=true;
     deps.pamManagerFactory=[&](const fic::platform::PamCapabilityConfig& capability,
         const std::vector<std::string>& services,std::string& detail){

@@ -370,3 +370,43 @@ Compact observed results and hashes of raw receipts:
 [startup-readiness-a2.json](../tests/integration/package-lifecycle/evidence/startup-readiness-a2.json).
 Startup scenarios, ACTIVE/PreLogin scope and full CTest limitations:
 [startup-readiness-validation.md](startup-readiness-validation.md).
+
+## Debian 13 SSH MFA package lifecycle
+
+Use two real Debian 13 DEB sets with increasing package versions. The first
+set must already support active SSH MFA ownership. Build the second with the
+changes under test using `tests/integration/package-lifecycle/build-deb.sh`.
+The Debian 13 fixture image supplies systemd and the test providers. Runtime
+containers use an isolated PID/mount namespace and no network except loopback.
+
+Run `tests/integration/package-lifecycle/run-deb.sh IMAGE OLD_DEBS d13_mfa_native.py`
+with `FIC_D13_MFA_PACKAGE_LIFECYCLE=active`,
+`FIC_D13_MFA_UPGRADE_PACKAGES=NEW_DEBS`, and the existing D13 MFA probe,
+selector, and OpenSSH driver paths. Set `FIC_D13_SSH_CUTOVER_PRODUCTION=1` and
+run once with `FIC_D13_SSH_CUTOVER_SCOPE=local` and once with `sssd`.
+The driver exercises actual apt/dpkg scriptlets, verifies both two-factor SSH
+routes and single-factor refusal across upgrade, then verifies protected and
+successful removals, reinstall through startup apply, and late purge. Drift
+and unresolved authority assertions require a preserved journal and payload.
+The test compares the registration in memory.
+
+Run the same wrapper on the new DEBs with
+`FIC_D13_MFA_PACKAGE_LIFECYCLE=minimal` and no cutover variables. The fixture
+removes optional providers before install, checks the default DISABLE and
+the packaged selector, and exercises STANDARD, IGNORE_ERROR and SKIP.
+In both emergency cases a foreign reference keeps the selector installed
+until the fixture removes the reference and retries.
+
+The typed journal suite covers failed terminal persistence and no-effect
+abort. The release graph suite covers Port ordering and conditional SSSD/PAM
+failure propagation. The ordinary SSH dependency suite exercises both real
+Debian profiles and verifies the Recommended-only contract.
+
+Native Debian 13 results for the D13-3C `0.1.2` to D13-3D `0.1.3` archives
+passed on local UNIX and LDAP/SSSD. The same tests refused an edited owned PAM
+slot, a foreign selector reference, a corrupt journal, a live SSH session and
+a stopped SSH service, then completed standard remove after the fixture
+restored the prerequisites. The minimal gate passed STANDARD, IGNORE_ERROR and
+SKIP with no OpenSSH server. The terminal journal persistence fault was
+exercised at the unit boundary. The native runs did not interrupt upgrade or
+inject failure after SSH publication.

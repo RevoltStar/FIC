@@ -51,6 +51,10 @@ if [[ "$driver" == d13_empty_password_native.py ]]; then
     docker cp "$repo/tests/integration/sssd-research/pam-probe.py" "$name:/usr/local/bin/pam-probe.py"
 fi
 if [[ "$driver" == d13_mfa_native.py ]]; then
+    if [[ -n "${FIC_D13_MFA_UPGRADE_PACKAGES:-}" ]]; then
+        docker exec "$name" mkdir -p /var/tmp/fic-upgrade-packages
+        docker cp "$(realpath "$FIC_D13_MFA_UPGRADE_PACKAGES")/." "$name:/var/tmp/fic-upgrade-packages/"
+    fi
     [[ -f "${FIC_D13_MFA_PROBE:-}" ]] || { echo 'FIC_D13_MFA_PROBE required' >&2; exit 2; }
     docker cp "$FIC_D13_MFA_PROBE" "$name:/usr/local/bin/d13-mfa-proof"
     docker cp "$repo/tests/integration/package-lifecycle/$driver" "$name:/usr/local/bin/d13-mfa-native.py"
@@ -81,10 +85,12 @@ if [[ -n "${FIC_D13_SSH_CUTOVER_DRIVER:-}" ]]; then
     docker cp "$repo/tests/integration/verified_config_service/openssh_native/mfa_cases.py" "$name:/usr/local/bin/mfa_cases.py"
     docker exec -e FIC_D13_SSH_CUTOVER="$cutover_scope" -e FIC_OPENSSH_DISPOSABLE="$token" \
         -e FIC_D13_SSH_CUTOVER_PRODUCTION="${FIC_D13_SSH_CUTOVER_PRODUCTION:-}" \
+        -e FIC_D13_MFA_PACKAGE_LIFECYCLE="${FIC_D13_MFA_PACKAGE_LIFECYCLE:-}" \
         -e FIC_OPENSSH_HOST_MNT="$(stat -Lc '%d:%i' /proc/self/ns/mnt)" \
         -e FIC_OPENSSH_HOST_ROOT="$(stat -Lc '%d:%i' /)" \
         "$name" python3 /usr/local/bin/deb-native.py
     exit
 fi
 docker exec -e FIC_A2_TEST_GROUP="${FIC_STARTUP_TEST_GROUP:-all}" \
+    -e FIC_D13_MFA_PACKAGE_LIFECYCLE="${FIC_D13_MFA_PACKAGE_LIFECYCLE:-}" \
     -e FIC_D13_SSH_FAILLOCK="${FIC_D13_SSH_FAILLOCK:-}" "$name" python3 /usr/local/bin/deb-native.py "${extra[@]}"

@@ -1,5 +1,7 @@
 #include "rollback/UnrecordedResourceInspection.h"
 #include "modules/net/ssh/SshResourceLock.h"
+#include "modules/net/ssh/SshPolicySemantics.h"
+#include "modules/identity_access/pam/PamConfiguration.h"
 #include <fic/core/fs/RootControlledDirectory.h>
 #include <fic/core/fs/SecureStateFile.h>
 #include <cerrno>
@@ -131,6 +133,69 @@ bool sshInventory(const Path& directory,bool enforce,std::set<Path>& paths,
     if(ec){error="SSH inventory incomplete";return false;}return true;
 }
 
+UnrecordedResourceState inspectMfaPam(const std::vector<Path>& directories, bool enforce,
+                                     std::string& error) {
+    using State = UnrecordedResourceState;
+    using namespace fic::identity::pam;
+    std::size_t files = 0, total = 0;
+    for (const auto& directory : directories) {
+        bool exists = false;
+        if (!parent(directory, enforce, exists, error)) return State::Error;
+        if (!exists) continue;
+        for (const auto* name : {"fic-sshd-mfa", "fic-mfa-ssh-auth"}) {
+            std::optional<AtomicTargetState> object;
+            if (!read(directory / name, enforce, object, error)) return State::Error;
+            if (object) {
+                error = "dedicated SSH MFA PAM file lacks active ownership: " + (directory / name).string();
+                return State::UnprovenOwnership;
+            }
+        }
+        std::error_code ec;
+        std::filesystem::directory_iterator it(directory, ec), end;
+        for (; !ec && it != end; it.increment(ec)) {
+            if (++files > 4096) {
+                error = "SSH MFA PAM inventory exceeded file budget";
+                return State::Error;
+            }
+            auto path = it->path();
+            struct stat info {};
+            if (::lstat(path.c_str(), &info) != 0) {
+                error = "SSH MFA PAM inventory changed at " + path.string();
+                return State::Error;
+            }
+            if (S_ISLNK(info.st_mode)) {
+                const auto target = std::filesystem::read_symlink(path, ec);
+                if (ec || (enforce && info.st_uid != 0) || info.st_nlink != 1 ||
+                    target.empty() || target != target.filename() || target == "." || target == "..") {
+                    error = "SSH MFA PAM inventory has an untrusted alias: " + path.string();
+                    return State::Error;
+                }
+                path = directory / target;
+            }
+            std::optional<AtomicTargetState> source;
+            if (!read(path, enforce, source, error)) return State::Error;
+            if (!source || (total += source->content.size()) > 16 * 1024 * 1024) {
+                error = "SSH MFA PAM inventory source missing or budget exceeded: " + path.string();
+                return State::Error;
+            }
+            std::vector<PamRule> rules;
+            if (!PamConfiguration::parseRulesContent(path, source->content, rules, error)) return State::Error;
+            for (const auto& rule : rules) {
+                const auto include = Path(rule.includeTarget).filename();
+                if (include == "fic-sshd-mfa" || include == "fic-mfa-ssh-auth" ||
+                    Path(rule.module).filename() == "pam_fic_ssh_stage.so") {
+                    error = "remaining SSH MFA PAM reference at " + path.string();
+                    return State::UnprovenOwnership;
+                }
+            }
+        }
+        if (ec) {
+            error = "SSH MFA PAM inventory incomplete: " + directory.string();
+            return State::Error;
+        }
+    }
+    return State::ProvenEmpty;
+}
 }
 UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
     const RollbackExecutorDeps& deps,MutationJournal& journal,std::string& error,
@@ -146,8 +211,11 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
     if(!journal.usable()||!journal.lifecycleInitialized()) {
         error="unrecorded resource inspection requires proven journal/witness";return State::Error;
     }
+    const bool mfa = *backend == MutationBackend::Ssh && policy.policyName == sshMfaPolicy;
+    if (mfa && !journal.proveCurrentSshMfaAuthority(error)) return State::Error;
     for(const auto& record:journal.records())
-        if(record.isActive()&&record.undo.backend==*backend)return State::Continue;
+        if(record.isActive() && (mfa ? record.policy == policy : record.undo.backend == *backend))
+            return State::Continue;
     error.clear();
     if(*backend==MutationBackend::Sysctl) {
         const auto options=deps.sysctlOptions?deps.sysctlOptions():SysctlConfigurationOptions{};
@@ -185,7 +253,10 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
         for(const auto& file:paths) {
             std::optional<AtomicTargetState> state;
             if(!read(file,options.enforceOwnership,state,error,8*1024*1024))return State::Error;
-            if(state&&state->content.find("#@FIC")!=std::string::npos) {
+            if (state && (mfa
+                ? state->content.find("d13_mfa_") != std::string::npos ||
+                  state->content.find("fic-sshd-mfa") != std::string::npos
+                : state->content.find("#@FIC") != std::string::npos)) {
                 error="SSH physical FIC artifact has no active provenance: "+file.string();return State::UnprovenOwnership;
             }
         }
@@ -194,6 +265,13 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
             if(!sshInventory(options.includeDirectory,options.enforceOwnership,currentPaths,current,error)||current!=generations) {
                 error="SSH Include inventory changed during physical absence proof: "+error;return State::Error;
             }
+        }
+        if (mfa) {
+            if (deps.sshMfaPamDirectories.empty()) {
+                error = "SSH MFA PAM inventory profile unavailable";
+                return State::Error;
+            }
+            return inspectMfaPam(deps.sshMfaPamDirectories, options.enforceOwnership, error);
         }
         return State::ProvenEmpty;
     }
@@ -234,14 +312,17 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
 std::vector<ReleasedResourceInspection> inspectReleasedOptionalResources(
     const RollbackExecutorDeps& deps, MutationJournal& journal) {
     std::vector<ReleasedResourceInspection> results;
-    for(const auto& policy:std::vector<PolicyRef>{{"NET","SshEdit","ssh_port"},
-            {"DAC","SudoEdit","sudo_require_authentication"},{"SYSCTL","",""}}) {
+    std::vector<PolicyRef> policies{{"NET","SshEdit","ssh_port"},
+        {"DAC","SudoEdit","sudo_require_authentication"},{"SYSCTL","",""}};
+    if (!deps.sshMfaPamDirectories.empty()) policies.push_back({"NET", "SshEdit", sshMfaPolicy});
+    for(const auto& policy : policies) {
         // Ordinary SSH rollback already holds this shared mutex; the final
         // read-only sweep runs separately and takes the same resource lock.
         std::unique_lock<std::mutex> sshLock(sshResourceMutex(),std::defer_lock);
         if(policy.moduleName=="NET")sshLock.lock();
         ReleasedResourceInspection result;
-        result.domain=policy.moduleName=="NET"?"SSH":policy.moduleName=="DAC"?"SUDO":"SYSCTL";
+        result.domain=policy.policyName==sshMfaPolicy?"SSH_MFA":policy.moduleName=="NET"?"SSH":
+            policy.moduleName=="DAC"?"SUDO":"SYSCTL";
         result.state=inspectUnrecordedResource(policy,deps,journal,result.detail,
             ResourceInspectionPhase::UninstallFinal);
         results.push_back(std::move(result));

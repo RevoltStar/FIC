@@ -234,10 +234,22 @@ controlled SSH listener and its authentication children to be drained
 of existing sessions. It verifies the active configuration after removing
 the owned SSH blocks and then conditionally removes the two owned PAM
 files. Other SSH policy blocks survive. The journal finalizes release
-after a durable DISABLE and registry reload. Before uninstall, release
-active MFA ownership through that same administrative operation.
+after a durable DISABLE and registry reload.
+
+Package upgrade keeps the desired status, dedicated PAM files and journal
+ownership. The new daemon confirms the existing MFA contract through normal
+startup apply. Fresh installation ships the selector with MFA disabled and
+creates dedicated PAM files only when the policy applies.
+
+Standard package remove can release active MFA directly. Close SSH sessions
+and drain authentication children first. The release requires a supported
+active `ssh.service` and an administrative route that survives the package
+operation. Package removal releases MFA before ordinary SSH ownership and
+the PAM/SSSD inputs it depends on. It preserves policy selections and TOTP
+registrations. Reinstall applies the preserved `ENABLE` through startup
+apply when the prerequisites are available. Purge also preserves administrator
+TOTP registrations. See the [package lifecycle](package-lifecycle.md#debian-13-ssh-mfa).
 
 An interrupted publication or mismatched ownership can require manual
-recovery. The daemon retains the journal receipts and refuses to treat a
-changed PAM file or a manually saved DISABLE as release. The existing
-package lifecycle does not automatically unwind active SSH MFA.
+recovery. The daemon retains journal receipts. A changed PAM file or a
+manually saved DISABLE cannot establish release.

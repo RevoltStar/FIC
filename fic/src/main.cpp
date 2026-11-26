@@ -51,6 +51,7 @@
 #include "daemon/InstallationProof.h"
 #include "daemon/UninstallRollback.h"
 #include "modules/net/ssh/SshRollback.h"
+#include "modules/net/ssh/SshMfaPolicy.h"
 #include "daemon/PackageWritersQuiescence.h"
 #include <fic/core/process/ExclusivePidLock.h>
 #include "daemon/MaintenanceAdmission.h"
@@ -1414,9 +1415,8 @@ std::string handle_client_packet(
             if (platform.id == "debian-13" && lifecycle.state == fic::core::PackageState::Installed) {
                 const auto* journal = fic::rollback::DaemonMutationJournal::instance().tryGet(error);
                 if (!journal) return finish(fic::ipc::make_error_response(error));
-                if (!journal->activeRecords({"NET", "SshEdit", fic::rollback::sshMfaPolicy}).empty())
-                    return finish(fic::ipc::make_error_response(
-                        "SSH MFA ownership must be released by explicit policy disable before uninstall"));
+                if (!fic::ssh::proveSshMfaPrepareUninstall(*journal,error))
+                    return finish(fic::ipc::make_error_response(error));
             }
             // Drain trust-sync under its existing resource lock. Once the state
             // is published, new trust-sync operations refuse inside this lock.
