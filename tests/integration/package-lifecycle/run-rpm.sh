@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# No runtime host mounts, ports or host namespaces; actual DEBs are copied in.
+# No runtime host mounts, ports or host namespaces; actual RPMs are copied in.
 set -euo pipefail
-[[ $# == 2 ]] || { echo 'usage: run-rpm.sh IMAGE PACKAGE_DIRECTORY' >&2; exit 2; }
+[[ $# -ge 2 && $# -le 3 ]] || { echo 'usage: run-rpm.sh IMAGE PACKAGE_DIRECTORY [DRIVER]' >&2; exit 2; }
+driver=${3:-rpm_native.py}
+case "$driver" in rpm_native.py|alt_group_native.py) ;; *) exit 2 ;; esac
 image=$1 packages=$(realpath "$2")
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 name="fic-rpm-lifecycle-$$"
@@ -29,5 +31,5 @@ docker exec "$name" timeout 60 sh -c 'systemctl is-system-running --wait >/dev/n
 docker cp "$repo/tests/integration/package-lifecycle/hardware_inventory.py" "$name:/usr/local/bin/hardware_inventory.py"
 docker exec "$name" mkdir -p /var/tmp/fic-packages
 docker cp "$packages/." "$name:/var/tmp/fic-packages/"
-docker cp "$repo/tests/integration/package-lifecycle/rpm_native.py" "$name:/usr/local/bin/rpm-native.py"
+docker cp "$repo/tests/integration/package-lifecycle/$driver" "$name:/usr/local/bin/rpm-native.py"
 docker exec "$name" python3 /usr/local/bin/rpm-native.py

@@ -81,3 +81,46 @@ for Debian 12 and Debian 13. Both fixtures build a DEB, verify the selected
 postinst branch and run the existing startup assertions. Both DEB cases and
 the RPM case passed with the variable unset and with an unrelated external
 value. The focused CTest passed in `build-d13-empty-password`.
+
+## ALT p11 supplementary groups
+
+Implemented on `main` from base `d5039bf9`. ALT p11 enables
+`user_default_supplementary_groups` via `ShadowUseraddDefaults` and wires
+`alt_ldap_users_default_groups` and `alt_role_groups` into normal daemon apply
+and rollback. The two new policies default to DISABLE. The accepted role
+layout replaces `.role` with `.fic` and publishes a relative link at the
+original path. Ownership of an exchanged pair uses journaled inode identities.
+
+`shadow-utils 4.17.4-alt4` passed 119 checks in Docker with active role NSS.
+`libnss-role 0.5.6-alt4` passed nested inheritance, the exact NAME_MAX case,
+empty rules, new files, conflicts, crash recovery, rollback and reinstall of
+`alterator-roles-common 0.55-alt1`. The stock `alterator-ldap-users 0.8.6-alt3`
+passed local account creation for nonempty/empty lists, absent RPM, restart
+recovery and rollback. Logs are in `build-user-creation-native/alt-p11/`.
+The native USER_CREATION regressions passed on Debian 12/13 and Ubuntu
+24.04/26.04 with cached drivers. The ALT daemon and three focused unit targets
+built. The unit binaries passed as an unprivileged user in the ALT container.
+Real FIC RPM `0.1.1` passed CLI configuration, daemon periodic discovery of
+a new role file, independent release during a link-ownership conflict, and
+RPM erase retry with all resources restored and selected values retained.
+Evidence: `build-package-lifecycle/native-fic-alt-groups-lifecycle:p11-20261126T113823Z-779361/`.
+
+**External Alterator defect.** Separate Docker runs used a real loopback
+`openldap-servers 2.6.13-alt1`, `alterator-ldap-users 0.8.6-alt3`,
+`ldap-user-tools 0.9.5-alt1` and `grep 3.11.0.20.dd8f-alt1`.
+
+- Stock LDAP: `rpm -V` verified the Alterator package before apply. The
+  account was created, but the backend treated the `egrep` warning captured
+  from `ldap-useradd` as an error and skipped default groups. This reproduced
+  with the stock assignment and with both nonempty and empty assignments
+  applied by FIC.
+  Evidence: `alt-groups-ldap-probe-final.log`.
+- Diagnostic LDAP: only the username validation call in
+  `/usr/sbin/ldap-useradd` was switched from `egrep` to `grep -E` inside
+  the disposable container. Both requested groups gained the first LDAP
+  user. With `default_groups=""`, the second LDAP user was created without
+  those memberships. Rollback restored the exact original Alterator backend.
+  Evidence: `alt-groups-ldap-diagnostic-final.log`.
+- The stock local route passed for nonempty and empty lists. Kerberos and AD
+  were not tested. FIC manages the assignment without detecting or restricting
+  the Alterator mode. The diagnostic change is outside FIC production code.

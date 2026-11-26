@@ -21,12 +21,13 @@ PlatformProfile makeBuildPlatformProfile() {
     profile.hostCompatibility.osIds = {"altlinux"};
     profile.hostCompatibility.altBranchIds = {"p11"};
     profile.userCreation.supplementaryGroupsProvider =
-        UserSupplementaryGroupsProviderKind::Unsupported;
-    // Verified in the ALT p11 builder with shadow-utils 4.17.4-alt2: useradd
-    // uses exact assignment keys and later duplicate assignments win.
+        UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults;
+    // ALT p11 shadow-utils uses exact keys and later assignments win, including
+    // an empty GROUPS assignment.
     profile.userCreation.useraddDefaultsLookup =
         UseraddDefaultsLookupSemantics::ExactKey;
     profile.userCreation.adduserConfigPath.clear();
+    profile.userCreation.altGroupPolicies = true;
     profile.executables.entries = {
         {ExecutableId::SystemdSysctl, {"/usr/lib/systemd/systemd-sysctl", "/lib/systemd/systemd-sysctl"}, false},
         {ExecutableId::Sddm, {"/usr/bin/sddm"}, false},

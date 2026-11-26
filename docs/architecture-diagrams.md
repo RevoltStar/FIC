@@ -922,9 +922,10 @@ frontend, игнорирующих shadow-utils defaults, намеренно н�
 `user_default_supplementary_groups` использует отдельную platform capability.
 На Debian 12 и Ubuntu 24.04 она управляет extra-groups частью `adduser` через
 `ADD_EXTRA_GROUPS` и `EXTRA_GROUPS` в `/etc/adduser.conf`; raw `useradd` этих
-defaults не получает. На Debian 13 и Ubuntu 26.04 она управляет `GROUPS` в
-`/etc/default/useradd`, поддержанным shadow-utils 4.17.4. `adduser` на этих
-платформах вызывает `useradd` без `-G`, но затем может добавить memberships из
+defaults не получает. На Debian 13, Ubuntu 26.04 и ALT p11 она управляет
+`GROUPS` в `/etc/default/useradd` через shadow-utils 4.17.4. `adduser` на
+Debian 13 и Ubuntu 26.04 вызывает `useradd` без `-G`, но затем может
+добавить memberships из
 `USERGROUPS`/`USERS_GROUP` и `EXTRA_GROUPS`, поэтому policy не обещает полный
 итоговый exact set для каждого frontend. Логический список хранится как
 canonical JSON array. Для shadow provider пустой список задаётся FIC-owned EOF
@@ -934,7 +935,7 @@ assignment `GROUPS=`. Shadow 4.17 очищает внутренний `user_grou
 provider empty задаётся managed `ADD_EXTRA_GROUPS=0` без managed
 `EXTRA_GROUPS`. Foreign значения при этом не удаляются.
 
-Каждая включённая поддерживаемая USER_CREATION политика устанавливает собственный
+Каждая включённая поддерживаемая политика defaults `useradd`/`adduser` устанавливает собственный
 sub-block и journal даже при совпадающем foreign default; только доказанный
 owned repeat допускает zero-write. Все пять scalar PASSWORD_AGING политик
 также требуют OwnWhileEnabled в общей таблице IdentityLoginDefs: совпадающий
@@ -944,7 +945,7 @@ foreign default не заменяет собственные sub-block/journal. 
 назначение этой группы при private-group механизме. Подробнее —
 [USER_CREATION ownership/native contract](rollback.md#user_creation-ownership-и-native-consumer).
 
-USER_CREATION rollback использует ownership-release: journal хранит только
+Rollback defaults `useradd`/`adduser` использует ownership-release: journal хранит только
 точные FIC assignments текущего/предыдущего refresh, но не foreign значения и
 не snapshot файла. Apply добавляет один policy sub-block в общий EOF container;
 refresh A→B выполняется одной conditional atomic replacement без окна release.
@@ -952,8 +953,8 @@ Rollback удаляет только доказанный sub-block, сохра�
 bytes; после удаления естественно проявляется актуальное последнее foreign
 значение. Native probes пакетов shadow 4.13 и 4.17 на всех пяти production
 profiles подтвердили exact-key/last-wins semantics `/etc/default/useradd`;
-`HOME_FOO` не является `HOME`, а `GROUPS` не является `GROUP`. ALT p11 не
-enroll-ит unsupported supplementary-groups route.
+`HOME_FOO` не является `HOME`, а `GROUPS` не является `GROUP`. На ALT p11
+группы, назначенные `useradd` через `GROUPS`, отделены от наследования через NSS.
 
 ALT p11 `alterator-users 10.25-alt1` читает непустой
 `/usr/share/install3/default-groups` как замену встроенного списка и объединяет
@@ -962,10 +963,34 @@ whitespace split и `sort -u` при каждом вызове `create_account()
 additive-only и не имеют late precedence; пустой основной файл игнорируется.
 При enabled `libnss-role` backend принудительно оставляет `users` и исключает
 из явного списка группы, уже входящие в системную роль `users`. Поэтому ни
-точная замена, ни пустой список через FIC-owned drop-in невыразимы; capability
-для ALT p11 помечена unsupported и apply завершается fail-closed без записи.
-Отсутствие пакета `alterator-users` не включает другой backend и не приводит к
-созданию предполагаемых native files.
+точная замена, ни пустой список через FIC-owned drop-in этого frontend
+невыразимы. Политика управляет `/etc/default/useradd` и имеет тот же ресурс
+при установленном и при отсутствующем `alterator-users`.
+
+На ALT p11 `alt_ldap_users_default_groups` управляет отдельным ресурсом
+`/usr/lib/alterator/backend3/ldap-users`. В штатном пакете параметр
+`default_groups` используется маршрутами local, LDAP/Kerberos и AD. Политика
+сохраняет JSON-массив имён и заменяет только однозначное строковое присваивание.
+Пустой массив задаёт `default_groups=""`. При отсутствии пакета политика не
+создаёт файл. В local-маршруте Alterator после `useradd` применяет собственный
+список через `usermod -G`, поэтому результат зависит от вызванного frontend.
+Контракт FIC ограничен присваиванием `default_groups` и действует независимо
+от режима Alterator. В проверенном штатном RPM предупреждение `egrep`
+прерывает LDAP-маршрут до назначения групп. Результаты на исходном RPM и
+после диагностической замены вызова в Docker зафиксированы в
+[HANDOFF](HANDOFF.md#alt-p11-supplementary-groups).
+
+`alt_role_groups` эксклюзивно управляет конфигурацией наследования
+`libnss-role` на ALT p11. JSON-объект вида
+`{"users":["audio"],"localadmins":["wheel"]}` полностью задаёт `/etc/role`.
+`{}` задаёт отсутствие правил. При каждом apply новые обычные `.role` из
+`/etc/role.d` нейтрализуются, включая поставляемые RPM: `example.role`
+становится относительной ссылкой на переименованный `example.fic`.
+`libnss-role` сканирует только обычные файлы с расширением `.role`, поэтому
+прежнее правило перестаёт участвовать в NSS, в том числе для уже созданных
+пользователей. Вложенное наследование вычисляет сама библиотека. Политики
+не меняют NSS-топологию и прямое членство в группах. Обе новые политики
+отключены по умолчанию. [Контракт rollback](rollback.md#группы-alterator-и-libnss-role-на-alt-p11).
 
 `PasswordAgingPolicyDefaults` не используются как semantics отсутствующего
 `login.defs` key. Для отсутствующих `PASS_MIN_DAYS`/`PASS_MAX_DAYS` явно

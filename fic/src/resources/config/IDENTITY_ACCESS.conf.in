@@ -56,3 +56,4 @@ user_default_primary_group.status=DISABLE
 user_default_primary_group.value=@FIC_USER_CREATION_PRIMARY_GROUP_DEFAULT@
 user_default_supplementary_groups.status=DISABLE
 user_default_supplementary_groups.value=[]
+@FIC_ALT_GROUP_POLICY_DEFAULTS@

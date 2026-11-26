@@ -1,4 +1,5 @@
 #include "main_function.h"
+#include "modules/identity_access/alt_groups/AltGroupPolicies.h"
 #include "modules/identity_access/pam/policies/PamDenyEmptyPasswordLoginPolicy.h"
 
 #include "daemon/PolicyDisableFlow.h"
@@ -570,6 +571,10 @@ bool initPolicyRegistry(
         platform.userCreation));
     cafArr.push_back(std::make_unique<UserDefaultSupplementaryGroupsPolicy>(
         platform.userCreation));
+    if (platform.userCreation.altGroupPolicies) {
+        cafArr.push_back(std::make_unique<fic::identity::alt_groups::AltLdapUsersDefaultGroupsPolicy>());
+        cafArr.push_back(std::make_unique<fic::identity::alt_groups::AltRoleGroupsPolicy>());
+    }
 
     //Настройки ядра (SYSCTL)
     cafArr.push_back(std::make_unique<SYSCTL_dmesg_restrict>());

@@ -32,6 +32,7 @@
 #include "modules/identity_access/pam/PamProviderRollback.h"
 #include "modules/identity_access/IdentityAccessPolicy.h"
 #include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
+#include "modules/identity_access/alt_groups/AltGroupTransaction.h"
 
 #include <algorithm>
 #include <map>
@@ -546,6 +547,15 @@ MutationRollbackOutcome undoPamProviderManagedFlagMutation(
 MutationRollbackOutcome undoMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record) {
+    if (record.undo.backend == MutationBackend::AltGroups) {
+        std::string error;
+        auto* journal = DaemonMutationJournal::instance().tryGet(error);
+        const bool released = deps.userCreationPlatform.altGroupPolicies && journal &&
+            fic::identity::alt_groups::release(record, *journal, error);
+        return {record.id, record.resource, released ? RollbackStatus::Success : RollbackStatus::Failed,
+                released ? "ALT group policy ownership released" :
+                    (error.empty() ? "ALT group policy rollback is unavailable" : error)};
+    }
     if (std::holds_alternative<UndoReleaseSudoGlobalDefault>(record.undo.payload)) {
         const std::lock_guard<std::mutex> lock(SudoersConfiguration::mutationMutex());
         std::string error;
@@ -781,6 +791,9 @@ std::string rollbackStatusToString(RollbackStatus status) {
 }
 
 RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
+    if (policy == fic::identity::alt_groups::ldapPolicy || policy == fic::identity::alt_groups::rolePolicy) {
+        return RollbackEnrollment::Supported;
+    }
     if (policy.moduleName == "OSS" && policy.submoduleName == "DisplayManager") {
         if (policy.policyName == "controlled_display_managers" || policy.policyName == "absence_of_uncontrolled_display_managers") return RollbackEnrollment::NotEnrolled;
         if (policy.policyName == "disable_autologin") return RollbackEnrollment::Supported;
@@ -911,6 +924,10 @@ RollbackEnrollment rollbackEnrollment(const PolicyRef& policy) {
 
 RollbackEnrollment effectiveRollbackEnrollment(const PolicyRef& policy,
                                                const RollbackExecutorDeps& deps) {
+    if (policy == fic::identity::alt_groups::ldapPolicy || policy == fic::identity::alt_groups::rolePolicy) {
+        return deps.userCreationPlatform.altGroupPolicies ? RollbackEnrollment::Supported
+                                                          : RollbackEnrollment::NotEnrolled;
+    }
     if (policy.moduleName == "IDENTITY_ACCESS" &&
         policy.submoduleName == "USER_CREATION" &&
         policy.policyName == "user_default_supplementary_groups" &&
@@ -965,6 +982,9 @@ RollbackReport checkUnrecordedOwnership(
     report.status = RollbackStatus::NothingToDo;
     report.message = "Active mutation records отсутствуют; FIC не владеет "
                      "изменениями этой политики";
+    if (policy == fic::identity::alt_groups::ldapPolicy || policy == fic::identity::alt_groups::rolePolicy) {
+        return report;
+    }
 
     std::string inspectionError;
     const auto inspection=inspectUnrecordedResource(policy,deps,*journal,inspectionError);

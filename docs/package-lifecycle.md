@@ -67,7 +67,8 @@ and schema are unchanged.
 | IDENTITY_ACCESS/SSSD | Existing managed snippet rollback; physically absent trusted parents/snippet without a record prove nothing to release, staging artifacts remain a conflict |
 | IDENTITY_ACCESS/KERBEROS | Existing scalar rollback |
 | IDENTITY_ACCESS/PAM and internal PAM_CONTAINER | Joint platform topology/provider/password release before per-policy resolution; independent physical final proof |
-| IDENTITY_ACCESS/USER_CREATION | Existing journal-backed defaults rollback |
+| IDENTITY_ACCESS/USER_CREATION | Existing journal-backed defaults rollback, including the Alterator assignment on ALT p11 |
+| IDENTITY_ACCESS/NSS ALT role groups | Restore `/etc/role` and the journal-proven file/link pairs in `/etc/role.d` |
 | IDENTITY_ACCESS/PASSWORD_AGING | Five scalar login.defs policies release; two account operations intentionally non-reverting |
 | OSS/DesktopEnvironment | Joint domain release plus physical proof before retiring scope checkpoint; non-reverting policy identities retain their contract |
 | OSS/DisplayManager | Joint domain release and physical proof before retiring checkpoint; no DM restart |

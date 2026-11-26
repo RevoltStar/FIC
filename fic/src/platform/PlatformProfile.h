@@ -462,6 +462,7 @@ struct UserCreationPlatformConfig {
     std::filesystem::path shellsPath = "/etc/shells";
     bool requireListedShellWhenShellsFileExists = true;
     UserCreationPolicyDefaults policyDefaults;
+    bool altGroupPolicies = false;
 };
 
 struct DisplayManagerPlatformConfig {

@@ -1,4 +1,6 @@
 #include "modules/identity_access/user_creation/UserCreationPolicies.h"
+#include "modules/identity_access/alt_groups/AltGroupPolicies.h"
+#include "modules/identity_access/alt_groups/AltGroupTransaction.h"
 #include "modules/identity_access/user_creation/UserCreationManagedTransaction.h"
 #include "modules/identity_access/shared/login_defs/IdentityLoginDefsManagedTransaction.h"
 #include "rollback/DaemonMutationJournal.h"
@@ -12,10 +14,12 @@
 
 namespace uc = fic::identity::user_creation;
 namespace ld = fic::identity::login_defs;
+namespace alt = fic::identity::alt_groups;
 using namespace fic::rollback;
 
 int main(int argc, char** argv) {
-    if (getuid() != 0 || !std::filesystem::exists("/run/.containerenv")) {
+    if (getuid() != 0 || (!std::filesystem::exists("/run/.containerenv") &&
+                          !std::filesystem::exists("/.dockerenv"))) {
         std::cerr << "Container-only native driver; host execution refused\n";
         return 77;
     }
@@ -39,11 +43,15 @@ int main(int argc, char** argv) {
     for (const auto& path : {paths.configDir, paths.logDir, paths.dataDir, paths.notifyDir, paths.runtimeDir})
         std::filesystem::create_directories(path);
     if (!fic::core::FicRuntimePaths::initialize(paths, error)) { std::cerr << error; return 1; }
-    const std::map<std::string, std::string> defaults{
+    std::map<std::string, std::string> defaults{
         {"user_home_base_directory", "/home"}, {"user_create_home", "yes"},
         {"user_skeleton_directory", "/etc/skel"}, {"user_default_shell", "/bin/sh"},
         {"user_create_private_group", "yes"}, {"user_default_primary_group", "users"},
         {"user_default_supplementary_groups", "[]"}};
+    if (platform.altGroupPolicies) {
+        defaults.emplace(alt::ldapPolicy.policyName, "[]");
+        defaults.emplace(alt::rolePolicy.policyName, "{}");
+    }
     if (!defaults.count(name)) return 2;
     if (!std::filesystem::exists(paths.configDir / "IDENTITY_ACCESS.conf")) {
         std::ofstream config(paths.configDir / "IDENTITY_ACCESS.conf");
@@ -55,7 +63,18 @@ int main(int argc, char** argv) {
     }
     auto* journal = DaemonMutationJournal::instance().tryGet(error);
     if (!journal) { std::cerr << error; return 1; }
-    const PolicyRef policy{"IDENTITY_ACCESS", "USER_CREATION", name};
+    const PolicyRef policy{"IDENTITY_ACCESS", name == alt::rolePolicy.policyName ? "NSS" : "USER_CREATION", name};
+    const bool altGroups = policy == alt::ldapPolicy || policy == alt::rolePolicy;
+    if (altGroups && action == "release") {
+        for (const auto& record : journal->activeRecords(policy)) {
+            if (!alt::release(record, *journal, error) ||
+                !journal->setStatus(record.id, MutationStatus::RolledBack, error)) {
+                std::cerr << error << '\n';
+                return 1;
+            }
+        }
+        return 0;
+    }
     if (action == "release") {
         const std::lock_guard<std::mutex> lock(IdentityAccessPolicy::configurationMutex());
         const auto records = journal->activeRecords(policy);
@@ -90,6 +109,25 @@ int main(int argc, char** argv) {
     if (!config.loadConfig() || !config.setPolicyValue(name, argv[3]) || !config.saveConfig()) return 1;
     unsigned writes = 0;
     const std::string cut = action == "crash-apply" && argc == 5 ? argv[4] : "";
+    if (altGroups && !cut.empty()) {
+        if (policy == alt::ldapPolicy) {
+            AtomicFileWriter::setPreInstallHookForTests([&](const std::string& path) {
+                if (path == alt::ldapPath && cut == "before") ::_exit(86);
+            });
+            AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path) {
+                if (path == alt::ldapPath && cut == "after") ::_exit(86);
+                return true;
+            });
+        } else {
+            AtomicFileWriter::setPreInstallHookForTests([&, publications = 0](const std::string& path) mutable {
+                if (path == paths.mutationJournalFile && ++publications == 2 && cut == "after") ::_exit(86);
+            });
+            AtomicFileWriter::setDirectoryFsyncHookForTests([&](const std::string& path) {
+                if (path == paths.mutationJournalFile && cut == "before") ::_exit(86);
+                return true;
+            });
+        }
+    }
     auto before = [&] { ++writes; if (cut == "before") ::_exit(86); };
     auto after = [&] { if (cut == "after") ::_exit(86); };
     uc::setBeforeUserCreationWriteHookForTests(before);
@@ -103,9 +141,15 @@ int main(int argc, char** argv) {
     else if (name == "user_default_shell") instance = std::make_unique<UserDefaultShellPolicy>(platform);
     else if (name == "user_create_private_group") instance = std::make_unique<UserCreatePrivateGroupPolicy>(platform);
     else if (name == "user_default_primary_group") instance = std::make_unique<UserDefaultPrimaryGroupPolicy>(platform);
+    else if (policy == alt::ldapPolicy) instance = std::make_unique<alt::AltLdapUsersDefaultGroupsPolicy>();
+    else if (policy == alt::rolePolicy) instance = std::make_unique<alt::AltRoleGroupsPolicy>();
     else instance = std::make_unique<UserDefaultSupplementaryGroupsPolicy>(platform);
     if (!instance->apply()) return 1;
     const auto active = journal->activeRecords(policy);
+    if (altGroups) {
+        for (const auto& record : active) if (record.status != MutationStatus::Applied) return 1;
+        return 0;
+    }
     if (active.size() != 1 || active.front().status != MutationStatus::Applied) return 1;
     std::cout << "SUCCESS writes=" << writes << " ownership=Applied\n";
     return 0;

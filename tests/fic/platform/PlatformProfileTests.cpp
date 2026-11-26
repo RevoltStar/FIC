@@ -295,6 +295,8 @@ void testSelectedProfile() {
             "DM package inventory must use the platform package database");
     const auto supplementaryProvider =
         profile.userCreation.supplementaryGroupsProvider;
+    require(profile.userCreation.altGroupPolicies == (profile.id == "alt-p11"),
+            "Alterator and libnss-role policies must be available only on ALT p11");
     if (profile.id == "debian-12" || profile.id == "ubuntu-24.04") {
         require(supplementaryProvider ==
                     fic::platform::UserSupplementaryGroupsProviderKind::DebianAdduser,
@@ -311,8 +313,8 @@ void testSelectedProfile() {
                 "shadow 4.17 profile must use exact useradd key lookup");
     } else if (profile.id == "alt-p11") {
         require(supplementaryProvider ==
-                    fic::platform::UserSupplementaryGroupsProviderKind::Unsupported,
-                "ALT p11 cannot express replacement or empty group-list semantics");
+                    fic::platform::UserSupplementaryGroupsProviderKind::ShadowUseraddDefaults,
+                "ALT p11 must manage supplementary groups through useradd GROUPS");
         require(profile.userCreation.adduserConfigPath.empty(),
                 "ALT p11 must not claim a Debian adduser native path");
         require(profile.userCreation.useraddDefaultsLookup ==

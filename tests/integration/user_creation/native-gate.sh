@@ -1,7 +1,7 @@
 #!/bin/bash
-# Only real OS consumers in disposable Podman. Production driver refuses host.
+# Only real OS consumers in disposable containers. Production driver refuses host.
 set -euo pipefail
-[[ $(id -u) == 0 && -f /run/.containerenv ]] || exit 77
+[[ $(id -u) == 0 && ( -f /run/.containerenv || -f /.dockerenv ) ]] || exit 77
 driver=${1:?native driver}; row=${2:?platform row}
 cat /etc/os-release
 root=/var/lib/fic-user-creation-native
@@ -31,10 +31,9 @@ case $row in
   cp /etc/adduser.conf "$root/adduser-original"
   printf '\n# native foreign fixture\nADD_EXTRA_GROUPS=0\nEXTRA_GROUPS="audio video"\n' >> /etc/adduser.conf
   cp /etc/adduser.conf "$root/adduser-foreign";;
- debian13|ubuntu2604)
+ debian13|ubuntu2604|alt-p11)
   provider=shadow
   printf 'GROUPS=audio,video\nGROUPS=\n' >> /etc/default/useradd;;
- alt-p11) provider=unsupported;;
  *) exit 2;;
 esac
 cp /etc/default/useradd "$root/useradd-foreign"
@@ -51,14 +50,7 @@ release() { "$driver" release "$1"; }
 policies=(user_home_base_directory user_create_home user_skeleton_directory user_default_shell user_create_private_group user_default_primary_group)
 values=("$root/home" yes "$root/skel" /bin/sh no users)
 next=("$root/home-next" no "$root/skel-next" /bin/bash yes staff)
-if [[ $provider != unsupported ]]; then
- policies+=(user_default_supplementary_groups); values+=('[]'); next+=('["audio","video"]')
-else
- before=$(sha256sum /etc/default/useradd /etc/login.defs)
- if "$driver" apply user_default_supplementary_groups '[]'; then echo 'ALT Unsupported accepted' >&2; exit 1; fi
- [[ $(sha256sum /etc/default/useradd /etc/login.defs) == "$before" ]]
- pass 'ALT supplementary Unsupported: refusal without system mutation'
-fi
+policies+=(user_default_supplementary_groups); values+=('[]'); next+=('["audio","video"]')
 # Fresh compliant ownership, repeat, single refresh, release both fresh and
 # refreshed, actual persistent crash recovery before/after physical install.
 for i in ${!policies[@]}; do
@@ -131,29 +123,46 @@ apply user_create_home yes 1
 new_user
 [[ $(getent passwd "$account" | cut -d: -f6) == "$root/home-next/$account" && $(getent passwd "$account" | cut -d: -f7) == /bin/bash && -f $root/home-next/$account/fic-template-next ]]
 pass 'refreshed HOME/SKEL/SHELL actual native account'
+no_direct_default_groups() {
+ [[ $row != alt-p11 ]] || ! grep -Eq "^(audio|video):[^:]*:[^:]*:([^:]*,)?$account(,|$)" /etc/group
+}
 if [[ $provider == shadow ]]; then
  apply user_default_supplementary_groups '["audio","video"]' 1
  new_user; memberships=" $(id -Gn "$account") "
  [[ $memberships == *' audio '* && $memberships == *' video '* ]]
  pass 'GROUPS actual nonempty native membership'
- # Prove how this distribution frontend invokes useradd, separately from its
- # own EXTRA_GROUPS mechanism; do not pretend adduser consumes every default.
- printf '\nADD_EXTRA_GROUPS=0\n' >> /etc/adduser.conf
- serial=$((serial+1)); account="ficnative$serial"
- adduser --disabled-password --gecos '' "$account" </dev/null
- memberships=" $(id -Gn "$account") "
- [[ $memberships == *' audio '* && $memberships == *' video '* ]]
- pass 'native adduser inherits shadow GROUPS when its own extras disabled'
- [[ $(getent passwd "$account" | cut -d: -f6) == "/home/$account" ]]
- primary "$account"
- pass 'adduser frontend overrides HOME and primary group defaults'
+ if [[ $row == alt-p11 ]]; then
+  grep -E "^audio:[^:]*:[^:]*:([^:]*,)?$account(,|$)" /etc/group
+  grep -E "^video:[^:]*:[^:]*:([^:]*,)?$account(,|$)" /etc/group
+  pass 'GROUPS direct membership in /etc/group'
+ else
+  # Check the adduser frontend separately from its own EXTRA_GROUPS mechanism.
+  printf '\nADD_EXTRA_GROUPS=0\n' >> /etc/adduser.conf
+  serial=$((serial+1)); account="ficnative$serial"
+  adduser --disabled-password --gecos '' "$account" </dev/null
+  memberships=" $(id -Gn "$account") "
+  [[ $memberships == *' audio '* && $memberships == *' video '* ]]
+  pass 'native adduser inherits shadow GROUPS when its own extras disabled'
+  [[ $(getent passwd "$account" | cut -d: -f6) == "/home/$account" ]]
+  primary "$account"
+  pass 'adduser frontend overrides HOME and primary group defaults'
+ fi
  new_user -G users; memberships=" $(id -Gn "$account") "
- [[ $memberships != *' audio '* && $memberships != *' video '* && $memberships == *' users '* ]]
+ [[ $memberships == *' users '* ]]
+ if [[ $row == alt-p11 ]]; then
+  no_direct_default_groups
+ else
+  [[ $memberships != *' audio '* && $memberships != *' video '* ]]
+ fi
  pass '-G overrides GROUPS'
  apply user_default_supplementary_groups '[]' 1
  grep -Fx 'GROUPS=' /etc/default/useradd
  new_user; memberships=" $(id -Gn "$account") "
- [[ $memberships != *' audio '* && $memberships != *' video '* ]]
+ if [[ $row == alt-p11 ]]; then
+  no_direct_default_groups
+ else
+  [[ $memberships != *' audio '* && $memberships != *' video '* ]]
+ fi
  pass 'GROUPS= actual empty membership despite prior nonempty foreign defaults'
 elif [[ $provider == adduser ]]; then
  apply user_default_supplementary_groups '["audio","video"]' 1
@@ -188,7 +197,7 @@ apply user_default_shell /bin/bash 0
 apply user_create_home yes 0
 apply user_create_private_group no 0
 apply user_default_primary_group staff 0
-[[ $provider == unsupported ]] || apply user_default_supplementary_groups '[]' 0
+apply user_default_supplementary_groups '[]' 0
 for policy in "${policies[@]}"; do release "$policy"; done
 cmp /etc/default/useradd "$root/useradd-foreign"
 cmp /etc/login.defs "$root/login-foreign"
@@ -202,9 +211,13 @@ if [[ $provider == shadow ]]; then
  apply user_default_supplementary_groups '[]' 1
  grep -Fx 'GROUPS=' /etc/default/useradd
  new_user -M; memberships=" $(id -Gn "$account") "
- [[ $memberships != *' audio '* && $memberships != *' video '* ]]
+ if [[ $row == alt-p11 ]]; then
+  no_direct_default_groups
+ else
+  [[ $memberships != *' audio '* && $memberships != *' video '* ]]
+ fi
  release user_default_supplementary_groups
  cmp /etc/default/useradd "$root/useradd-no-groups"
  pass 'absent foreign GROUPS still acquires authoritative empty ownership'
 fi
-echo "RESULT row=$row PASS=$checks FAIL=0 Unsupported=$([[ $provider == unsupported ]] && echo 1 || echo 0)"
+echo "RESULT row=$row PASS=$checks FAIL=0"

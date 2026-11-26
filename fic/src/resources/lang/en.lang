@@ -155,6 +155,10 @@
 [module:IDENTITY_ACCESS][policy:user_default_primary_group][description]=Sets the default primary group for new users. The value is used when USERGROUPS_ENAB=no. When USERGROUPS_ENAB=yes, ordinary user creation creates a same-name group and GROUP is not used. Command-line arguments can override this behavior. Only an existing local group name is accepted, not a numeric GID.
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups]=Supplementary groups for new users
 [module:IDENTITY_ACCESS][policy:user_default_supplementary_groups][description]=Sets supplementary groups assigned to new local users by the platform's native user-creation provider. Only the provider-specific list is managed; other frontend options may add memberships.
+[module:IDENTITY_ACCESS][policy:alt_ldap_users_default_groups]=Supplementary groups for new Alterator users
+[module:IDENTITY_ACCESS][policy:alt_ldap_users_default_groups][description]=Sets the native alterator-ldap-users backend default_groups list on ALT p11. An empty list disables assignments through this setting. Other group assignment and inheritance mechanisms operate independently.
+[module:IDENTITY_ACCESS][policy:alt_role_groups]=Group inheritance through libnss-role
+[module:IDENTITY_ACCESS][policy:alt_role_groups][description]=Exclusively manages libnss-role rules on ALT p11. Replaces /etc/role and neutralizes regular .role files in /etc/role.d, including RPM-owned files. Changes inherited groups for existing users. An empty object {} disables inheritance through this configuration.
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration]=SSSD cached credential lifetime
 [module:IDENTITY_ACCESS][policy:sssd_offline_credentials_expiration][description]=Sets offline_credentials_expiration in days (0–3650, recommended value 30). Apply and ownership release use verified SSSD transactions; an uncertain outcome retains provenance and reports failure.
 [module:IDENTITY_ACCESS][policy:sssd_cache_credentials]=SSSD credential caching

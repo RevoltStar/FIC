@@ -21,6 +21,17 @@ policy ID, межполитической зависимости или snapshot
 
 ## Реальное окружение
 
+Таблица ниже фиксирует результаты от 2026-10-14. Повторная проверка ALT p11
+со включённым провайдером `GROUPS` описана в
+[HANDOFF](HANDOFF.md#alt-p11-supplementary-groups).
+
+Расширенная ALT p11 проверка использует тот же `user_creation_native_driver`
+и [alt-groups-native-gate.sh](../tests/integration/user_creation/alt-groups-native-gate.sh).
+Передайте драйвер и путь к штатному RPM `alterator-roles-common` в одноразовом
+Docker с установленными `alterator-ldap-users`, `libnss-role` и
+`alterator-roles-common`. Проверка меняет файлы, создаёт тестовые учётные записи,
+переустанавливает role RPM и удаляет RPM Alterator внутри контейнера.
+
 Драйвер собирает production `UserCreationPolicies`, оба managed transaction
 backend, `MutationJournal`, `fic-core`, `fic-policy` и выбранный platform profile.
 Он отказывается работать вне root Podman-контейнера и проверяет настоящий

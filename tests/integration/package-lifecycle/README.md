@@ -29,6 +29,7 @@ hard-coded dependencies to make a fixture install.
 ```sh
 bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/lifecycle-packages
 bash tests/integration/package-lifecycle/run-rpm.sh ALT_IMAGE BUILD/lifecycle-packages
+bash tests/integration/package-lifecycle/run-rpm.sh ALT_IMAGE BUILD/lifecycle-packages alt_group_native.py
 bash tests/integration/package-lifecycle/run-restricted.sh IMAGE BUILD/fic/fic
 bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/lifecycle-packages purge_failure_native.py
 bash tests/integration/package-lifecycle/run-deb.sh IMAGE BUILD/lifecycle-packages slow_init_native.py
@@ -56,6 +57,11 @@ RPM has no dpkg-style purge. The minimal ALT base image's foreign
 before installing FIC and checked with native visudo; FIC does not repair it.
 ALT emergency SKIP is tested after actual daemon PAM release: SKIP is never
 expected to undo policy topology after breaking the ownership engine.
+
+The focused `alt_group_native.py` driver also requires the stock
+`libnss-role`, `alterator-roles-common` and `alterator-ldap-users` RPMs in
+the test image. It uses the real CLI, daemon scheduler, rollback-all and
+RPM erase to verify the three supplementary-group policies and conflict retry.
 
 Both default native drivers also verify automatic CPU/board/memory collection:
 enabled oneshot, a completed invocation and concrete database rows immediately

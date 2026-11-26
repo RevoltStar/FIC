@@ -3551,6 +3551,8 @@ foreach(fic_sssd_target IN LISTS fic_sssd_targets)
     foreach(fic_sssd_source IN LISTS fic_sssd_sources)
         if(fic_sssd_source MATCHES "/RollbackExecutor.cpp$")
             target_link_libraries(${fic_sssd_target} PRIVATE fic-sssd-integration-test-support)
+            target_sources(${fic_sssd_target} PRIVATE
+                ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/alt_groups/AltGroupTransaction.cpp)
             break()
         endif()
     endforeach()

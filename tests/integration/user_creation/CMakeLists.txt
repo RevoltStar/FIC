@@ -28,6 +28,8 @@ if(CMAKE_LIBRARY_ARCHITECTURE)
 endif()
 add_executable(user_creation_native_driver native-driver.cpp
     ${FIC_USER_CREATION_SOURCE_ROOT}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
+    ${FIC_USER_CREATION_SOURCE_ROOT}/fic/src/modules/identity_access/alt_groups/AltGroupPolicies.cpp
+    ${FIC_USER_CREATION_SOURCE_ROOT}/fic/src/modules/identity_access/alt_groups/AltGroupTransaction.cpp
     ${FIC_USER_CREATION_SOURCE_ROOT}/fic/src/modules/identity_access/shared/configuration/LoginDefsFileHandler.cpp
     ${FIC_USER_CREATION_SOURCE_ROOT}/fic/src/modules/identity_access/shared/configuration/LocalGroupDatabase.cpp
     ${FIC_USER_CREATION_SOURCE_ROOT}/fic/src/modules/identity_access/user_creation/configuration/AdduserConfigFileHandler.cpp

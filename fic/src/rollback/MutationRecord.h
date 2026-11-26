@@ -42,7 +42,8 @@ enum class MutationBackend {
     IdentityLoginDefs,
     Scope,
     Desktop,
-    DisplayManager
+    DisplayManager,
+    AltGroups
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -554,6 +555,23 @@ struct UndoRemoveDisplayManagerBlock {
     std::string phase = "ensure";
 };
 
+// Whole-file state for /etc/role; the LDAP backend projects only its assignment.
+struct UndoAltGroupConfig {
+    std::optional<AtomicTargetState> original;
+    std::optional<AtomicTargetState> before;
+    std::optional<AtomicTargetState> published;
+    bool releasing = false;
+};
+
+// The backup and link are exchanged within /etc/role.d. No role bytes are
+// copied into the journal.
+struct UndoAltRoleFile {
+    std::uint64_t device;
+    std::uint64_t fileInode;
+    std::uint64_t linkInode;
+    bool releasing = false;
+};
+
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoReleaseSudoGlobalDefault,
@@ -575,7 +593,9 @@ using UndoPayload = std::variant<
     ScopeTransitionCheckpoint,
     UndoRestoreDesktopScalar,
     UndoOwnDesktopArtifact,
-    UndoRemoveDisplayManagerBlock>;
+    UndoRemoveDisplayManagerBlock,
+    UndoAltGroupConfig,
+    UndoAltRoleFile>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

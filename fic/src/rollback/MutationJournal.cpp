@@ -1,4 +1,5 @@
 #include "rollback/MutationJournal.h"
+#include "rollback/AltGroupResources.h"
 #include "rollback/SssdJournalPayload.h"
 #include "rollback/SssdDisableProof.h"
 
@@ -651,6 +652,31 @@ bool readSysctlSnapshot(const json& j,std::optional<AtomicTargetState>& state,st
     AtomicTargetState s;s.identity={j.at("device").get<dev_t>(),j.at("inode").get<ino_t>()};
     s.mode=j.at("mode");s.owner=j.at("owner");s.group=j.at("group");s.content=j.at("content");state=std::move(s);return true;
 }
+namespace alt = fic::identity::alt_groups;
+
+json serializeAltGroupState(const std::optional<AtomicTargetState>& state) {
+    auto fields = sysctlSnapshot(state);
+    if (state) fields["content"] = alt::hexEncode(state->content);
+    return fields;
+}
+
+bool readAltGroupState(json fields, std::optional<AtomicTargetState>& state,
+                       std::string& error) {
+    if (!fields.is_null()) {
+        const auto& encoded = fields.at("content").get_ref<const std::string&>();
+        if (encoded.size() > 2 * 1024 * 1024) {
+            error = "ALT group configuration snapshot is too large";
+            return false;
+        }
+        auto bytes = alt::hexDecode(encoded);
+        if (!bytes) {
+            error = "Invalid ALT group configuration snapshot";
+            return false;
+        }
+        fields["content"] = std::move(*bytes);
+    }
+    return readSysctlSnapshot(fields, state, error);
+}
 bool validSysctlRecord(const MutationRecord& record,std::string& error) {
     const auto* p=std::get_if<UndoRemoveManagedSetting>(&record.undo.payload);
     if(record.undo.backend==MutationBackend::Sysctl&&!p){error="SYSCTL undo payload unavailable";return false;}
@@ -806,7 +832,17 @@ json serializeUndoAction(const UndoAction& action) {
     // the backend inside the undo object to validate payload/backend
     // consistency on load (fail closed).
     value["backend"] = mutationBackendToString(action.backend);
-    if (const auto* dm = std::get_if<UndoRemoveDisplayManagerBlock>(&action.payload)) {
+    if (const auto* config = std::get_if<UndoAltGroupConfig>(&action.payload)) {
+        value["original"] = serializeAltGroupState(config->original);
+        value["before"] = serializeAltGroupState(config->before);
+        value["published"] = serializeAltGroupState(config->published);
+        value["releasing"] = config->releasing;
+    } else if (const auto* role = std::get_if<UndoAltRoleFile>(&action.payload)) {
+        value["device"] = role->device;
+        value["file_inode"] = role->fileInode;
+        value["link_inode"] = role->linkInode;
+        value["releasing"] = role->releasing;
+    } else if (const auto* dm = std::get_if<UndoRemoveDisplayManagerBlock>(&action.payload)) {
         value["manager"] = dm->manager; value["route"] = dm->route; value["seats"] = dm->seats;
         value["created_file"] = dm->createdFile; value["separator"] = dm->separator;
         value["creation_device"] = dm->creationDevice; value["creation_inode"] = dm->creationInode;
@@ -1590,6 +1626,27 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
     if (backend == MutationBackend::Sssd && actionName == "sssd_journal_ownership") {
         try { action.payload=sssd_payload::decode(value.at("ownership"));return true; }
         catch(const std::exception& e) {error=std::string("Malformed SSSD I4 payload: ")+e.what();return false;}
+    }
+    if (backend == MutationBackend::AltGroups && actionName == "alt_group_config") {
+        UndoAltGroupConfig config;
+        if (!readAltGroupState(value.at("original"), config.original, error) ||
+            !readAltGroupState(value.at("before"), config.before, error) ||
+            !readAltGroupState(value.at("published"), config.published, error)) return false;
+        config.releasing = value.at("releasing").get<bool>();
+        action.payload = std::move(config);
+        return true;
+    }
+    if (backend == MutationBackend::AltGroups && actionName == "alt_role_file") {
+        for (const auto* key : {"device", "file_inode", "link_inode"}) {
+            if (!value.at(key).is_number_unsigned()) {
+                error = "Invalid ALT role file identity";
+                return false;
+            }
+        }
+        action.payload = UndoAltRoleFile{value.at("device").get<std::uint64_t>(),
+            value.at("file_inode").get<std::uint64_t>(), value.at("link_inode").get<std::uint64_t>(),
+            value.at("releasing").get<bool>()};
+        return true;
     }
     if (backend == MutationBackend::Desktop && actionName == "own_desktop_artifact") {
         if (!value.contains("kind") || !value["kind"].is_string() ||
@@ -2492,6 +2549,7 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
         return false;
     }
     record.status = status;
+    if (!alt::validRecord(record, error)) return false;
     if(!validSshRecord(record,error)||!validSysctlRecord(record,error)||!sssd_payload::validRecord(record,error))return false;
     if ((record.undo.backend == MutationBackend::Desktop ||
          (std::holds_alternative<UndoRestoreDesktopScalar>(record.undo.payload) ||
@@ -2566,6 +2624,7 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::Scope: return "scope";
     case MutationBackend::Desktop: return "desktop";
     case MutationBackend::DisplayManager: return "display_manager";
+    case MutationBackend::AltGroups: return "alt_groups";
     }
     return "unknown";
 }
@@ -2584,10 +2643,13 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "scope") { backend = MutationBackend::Scope; return true; }
     if (value == "desktop") { backend = MutationBackend::Desktop; return true; }
     if (value == "display_manager") { backend = MutationBackend::DisplayManager; return true; }
+    if (value == "alt_groups") { backend = MutationBackend::AltGroups; return true; }
     return false;
 }
 
 std::string undoActionTypeName(const UndoAction& action) {
+    if (std::holds_alternative<UndoAltGroupConfig>(action.payload)) return "alt_group_config";
+    if (std::holds_alternative<UndoAltRoleFile>(action.payload)) return "alt_role_file";
     if (std::holds_alternative<UndoRemoveDisplayManagerBlock>(action.payload)) return "remove_display_manager_block";
     if (std::holds_alternative<UndoOwnDesktopArtifact>(action.payload))
         return "own_desktop_artifact";
@@ -3465,6 +3527,7 @@ bool MutationJournal::prepareMutation(MutationRecord record,MutationId& id,std::
     return prepareMutationImpl(std::move(record),id,error,false);
 }
 bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,std::string& error,bool sshInitial) {
+    if (!alt::validRecord(record, error)) return false;
     if (std::holds_alternative<SssdJournalOwnership>(record.undo.payload)) {
         error="SSSD I4 ownership requires typed transaction API";return false;
     }
@@ -3879,6 +3942,25 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
             existing.policy == record.policy &&
             existing.undo.backend == record.undo.backend &&
             existing.resource == record.resource) {
+            if (record.undo.backend == MutationBackend::AltGroups) {
+                const auto* current = std::get_if<UndoAltGroupConfig>(&existing.undo.payload);
+                const auto* next = std::get_if<UndoAltGroupConfig>(&record.undo.payload);
+                const auto* oldRole = std::get_if<UndoAltRoleFile>(&existing.undo.payload);
+                const auto* newRole = std::get_if<UndoAltRoleFile>(&record.undo.payload);
+                const bool configTransition = current && next &&
+                    alt::sameState(current->original, next->original) &&
+                    (!current->releasing || next->releasing) &&
+                    (alt::sameState(current->published, next->before) ||
+                     (existing.status != MutationStatus::Applied &&
+                      alt::sameState(current->before, next->before)));
+                const bool roleRelease = oldRole && newRole && newRole->releasing &&
+                    oldRole->device == newRole->device && oldRole->fileInode == newRole->fileInode &&
+                    oldRole->linkInode == newRole->linkInode;
+                if (!configTransition && !roleRelease) {
+                    error = "ALT group policy transition would lose ownership";
+                    return false;
+                }
+            }
             if(record.undo.backend==MutationBackend::Sysctl&&
                (std::get<UndoRemoveManagedSetting>(existing.undo.payload).sysctl||std::get<UndoRemoveManagedSetting>(record.undo.payload).sysctl)) {
                 error="typed SYSCTL ownership requires typed refresh; generic reprepare refused";return false;
@@ -4176,6 +4258,15 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
         }
     }
 
+    if (const auto* config = std::get_if<UndoAltGroupConfig>(&record.undo.payload);
+        config && (config->releasing || !alt::sameState(config->original, config->before))) {
+        error = "Fresh ALT group policy record has invalid original state";
+        return false;
+    }
+    if (const auto* role = std::get_if<UndoAltRoleFile>(&record.undo.payload); role && role->releasing) {
+        error = "Fresh ALT role file record cannot release ownership";
+        return false;
+    }
     record.id = nextId_;
     record.status = MutationStatus::Prepared;
     record.error.clear();
@@ -5028,6 +5119,10 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
     }
     const MutationRecord previous = *record;
     record->status = status;
+    if (!alt::validRecord(*record, error)) {
+        *record = previous;
+        return false;
+    }
     if (status == MutationStatus::Applied) {
         if (auto* global = std::get_if<UndoReleaseSudoGlobalDefault>(&record->undo.payload))
             global->previousLine.clear();

@@ -163,6 +163,11 @@ if(FIC_TARGET_PLATFORM STREQUAL "debian-13")
     set(FIC_EMPTY_PASSWORD_LOGIN_POLICY_DEFAULTS
         "deny_empty_password_login.status=DISABLE\ndeny_empty_password_login.value=ENABLE")
 endif()
+set(FIC_ALT_GROUP_POLICY_DEFAULTS "")
+if(FIC_TARGET_PLATFORM STREQUAL "alt-p11")
+    set(FIC_ALT_GROUP_POLICY_DEFAULTS
+        "alt_ldap_users_default_groups.status=DISABLE\nalt_ldap_users_default_groups.value=[]\nalt_role_groups.status=DISABLE\nalt_role_groups.value={}")
+endif()
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/resources/config/IDENTITY_ACCESS.conf.in"
     "${FIC_GENERATED_SCRIPTS_DIR}/config/IDENTITY_ACCESS.conf"
