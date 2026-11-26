@@ -400,6 +400,9 @@ void testSelectedProfile() {
         "gdm-smartcard-sssd-exclusive",
         "gdm-smartcard-sssd-or-password",
         "lightdm", "lightdm-autologin"};
+    if (profile.id == "debian-13")
+        expectedAccessServices.insert(expectedAccessServices.begin() + 2,
+                                      "fic-sshd-mfa");
     if (profile.id == "alt-p11")
         expectedAccessServices.insert(expectedAccessServices.begin() + 7,
                                       "gdm-smartcard");

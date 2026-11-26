@@ -2729,20 +2729,7 @@ list(APPEND FIC_SSH_MFA_DEP_SOURCES
     ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryInitialization.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyDependencyGraph.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/policy/execution/PolicyExecutionPlanner.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/Debian12Profile.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/Debian13Profile.cpp
 )
-# Both Debian profiles define makeBuildPlatformProfile(); rename each
-# compiled profile source so one test binary can use both real profiles
-# regardless of the FIC_TARGET_PLATFORM this build was configured with.
-set_source_files_properties(
-    "${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/Debian12Profile.cpp"
-    PROPERTIES COMPILE_DEFINITIONS
-        "makeBuildPlatformProfile=makeDebian12ProfileForTest")
-set_source_files_properties(
-    "${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/Debian13Profile.cpp"
-    PROPERTIES COMPILE_DEFINITIONS
-        "makeBuildPlatformProfile=makeDebian13ProfileForTest")
 add_executable(ssh_mfa_dependency_tests ${FIC_SSH_MFA_DEP_SOURCES})
 target_include_directories(ssh_mfa_dependency_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -3650,7 +3637,7 @@ add_test(NAME device_startup_readiness_tests COMMAND device_startup_readiness_te
 set_tests_properties(device_startup_readiness_tests PROPERTIES LABELS "unit;root" SKIP_RETURN_CODE 77 TIMEOUT 20)
 
 # Compile the actual distribution factories under test-only names. This keeps
-# SDDM regressions independent of the host/selected build platform.
+# profile regressions independent of the host/selected build platform.
 foreach(profile Debian12 Debian13 Ubuntu2404 Ubuntu2604 AltP11)
     add_library(sddm_test_profile_${profile} STATIC
         ${CMAKE_SOURCE_DIR}/fic/src/platform/profiles/${profile}Profile.cpp)
@@ -3664,6 +3651,8 @@ foreach(profile Debian12 Debian13 Ubuntu2404 Ubuntu2604 AltP11)
         target_link_libraries(${consumer} PRIVATE sddm_test_profile_${profile})
     endforeach()
 endforeach()
+target_link_libraries(ssh_mfa_dependency_tests PRIVATE
+    sddm_test_profile_Debian12 sddm_test_profile_Debian13)
 target_sources(pam_capability_activation_policy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamDisableRootSddmLoginPolicy.cpp)
 

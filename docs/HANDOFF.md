@@ -58,3 +58,18 @@ can require manual recovery. The scope is Debian 13 SSH only. Faults at the
 terminal journal persistence boundary were exercised in unit tests. The native
 package gate did not interrupt dpkg during upgrade or force a failure after SSH
 publication. The multi-distribution matrix was outside this gate.
+
+## CMake test profile regression
+
+`ssh_mfa_dependency_tests` links the existing Debian 12/13
+`sddm_test_profile_*` libraries and uses their shared factory declarations.
+Each test library owns its factory rename. The source-wide definitions added
+in `9184d203` had also reached the SDDM consumers, causing duplicate macro
+definitions and undefined factory references in CI run `45771531034`.
+The test still exercises the real SSH classes and both production profiles.
+
+`platform_profile_tests` now checks the exact Debian 13 incident PAM service
+list including `fic-sshd-mfa`. A clean Debian 13 configuration built `fic` and
+all six profile-library consumers in one directory. All six CTests passed.
+The compile database and `nm -C` confirmed isolated test factory names and
+the original production factory. Logs are under `build-profile-link-fix/`.

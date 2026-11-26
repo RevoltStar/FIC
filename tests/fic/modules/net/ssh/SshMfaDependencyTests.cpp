@@ -28,6 +28,7 @@
 #include "policy/execution/PolicyDependencyGraph.h"
 #include "policy/execution/PolicyExecutionPlanner.h"
 #include "policy/registry/PolicyRegistryInitialization.h"
+#include "../../../platform/SddmTestProfiles.h"
 
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/policy/PolicyApplyResult.h>
@@ -39,15 +40,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-namespace fic::platform {
-// Both production Debian profile sources are compiled into this test target
-// with -DmakeBuildPlatformProfile=<name>, so both real profiles are
-// available here regardless of the FIC_TARGET_PLATFORM the build was
-// configured with (only one profile can be the build platform).
-PlatformProfile makeDebian12ProfileForTest();
-PlatformProfile makeDebian13ProfileForTest();
-} // namespace fic::platform
 
 namespace {
 
@@ -189,7 +181,7 @@ struct SshFixture {
 // empty value and an unknown token keep it (fail closed).
 void testSshMfaStatusSemantics() {
     const fic::platform::PlatformProfile profile =
-        fic::platform::makeDebian13ProfileForTest();
+        fic::platform::makeDebian13SddmTestProfile();
     SshFixture fixture;
     const auto config = fixture.sshConfigFromProfile(profile);
 
@@ -232,7 +224,7 @@ void testSshMfaStatusSemantics() {
 // result and the ordinary SSH policy applies without any MFA warning.
 void testSshMfaDisabledSkipsDependencyWithoutWarning() {
     const fic::platform::PlatformProfile profile =
-        fic::platform::makeDebian13ProfileForTest();
+        fic::platform::makeDebian13SddmTestProfile();
     SshFixture fixture;
     fixture.writeNetConfig("ssh_mfa_required.status=DISABLE\n");
     const auto config = fixture.sshConfigFromProfile(profile);
@@ -277,7 +269,7 @@ void testSshMfaDisabledSkipsDependencyWithoutWarning() {
 // dependency graph validates without the unregistered MFA policy.
 void testSshMfaDebian12ProfileDependencies() {
     const fic::platform::PlatformProfile profile =
-        fic::platform::makeDebian12ProfileForTest();
+        fic::platform::makeDebian12SddmTestProfile();
     require(profile.id == "debian-12", "expected the real Debian 12 profile");
     require(profile.ssh.applyContract ==
                 fic::platform::SshApplyContract::DebianVerified,
@@ -338,7 +330,7 @@ void testSshMfaDebian12ProfileDependencies() {
 // disabling MFA.
 void testSshMfaDebian13ProfileDependencies() {
     const fic::platform::PlatformProfile profile =
-        fic::platform::makeDebian13ProfileForTest();
+        fic::platform::makeDebian13SddmTestProfile();
     require(profile.id == "debian-13", "expected the real Debian 13 profile");
     require(profile.ssh.applyContract ==
                 fic::platform::SshApplyContract::DebianVerified,
