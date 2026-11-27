@@ -1462,6 +1462,25 @@ RollbackReport rollbackPolicyBeforeDisable(
             else ++failed;
             continue;
         }
+        const auto* suppression = current
+            ? std::get_if<UndoRestorePamSuppression>(&current->undo.payload) : nullptr;
+        if (suppression && suppression->releasing) {
+            const bool succeededOutcome = outcome.status == RollbackStatus::Success ||
+                                          outcome.status == RollbackStatus::NothingToDo;
+            if (succeededOutcome && journal->usable() &&
+                current->status == MutationStatus::RolledBack) {
+                ++succeeded;
+            } else {
+                ++failed;
+                if (succeededOutcome) {
+                    report.outcomes.back().status = RollbackStatus::Failed;
+                    report.outcomes.back().message += "; PAM suppression release not finalized";
+                }
+            }
+            // Only the backend may finish its typed release after physical and
+            // durability proof. Preserve Prepared on publication/journal errors.
+            continue;
+        }
         const auto* sysctl=current?std::get_if<UndoRemoveManagedSetting>(&current->undo.payload):nullptr;
         if(record.undo.backend==MutationBackend::Sysctl&&sysctl&&sysctl->sysctl&&sysctl->sysctl->release) {
             ++failed; // Preserve typed release intent, never overwrite with RollbackFailed.

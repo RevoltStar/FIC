@@ -2651,6 +2651,92 @@ void testNopasswdloginExecutorRelease() {
             includedOrphan.status != RollbackStatus::Success,
             "included orphan marker must block final absence proof");
 
+    // Missing primary service must inspect Linux-PAM's applicable "other".
+    std::filesystem::remove(service);
+    writeFile(service.parent_path() / "other", ownedBytes);
+    const auto fallbackOrphan = rollbackPolicyBeforeDisable(policy, "", deps);
+    require(fallbackOrphan.status != RollbackStatus::NothingToDo &&
+            fallbackOrphan.status != RollbackStatus::Success,
+            "fallback orphan marker must block absence proof");
+    require(readFile(service.parent_path() / "other") == ownedBytes,
+            "fallback must remain untouched");
+    writeFile(service.parent_path() / "other", "auth required pam_deny.so\n");
+    require(rollbackPolicyBeforeDisable(policy, "", deps).status == RollbackStatus::NothingToDo,
+            "safe other must allow ownership absence");
+    std::filesystem::remove(service.parent_path() / "other");
+    require(rollbackPolicyBeforeDisable(policy, "", deps).status == RollbackStatus::NothingToDo,
+            "missing other must allow ownership absence");
+
+}
+
+
+void testNopasswdloginExecutorReleaseDurability() {
+    for (bool afterPublication : {true, false}) {
+        TempJournal holder;
+        JournalOverride override(holder.tree.root / "journal");
+        TempTree files("/tmp/fic-suppression-retry-XXXXXX");
+        std::string error;
+        auto* journal = DaemonMutationJournal::instance().tryGet(error);
+        require(journal != nullptr, error);
+        const auto service = files.root / "pam.d/lightdm";
+        const std::string original =
+            "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n"
+            "auth required pam_unix.so\n";
+        writeFile(service, original);
+        RollbackExecutorDeps deps;
+        deps.pamPlatform.configDirectories = {service.parent_path()};
+        deps.pamPlatform.passwordlessLoginTargets = {{"lightdm", service, {"lightdm"}}};
+        fic::identity::pam::PamNopasswdloginOptions options;
+        options.platform = deps.pamPlatform;
+        options.services = {"lightdm"};
+        fic::identity::pam::PamNopasswdloginTransaction transaction(options, *journal);
+        require(transaction.apply(error), error);
+        const auto owned = std::string("# administrator\n") + readFile(service);
+        writeFile(service, owned);
+        const PolicyRef policy{"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"};
+        if (afterPublication) {
+            AtomicFileWriter::setDirectoryFsyncHookForTests(
+                [&](const std::string& path) { return path != service.string(); });
+        } else {
+            AtomicFileWriter::setPreInstallHookForTests([&](const std::string& path) {
+                if (path == service.string()) writeFile(service, owned + "# concurrent\n");
+            });
+        }
+        const auto failed = rollbackPolicyBeforeDisable(policy, "", deps);
+        AtomicFileWriter::setDirectoryFsyncHookForTests({});
+        AtomicFileWriter::setPreInstallHookForTests({});
+        require(failed.status == RollbackStatus::Failed, "writer failure must remain visible");
+        require(readFile(service) == (afterPublication ? "# administrator\n" + original :
+                                     owned + "# concurrent\n"), "publication state mismatch");
+        const auto records = journal->activeRecords(policy);
+        require(records.size() == 1, "failed release must retain ownership");
+        require(records.front().status == MutationStatus::Prepared &&
+                std::get<UndoRestorePamSuppression>(records.front().undo.payload).releasing,
+                "executor must retain typed Prepared release intent");
+        if (afterPublication) {
+            const auto restoredBytes = readFile(service);
+            writeFile(service, "# administrator\nauth required pam_deny.so\n");
+            const auto conflictBytes = readFile(service);
+            const auto conflict = rollbackPolicyBeforeDisable(policy, "", deps);
+            require(conflict.status == RollbackStatus::Failed,
+                    "unproven foreign replacement must not complete release");
+            require(readFile(service) == conflictBytes, "conflict changed foreign state");
+            writeFile(service, restoredBytes);
+            AtomicFileWriter::setDirectoryFsyncHookForTests(
+                [&](const std::string& path) { return path != service.string(); });
+            const auto notDurable = rollbackPolicyBeforeDisable(policy, "", deps);
+            AtomicFileWriter::setDirectoryFsyncHookForTests({});
+            require(notDurable.status == RollbackStatus::Failed,
+                    "already restored bytes still need durability proof");
+        }
+        const auto retried = rollbackPolicyBeforeDisable(policy, "", deps);
+        require(retried.status == RollbackStatus::Success, retried.message);
+        require(journal->activeRecords(policy).empty(), "retry must finish ownership");
+        require(readFile(service) == "# administrator\n" + original +
+                (afterPublication ? "" : "# concurrent\n"), "retry lost foreign text");
+        const auto repeated = rollbackPolicyBeforeDisable(policy, "", deps);
+        require(repeated.status == RollbackStatus::NothingToDo, repeated.message);
+    }
 }
 
 } // namespace
@@ -3281,6 +3367,7 @@ int main(int argc, char** argv) {
         {"contextual managed provider enrollment",
          testContextualManagedProviderEnrollment},
         {"nopasswdlogin executor release", testNopasswdloginExecutorRelease},
+        {"nopasswdlogin executor release durability", testNopasswdloginExecutorReleaseDurability},
         {"PAM ownership release", testPamOwnershipRelease},
         {"PAM executor journal lifecycle", testPamExecutorJournalLifecycle},
         {"managed provider option without record/marker is nothing to do",

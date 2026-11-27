@@ -216,12 +216,12 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
         }
         fic::identity::pam::PamConfiguration configuration(deps.pamPlatform);
         for (const auto& target : deps.pamPlatform.passwordlessLoginTargets) {
-            std::vector<std::string> existing;
-            if (!configuration.existingServices({target.service}, existing, error)) return State::Error;
-            if (existing.empty()) continue;
+            std::string selected;
+            if (!configuration.existingServiceOrOther(target.service, selected, error)) return State::Error;
+            if (selected.empty()) continue;
             std::vector<fic::identity::pam::PamRule> rules;
             std::set<Path> sources;
-            if (!configuration.collectRules(target.service, fic::identity::pam::PamManagementGroup::Auth,
+            if (!configuration.collectRules(selected, fic::identity::pam::PamManagementGroup::Auth,
                                              rules, error, &sources)) return State::Error;
             for (const auto& source : sources) {
                 fic::core::TrustedFileReadOptions options;

@@ -73,6 +73,11 @@ public:
                           std::vector<std::string>& existing,
                           std::string& error) const;
 
+    // Select Linux-PAM's root-service fallback without changing include resolution.
+    // An empty result means neither the requested service nor "other" exists.
+    bool existingServiceOrOther(const std::string& service, std::string& selected,
+                                std::string& error) const;
+
     bool collectRules(const std::string& service,
                       PamManagementGroup group,
                       std::vector<PamRule>& rules,

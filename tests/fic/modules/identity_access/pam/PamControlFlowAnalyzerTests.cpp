@@ -1187,6 +1187,26 @@ void testNopasswdloginTransaction(const fs::path& root) {
     require(!unsafeFallback.apply(error), "fallback suppression witness must not be silently ignored");
     fs::remove(vendor / "lightdm");
 
+    const auto readFile = [](const fs::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    const auto other = service.parent_path() / "other";
+    require(unsafeFallback.apply(error), "missing service without other must be allowed");
+    writeFile(other, "auth required pam_deny.so\n");
+    const auto safeOther = readFile(other);
+    require(unsafeFallback.apply(error), error);
+    require(readFile(other) == safeOther, "safe fallback changed");
+    writeFile(other, original);
+    require(!unsafeFallback.apply(error), "other bypass must refuse missing service");
+    require(readFile(other) == original && !fs::exists(service),
+            "other bypass refusal must not write either file");
+    writeFile(other, "# FIC_PAM_NOPASSWDLOGIN orphan\nauth required pam_deny.so\n");
+    const auto orphanOther = readFile(other);
+    require(!unsafeFallback.apply(error), "other orphan witness must fail closed");
+    require(readFile(other) == orphanOther, "other orphan changed");
+    fs::remove(other);
+
     const auto stage = service.parent_path() / "stage";
     writeFile(service, bypass + "auth include stage\n");
     writeFile(stage, "auth required pam_unix.so\n");

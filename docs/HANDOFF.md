@@ -1,58 +1,54 @@
-# disable_nopasswdlogin completion
+# disable_nopasswdlogin P1/P2 follow-up
 
 ## Current base
 
-Branch `main`, base `cf51e64dec72262e6f28bf69e418a6a01ded1b1b`.
-The imported `fic-uncommitted.patch` applies on this base.
+Branch main, base 883ff3bcd7024aa073c9f267abf37fb3741656f8.
+One local follow-up commit requested; no push.
 
 ## Accepted architecture / invariants
 
-One PAM suppression backend for all five platforms. ALT manages gdm-password,
-gdm-fingerprint, gdm-smartcard, lightdm, sddm, plasmalogin and emptty;
-Debian/Ubuntu manage gdm-password, lightdm and sddm. Default DISABLE and
-Recommended dependencies remain. Managed targets do not expand trusted bypasses.
-
-Wrappers bind original bytes, unique adjacent auth anchors and journal mutation
-ID. Trusted reads, CAS, durability, fresh graph proof and scoped compensation
-preserve foreign changes. Numeric jumps crossing suppression are rejected.
-Lost wrappers require installed-package content proof; missing files are never
-recreated. Ordinary periodic apply repairs supported package replacement.
-NSS and group membership are untouched. No new PAM hooks or package hooks.
-Authoritative contract is the PAM suppression section in docs/rollback.md.
+Existing five-platform suppression backend, managed service list, raw wrappers,
+unique anchors, CAS/durability, package proof and scoped rollback remain.
+NSS/group membership is untouched. No new hooks or service-file creation.
+Managed service coverage does not expand trusted authentication bypasses.
 
 ## Completed / changed areas
 
-PAM parser/analyzer, fragment, coordinator and package proof; policy and registry;
-five profiles; journal validation, rollback and orphan inspection; localization,
-unit tests and native fixtures. Real ALT RPM lifecycle passed installation,
-CLI apply, periodic repair, refusal of corrupt-witness rollback, and RPM erase
-with exact scoped PAM restoration and preserved administrator comment/config.
+P1: RollbackExecutor preserves typed Prepared/releasing intent when suppression
+release fails, using the existing SSH/SYSCTL pattern. Only proven terminal
+backend release permits success. Retry checks actual fragment/anchors/durability.
+No MutationJournal schema change or new fault injection hooks.
+
+P2: Narrow existingServiceOrOther selection is shared by suppression apply and
+orphan inspection. Only these callers select root-service Linux-PAM fallback.
+The existing parser inspects the selected graph. No writer targets other.
+
+Changed PAM configuration selection, transaction bypass inspection, rollback
+executor/orphan inspection, regression/native fixtures and rollback docs.
 
 ## Validation
 
-Current run, 2026-11-27, logs in `/tmp/fic-nopasswdlogin-final/`.
+Logs in /tmp/nopasswd-followup/.
 
-- Ubuntu24 profile full configure/build passed, all 3038 build steps.
-- 18 static CTests passed (static.log).
-- Remaining 218 CTests ran (ctest.log). Eight sandbox socket/process failures
-  passed on targeted rerun outside sandbox (socket-retry.log).
-- Combined CTest outcome: 219 passed, 17 skipped, zero remaining failures after
-  targeted environment retries; two of those skipped root suites additionally
-  passed in the disposable container.
-- Analyzer, policy, MutationJournal, RollbackExecutor, platform and real
-  five-profile registry/dependency/GUI descriptor contracts passed.
-- ALT p11 all seven actual RPMs 0.1.1 built (rpm-build.log), artifacts in
-  build-nopasswdlogin-package-alt/packages.
-- Real systemd RPM lifecycle PASS (lifecycle.log), exported commands/result:
-  build-package-lifecycle/native-fic-nopasswdlogin-lifecycle:p11-20261127T141523Z-21113/.
-- Original native five-platform PAM, GDM upgrade and ALT control results are
-  recorded in the imported patch's HANDOFF. Their referenced logs and binaries
-  are absent in this environment; those results were not independently repeated.
+- Baseline production RollbackExecutor failed the new typed-intent regression
+  with actual post-rename directory fsync failure (p1-baseline-red.log).
+- Existing preinstall hook verifies refusal before publication; retry preserves
+  concurrent and administrator comments. Post-publication fsync failure retains
+  intent; unproven foreign bytes and continued durability failure refuse success.
+  Successful retry finalizes ownership and subsequent rollback is idempotent.
+- Baseline native ALT Linux-PAM authenticated through other with lightdm absent;
+  baseline production driver incorrectly returned ok=1 records=0 (native-red.log).
+- Fixed native driver passes absent/safe/bypass/orphan fallback, proves native
+  PAM uses other, checks unchanged fallback and no creation (native-green.log).
+  Reproduction is tests/integration/pam/nopasswdlogin/fallback-native.sh.
+- Four directly affected CTests passed: mutation_journal_tests,
+  rollback_executor_tests, pam_control_flow_analyzer_tests,
+  pam_disable_nopasswdlogin_policy_tests (ctest.log).
+- Final baseline/fixed executor comparison passed (p1-fixed.log). Shell syntax
+  and git diff --check passed. No unresolved failure in targeted gates.
 
 ## Remaining limits
 
-Root container DM transactions, package PAM hooks and package state store passed
-(root-tests.log and root-package-tests.log). Some root/native CTests intentionally
-skip under the unprivileged host; their skip is not a runtime PASS.
-Graphical login and actual fingerprint/smartcard hardware are outside this gate.
-No host PAM changes. Full cross-distribution package lifecycle is not claimed.
+Native fallback proof is ALT Linux-PAM. Full five-distro matrix, full CTest,
+graphical login and package lifecycle were intentionally not repeated for this
+local follow-up. Other PAM policies retain their existing service resolution.

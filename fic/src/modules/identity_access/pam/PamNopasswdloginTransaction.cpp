@@ -79,12 +79,12 @@ bool write(const PamNopasswdloginOptions& options, const Snapshot& before,
 
 bool hasBypass(PamConfiguration& configuration, const std::string& service,
                std::string& error, const std::filesystem::path& permittedMarkerSource = {}) {
-    std::vector<std::string> existing;
-    if (!configuration.existingServices({service}, existing, error)) return true;
-    if (existing.empty()) return false;
+    std::string selected;
+    if (!configuration.existingServiceOrOther(service, selected, error)) return true;
+    if (selected.empty()) return false;
     std::vector<PamRule> rules;
     std::set<std::filesystem::path> sources;
-    if (!configuration.collectRules(service, PamManagementGroup::Auth, rules, error, &sources)) return true;
+    if (!configuration.collectRules(selected, PamManagementGroup::Auth, rules, error, &sources)) return true;
     for (const auto& source : sources) {
         if (source == permittedMarkerSource) continue;
         Snapshot current;

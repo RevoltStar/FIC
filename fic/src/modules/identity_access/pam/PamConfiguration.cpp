@@ -513,6 +513,17 @@ bool PamConfiguration::existingServices(
     return true;
 }
 
+bool PamConfiguration::existingServiceOrOther(
+    const std::string& service, std::string& selected, std::string& error) const {
+    selected.clear();
+    std::vector<std::string> existing;
+    if (!existingServices({service}, existing, error)) return false;
+    if (existing.empty() && service != "other" &&
+        !existingServices({"other"}, existing, error)) return false;
+    if (!existing.empty()) selected = existing.front();
+    return true;
+}
+
 bool PamConfiguration::parseService(const std::string& service,
                                     const ParsedService*& parsed,
                                     std::string& error) {
