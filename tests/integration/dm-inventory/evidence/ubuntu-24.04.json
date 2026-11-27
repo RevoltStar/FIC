@@ -1,0 +1,51 @@
+{
+  "version": "systemd 255 (255.4-1ubuntu8.19)",
+  "pid1": "systemd",
+  "unit_file_rows": 130,
+  "fixtures": {
+    "fic-dm-enabled.service": "enabled",
+    "fic-dm-runtime.service": "enabled-runtime",
+    "fic-dm-disabled.service": "disabled",
+    "fic-dm-masked.service": "masked",
+    "fic-dm-alias.service": "alias",
+    "fic-dm-generated.service": "generated",
+    "fic-dm-template@.service": "disabled",
+    "fic-dm-transient.service": "transient",
+    "fic-dm-custom-dm.service": "disabled"
+  },
+  "equivalent": true,
+  "concrete_instance_in_loaded": true,
+  "show_units": 131,
+  "individual": {
+    "processes": 131,
+    "seconds": 1.541815363000012
+  },
+  "batch32": {
+    "processes": 5,
+    "seconds": 0.40640492999997946,
+    "equivalent": true
+  },
+  "missing_batch_exit": 0,
+  "timings": {
+    "server": {
+      "enumeration_seconds": [
+        0.3723962960000051,
+        0.38635651100000246,
+        0.3555250790000173
+      ],
+      "probe_samples": 4,
+      "max_probe_ms": 386.309510999979,
+      "over_250ms": 3
+    },
+    "client": {
+      "enumeration_seconds": [
+        0.4006039260000023,
+        0.4392740670000137,
+        0.422801249999992
+      ],
+      "probe_samples": 116,
+      "max_probe_ms": 21.89552299998354,
+      "over_250ms": 0
+    }
+  }
+}

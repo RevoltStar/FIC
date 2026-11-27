@@ -1,54 +1,33 @@
-# disable_nopasswdlogin P1/P2 follow-up
+# DM inventory optimization
 
-## Current base
+Branch main. Task base a0fae90b073321ea8bb07c00d664d033ac91f19f.
 
-Branch main, base 883ff3bcd7024aa073c9f267abf37fb3741656f8.
-One local follow-up commit requested; no push.
+## Accepted invariants
 
-## Accepted architecture / invariants
+Three tasks: client-side unit-file listing, package-independent observational
+compliance, then research only for show optimization. Installed-manager
+autologin scope, trust, transaction rechecks, SDDM package-version proof,
+ownership/rollback, prelogin IPC/timeouts remain.
 
-Existing five-platform suppression backend, managed service list, raw wrappers,
-unique anchors, CAS/durability, package proof and scoped rollback remain.
-NSS/group membership is untouched. No new hooks or service-file creation.
-Managed service coverage does not expand trusted authentication bypasses.
+## Completed
 
-## Completed / changed areas
+Task 1 changes only the unit-file argv to systemctl --root=/ list-unit-files.
+Running/loaded unit and logind queries remain live. The shipped fic.service
+has no RootDirectory, PrivateMounts or alternate unit filesystem. Custom
+mount/root/unit lookup overrides require separate validation.
 
-P1: RollbackExecutor preserves typed Prepared/releasing intent when suppression
-release fails, using the existing SSH/SYSCTL pattern. Only proven terminal
-backend release permits success. Retry checks actual fragment/anchors/durability.
-No MutationJournal schema change or new fault injection hooks.
+Native systemd fixtures compare all names/states including runtime, generated,
+transient, aliases, masks, templates and concrete instances. Fixtures and
+evidence are in tests/integration/dm-inventory/. ALT258, Ubuntu24 systemd255
+and Ubuntu26 systemd259 passed. Debian12/13 images are still downloading APT
+indexes; native equivalence is not claimed for them yet.
 
-P2: Narrow existingServiceOrOther selection is shared by suppression apply and
-orphan inspection. Only these callers select root-service Linux-PAM fallback.
-The existing parser inspects the selected graph. No writer targets other.
+Task 1 target build passed. DM transaction suite passed in root Ubuntu26
+container; five targeted planner/save/static checks passed. Logs /tmp/fic-dm-opt/.
+Versioned upstream v252/255/257/258/259 sources were read: arg_root selects
+client-side enumeration; client and manager use unit_file_get_list.
 
-Changed PAM configuration selection, transaction bypass inspection, rollback
-executor/orphan inspection, regression/native fixtures and rollback docs.
+## Remaining
 
-## Validation
-
-Logs in /tmp/nopasswd-followup/.
-
-- Baseline production RollbackExecutor failed the new typed-intent regression
-  with actual post-rename directory fsync failure (p1-baseline-red.log).
-- Existing preinstall hook verifies refusal before publication; retry preserves
-  concurrent and administrator comments. Post-publication fsync failure retains
-  intent; unproven foreign bytes and continued durability failure refuse success.
-  Successful retry finalizes ownership and subsequent rollback is idempotent.
-- Baseline native ALT Linux-PAM authenticated through other with lightdm absent;
-  baseline production driver incorrectly returned ok=1 records=0 (native-red.log).
-- Fixed native driver passes absent/safe/bypass/orphan fallback, proves native
-  PAM uses other, checks unchanged fallback and no creation (native-green.log).
-  Reproduction is tests/integration/pam/nopasswdlogin/fallback-native.sh.
-- Four directly affected CTests passed: mutation_journal_tests,
-  rollback_executor_tests, pam_control_flow_analyzer_tests,
-  pam_disable_nopasswdlogin_policy_tests (ctest.log).
-- Final baseline/fixed executor comparison passed (p1-fixed.log). Shell syntax
-  and git diff --check passed. No unresolved failure in targeted gates.
-
-## Remaining limits
-
-Native fallback proof is ALT Linux-PAM. Full five-distro matrix, full CTest,
-graphical login and package lifecycle were intentionally not repeated for this
-local follow-up. Other PAM policies retain their existing service resolution.
+Finish task 2 and targeted regression; task 3 research report. Retry/record
+Debian native checks if images become available. No full CI or host mutations.

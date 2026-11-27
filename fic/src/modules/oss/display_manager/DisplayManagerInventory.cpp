@@ -85,7 +85,7 @@ bool SystemDisplayManagerInventory::inspect(DisplayManagerSnapshot& result, std:
     // complete unit-file enumeration and each loaded unit Names property.
     std::set<std::string> units;
     // Unit inventory needs its own command output after package enumeration.
-    if (!query(ExecutableId::Systemctl, {"list-unit-files", "--type=service", "--no-legend", "--no-pager"}, output)) return false;
+    if (!query(ExecutableId::Systemctl, {"--root=/", "list-unit-files", "--type=service", "--no-legend", "--no-pager"}, output)) return false;
     std::istringstream files(output);
     while (std::getline(files,line)) {
         std::istringstream row(line); std::string unit, state; row >> unit >> state;

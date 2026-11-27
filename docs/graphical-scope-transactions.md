@@ -300,3 +300,9 @@ Unknown DM policies and generic individual DM undo actions are Unsupported.
 independently of current scope or manager selection. Package removal preflights
 before stopping writers and releases before PAM detach; failure blocks removal.
 The root CAS/FIC-lock residual race described above also applies to DM files.
+
+Unit-file enumeration uses `systemctl --root=/ list-unit-files` in the FIC
+process filesystem view. Runtime properties and logind remain live queries.
+The shipped daemon unit shares the system unit-file view; custom root,
+mount-namespace or unit lookup overrides require independent validation.
+A failed client-side enumeration fails closed. There is no server-call retry.

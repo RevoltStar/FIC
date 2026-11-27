@@ -232,11 +232,15 @@ void journalGuards(){
 }
 void inventoryProof(){
     Fixture f("inventory");std::string error;
-    auto runner=[](ExecutableId id,const std::vector<std::string>& args){
+    bool enumerationFailure = false;
+    auto runner=[&](ExecutableId id,const std::vector<std::string>& args){
         ProcessResult r;r.started=true;r.exitCode=0;
         if(id==ExecutableId::PackageQuery){r.standardOutput="sddm\tinstalled\nlightdm\tinstalled\n";return r;}
         if(id==ExecutableId::Loginctl){r.standardOutput="";return r;}
-        if(args[0]=="list-unit-files"){r.standardOutput="sddm.service enabled\nlightdm.service disabled\nodd.service enabled\n";return r;}
+        if(args[0]=="--root=/"){
+            require(args==std::vector<std::string>{"--root=/","list-unit-files","--type=service","--no-legend","--no-pager"},"client-side unit enumeration arguments changed");
+            if (enumerationFailure) { r.exitCode=1; r.standardError="client enumeration refused"; return r; }
+            r.standardOutput="sddm.service enabled\nlightdm.service disabled\nodd.service enabled\n";return r;}
         if(args[0]=="list-units"){r.standardOutput="odd.service loaded active running Weird display manager\n";return r;}
         if(args[1]=="sddm.service")r.standardOutput="Id=sddm.service\nNames=sddm.service\nLoadState=loaded\nActiveState=inactive\nExecStart={ path=/usr/bin/sddm ; }\n";
         else if(args[1]=="lightdm.service")r.standardOutput="Id=lightdm.service\nLoadState=loaded\nActiveState=inactive\nExecStart={ path=/usr/sbin/lightdm ; }\n";
@@ -250,6 +254,12 @@ void inventoryProof(){
     require(snapshot.managers["LIGHTDM"].installed&&!snapshot.managers["LIGHTDM"].selected,"installed unused not classified");
     require(!snapshot.unknownSelectedOrRunning.empty(),"unknown independently active DM missed");
     require(SystemDisplayManagerInventory::canonicalName("gdm3.service")=="GDM","GDM3 normalization failed");
+    enumerationFailure = true;
+    require(!inventory.inspect(snapshot,error) && !snapshot.complete &&
+            error.find("client enumeration refused") != std::string::npos,
+            "client enumeration failure must fail closed without server fallback");
+    enumerationFailure = false;
+
     SystemDisplayManagerInventory custom([&](ExecutableId id,const std::vector<std::string>& args){
         auto result=runner(id,args);
         if(id==ExecutableId::Systemctl && args.front()=="show" && args[1]=="sddm.service")
@@ -278,7 +288,8 @@ void inventoryTemplateProof(){
         if(id==ExecutableId::PackageQuery){r.standardOutput=packages;return r;}
         if(id==ExecutableId::Loginctl)return r;
         require(id==ExecutableId::Systemctl,"unexpected inventory executable");
-        if(args.front()=="list-unit-files"){r.standardOutput=files;return r;}
+        if(args.front()=="--root=/"){
+            require(args==std::vector<std::string>{"--root=/","list-unit-files","--type=service","--no-legend","--no-pager"},"client-side unit enumeration arguments changed");r.standardOutput=files;return r;}
         if(args.front()=="list-units"){r.standardOutput=loaded;return r;}
         require(args.front()=="show"&&args.size()==4&&args[2]=="--no-pager"&&
             args[3]=="--property=Id,Names,LoadState,ActiveState,Description,ExecStart,UnitFileState",
