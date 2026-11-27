@@ -4,9 +4,12 @@
 #include "modules/identity_access/pam/PamProviderManagedEntryExecutor.h"
 #include "modules/identity_access/pam/PamTopologyManagerFactory.h"
 #include "policy/execution/PolicyDependencyGraph.h"
+#include "policy/registry/PolicyRegistryJson.h"
+#include "features/policies/models/PolicyDescriptor.h"
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/process/ProcessExecutor.h>
 #include <nlohmann/json.hpp>
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -68,9 +71,9 @@ int main(int argc,char** argv){
    need(fs::exists("/.dockerenv") && geteuid()==0,"I6 requires disposable root container");
    result["functional"]=functionalI6(profile,executables);
   } else if(std::string(argv[1])=="--test") {
-   result["contracts"] = contracts(profile, root);
    auto profiles=sddmTestProfiles();profiles.push_back(makeAltP11SddmTestProfile());
    result["sddm_registration"]=json::array();
+   result["nopasswdlogin_registration"]=json::array();
    for(const auto& candidate:profiles) {
     PlatformExecutableResolver resolver(candidate.executables);PolicyRegistry registry;
     need(initPolicyRegistry(candidate,resolver,registry,error),candidate.id+": "+error);
@@ -79,7 +82,27 @@ int main(int argc,char** argv){
     if(registered)need(!registry.findPolicy({"IDENTITY_ACCESS","PAM","disable_root_sddm_login"})->isEnabled(),
         candidate.id+": SDDM policy default unexpectedly enabled");
     result["sddm_registration"].push_back({{"platform",candidate.id},{"registered",registered}});
+    auto* passwordless=registry.findPolicy({"IDENTITY_ACCESS","PAM","disable_nopasswdlogin"});
+    need(passwordless!=nullptr,candidate.id+": missing nopasswdlogin policy");
+    need(!passwordless->isEnabled(),candidate.id+": nopasswdlogin default unexpectedly enabled");
+    need(passwordless->getValue()==std::optional<std::string>{"ENABLE"},
+         candidate.id+": changed nopasswdlogin fixed value");
+    const json response={{"ok",true},{"message",""},
+        {"policies",policyListJson(registry,"IDENTITY_ACCESS")}};
+    std::vector<PolicyDescriptor> descriptors;
+    need(parsePolicyDescriptors(response,"IDENTITY_ACCESS",descriptors,error),
+         candidate.id+": GUI descriptor rejected: "+error);
+    const auto descriptor=std::find_if(descriptors.begin(),descriptors.end(),[](const auto& item){
+        return item.submoduleName=="PAM" && item.policyName=="disable_nopasswdlogin";
+    });
+    need(descriptor!=descriptors.end() && !descriptor->enabled &&
+         descriptor->value=="ENABLE" && descriptor->editor=="label",
+         candidate.id+": missing or invalid GUI nopasswdlogin descriptor");
+    checkDependencies(candidate);
+    result["nopasswdlogin_registration"].push_back({{"platform",candidate.id},{"default","DISABLE"}});
+
    }
+   result["contracts"] = contracts(profile, root);
   } else if(std::string(argv[1])=="--audit") {
    PolicyRegistry registry;need(initPolicyRegistry(profile,executables,registry,error),error);need(validatePolicyDependencyGraph(registry,error),error);
    const auto rollbackDeps=fic::rollback::productionRollbackDeps(profile,executables,&registry);

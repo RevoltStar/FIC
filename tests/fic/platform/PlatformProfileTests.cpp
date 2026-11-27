@@ -515,36 +515,20 @@ void testSelectedProfile() {
                         "/etc/pam.d/" + service};
             });
     };
-    if (profile.id == "alt-p11") {
-        require(hasExactPasswordless("gdm-password") &&
-                    hasExactPasswordless("lightdm") &&
-                    profile.pam.passwordlessLoginControl.has_value() &&
-                    profile.pam.passwordlessLoginControl->groupName ==
-                        "nopasswdlogin" &&
-                    profile.pam.passwordlessLoginControl->supportedNss.passwd ==
-                        std::vector<std::vector<std::string>>{
-                            {"files"}, {"files", "systemd"}} &&
-                    profile.pam.passwordlessLoginControl->supportedNss.group ==
-                        std::vector<std::vector<std::string>>{
-                            {"files"}, {"files", "systemd"},
-                            {"files", "role"},
-                            {"files", "systemd", "role"}} &&
-                    profile.pam.passwordlessLoginControl->
-                            pamBypassNssServices ==
-                        std::vector<std::string>{"sss"} &&
-                    profile.pam.passwordlessLoginControl->supportedNss.
-                            initgroups ==
-                        std::vector<std::vector<std::string>>{
-                            {"files"}, {"files", "systemd"},
-                            {"files", "role"},
-                            {"files", "systemd", "role"}},
-                "ALT exact passwordless-login contract is incorrect");
-    } else {
-        require(!hasExactPasswordless("gdm-password") &&
-                    !hasExactPasswordless("lightdm") &&
-                    !profile.pam.passwordlessLoginControl.has_value(),
-                "non-ALT profile declares ALT passwordless-login contract");
+    const std::vector<std::string> expectedPasswordless = profile.id == "alt-p11"
+        ? std::vector<std::string>{"gdm-password", "gdm-fingerprint", "gdm-smartcard",
+                                   "lightdm", "sddm", "plasmalogin", "emptty"}
+        : std::vector<std::string>{"gdm-password", "lightdm", "sddm"};
+    std::vector<std::string> managedPasswordless;
+    for (const auto& target : profile.pam.passwordlessLoginTargets) {
+        managedPasswordless.push_back(target.service);
+        require(target.source == std::filesystem::path("/etc/pam.d") / target.service &&
+                !target.packages.empty(), "invalid managed passwordless target");
     }
+    require(managedPasswordless == expectedPasswordless, "managed passwordless targets differ");
+    require(hasExactPasswordless("gdm-password") == (profile.id == "alt-p11") &&
+            hasExactPasswordless("lightdm") == (profile.id == "alt-p11"),
+            "managed targets must not widen trusted passwordless exemptions");
     const auto* faillock = pamCapability(
         profile.pam, fic::platform::PamCapability::AuthenticationLockout);
     const auto* quality = pamCapability(
@@ -1408,7 +1392,7 @@ void testInvalidProfileIsRejected() {
     });
 
     profile = fic::platform::makeBuildPlatformProfile();
-    if (profile.pam.passwordlessLoginControl.has_value()) {
+    if (profile.id == "alt-p11") {
         auto exact = std::find_if(
             profile.pam.trustedAuthenticationBypasses.begin(),
             profile.pam.trustedAuthenticationBypasses.end(),
@@ -1435,27 +1419,13 @@ void testInvalidProfileIsRejected() {
                 "passwordless bypass from another source must be rejected");
 
         profile = fic::platform::makeBuildPlatformProfile();
-        profile.pam.passwordlessLoginControl->supportedNss.group.clear();
+        profile.pam.passwordlessLoginTargets.front().source = "/etc/pam.d/sshd";
         require(!fic::platform::validatePlatformProfile(profile, error),
-                "empty passwordless NSS contract must be rejected");
-
+                "wrong managed source must be rejected");
         profile = fic::platform::makeBuildPlatformProfile();
-        profile.pam.passwordlessLoginControl->supportedNss.group.push_back(
-            {"files", "systemd", "role"});
+        profile.pam.passwordlessLoginTargets.push_back(profile.pam.passwordlessLoginTargets.front());
         require(!fic::platform::validatePlatformProfile(profile, error),
-                "duplicate passwordless NSS contract must be rejected");
-
-        profile = fic::platform::makeBuildPlatformProfile();
-        profile.pam.passwordlessLoginControl->pamBypassNssServices = {
-            "sss", "sss"};
-        require(!fic::platform::validatePlatformProfile(profile, error),
-                "duplicate PAM-bypass NSS service must be rejected");
-
-        profile = fic::platform::makeBuildPlatformProfile();
-        profile.pam.passwordlessLoginControl->pamBypassNssServices = {
-            "sss [SUCCESS=return]"};
-        require(!fic::platform::validatePlatformProfile(profile, error),
-                "unsafe PAM-bypass NSS service name must be rejected");
+                "duplicate managed service must be rejected");
     }
 
     profile = fic::platform::makeBuildPlatformProfile();

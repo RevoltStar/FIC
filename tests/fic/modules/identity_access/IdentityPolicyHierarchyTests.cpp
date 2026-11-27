@@ -1809,9 +1809,8 @@ int main() {
             fic::platform::PamTopologyStrategyKind::PamAuthUpdate;
         dependencyPlatform.capabilities[2].topology =
             fic::platform::PamTopologyStrategyKind::AltTcbManaged;
-        dependencyPlatform.passwordlessLoginControl = {
-            "nopasswdlogin", "/etc/passwd", "/etc/group",
-            "/etc/nsswitch.conf"};
+        dependencyPlatform.passwordlessLoginTargets = {
+            {"lightdm", "/etc/pam.d/lightdm", {"lightdm"}}};
         PamFailedAuthenticationAttemptsPolicy attempts(dependencyPlatform);
         PamFailedAuthenticationCountingPeriodPolicy period(dependencyPlatform);
         PamFailedAuthenticationEnforceForRootPolicy rootLockout(

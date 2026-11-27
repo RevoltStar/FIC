@@ -43,7 +43,8 @@ enum class MutationBackend {
     Scope,
     Desktop,
     DisplayManager,
-    AltGroups
+    AltGroups,
+    PamSuppression
 };
 
 // Typed undo actions. Each payload carries everything the rollback executor
@@ -575,6 +576,16 @@ struct UndoAltRoleFile {
     bool releasing = false;
 };
 
+// One suppressed service fragment. The physical witness uses the record id.
+// Anchors describe adjacent auth rules, never whole-file rollback history.
+struct UndoRestorePamSuppression {
+    std::string service;
+    std::string original;
+    std::string previousAnchor;
+    std::string nextAnchor;
+    bool releasing = false;
+};
+
 using UndoPayload = std::variant<
     UndoRemoveManagedSetting,
     UndoReleaseSudoGlobalDefault,
@@ -598,7 +609,8 @@ using UndoPayload = std::variant<
     UndoOwnDesktopArtifact,
     UndoRemoveDisplayManagerBlock,
     UndoAltGroupConfig,
-    UndoAltRoleFile>;
+    UndoAltRoleFile,
+    UndoRestorePamSuppression>;
 
 struct UndoAction {
     MutationBackend backend = MutationBackend::Sysctl;

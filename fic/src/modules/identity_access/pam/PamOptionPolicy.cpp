@@ -32,7 +32,7 @@ PamOptionPolicy::PamOptionPolicy(
     }
     if (capability ==
             fic::platform::PamCapability::AuthenticationLockout &&
-        platformConfig_.passwordlessLoginControl.has_value()) {
+        !platformConfig_.passwordlessLoginTargets.empty()) {
         addRecommendedDependency(
             {"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"});
     }

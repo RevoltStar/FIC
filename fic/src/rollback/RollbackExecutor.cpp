@@ -1,3 +1,4 @@
+#include "modules/identity_access/pam/PamNopasswdloginPackageProof.h"
 #include "modules/net/ssh/SshResourceLock.h"
 #include "modules/net/ssh/SshMfaPolicy.h"
 #include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
@@ -126,7 +127,8 @@ bool isSupportedKerberosPolicy(const std::string& policyName) {
 }
 
 bool isSupportedPamPolicy(const std::string& policyName) {
-    return policyName == "deny_empty_password_login" ||
+    return policyName == "disable_nopasswdlogin" ||
+           policyName == "deny_empty_password_login" ||
            policyName == "enable_authentication_lockout" ||
            policyName == "enable_password_history" ||
            policyName == "enable_password_quality";
@@ -547,6 +549,19 @@ MutationRollbackOutcome undoPamProviderManagedFlagMutation(
 MutationRollbackOutcome undoMutation(
     const RollbackExecutorDeps& deps,
     const MutationRecord& record) {
+    if (record.undo.backend == MutationBackend::PamSuppression) {
+        std::string error;
+        auto* journal = DaemonMutationJournal::instance().tryGet(error);
+        if (!journal || deps.pamPlatform.passwordlessLoginTargets.empty()) {
+            return {record.id, record.resource, RollbackStatus::Failed,
+                    error.empty() ? "PAM suppression release route unavailable" : error};
+        }
+        auto options = fic::identity::pam::productionNopasswdloginOptions(deps.pamPlatform);
+        fic::identity::pam::PamNopasswdloginTransaction transaction(std::move(options), *journal);
+        const bool success = transaction.release(record, error);
+        return {record.id, record.resource, success ? RollbackStatus::Success : RollbackStatus::Failed,
+                success ? "PAM suppression ownership released" : error};
+    }
     if (record.undo.backend == MutationBackend::AltGroups) {
         std::string error;
         auto* journal = DaemonMutationJournal::instance().tryGet(error);

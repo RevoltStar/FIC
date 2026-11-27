@@ -140,6 +140,15 @@ std::optional<fic::platform::PamFaillockStrategy> detectPamFaillockStrategy(
     const PamEffectiveStack& authStack,
     std::string& error);
 
+// Proves that removing one admitted sufficient rule leaves every other
+// executable rule and substack boundary unchanged. Numeric jumps that cross or target the
+// changed position are rejected, including unreachable branches. The caller
+// supplies a platform-admitted target and separately proves file ownership.
+bool provePamRuleSuppression(const PamEffectiveStack& original,
+                             const PamEffectiveStack& suppressed,
+                             const PamRule& target,
+                             std::string& error);
+
 std::string pamFlowViolationKindName(PamFlowViolationKind kind);
 std::string formatPamFlowViolation(const PamFlowViolation& violation);
 

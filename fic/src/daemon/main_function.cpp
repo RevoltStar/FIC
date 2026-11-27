@@ -493,9 +493,9 @@ bool initPolicyRegistry(
     if (!platform.pam.emptyPasswordAuthSelection.empty()) {
         cafArr.push_back(std::make_unique<PamDenyEmptyPasswordLoginPolicy>(platform.pam));
     }
-    if (platform.pam.passwordlessLoginControl.has_value()) {
+    if (!platform.pam.passwordlessLoginTargets.empty()) {
         cafArr.push_back(std::make_unique<PamDisableNopasswdloginPolicy>(
-            platform.pam, executables));
+            platform.pam));
     }
     if (std::any_of(
             platform.pam.trustedAuthenticationExclusions.begin(),

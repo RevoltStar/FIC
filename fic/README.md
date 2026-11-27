@@ -755,14 +755,14 @@ nopasswdlogin` является отдельным typed trusted bypass
 `ExplicitPasswordlessLogin`: matcher требует exact service `gdm-password`,
 source, simple control и ordered arguments. Evidence сохраняется отдельно и
 не выдаётся за executed `pam_faillock`. Политика `disable_nopasswdlogin`
-административно запрещает этот путь: при files-only `passwd`, `group` и
-явном `initgroups` NSS она оставляет
-отсутствующую/пустую группу без изменений либо очищает supplementary members
-через hash-verified `gpasswd`; primary GID и внешний NSS приводят к fail-closed.
-При штатном ALT `sss` в NSS policy не пытается перечислять доменных
-пользователей: она атомарно удаляет exact typed passwordless PAM bypass из
-объявленных GDM/LightDM services, проверяет отсутствие всех таких bypass и
-восстанавливает exact исходные bytes при ошибке записи или postcondition.
+подавляет поддерживаемые правила PAM в объявленных сервисах на всех пяти
+платформах. Исходный фрагмент сохраняется в journal-bound обёртке.
+Typed targets управления отделены от trusted exemptions анализатора.
+Apply и rollback используют проверку effective graph и атомарный CAS.
+Соседние административные изменения сохраняются при scoped release.
+После внешней замены PAM-файла ограничение может временно отсутствовать
+до следующего успешного initial, periodic или ручного apply.
+Контракт владения и восстановления описан в [rollback](../docs/rollback.md#pam-nopasswdlogin-suppression).
 Она является Recommended dependency только для lockout/authentication PAM
 policies, поэтому её warning не блокирует основную policy.
 Moved managed blocks и заменённый после snapshot target inode любого target

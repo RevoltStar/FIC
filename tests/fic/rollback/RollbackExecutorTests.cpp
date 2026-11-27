@@ -1,3 +1,4 @@
+#include "modules/identity_access/pam/PamNopasswdloginTransaction.h"
 #include "modules/dac/sudo/SudoersAuthenticationTransaction.h"
 #include "modules/dac/sudo/SudoersAuthenticationGrammar.h"
 #include "rollback/DaemonMutationJournal.h"
@@ -2610,6 +2611,48 @@ void testSshRollbackRefusedOnConcurrentModification() {
             "the FIC-owned state must be intact");
 }
 
+void testNopasswdloginExecutorRelease() {
+    TempJournal holder;
+    JournalOverride override(holder.tree.root / "journal");
+    TempTree files("/tmp/fic-suppression-executor-XXXXXX");
+    std::string error;
+    auto* journal = DaemonMutationJournal::instance().tryGet(error);
+    require(journal != nullptr, error);
+    const auto service = files.root / "pam.d/lightdm";
+    const std::string original =
+        "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n"
+        "auth required pam_unix.so\n";
+    writeFile(service, original);
+    RollbackExecutorDeps deps;
+    deps.pamPlatform.configDirectories = {service.parent_path()};
+    deps.pamPlatform.passwordlessLoginTargets = {{"lightdm", service, {"lightdm"}}};
+    fic::identity::pam::PamNopasswdloginOptions options;
+    options.platform = deps.pamPlatform;
+    options.services = {"lightdm"};
+    fic::identity::pam::PamNopasswdloginTransaction transaction(options, *journal);
+    require(transaction.apply(error), error);
+    const auto ownedBytes = readFile(service);
+    const PolicyRef policy{"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"};
+    require(rollbackEnrollment(policy) == RollbackEnrollment::Supported, "suppression must enroll");
+    const auto result = rollbackPolicyBeforeDisable(policy, "", deps);
+    require(result.status == RollbackStatus::Success, result.message);
+    require(readFile(service) == original, "executor must restore only the owned fragment");
+    const auto repeated = rollbackPolicyBeforeDisable(policy, "", deps);
+    require(repeated.status == RollbackStatus::NothingToDo, repeated.message);
+    writeFile(service, ownedBytes);
+    const auto orphan = rollbackPolicyBeforeDisable(policy, "", deps);
+    require(orphan.status != RollbackStatus::NothingToDo && orphan.status != RollbackStatus::Success,
+            "orphan physical marker must prevent a false successful release");
+    require(readFile(service) == ownedBytes, "orphan inspection must not mutate files");
+    writeFile(service, "auth include foreign\n");
+    writeFile(service.parent_path() / "foreign", ownedBytes);
+    const auto includedOrphan = rollbackPolicyBeforeDisable(policy, "", deps);
+    require(includedOrphan.status != RollbackStatus::NothingToDo &&
+            includedOrphan.status != RollbackStatus::Success,
+            "included orphan marker must block final absence proof");
+
+}
+
 } // namespace
 
 // An Indeterminate journal must fail the rollback closed BEFORE any backend
@@ -3237,6 +3280,7 @@ int main(int argc, char** argv) {
          testUserCreationCrashAfterRollbackNormalization},
         {"contextual managed provider enrollment",
          testContextualManagedProviderEnrollment},
+        {"nopasswdlogin executor release", testNopasswdloginExecutorRelease},
         {"PAM ownership release", testPamOwnershipRelease},
         {"PAM executor journal lifecycle", testPamExecutorJournalLifecycle},
         {"managed provider option without record/marker is nothing to do",

@@ -269,6 +269,11 @@ PlatformProfile makeBuildPlatformProfile() {
         "hosts_deny", "group", "resolv", "sysctl_config",
         "logrotate_config", "passwd", "shadow", "grub_config", "securetty",
         "sudoers"}, modeAndOwnerCommands, {"df", "chattr", "arp", "ip"});
+    profile.pam.passwordlessLoginTargets = {
+        {"gdm-password", "/etc/pam.d/gdm-password", {"gdm3"}},
+        {"lightdm", "/etc/pam.d/lightdm", {"lightdm"}},
+        {"sddm", "/etc/pam.d/sddm", {"sddm"}}
+    };
     return profile;
 }
 

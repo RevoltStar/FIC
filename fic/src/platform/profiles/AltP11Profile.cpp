@@ -213,16 +213,15 @@ PlatformProfile makeBuildPlatformProfile() {
         PamFaillockStrategy::PreauthRequisite};
     profile.pam.capabilities.front().defaultFaillockStrategy =
         PamFaillockStrategy::PreauthRequired;
-    profile.pam.passwordlessLoginControl = {
-        "nopasswdlogin", "/etc/passwd", "/etc/group", "/etc/nsswitch.conf",
-        {
-            {{"files"}, {"files", "systemd"}},
-            {{"files"}, {"files", "systemd"}, {"files", "role"},
-             {"files", "systemd", "role"}},
-            {{"files"}, {"files", "systemd"}, {"files", "role"},
-             {"files", "systemd", "role"}}
-        },
-        {"sss"}};
+    profile.pam.passwordlessLoginTargets = {
+        {"gdm-password", "/etc/pam.d/gdm-password", {"gdm-data"}},
+        {"gdm-fingerprint", "/etc/pam.d/gdm-fingerprint", {"gdm-data"}},
+        {"gdm-smartcard", "/etc/pam.d/gdm-smartcard", {"gdm-data"}},
+        {"lightdm", "/etc/pam.d/lightdm", {"lightdm"}},
+        {"sddm", "/etc/pam.d/sddm", {"sddm"}},
+        {"plasmalogin", "/etc/pam.d/plasmalogin", {"plasma-login-manager"}},
+        {"emptty", "/etc/pam.d/emptty", {"emptty"}}
+    };
     profile.passwordAging.shadowKind = LocalShadowKind::TcbDirectory;
     profile.executables.entries.push_back({ExecutableId::PackageQuery, profile.packageManager.queryCandidates, false});
     // Optional managed software/tools: trust-sync verifies installed programs,

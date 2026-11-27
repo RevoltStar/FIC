@@ -1,3 +1,6 @@
+#include "modules/identity_access/pam/PamNopasswdloginPackageProof.h"
+#include "modules/identity_access/pam/PamNopasswdloginTransaction.h"
+#include "modules/identity_access/pam/PamNopasswdloginFragment.h"
 #include "modules/identity_access/pam/PamControlFlowAnalyzer.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
 #include "../../../platform/SddmTestProfiles.h"
@@ -897,6 +900,370 @@ void testMfaAuthenticationPaths() {
     check(strict, mfa, "auth [success=reset default=ignore] pam_permit.so\n", false);
 }
 
+void testRuleSuppressionProof(const fs::path& root) {
+    using namespace fic::identity::pam;
+    const auto platform = makePlatform(root / "suppression");
+    const auto path = platform.configDirectories.front() / "login";
+    const std::string prefix = "auth required pam_shells.so\n";
+    const std::string bypass =
+        "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n";
+    const std::string suffix = "auth required pam_unix.so\n";
+    auto stack = [&](const std::string& content) {
+        PamConfiguration configuration(platform);
+        std::string error;
+        require(configuration.projectService("login", content, error), error);
+        PamEffectiveStack result;
+        require(configuration.buildEffectiveStack("login", PamManagementGroup::Auth,
+                                                  result, error), error);
+        return result;
+    };
+    auto original = stack(prefix + bypass + suffix);
+    const auto target = original.entries.at(1).rule;
+    auto suppressed = stack(prefix + "# owned suppression\n" + suffix);
+    std::string error;
+    require(provePamRuleSuppression(original, suppressed, target, error), error);
+    auto changed = stack(prefix + "auth optional pam_unix.so\n");
+    require(!provePamRuleSuppression(original, changed, target, error),
+            "changing adjacent enforcement must fail");
+    auto inserted = stack(prefix + "auth sufficient pam_permit.so\n" + suffix);
+    require(!provePamRuleSuppression(original, inserted, target, error),
+            "inserting another bypass must fail");
+    require(!provePamRuleSuppression(original, original, target, error),
+            "unchanged graph must not prove suppression");
+    auto jumped = stack("auth [success=1 default=ignore] pam_permit.so\n" + bypass + suffix);
+    auto jumpedSuppressed = stack("auth [success=1 default=ignore] pam_permit.so\n" + suffix);
+    require(!provePamRuleSuppression(jumped, jumpedSuppressed,
+                                     jumped.entries.at(1).rule, error),
+            "numeric jump target changes must fail");
+    auto laterJump = stack(prefix + bypass +
+        "auth [success=1 default=ignore] pam_unix.so\nauth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n");
+    auto laterJumpSuppressed = stack(prefix +
+        "auth [success=1 default=ignore] pam_unix.so\nauth requisite pam_deny.so\n"
+        "auth required pam_permit.so\n");
+    require(provePamRuleSuppression(laterJump, laterJumpSuppressed,
+                                    laterJump.entries.at(1).rule, error),
+            "jumps after suppression preserve their targets: " + error);
+    auto terminal = stack(prefix + bypass);
+    require(!provePamRuleSuppression(terminal, stack(prefix),
+                                     terminal.entries.back().rule, error),
+            "terminal bypass without fallback must fail");
+    writeFile(path.parent_path() / "nested",
+              "auth [success=1 default=ignore] pam_unix.so\n"
+              "auth requisite pam_deny.so\nauth required pam_permit.so\n");
+    const std::string nested = "auth substack nested\n";
+    original = stack(prefix + bypass + nested);
+    suppressed = stack(prefix + nested);
+    require(provePamRuleSuppression(original, suppressed,
+                                    original.entries.at(1).rule, error),
+            "jumps inside an unchanged substack must remain supported: " + error);
+    const auto saved = original.entries.at(1);
+    original.entries.push_back(saved);
+    require(!provePamRuleSuppression(original, suppressed, saved.rule, error),
+            "repeated included target must fail");
+}
+
+void testNopasswdloginFragment() {
+    using namespace fic::identity::pam;
+    const fs::path source = "/etc/pam.d/lightdm";
+    const std::string prefix = "# administrator\nauth required pam_shells.so\n";
+    const std::string raw =
+        "auth\t sufficient\t pam_succeed_if.so user ingroup nopasswdlogin # kept\n";
+    const std::string suffix = "# separator\nauth include common-auth\naccount required pam_permit.so\n";
+    const auto original = prefix + raw + suffix;
+    std::optional<fic::rollback::UndoRestorePamSuppression> proof;
+    PamRule target;
+    std::string error, suppressed, restored;
+    require(planNopasswdloginSuppression(source, "lightdm", original, proof, target, error), error);
+    require(proof && proof->original == raw, "original formatting must survive planning");
+    const std::string continued =
+        std::string("auth sufficient pam_succeed_if.so user ") + char(92) +
+        "\n ingroup nopasswdlogin\n";
+    std::optional<fic::rollback::UndoRestorePamSuppression> multiline;
+    require(planNopasswdloginSuppression(source, "lightdm", prefix + continued + suffix,
+                                        multiline, target, error), error);
+    require(multiline && multiline->original == continued && target.endLine == target.line + 1,
+            "parser must expose the whole logical rule");
+    require(suppressNopasswdloginFragment(source, prefix + continued + suffix, 19,
+                                          *multiline, suppressed, error), error);
+    std::vector<PamRule> active;
+    require(PamConfiguration::parseRulesContent(source, suppressed, active, error), error);
+    require(std::none_of(active.begin(), active.end(), [](const PamRule& rule) {
+        return std::find(rule.arguments.begin(), rule.arguments.end(), "nopasswdlogin") !=
+            rule.arguments.end();
+    }), "all continued physical lines must be suppressed");
+    require(restoreNopasswdloginFragment(source, suppressed, 19, *multiline,
+                                         restored, target, error), error);
+    require(restored == prefix + continued + suffix, "continued rule must round trip exactly");
+    const auto saved = *proof;
+    require(suppressNopasswdloginFragment(source, original, 17, saved, suppressed, error), error);
+    require(restoreNopasswdloginFragment(source, suppressed, 17, saved, restored, target, error), error);
+    require(restored == original, "suppression round trip must preserve all bytes");
+    auto adjacent = "# another administrator comment\n" + suppressed;
+    require(restoreNopasswdloginFragment(source, adjacent, 17, saved, restored, target, error), error);
+    require(restored == "# another administrator comment\n" + original, "release must retain adjacent changes");
+    require(!restoreNopasswdloginFragment(source, suppressed, 18, saved, restored, target, error),
+            "wrong mutation id must fail");
+    require(!restoreNopasswdloginFragment(source, suppressed + nopasswdloginWrapper(17, saved),
+                                         17, saved, restored, target, error), "duplicate marker must fail");
+    auto damaged = suppressed;
+    damaged.replace(damaged.find("# kept"), 6, "# changed");
+    require(!restoreNopasswdloginFragment(source, damaged, 17, saved, restored, target, error),
+            "modified suppressed bytes must fail");
+    auto moved = prefix + suffix + nopasswdloginWrapper(17, saved);
+    require(!restoreNopasswdloginFragment(source, moved, 17, saved, restored, target, error),
+            "moved wrapper must fail");
+    const auto duplicateAnchors = prefix + suffix;
+    require(!planNopasswdloginSuppression(source, "lightdm", original + duplicateAnchors,
+                                         proof, target, error),
+            "ambiguous anchor pair must refuse initial ownership");
+    require(!restoreNopasswdloginFragment(source, suppressed + duplicateAnchors,
+                                         17, saved, restored, target, error),
+            "new duplicate anchor pair must refuse ambiguous release");
+    require(!restoreNopasswdloginFragment(source, prefix + suffix + prefix +
+                                         nopasswdloginWrapper(17, saved) + suffix,
+                                         17, saved, restored, target, error),
+            "moving a wrapper to an identical anchor pair must fail");
+    require(!suppressNopasswdloginFragment(source, original, 0, saved, suppressed, error),
+            "zero mutation id must fail");
+    require(planNopasswdloginSuppression(source, "lightdm", prefix + "# " + raw + suffix,
+                                        proof, target, error) && !proof,
+            "administrator-commented rule must be a no-op");
+    require(!planNopasswdloginSuppression(source, "lightdm",
+                                         prefix + raw + raw + suffix, proof, target, error),
+            "duplicate active bypass must fail");
+    require(!planNopasswdloginSuppression(source, "lightdm",
+                                         prefix + "auth optional pam_succeed_if.so user ingroup nopasswdlogin\n" + suffix,
+                                         proof, target, error),
+            "unsupported control must fail");
+    require(!planNopasswdloginSuppression(source, "lightdm", prefix +
+                "auth sufficient pam_succeed_if.so user ingroup wheel:nopasswdlogin\n" + suffix,
+                proof, target, error), "unsupported group list must fail");
+    require(planNopasswdloginSuppression(source, "lightdm", prefix +
+                "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin-other\n" + suffix,
+                proof, target, error) && !proof, "different group name must remain outside the contract");
+}
+
+void testNopasswdloginTransaction(const fs::path& root) {
+    using namespace fic::identity::pam;
+    using namespace fic::rollback;
+    const auto directory = root / "transaction";
+    auto platform = makePlatform(directory);
+    const auto service = platform.configDirectories.front() / "lightdm";
+    const std::string bypass = "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n";
+    const std::string original = "auth required pam_shells.so\n" + bypass +
+        "auth required pam_unix.so\n";
+    writeFile(service, original);
+    MutationJournal journal(directory / "journal");
+    std::string error;
+    require(journal.load(error), error);
+    PamNopasswdloginOptions options;
+    options.platform = platform;
+    options.services = {"lightdm", "sddm"};
+    PamNopasswdloginTransaction transaction(options, journal);
+    require(transaction.apply(error), error);
+    const auto bytes = [&] {
+        std::ifstream file(service);
+        return std::string(std::istreambuf_iterator<char>(file), {});
+    };
+    auto suppressed = bytes();
+    require(suppressed.find("# FIC_PAM_NOPASSWDLOGIN BEGIN") != std::string::npos, "wrapper missing");
+    require(journal.records().size() == 1 && journal.records()[0].status == MutationStatus::Applied,
+            "apply must commit one record");
+    require(transaction.apply(error), error);
+    require(bytes() == suppressed && journal.records().size() == 1, "reapply must be a no-op");
+    auto differentDomain = options;
+    differentDomain.services = {"sddm"};
+    PamNopasswdloginTransaction wrongPlatform(differentDomain, journal);
+    require(!wrongPlatform.apply(error), "an active resource outside the platform domain must fail");
+    require(bytes() == suppressed, "wrong platform must retain physical ownership");
+
+    writeFile(service, "# administrator\n" + suppressed);
+    require(transaction.release(journal.records()[0], error), error);
+    require(bytes() == "# administrator\n" + original, "release must preserve administrator bytes");
+    require(transaction.apply(error), error);
+    auto owned = journal.records().back();
+    // Simulate restart between durable Prepared and physical publication.
+    require(transaction.release(owned, error), error);
+    require(transaction.apply(error), error);
+    owned = journal.records().back();
+    require(journal.setStatus(owned.id, MutationStatus::Prepared, error), error);
+    require(transaction.apply(error), error);
+    require(journal.records().back().status == MutationStatus::Applied, "published Prepared must recover");
+    require(transaction.release(journal.records().back(), error), error);
+    const auto beforeFailure = bytes();
+    options.writer = [](const std::string& path, const std::string& content,
+                        const AtomicWriteOptions& opts, std::string* message) {
+        if (!AtomicFileWriter::write(path, content, opts, message)) return false;
+        *message = "injected post-publication error";
+        return false;
+    };
+    PamNopasswdloginTransaction failed(options, journal);
+    require(!failed.apply(error), "post-publication failure must be reported");
+    // Failed compensation also publishes its restored bytes. Recovery resolves
+    // its durable releasing record on the next ordinary apply.
+    options.writer = AtomicFileWriter::write;
+    PamNopasswdloginTransaction recovered(options, journal);
+    require(recovered.apply(error), error);
+    require(recovered.release(journal.records().back(), error), error);
+    require(bytes() == beforeFailure, "recovery must restore the original fragment");
+    // Refuse external replacement without stock proof.
+    require(recovered.apply(error), error);
+    owned = journal.records().back();
+    writeFile(service, original);
+    require(!recovered.release(owned, error), "unknown replacement must retain conflict");
+    options.proveStock = [&](const fs::path& path, const std::string& content, std::string&) {
+        return path == service && content == original;
+    };
+    PamNopasswdloginTransaction stock(options, journal);
+    require(stock.release(owned, error), error);
+    require(bytes() == original, "stock release must not write historical data");
+    // Unsupported included rule must be diagnosed without adopting the include.
+    writeFile(service, "auth include nested\n");
+    writeFile(service.parent_path() / "nested", bypass + "auth required pam_unix.so\n");
+    require(!stock.apply(error), "included foreign bypass must fail");
+    writeFile(service.parent_path() / "nested",
+              "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin:wheel\n"
+              "auth required pam_unix.so\n");
+    require(!stock.apply(error), "included unsupported group list must fail");
+    writeFile(service, original);
+    writeFile(service.parent_path() / "sddm",
+              "auth optional pam_succeed_if.so user ingroup nopasswdlogin\n"
+              "auth required pam_unix.so\n");
+    const auto initialRecords = journal.records().size();
+    require(!stock.apply(error), "second service failure must be reported");
+    require(bytes() == original, "second service failure must compensate new first-service effect");
+    require(journal.records().size() == initialRecords + 1 &&
+            journal.records().back().status == MutationStatus::RolledBack,
+            "compensated effect must close its journal cycle");
+    fs::remove(service.parent_path() / "sddm");
+    // A third-party edit after publication prevents whole-call compensation.
+    options.writer = [&](const std::string& path, const std::string& content,
+                         const AtomicWriteOptions& opts, std::string* message) {
+        if (!AtomicFileWriter::write(path, content, opts, message)) return false;
+        writeFile(path, "# concurrent administrator\n" + content);
+        *message = "injected concurrent writer";
+        return false;
+    };
+    PamNopasswdloginTransaction concurrent(options, journal);
+    require(!concurrent.apply(error), "concurrent publication must report failure");
+    require(bytes().find("# concurrent administrator\n") == 0,
+            "compensation must preserve third-party writes");
+    require(journal.records().back().isActive(), "uncertain effect must retain provenance");
+    options.writer = AtomicFileWriter::write;
+    PamNopasswdloginTransaction retried(options, journal);
+    require(retried.apply(error), error);
+    require(retried.release(journal.records().back(), error), error);
+    require(bytes() == "# concurrent administrator\n" + original,
+            "scoped release must preserve concurrent administrator changes");
+    require(retried.release(journal.records().back(), error), "release must be idempotent");
+    // Recover a Prepared intent that never published its physical marker.
+    std::optional<UndoRestorePamSuppression> planned;
+    PamRule plannedTarget;
+    require(planNopasswdloginSuppression(service, "lightdm", bytes(), planned, plannedTarget, error), error);
+    MutationRecord intent;
+    intent.policy = {"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"};
+    intent.resource = "lightdm";
+    intent.undo.backend = MutationBackend::PamSuppression;
+    intent.undo.payload = *planned;
+    MutationId intentId = 0;
+    require(journal.prepareMutation(intent, intentId, error), error);
+    require(retried.apply(error), error);
+    require(journal.records().back().id != intentId,
+            "unpublished intent must close before a fresh ownership cycle");
+    require(retried.release(journal.records().back(), error), error);
+
+    fs::remove(service);
+    const auto vendor = directory / "vendor";
+    fs::create_directories(vendor);
+    writeFile(directory / "foreign", original);
+    fs::create_symlink(directory / "foreign", vendor / "lightdm");
+    options.platform.configDirectories.push_back(vendor);
+    PamNopasswdloginTransaction unsafeFallback(options, journal);
+    require(!unsafeFallback.apply(error), "untrusted fallback must not be treated as a missing service");
+    require(!fs::exists(service), "fallback refusal must not create a primary file");
+    fs::remove(vendor / "lightdm");
+    writeFile(vendor / "lightdm", "# FIC_PAM_NOPASSWDLOGIN orphan\nauth required pam_unix.so\n");
+    require(!unsafeFallback.apply(error), "fallback suppression witness must not be silently ignored");
+    fs::remove(vendor / "lightdm");
+
+    const auto stage = service.parent_path() / "stage";
+    writeFile(service, bypass + "auth include stage\n");
+    writeFile(stage, "auth required pam_unix.so\n");
+    options.writer = [&](const std::string& path, const std::string& content,
+                         const AtomicWriteOptions& settings, std::string* message) {
+        if (!AtomicFileWriter::write(path, content, settings, message)) return false;
+        writeFile(stage, bypass + "auth required pam_unix.so\n");
+        return true;
+    };
+    PamNopasswdloginTransaction changedInclude(options, journal);
+    require(!changedInclude.apply(error), "post-publication include drift must fail postcondition");
+    require(journal.records().back().isActive(), "unresolved graph drift must retain ownership");
+    require(bytes().find("FIC_PAM_NOPASSWDLOGIN") != std::string::npos,
+            "failed graph compensation must leave its physical proof");
+    writeFile(stage, "auth required pam_unix.so\n");
+    options.writer = AtomicFileWriter::write;
+    PamNopasswdloginTransaction repairedInclude(options, journal);
+    require(repairedInclude.apply(error), error);
+    require(repairedInclude.release(journal.records().back(), error), error);
+
+
+}
+
+void testPackagedPamProof() {
+    using namespace fic::identity::pam;
+    using fic::platform::PackageManagerKind;
+    fic::platform::PamPlatformConfig::PasswordlessLoginTarget target{
+        "lightdm", "/etc/pam.d/lightdm", {"lightdm"}};
+    std::string error;
+    std::string owner = "lightdm:amd64: /etc/pam.d/lightdm\n";
+    std::string metadata = "installed\n /etc/pam.d/lightdm 900150983cd24fb0d6963f7d28e17f72\n";
+    std::string rpm = "lightdm\n/etc/pam.d/lightdm\t900150983cd24fb0d6963f7d28e17f72\n";
+    bool failed = false;
+    const auto query = [&](const std::vector<std::string>& arguments) {
+        ProcessResult result;
+        result.started = true;
+        result.exitCode = failed ? 1 : 0;
+        if (arguments.front() == "-S") {
+            require(arguments.back() == target.source, "owner query must use the exact managed source");
+            result.standardOutput = owner;
+        } else if (arguments.front() == "-W") {
+            require(arguments.back() == "lightdm:amd64", "metadata must use the identified binary owner");
+            result.standardOutput = metadata;
+        } else {
+            require(arguments.front() == "-qf" && arguments.back() == target.source,
+                    "RPM must query exact file ownership");
+            result.standardOutput = rpm;
+        }
+        return result;
+    };
+    require(provePackagedPamContent(target, PackageManagerKind::Dpkg, "abc", query, error), error);
+    require(provePackagedPamContent(target, PackageManagerKind::Rpm, "abc", query, error), error);
+    require(!provePackagedPamContent(target, PackageManagerKind::Dpkg, "changed", query, error),
+            "DEB ownership alone must not prove package bytes");
+    require(!provePackagedPamContent(target, PackageManagerKind::Rpm, "changed", query, error),
+            "RPM ownership alone must not prove package bytes");
+    owner += "other: /etc/pam.d/lightdm\n";
+    require(!provePackagedPamContent(target, PackageManagerKind::Dpkg, "abc", query, error),
+            "ambiguous DEB owner must fail");
+    owner = "lightdm:amd64: /etc/pam.d/lightdm\n";
+    metadata = "config-files\n /etc/pam.d/lightdm 900150983cd24fb0d6963f7d28e17f72\n";
+    require(!provePackagedPamContent(target, PackageManagerKind::Dpkg, "abc", query, error),
+            "removed DEB package metadata must fail");
+    metadata = "installed\n /etc/pam.d/lightdm 900150983cd24fb0d6963f7d28e17f72 obsolete\n";
+    require(!provePackagedPamContent(target, PackageManagerKind::Dpkg, "abc", query, error),
+            "obsolete conffile metadata must fail");
+    rpm += "/etc/pam.d/lightdm\t900150983cd24fb0d6963f7d28e17f72\n";
+    require(!provePackagedPamContent(target, PackageManagerKind::Rpm, "abc", query, error),
+            "duplicate RPM digest must fail");
+    rpm = "other\n/etc/pam.d/lightdm\t900150983cd24fb0d6963f7d28e17f72\n";
+    require(!provePackagedPamContent(target, PackageManagerKind::Rpm, "abc", query, error),
+            "unexpected package must fail");
+    failed = true;
+    require(!provePackagedPamContent(target, PackageManagerKind::Rpm, "abc", query, error),
+            "failed query must fail closed");
+}
+
 } // namespace
 
 int main() {
@@ -904,6 +1271,10 @@ int main() {
         ("fic-pam-analyzer-test-" + std::to_string(::getpid()));
     fs::remove_all(root);
     try {
+        testPackagedPamProof();
+        testNopasswdloginTransaction(root);
+        testNopasswdloginFragment();
+        testRuleSuppressionProof(root);
         testMfaAuthenticationPaths();
         testEmptyUnixPasswordPaths();
         testDetectPamFaillockStrategy(root);

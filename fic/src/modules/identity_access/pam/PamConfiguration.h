@@ -36,6 +36,8 @@ struct PamRule {
     std::vector<std::string> arguments;
     PamIncludeKind includeKind = PamIncludeKind::None;
     std::string includeTarget;
+    // Last physical line of the parsed logical rule, including continuations.
+    std::size_t endLine = 0;
 };
 
 // Structured effective stack used by the control-flow analyzer. Includes are

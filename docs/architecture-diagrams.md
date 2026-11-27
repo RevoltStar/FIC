@@ -1062,20 +1062,19 @@ graph целевых authentication services и отклоняет любой н
 `nopasswdlogin` моделируется отдельно как `ExplicitPasswordlessLogin`: trusted
 contract сопоставляет exact service/module/source/simple control/ordered argv,
 а acceptance остаётся видна в analyzer evidence. Политика
-`disable_nopasswdlogin` использует два typed enforcement mode. Для локального
-ALT NSS contract (`files` с опциональным `systemd`, плюс завершающий `role`
-для group/initgroups) она отклоняет primary-GID, очищает только supplementary
-local members через hash-verified `gpasswd`, а затем доказывает отсутствие
-effective membership тем же NSS-путём, который использует `pam_succeed_if user
-ingroup`. При объявленном `sss` policy не полагается на неполную enumeration:
-она атомарно удаляет exact `ExplicitPasswordlessLogin` rules из declared
-GDM/LightDM sources, проверяет отсутствие всех declared bypass и делает exact
-rollback исходных bytes при ошибке. Похожее non-exact правило или неизвестный
-NSS service дают fail-closed. Это Recommended dependency lockout
-policies, но не password quality/history. Disable требует неизменного placement
-managed blocks. Atomic replacement получает ожидаемые `dev+ino` target и
-отклоняет уже заменённый inode непосредственно перед commit. Внешняя topology
-не присваивается FIC. ALT `pam_pwhistory` активируется отдельной facility
+`disable_nopasswdlogin` использует единый backend адресного подавления
+PAM-правил на ALT p11, Debian 12/13 и Ubuntu 24.04/26.04.
+Типизированные managed targets отделены от trusted bypasses анализатора.
+Политика сохраняет исходный raw-фрагмент и связывает физическую обёртку
+с MutationJournal. Scoped rollback восстанавливает доказанный фрагмент
+с сохранением соседних административных изменений. Потеря физического
+доказательства требует подтверждения штатного пакетного содержимого
+или отсутствия активного эффекта. После внешних изменений ограничение
+восстанавливается очередным успешным apply. Непрерывное действие между
+внешней заменой и apply выходит за принятый контракт.
+Это Recommended dependency lockout policies.
+Подробности изложены в [контракте rollback](rollback.md#pam-nopasswdlogin-suppression).
+ALT `pam_pwhistory` активируется отдельной facility
 `control fic-pam-pwhistory enabled|disabled` и использует собственные markers.
 
 Классы identity-модуля разделяют policy metadata и владение системной

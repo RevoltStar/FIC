@@ -360,24 +360,13 @@ struct PamPlatformConfig {
     std::vector<PamTrustedAuthenticationExclusionRule>
         trustedAuthenticationExclusions;
     std::vector<PamTrustedServiceAlias> trustedServiceAliases;
-    struct PasswordlessLoginControl {
-        struct NssServiceContract {
-            std::vector<std::vector<std::string>> passwd;
-            std::vector<std::vector<std::string>> group;
-            std::vector<std::vector<std::string>> initgroups;
-        };
-
-        std::string groupName;
-        std::filesystem::path passwdPath;
-        std::filesystem::path groupPath;
-        std::filesystem::path nsswitchPath;
-        NssServiceContract supportedNss;
-        // NSS services whose membership cannot be proven safely by complete
-        // enumeration. When one is active, enforcement disables the exact
-        // platform-declared PAM bypass rules instead of inspecting members.
-        std::vector<std::string> pamBypassNssServices;
+    // Managed rules are independent of trusted authentication exemptions.
+    struct PasswordlessLoginTarget {
+        std::string service;
+        std::filesystem::path source;
+        std::vector<std::string> packages;
     };
-    std::optional<PasswordlessLoginControl> passwordlessLoginControl;
+    std::vector<PasswordlessLoginTarget> passwordlessLoginTargets;
     std::filesystem::path emptyPasswordAuthSelection;
     // Joint C2 password topology (quality + history) runtime mutation is
     // VALIDATED on this platform profile: the PamAuthUpdate C2 path passed

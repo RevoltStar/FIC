@@ -46,7 +46,7 @@ void checkDependencies(const PlatformProfile& profile) {
                      dep.policy == pamRef("disable_nopasswdlogin"), "changed Recommended dependency");
             }
         }
-        need(required == 1 && recommended == (capability == PamCapability::AuthenticationLockout && profile.pam.passwordlessLoginControl.has_value() ? 1u : 0u),
+        need(required == 1 && recommended == (capability == PamCapability::AuthenticationLockout && !profile.pam.passwordlessLoginTargets.empty() ? 1u : 0u),
              std::string("dependency count: ") + option.name);
         need(registry.findPolicy(activation)->dependencies().empty(), "artificial activation edge");
     }

@@ -1,0 +1,13 @@
+ARG BASE=debian:12
+FROM ${BASE}
+ENV DEBIAN_FRONTEND=noninteractive
+# These containers run PAM/package tests without starting a display manager.
+RUN printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod 755 /usr/sbin/policy-rc.d
+# APT release signatures and package hashes remain mandatory. The test network
+# uses a TLS proxy whose CA is absent from the minimal base images.
+RUN find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) -exec sed -i 's|http://|https://|g' {} + && \
+    printf 'Acquire::https::Verify-Peer "false";\nAcquire::Retries "2";\n' > /etc/apt/apt.conf.d/90native-proxy && \
+    apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake libssl-dev nlohmann-json3-dev libpam0g-dev \
+        gdm3 lightdm sddm ca-certificates && \
+    mkdir /native-debs && cd /native-debs && apt-get download gdm3 lightdm sddm

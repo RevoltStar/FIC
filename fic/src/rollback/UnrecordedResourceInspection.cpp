@@ -2,6 +2,7 @@
 #include "modules/net/ssh/SshResourceLock.h"
 #include "modules/net/ssh/SshPolicySemantics.h"
 #include "modules/identity_access/pam/PamConfiguration.h"
+#include <fic/core/fs/TrustedFileReader.h>
 #include <fic/core/fs/RootControlledDirectory.h>
 #include <fic/core/fs/SecureStateFile.h>
 #include <cerrno>
@@ -205,6 +206,39 @@ UnrecordedResourceState inspectUnrecordedResource(const PolicyRef& policy,
     if(policy.moduleName=="SYSCTL")backend=MutationBackend::Sysctl;
     if(policy.moduleName=="DAC"&&policy.submoduleName=="SudoEdit")backend=MutationBackend::Sudo;
     if(policy.moduleName=="NET"&&policy.submoduleName=="SshEdit")backend=MutationBackend::Ssh;
+    if (policy == PolicyRef{"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"}) {
+        if (!journal.usable() || !journal.lifecycleInitialized()) {
+            error = "PAM suppression inspection requires journal/witness proof";
+            return State::Error;
+        }
+        for (const auto& record : journal.records()) {
+            if (record.isActive() && record.policy == policy) return State::Continue;
+        }
+        fic::identity::pam::PamConfiguration configuration(deps.pamPlatform);
+        for (const auto& target : deps.pamPlatform.passwordlessLoginTargets) {
+            std::vector<std::string> existing;
+            if (!configuration.existingServices({target.service}, existing, error)) return State::Error;
+            if (existing.empty()) continue;
+            std::vector<fic::identity::pam::PamRule> rules;
+            std::set<Path> sources;
+            if (!configuration.collectRules(target.service, fic::identity::pam::PamManagementGroup::Auth,
+                                             rules, error, &sources)) return State::Error;
+            for (const auto& source : sources) {
+                fic::core::TrustedFileReadOptions options;
+                options.expectedOwner = ::geteuid();
+                options.forbiddenMode = 0022;
+                options.requireSingleLink = true;
+                std::string content;
+                if (!fic::core::readTrustedFile(source, options, content, error)) return State::Error;
+                if (content.find("FIC_PAM_NOPASSWDLOGIN") != std::string::npos) {
+                    error = "Active PAM suppression marker has no active journal provenance";
+                    return State::Error;
+                }
+            }
+        }
+        error.clear();
+        return State::ProvenEmpty;
+    }
     if(!backend)return State::Continue;
     std::unique_lock<std::mutex> sudoLock(SudoersConfiguration::mutationMutex(),std::defer_lock);
     if(*backend==MutationBackend::Sudo)sudoLock.lock();

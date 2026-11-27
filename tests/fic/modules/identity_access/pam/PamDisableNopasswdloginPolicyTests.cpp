@@ -1,108 +1,27 @@
 #include "modules/identity_access/pam/policies/PamDisableNopasswdloginPolicy.h"
-
+#include "rollback/DaemonMutationJournal.h"
 #include <fic/core/runtime/FicRuntimePaths.h>
-#include <fic/core/fs/AtomicFileWriter.h>
-
 #include <filesystem>
 #include <fstream>
 #include <iostream>
-#include <memory>
 #include <stdexcept>
-#include <string>
-#include <sys/stat.h>
 #include <unistd.h>
 
 namespace fs = std::filesystem;
-
 namespace {
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
+void require(bool value, const std::string& message) {
+    if (!value) throw std::runtime_error(message);
 }
-
-void writeFile(const fs::path& path,
-               const std::string& content,
-               mode_t mode = 0644) {
+void writeFile(const fs::path& path, const std::string& bytes) {
     fs::create_directories(path.parent_path());
-    std::ofstream output(path, std::ios::trunc);
-    require(output.is_open(), "could not write " + path.string());
-    output << content;
-    output.close();
-    require(::chmod(path.c_str(), mode) == 0, "could not chmod fixture");
+    std::ofstream file(path);
+    file << bytes;
+    require(file.good(), "fixture write failed");
 }
-
 std::string readFile(const fs::path& path) {
-    std::ifstream input(path);
-    return {std::istreambuf_iterator<char>(input),
-            std::istreambuf_iterator<char>()};
+    std::ifstream file(path);
+    return std::string(std::istreambuf_iterator<char>(file), {});
 }
-
-struct Tree {
-    fs::path root;
-    fs::path group;
-    fs::path passwd;
-    fs::path nsswitch;
-    fs::path gpasswd;
-    fs::path gdm;
-    fs::path lightdm;
-    fic::platform::PamPlatformConfig platform;
-    fic::platform::PlatformExecutableResolver resolver;
-
-    Tree()
-        : root([] {
-              std::string pattern =
-                  (fs::temp_directory_path() / "fic-nopasswd-XXXXXX").string();
-              char* path = ::mkdtemp(pattern.data());
-              if (path == nullptr) throw std::runtime_error("mkdtemp failed");
-              return fs::path(path);
-          }()),
-          group(root / "etc/group"), passwd(root / "etc/passwd"),
-          nsswitch(root / "etc/nsswitch.conf"),
-          gpasswd(root / "bin/gpasswd"),
-          gdm(root / "etc/pam.d/gdm-password"),
-          lightdm(root / "etc/pam.d/lightdm"),
-          resolver(
-              fic::platform::PlatformExecutables{{
-                  {fic::platform::ExecutableId::Gpasswd, {gpasswd}}}},
-              {false}) {
-        writeFile(gpasswd, "fixture\n", 0755);
-        platform.passwordlessLoginControl = {
-            "nopasswdlogin", passwd, group, nsswitch,
-            {
-                {{"files"}, {"files", "systemd"}},
-                {{"files"}, {"files", "systemd"}, {"files", "role"},
-                 {"files", "systemd", "role"}},
-                {{"files"}, {"files", "systemd"}, {"files", "role"},
-                 {"files", "systemd", "role"}}
-            },
-            {"sss"}};
-        platform.trustedAuthenticationBypasses = {
-            {"gdm-password", "pam_succeed_if.so",
-             fic::platform::PamTrustedAuthenticationBypassReason::
-                 ExplicitPasswordlessLogin,
-             "sufficient", {"user", "ingroup", "nopasswdlogin"}, gdm},
-            {"lightdm", "pam_succeed_if.so",
-             fic::platform::PamTrustedAuthenticationBypassReason::
-                 ExplicitPasswordlessLogin,
-             "sufficient", {"user", "ingroup", "nopasswdlogin"}, lightdm}};
-    }
-
-    ~Tree() {
-        std::error_code ignored;
-        fs::remove_all(root, ignored);
-    }
-
-    void reset(const std::string& groupContent,
-               const std::string& passwdContent =
-                   "alice:x:1000:1000::/home/alice:/bin/sh\n",
-               const std::string& nssContent =
-                   "passwd: files systemd\ngroup: files systemd role\n") {
-        writeFile(group, groupContent);
-        writeFile(passwd, passwdContent);
-        writeFile(nsswitch, nssContent);
-    }
-};
-
 void initializeRuntime(const fs::path& root) {
     auto paths = fic::core::FicProductPaths::production();
     paths.configDir = root / "config";
@@ -124,308 +43,41 @@ void initializeRuntime(const fs::path& root) {
               "disable_nopasswdlogin.value=ENABLE\n");
 }
 
-void runTests() {
-    Tree tree;
-    initializeRuntime(tree.root);
-    std::size_t calls = 0;
-    std::size_t membershipCalls = 0;
-    bool clearEffectiveOnMutation = true;
-    bool resolverFailure = false;
-    fic::identity::pam::PamEffectiveGroupMembership effective;
-    auto membershipResolver =
-        [&effective, &resolverFailure, &membershipCalls](
-                                  const std::string& group,
-                                  fic::identity::pam::
-                                  PamEffectiveGroupMembership& result,
-                                  std::string& error) {
-        ++membershipCalls;
-        require(group == "nopasswdlogin", "unexpected NSS group lookup");
-        if (resolverFailure) {
-            error = "fixture NSS failure";
-            return false;
-        }
-        result = effective;
-        error.clear();
-        return true;
-    };
-    auto clearingRunner = [&](const std::string& executable,
-                              const std::vector<std::string>& arguments) {
-        ++calls;
-        require(executable == tree.gpasswd &&
-                    arguments == std::vector<std::string>{
-                        "-M", "", "nopasswdlogin"},
-                "unexpected gpasswd invocation");
-        writeFile(tree.group, "nopasswdlogin:x:2000:\n");
-        if (clearEffectiveOnMutation) effective.users.clear();
-        ProcessResult result;
-        result.started = true;
-        result.exitCode = 0;
-        return result;
-    };
-    auto makePolicy = [&](PamDisableNopasswdloginPolicy::Runner runner = {},
-                          fic::core::TrustedFilePostValidationHook hook = {},
-                          PamDisableNopasswdloginPolicy::Writer writer = {}) {
-        if (!runner) runner = clearingRunner;
-        return std::make_unique<PamDisableNopasswdloginPolicy>(
-            tree.platform, tree.resolver, std::move(runner),
-            membershipResolver, std::move(hook), std::move(writer));
-    };
-
-    tree.reset("users:x:1000:alice\n");
-    effective = {};
-    auto policy = makePolicy();
-    require(policy->apply() && calls == 0,
-            "absent group must be an applied no-op");
-
-    tree.reset("nopasswdlogin:x:2000:\n");
-    effective = {true, 2000, {}};
-    policy = makePolicy();
-    require(policy->apply() && policy->apply() && calls == 0,
-            "empty group must be idempotent");
-
-    tree.reset("users:x:1000:alice\n");
-    effective = {};
-    bool groupReplaced = false;
-    policy = makePolicy({}, [&](const fs::path& path) {
-        if (path != tree.group || groupReplaced) return;
-        fs::rename(tree.group, tree.group.string() + ".opened");
-        writeFile(tree.group, "nopasswdlogin:x:2000:alice\n");
-        groupReplaced = true;
-    });
-    require(policy->apply() && groupReplaced && calls == 0,
-            "group pathname replacement changed parsed trusted bytes");
-
-    tree.reset("nopasswdlogin:x:2000:\n");
-    effective = {true, 2000, {}};
-    bool passwdReplaced = false;
-    policy = makePolicy({}, [&](const fs::path& path) {
-        if (path != tree.passwd || passwdReplaced) return;
-        fs::rename(tree.passwd, tree.passwd.string() + ".opened");
-        writeFile(tree.passwd,
-                  "mallory:x:1001:2000::/home/mallory:/bin/sh\n");
-        passwdReplaced = true;
-    });
-    require(policy->apply() && passwdReplaced && calls == 0,
-            "passwd pathname replacement changed parsed trusted bytes");
-
-    tree.reset("nopasswdlogin:x:2000:\n");
-    require(::chmod(tree.group.c_str(), 0664) == 0,
-            "could not make group fixture unsafe");
-    effective = {true, 2000, {}};
-    policy = makePolicy();
-    require(!policy->apply(), "group-writable group file was accepted");
-
-    tree.reset("nopasswdlogin:x:2000:\n");
-    require(::chmod(tree.passwd.c_str(), 0646) == 0,
-            "could not make passwd fixture unsafe");
-    effective = {true, 2000, {}};
-    policy = makePolicy();
-    require(!policy->apply(), "world-writable passwd file was accepted");
-
-    tree.reset("nopasswdlogin:x:2000:alice,bob\n");
-    effective = {true, 2000, {"alice", "bob"}};
-    policy = makePolicy();
-    require(policy->apply() && policy->apply() && calls == 1 &&
-                readFile(tree.group) == "nopasswdlogin:x:2000:\n",
-            "supplementary members were not cleared idempotently");
-
-    tree.reset("nopasswdlogin:x:2000:alice\n",
-               "alice:x:1000:2000::/home/alice:/bin/sh\n");
-    effective = {true, 2000, {"alice"}};
-    policy = makePolicy();
-    require(!policy->apply() && calls == 1,
-            "primary-GID member must fail closed without mutation");
-
-    tree.reset("nopasswdlogin:x:2000:\n");
-    effective = {true, 2000, {}};
-    policy = makePolicy();
-    require(policy->apply(),
-            "real ALT files/systemd/role topology was rejected");
-
-    tree.reset("nopasswdlogin:x:2000:\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n",
-               "passwd: files systemd\ngroup: files systemd\n");
-    effective = {true, 2000, {}};
-    policy = makePolicy();
-    require(policy->apply(), "supported systemd-only topology was rejected");
-
-    for (const std::string& remote :
-         {"winbind", "ldap", "nis", "compat"}) {
-        tree.reset("nopasswdlogin:x:2000:\n",
-                   "alice:x:1000:1000::/home/alice:/bin/sh\n",
-                   "passwd: files systemd\ngroup: files " + remote + "\n");
-        effective = {true, 2000, {}};
-        policy = makePolicy();
-        require(!policy->apply() && calls == 1,
-                "remote NSS service was accepted: " + remote);
-    }
-
-    const std::string exactBypass =
-        "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n";
-    const std::string sssNss =
-        "passwd: files systemd sss\n"
-        "group: files systemd role\n"
-        "initgroups: files systemd role\n";
-    tree.reset("nopasswdlogin:x:2000:domain-user\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n", sssNss);
-    writeFile(tree.gdm, exactBypass + "auth required pam_nologin.so\n");
-    writeFile(tree.lightdm,
-              "auth required pam_nologin.so\n" + exactBypass);
-    const std::size_t membershipBeforeSss = membershipCalls;
-    std::size_t pamWrites = 0;
-    auto countingWriter = [&](const std::string& path,
-                              const std::string& content,
-                              const AtomicWriteOptions& options,
-                              std::string* error) {
-        ++pamWrites;
-        return AtomicFileWriter::write(path, content, options, error);
-    };
-    policy = makePolicy({}, {}, countingWriter);
-    require(policy->apply() && policy->apply() && pamWrites == 2 &&
-                membershipCalls == membershipBeforeSss &&
-                readFile(tree.gdm) == "auth required pam_nologin.so\n" &&
-                readFile(tree.lightdm) ==
-                    "auth required pam_nologin.so\n",
-            "SSS enforcement did not remove exact PAM bypasses "
-            "idempotently without membership enumeration");
-
-    tree.reset("nopasswdlogin:x:2000:\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n", sssNss);
-    const std::string nonExact =
-        "auth required pam_succeed_if.so user ingroup nopasswdlogin\n";
-    writeFile(tree.gdm, nonExact);
-    fs::remove(tree.lightdm);
-    policy = makePolicy();
-    require(!policy->apply() && readFile(tree.gdm) == nonExact,
-            "non-exact passwordless PAM rule was modified or accepted");
-
-    tree.reset("nopasswdlogin:x:2000:\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n", sssNss);
-    writeFile(tree.gdm, exactBypass);
-    writeFile(tree.lightdm, exactBypass);
-    std::size_t failingWrites = 0;
-    auto secondWriteFails = [&](const std::string& path,
-                                const std::string& content,
-                                const AtomicWriteOptions& options,
-                                std::string* error) {
-        ++failingWrites;
-        if (failingWrites == 2) {
-            if (error != nullptr) *error = "injected second write failure";
-            return false;
-        }
-        return AtomicFileWriter::write(path, content, options, error);
-    };
-    policy = makePolicy({}, {}, secondWriteFails);
-    require(!policy->apply() && failingWrites == 3 &&
-                readFile(tree.gdm) == exactBypass &&
-                readFile(tree.lightdm) == exactBypass,
-            "multi-service PAM write failure did not restore exact bytes");
-
-    tree.reset("nopasswdlogin:x:2000:\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n", sssNss);
-    writeFile(tree.gdm, exactBypass);
-    fs::remove(tree.lightdm);
-    std::size_t postconditionWrites = 0;
-    auto ineffectiveWriter = [&](const std::string& path,
-                                 const std::string& content,
-                                 const AtomicWriteOptions& options,
-                                 std::string* error) {
-        ++postconditionWrites;
-        const std::string actual = postconditionWrites == 1
-            ? content + exactBypass
-            : content;
-        return AtomicFileWriter::write(path, actual, options, error);
-    };
-    policy = makePolicy({}, {}, ineffectiveWriter);
-    require(!policy->apply() && postconditionWrites == 2 &&
-                readFile(tree.gdm) == exactBypass,
-            "PAM postcondition failure did not restore exact bytes");
-
-    tree.reset("nopasswdlogin:x:2000:\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n",
-               "passwd: files\ngroup: files\ninitgroups: files sss\n");
-    effective = {true, 2000, {}};
-    const std::size_t membershipBeforeInitgroupsSss = membershipCalls;
-    policy = makePolicy();
-    require(policy->apply() &&
-                membershipCalls == membershipBeforeInitgroupsSss,
-            "SSS initgroups topology used incomplete membership enumeration");
-
-    tree.reset("nopasswdlogin:x:2000:\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n",
-               "passwd: files systemd\ngroup: files systemd role\n"
-               "initgroups: files systemd role\n");
-    effective = {true, 2000, {}};
-    policy = makePolicy();
-    require(policy->apply(), "supported explicit initgroups was rejected");
-
-    tree.reset("nopasswdlogin:x:2000:\n");
-    effective = {true, 2000, {"alice"}};
-    policy = makePolicy();
-    require(!policy->apply() && calls == 1,
-            "role-derived effective membership was ignored");
-
-    tree.reset("nopasswdlogin:x:2000:alice\n");
-    effective = {true, 2000, {"alice"}};
-    clearEffectiveOnMutation = false;
-    policy = makePolicy();
-    require(!policy->apply() && calls == 2 &&
-                readFile(tree.group) == "nopasswdlogin:x:2000:\n",
-            "residual effective membership passed the postcondition");
-    clearEffectiveOnMutation = true;
-
-    tree.reset("nopasswdlogin:x:2000:\n");
-    effective = {true, 2000, {}};
-    resolverFailure = true;
-    policy = makePolicy();
-    require(!policy->apply(), "NSS resolver failure was accepted");
-    resolverFailure = false;
-
-    tree.reset("nopasswdlogin:x:2000:alice\n");
-    auto failingRunner = [](const std::string&,
-                            const std::vector<std::string>&) {
-        ProcessResult result;
-        result.started = true;
-        result.exitCode = 1;
-        result.standardError = "fixture failure";
-        return result;
-    };
-    effective = {true, 2000, {"alice"}};
-    policy = makePolicy(failingRunner);
-    require(!policy->apply() &&
-                readFile(tree.group) == "nopasswdlogin:x:2000:alice\n",
-            "failed gpasswd mutation was accepted");
-
-    tree.reset("nopasswdlogin:x:2000:alice\n");
-    auto ineffectiveRunner = [](const std::string&,
-                                const std::vector<std::string>&) {
-        ProcessResult result;
-        result.started = true;
-        result.exitCode = 0;
-        return result;
-    };
-    effective = {true, 2000, {"alice"}};
-    policy = makePolicy(ineffectiveRunner);
-    require(!policy->apply(),
-            "successful command without postcondition was accepted");
-
-    tree.reset("nopasswdlogin:x:2000:\n",
-               "alice:x:1000:1000::/home/alice:/bin/sh\n",
-               "passwd: files systemd\n"
-               "group: files [SUCCESS=return] systemd role\n");
-    effective = {true, 2000, {}};
-    policy = makePolicy();
-    require(!policy->apply(), "NSS action override was accepted");
 }
-
-} // namespace
-
 int main() {
+    const auto root = fs::temp_directory_path() /
+        ("fic-passwordless-policy-" + std::to_string(getpid()));
+    fs::remove_all(root);
     try {
-        runTests();
-        return 0;
+        initializeRuntime(root);
+        fic::rollback::DaemonMutationJournal::instance().setOverridePath(root / "data/journal");
+        fic::platform::PamPlatformConfig platform;
+        platform.configDirectories = {root / "pam.d"};
+        platform.passwordlessLoginTargets = {
+            {"lightdm", root / "pam.d/lightdm", {"lightdm"}},
+            {"sddm", root / "pam.d/sddm", {"sddm"}}};
+        writeFile(root / "pam.d/lightdm",
+                  "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n"
+                  "auth required pam_unix.so\n");
+        writeFile(root / "group", "nopasswdlogin:x:2000:alice\n");
+        writeFile(root / "nsswitch.conf", "group: files [SUCCESS=merge] systemd role sss\n");
+        PamDisableNopasswdloginPolicy policy(platform);
+        require(policy.apply(), "production policy apply failed");
+        const auto first = readFile(root / "pam.d/lightdm");
+        require(first.find("FIC_PAM_NOPASSWDLOGIN BEGIN") != std::string::npos,
+                "production policy did not publish a wrapper");
+        require(policy.apply() && readFile(root / "pam.d/lightdm") == first,
+                "production reapply must be idempotent");
+        require(!fs::exists(root / "pam.d/sddm"), "missing service must not be created");
+        require(readFile(root / "group") == "nopasswdlogin:x:2000:alice\n",
+                "membership must remain untouched");
+        fic::rollback::DaemonMutationJournal::instance().resetOverride();
+        fs::remove_all(root);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
+        fic::rollback::DaemonMutationJournal::instance().resetOverride();
+        fs::remove_all(root);
         return 1;
     }
+    std::cout << "PamDisableNopasswdloginPolicyTests passed\n";
 }

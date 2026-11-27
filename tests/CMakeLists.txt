@@ -1560,6 +1560,12 @@ target_link_libraries(pam_configuration_tests PRIVATE fic-core fic-platform)
 add_test(NAME pam_configuration_tests COMMAND pam_configuration_tests)
 
 add_executable(pam_control_flow_analyzer_tests
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamNopasswdloginPackageProof.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamNopasswdloginTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamNopasswdloginFragment.cpp
     fic/modules/identity_access/pam/PamControlFlowAnalyzerTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
@@ -1582,7 +1588,7 @@ target_include_directories(pam_control_flow_analyzer_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
 )
 target_link_libraries(pam_control_flow_analyzer_tests PRIVATE
-    fic-core fic-platform
+    fic-core fic-policy fic-platform
 )
 add_test(NAME pam_control_flow_analyzer_tests
          COMMAND pam_control_flow_analyzer_tests)
@@ -2125,12 +2131,32 @@ add_executable(pam_disable_nopasswdlogin_policy_tests
     fic/modules/identity_access/pam/PamDisableNopasswdloginPolicyTests.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/IdentityAccessPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/composite/ConfigurationTransaction.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/nss/NssConfiguration.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfiguration.cpp
-    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamEffectiveGroupMembership.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/policies/PamDisableNopasswdloginPolicy.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/shared/configuration/PreparedFileChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamNopasswdloginPackageProof.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamNopasswdloginTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/MutationJournal.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/ScopeTransition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dac/sudo/SudoersDisabledWrapper.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamNopasswdloginFragment.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamCapabilityVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamManagedPasswordSlots.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamConfigFileTransaction.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamControlFlowAnalyzer.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamOptionValueCodec.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPlatformComposition.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderInspector.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderSemanticVerifier.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwhistoryConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamProviderModuleArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PamPwhistoryArguments.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PasswdqcConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/pam/PwqualityConfigFile.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/rollback/DaemonMutationJournal.cpp
 )
 target_include_directories(pam_disable_nopasswdlogin_policy_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/fic/src
@@ -3536,6 +3562,13 @@ if(Python3_Interpreter_FOUND)
     set_tests_properties(sssd_i5_evidence_checks PROPERTIES LABELS "unit;integration")
 endif()
 
+# Reuse the PAM analyzer source set for the suppression rollback route.
+get_target_property(fic_nopasswdlogin_sources pam_control_flow_analyzer_tests SOURCES)
+list(FILTER fic_nopasswdlogin_sources INCLUDE REGEX "/fic/src/modules/identity_access/pam/.*[.]cpp$")
+add_library(fic-pam-nopasswdlogin-test-support STATIC ${fic_nopasswdlogin_sources})
+target_include_directories(fic-pam-nopasswdlogin-test-support PRIVATE ${CMAKE_SOURCE_DIR}/fic/src)
+target_link_libraries(fic-pam-nopasswdlogin-test-support PUBLIC fic-core fic-policy fic-platform)
+
 # RollbackDispatcher's production SSSD route uses the same coordinator as
 # policies. Compile its test support once, without Docker/native side effects.
 add_library(fic-sssd-integration-test-support STATIC
@@ -3550,7 +3583,7 @@ foreach(fic_sssd_target IN LISTS fic_sssd_targets)
     get_target_property(fic_sssd_sources ${fic_sssd_target} SOURCES)
     foreach(fic_sssd_source IN LISTS fic_sssd_sources)
         if(fic_sssd_source MATCHES "/RollbackExecutor.cpp$")
-            target_link_libraries(${fic_sssd_target} PRIVATE fic-sssd-integration-test-support)
+            target_link_libraries(${fic_sssd_target} PRIVATE fic-sssd-integration-test-support fic-pam-nopasswdlogin-test-support)
             target_sources(${fic_sssd_target} PRIVATE
                 ${CMAKE_SOURCE_DIR}/fic/src/modules/identity_access/alt_groups/AltGroupTransaction.cpp)
             break()
@@ -3619,8 +3652,10 @@ get_target_property(pam_dependency_definitions fic COMPILE_DEFINITIONS)
 list(REMOVE_ITEM pam_dependency_libraries PkgConfig::FIC_LIBSYSTEMD)
 list(APPEND pam_dependency_libraries PkgConfig::FIC_VERIFIED_CONFIG_NATIVE_SYSTEMD)
 add_executable(pam_dependency_contract_tests
-    integration/pam-dependencies/Driver.cpp ${pam_dependency_sources})
-target_include_directories(pam_dependency_contract_tests PRIVATE ${pam_dependency_includes})
+    integration/pam-dependencies/Driver.cpp ${pam_dependency_sources}
+    ${CMAKE_SOURCE_DIR}/fic-gui/src/features/policies/models/PolicyDescriptor.cpp)
+target_include_directories(pam_dependency_contract_tests PRIVATE ${pam_dependency_includes}
+    ${CMAKE_SOURCE_DIR}/fic-gui/src)
 target_compile_definitions(pam_dependency_contract_tests PRIVATE ${pam_dependency_definitions}
     FIC_PAM_DEPENDENCIES_STATIC_CONFIG_DIR="${CMAKE_SOURCE_DIR}/fic/src/resources/config"
     FIC_PAM_DEPENDENCIES_CONFIG_DIR="${CMAKE_BINARY_DIR}/fic/generated/scripts/config")

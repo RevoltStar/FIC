@@ -274,34 +274,6 @@ bool validatePamServices(const std::vector<std::string>& services,
     return true;
 }
 
-bool validateNssServiceContract(
-    const std::vector<std::vector<std::string>>& alternatives,
-    const std::string& database,
-    std::string& error) {
-    if (alternatives.empty()) {
-        error = "passwordless-login NSS " + database +
-            " contract has no supported service lists";
-        return false;
-    }
-    std::set<std::vector<std::string>> unique;
-    for (const auto& services : alternatives) {
-        if (services.empty() || !unique.insert(services).second) {
-            error = "invalid passwordless-login NSS " + database +
-                " service-list contract";
-            return false;
-        }
-        for (const std::string& service : services) {
-            if (service.empty() ||
-                service.find_first_of("[]=:, \t\r\n") != std::string::npos) {
-                error = "invalid passwordless-login NSS service in " +
-                    database + " contract";
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 bool validatePamTrustedAuthenticationBypasses(
     const PamPlatformConfig& pam,
     std::string& error) {
@@ -343,7 +315,8 @@ bool validatePamTrustedAuthenticationBypasses(
         case PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin: {
             const std::filesystem::path expectedSource =
                 pam.configDirectories.front() / rule.service;
-            if (rule.control != "sufficient" || rule.arguments.empty() ||
+            if (rule.control != "sufficient" ||
+                rule.arguments != std::vector<std::string>{"user", "ingroup", "nopasswdlogin"} ||
                 !rule.source.has_value() ||
                 !validatePath(*rule.source,
                               "trusted PAM bypass source", error) ||
@@ -379,63 +352,26 @@ bool validatePamTrustedAuthenticationBypasses(
             return false;
         }
     }
-    const auto& passwordless = pam.passwordlessLoginControl;
-    const std::size_t explicitRuleCount = static_cast<std::size_t>(std::count_if(
-        pam.trustedAuthenticationBypasses.begin(),
-        pam.trustedAuthenticationBypasses.end(), [](const auto& rule) {
-            return rule.reason ==
-                PamTrustedAuthenticationBypassReason::ExplicitPasswordlessLogin;
-        }));
-    if (passwordless.has_value()) {
-        if (passwordless->groupName.empty() ||
-            passwordless->groupName.find_first_of(":, \t\r\n") !=
+    std::set<std::string> managedServices;
+    for (const auto& target : pam.passwordlessLoginTargets) {
+        if (target.service.empty() ||
+            target.service.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-") !=
                 std::string::npos ||
-            !validAbsolutePath(passwordless->passwdPath) ||
-            !validAbsolutePath(passwordless->groupPath) ||
-            !validAbsolutePath(passwordless->nsswitchPath) ||
-            passwordless->passwdPath != "/etc/passwd" ||
-            passwordless->groupPath != "/etc/group" ||
-            passwordless->nsswitchPath != "/etc/nsswitch.conf") {
-            error = "invalid passwordless-login enforcement metadata";
+            !managedServices.insert(target.service).second ||
+            target.source != std::filesystem::path("/etc/pam.d") / target.service ||
+            target.packages.empty()) {
+            error = "invalid managed passwordless-login target";
             return false;
         }
-        if (!validateNssServiceContract(
-                passwordless->supportedNss.passwd, "passwd", error) ||
-            !validateNssServiceContract(
-                passwordless->supportedNss.group, "group", error) ||
-            !validateNssServiceContract(
-                passwordless->supportedNss.initgroups, "initgroups", error)) {
-            return false;
-        }
-        std::set<std::string> pamBypassServices;
-        for (const auto& service :
-             passwordless->pamBypassNssServices) {
-            if (service.empty() ||
-                service.find_first_of("[]=:, \t\r\n") !=
-                    std::string::npos ||
-                !pamBypassServices.insert(service).second) {
-                error = "invalid or duplicate passwordless-login PAM-bypass "
-                    "NSS service";
+        std::set<std::string> packages;
+        for (const auto& package : target.packages) {
+            if (package.empty() ||
+                package.find_first_not_of("abcdefghijklmnopqrstuvwxyz0123456789-+.") !=
+                    std::string::npos || !packages.insert(package).second) {
+                error = "invalid managed passwordless-login package contract";
                 return false;
             }
         }
-        const bool allExplicitRulesMatch = std::all_of(
-            pam.trustedAuthenticationBypasses.begin(),
-            pam.trustedAuthenticationBypasses.end(),
-            [&](const auto& rule) {
-                return rule.reason != PamTrustedAuthenticationBypassReason::
-                           ExplicitPasswordlessLogin ||
-                    rule.arguments == std::vector<std::string>{
-                        "user", "ingroup", passwordless->groupName};
-            });
-        if (explicitRuleCount == 0 || !allExplicitRulesMatch) {
-            error = "passwordless-login control does not match an exact "
-                "trusted PAM bypass";
-            return false;
-        }
-    } else if (explicitRuleCount != 0) {
-        error = "explicit passwordless PAM bypass has no enforcement metadata";
-        return false;
     }
     return true;
 }

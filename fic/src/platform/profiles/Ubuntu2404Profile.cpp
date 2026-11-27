@@ -246,6 +246,11 @@ PlatformProfile makeBuildPlatformProfile() {
         makeModeAndOwnerPathObject("arp", {"/usr/sbin/arp", {"root", "root", 0750}, {"root", "root", 0755}, true}),
         makeModeAndOwnerPathObject("ip", {"/usr/sbin/ip", {"root", "root", 0750}, {"root", "root", 0755}, false})
     };
+    profile.pam.passwordlessLoginTargets = {
+        {"gdm-password", "/etc/pam.d/gdm-password", {"gdm3"}},
+        {"lightdm", "/etc/pam.d/lightdm", {"lightdm"}},
+        {"sddm", "/etc/pam.d/sddm", {"sddm"}}
+    };
     return profile;
 }
 

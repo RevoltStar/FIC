@@ -1280,6 +1280,61 @@ void testScopeCommitDurabilityFailure() {
             "retry did not reverify the target before committing");
 }
 
+void testPamSuppressionJournal() {
+    TempFile file;
+    MutationJournal journal(file.path);
+    std::string error;
+    require(journal.load(error), error);
+    MutationRecord record;
+    record.policy = {"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"};
+    record.resource = "lightdm";
+    record.undo.backend = MutationBackend::PamSuppression;
+    record.undo.payload = UndoRestorePamSuppression{
+        "lightdm", "auth sufficient pam_succeed_if.so user ingroup nopasswdlogin\n",
+        "auth requisite pam_nologin.so", "auth include common-auth", false};
+    MutationId id = 0;
+    require(journal.prepareMutation(record, id, error), error);
+    require(id != 0, "suppression id must be allocated");
+    MutationJournal restored(file.path);
+    require(restored.load(error), error);
+    require(restored.records().size() == 1, "prepared suppression must survive restart");
+    const auto& payload = std::get<UndoRestorePamSuppression>(restored.records()[0].undo.payload);
+    require(payload.original == std::get<UndoRestorePamSuppression>(record.undo.payload).original,
+            "original bytes must survive journal serialization");
+    require(restored.setStatus(id, MutationStatus::Applied, error), error);
+    auto changed = record;
+    std::get<UndoRestorePamSuppression>(changed.undo.payload).original += "# foreign";
+    MutationId unused = 0;
+    require(!restored.prepareMutation(changed, unused, error),
+            "refresh must not overwrite original proof");
+    std::get<UndoRestorePamSuppression>(record.undo.payload).releasing = true;
+    require(restored.prepareMutation(record, unused, error) && unused == id, error);
+    require(!restored.setStatus(id, MutationStatus::Applied, error),
+            "release cannot become Applied");
+    require(restored.setStatus(id, MutationStatus::RolledBack, error), error);
+    require(!restored.prepareMutation(record, unused, error),
+            "fresh releasing record must be rejected");
+    auto invalid = record;
+    std::get<UndoRestorePamSuppression>(invalid.undo.payload).releasing = false;
+    invalid.resource = "../lightdm";
+    require(!restored.prepareMutation(invalid, unused, error), "arbitrary resource must fail");
+    invalid = record;
+    invalid.undo.backend = MutationBackend::Pam;
+    require(!restored.prepareMutation(invalid, unused, error), "wrong backend must fail");
+    invalid = record;
+    invalid.undo.backend = MutationBackend::Sysctl;
+    invalid.undo.payload = UndoRemoveManagedSetting{};
+    require(!restored.prepareMutation(invalid, unused, error), "suppression policy cannot change backend/payload kind");
+    invalid = record;
+    invalid.policy.policyName = "enable_authentication_lockout";
+    require(!restored.prepareMutation(invalid, unused, error), "wrong policy must fail");
+    auto doc = nlohmann::json::parse(file.read());
+    doc["records"][0]["resource"] = "../lightdm";
+    file.write(doc.dump());
+    MutationJournal tampered(file.path);
+    require(!tampered.load(error), "tampered resource must fail load");
+}
+
 } // namespace
 
 // Arms a deterministic directory fsync hook for the journal path: the first
@@ -3466,6 +3521,14 @@ int main() {
         {"read-only validation missing journal fails closed",
          testReadOnlyValidationMissingJournalFailsClosed}
     };
+
+    try {
+        testPamSuppressionJournal();
+        std::cout << "PASS: PAM suppression journal\n";
+    } catch (const std::exception& exception) {
+        std::cerr << "FAIL: PAM suppression journal: " << exception.what() << '\n';
+        return 1;
+    }
 
     std::size_t failures = 0;
     for (const auto& [name, test] : tests) {

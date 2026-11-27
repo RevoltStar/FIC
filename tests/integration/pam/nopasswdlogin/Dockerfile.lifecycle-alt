@@ -1,0 +1,7 @@
+FROM fic-alt-groups-lifecycle:p11
+RUN sed -i '/^rpm /s/^/#/' /etc/apt/sources.list.d/*.list && \
+    printf 'rpm [p11] https://ftp.altlinux.org/pub/distributions/ALTLinux p11/branch/x86_64 classic\nrpm [p11] https://ftp.altlinux.org/pub/distributions/ALTLinux p11/branch/noarch classic\n' > /etc/apt/sources.list.d/fic-native.list && \
+    apt-get update && apt-get install -y lightdm && apt-get clean && \
+    mkdir -p /etc/systemd/system && \
+    ln -sf /dev/null /etc/systemd/system/lightdm.service && \
+    ln -sf /dev/null /etc/systemd/system/display-manager.service

@@ -2551,3 +2551,64 @@ Disable saves `DISABLE` and reconciles current incident containment; rollback
 does not restore the previous flag or recreate terminated sessions. The secure
 reader and local root recovery contract remain independent of the daemon.
 See the incident-response section in `fic/README.md` for saved/applied semantics.
+
+## PAM nopasswdlogin suppression
+
+Политика `IDENTITY_ACCESS/PAM/disable_nopasswdlogin` использует отдельный typed
+payload `restore_pam_suppression` в существующем MutationJournal. Для каждого
+сервиса journal связывает ID мутации, policy, service/resource, исходный raw
+PAM-фрагмент, соседние семантические auth anchors и фазу release. Полных
+исторических копий service files для rollback в журнале нет.
+
+ALT p11 объявляет gdm-password, gdm-fingerprint, gdm-smartcard, lightdm, sddm,
+plasmalogin и emptty. Debian 12/13 и Ubuntu 24.04/26.04 объявляют gdm-password,
+lightdm и sddm. Managed targets включают допустимый service source и пакеты.
+Эти targets независимы от `PamTrustedAuthenticationBypassRule`.
+Default status остаётся DISABLE, значение фиксировано как ENABLE.
+Lockout policies используют Recommended dependency.
+
+Apply разбирает правила существующим PAM-парсером и подавляет единственное
+поддерживаемое `auth sufficient pam_succeed_if.so user ingroup nopasswdlogin`.
+Физическая обёртка `FIC_PAM_NOPASSWDLOGIN` версии v1 содержит service и journal ID.
+Каждая исходная физическая строка сохраняется под comment prefix, включая
+продолжения логического правила. Отсутствие файла или активного правила даёт
+успех без присвоения ownership после проверки effective topology.
+
+До публикации coordinator проверяет доверенность файла, effective include/substack
+graph и сохранение всех остальных исполняемых правил. Числовые переходы через
+подавляемую позицию отклоняются. Переходы после неё и в неизменённом substack
+сохраняют свои цели. После публикации повторно проверяются physical state,
+effective graph и durability. Операция использует текущие bytes, metadata и inode
+в CAS. Долговременное владение не требует неизменности inode.
+
+Prepared фиксирует intent. Доказательством выполненного подавления служит
+совпадение активной обёртки с конкретной журнальной записью и допустимым
+положением фрагмента. Отсутствующая, чужая, изменённая, дублированная или
+недопустимо перемещённая обёртка не разрешает восстановление. Scoped release
+возвращает только доказанный исходный фрагмент и сохраняет посторонние bytes.
+Перед восстановлением проверяется безопасность результирующего графа.
+Предыдущее удаление правил или membership старой реализацией остаётся
+наблюдаемым состоянием и не реконструируется.
+
+Recovery различает unpublished Prepared, опубликованную обёртку и завершившуюся
+физическую публикацию release. Ошибка writer после rename сохраняет provenance
+до разрешения фактического состояния. Компенсация текущего apply использует
+временные snapshots и допускается только при совпадении текущего полного
+содержимого с исходным или опубликованным кандидатом этого вызова.
+Сторонняя правка сохраняется вместе с unresolved ownership.
+
+При утрате обёртки доказанная штатная замена разрешает завершить прежний цикл
+без записи в новый файл. RPM proof проверяет точного владельца и file digest.
+DEB proof требует уникального установленного владельца и digest действующего
+conffile. Digest сравнивается с захваченными bytes, затем подтверждается их
+текущее положение. Проверка запускается только для разрешения конфликта
+ownership. Включённая политика применяет новый цикл к текущей конфигурации.
+Отсутствующий активный ресурс также может завершить цикл после проверки fallback
+и отсутствия FIC-эффекта. Неактивные .rpmsave/.rpmnew/.dpkg-old/.dpkg-dist остаются
+в распоряжении администратора.
+
+Обычный uninstall FIC освобождает фрагменты через работающий daemon,
+prepare-uninstall и typed RollbackExecutor до удаления writers.
+Orphan-маркер блокирует успешное подтверждение отсутствия ownership.
+После внешней замены конфигурации ограничение может отсутствовать до следующего
+успешного initial, periodic или ручного apply.

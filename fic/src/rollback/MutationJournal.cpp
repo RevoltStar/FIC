@@ -825,6 +825,29 @@ bool validSshRecord(const MutationRecord& record,std::string& error) {
     return true;
 }
 
+bool validPamSuppressionRecord(const MutationRecord& record, std::string& error) {
+    const auto* payload = std::get_if<UndoRestorePamSuppression>(&record.undo.payload);
+    const PolicyRef policy{"IDENTITY_ACCESS", "PAM", "disable_nopasswdlogin"};
+    if (record.undo.backend != MutationBackend::PamSuppression && !payload &&
+        record.policy != policy) return true;
+    static const std::set<std::string> services = {
+        "gdm-password", "gdm-fingerprint", "gdm-smartcard", "lightdm",
+        "sddm", "plasmalogin", "emptty"};
+    if (record.undo.backend != MutationBackend::PamSuppression || !payload ||
+        record.policy != policy || !services.count(payload->service) ||
+        record.resource != payload->service || payload->original.empty() ||
+        payload->original.size() > 8192 || payload->nextAnchor.empty() ||
+        payload->previousAnchor.size() > 8192 || payload->nextAnchor.size() > 8192 ||
+        payload->original.find(char(0)) != std::string::npos ||
+        payload->previousAnchor.find(char(0)) != std::string::npos ||
+        payload->nextAnchor.find(char(0)) != std::string::npos ||
+        (payload->releasing && record.status == MutationStatus::Applied)) {
+        error = "Invalid PAM suppression ownership record";
+        return false;
+    }
+    return true;
+}
+
 json serializeUndoAction(const UndoAction& action) {
     json value;
     value["action"] = undoActionTypeName(action);
@@ -832,7 +855,13 @@ json serializeUndoAction(const UndoAction& action) {
     // the backend inside the undo object to validate payload/backend
     // consistency on load (fail closed).
     value["backend"] = mutationBackendToString(action.backend);
-    if (const auto* config = std::get_if<UndoAltGroupConfig>(&action.payload)) {
+    if (const auto* suppression = std::get_if<UndoRestorePamSuppression>(&action.payload)) {
+        value["service"] = suppression->service;
+        value["original"] = suppression->original;
+        value["previous_anchor"] = suppression->previousAnchor;
+        value["next_anchor"] = suppression->nextAnchor;
+        value["releasing"] = suppression->releasing;
+    } else if (const auto* config = std::get_if<UndoAltGroupConfig>(&action.payload)) {
         value["original"] = serializeAltGroupState(config->original);
         value["before"] = serializeAltGroupState(config->before);
         value["published"] = serializeAltGroupState(config->published);
@@ -1624,6 +1653,13 @@ bool deserializeUndoAction(const json& value, UndoAction& action, std::string& e
         return false;
     }
     action.backend = backend;
+    if (backend == MutationBackend::PamSuppression && actionName == "restore_pam_suppression") {
+        action.payload = UndoRestorePamSuppression{
+            value.at("service").get<std::string>(), value.at("original").get<std::string>(),
+            value.at("previous_anchor").get<std::string>(), value.at("next_anchor").get<std::string>(),
+            value.at("releasing").get<bool>()};
+        return true;
+    }
     if (backend == MutationBackend::Sssd && actionName == "sssd_journal_ownership") {
         try { action.payload=sssd_payload::decode(value.at("ownership"));return true; }
         catch(const std::exception& e) {error=std::string("Malformed SSSD I4 payload: ")+e.what();return false;}
@@ -2551,6 +2587,7 @@ bool deserializeRecord(const json& value, MutationRecord& record, std::string& e
         return false;
     }
     record.status = status;
+    if (!validPamSuppressionRecord(record, error)) return false;
     if (!alt::validRecord(record, error)) return false;
     if(!validSshRecord(record,error)||!validSysctlRecord(record,error)||!sssd_payload::validRecord(record,error))return false;
     if ((record.undo.backend == MutationBackend::Desktop ||
@@ -2621,6 +2658,7 @@ std::string mutationBackendToString(MutationBackend backend) {
     case MutationBackend::Sssd: return "sssd";
     case MutationBackend::Kerberos: return "kerberos";
     case MutationBackend::Pam: return "pam";
+    case MutationBackend::PamSuppression: return "pam_suppression";
     case MutationBackend::UserCreation: return "user_creation";
     case MutationBackend::IdentityLoginDefs: return "identity_login_defs";
     case MutationBackend::Scope: return "scope";
@@ -2639,6 +2677,7 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
     if (value == "grub") { backend = MutationBackend::Grub; return true; }
     if (value == "sssd") { backend = MutationBackend::Sssd; return true; }
     if (value == "kerberos") { backend = MutationBackend::Kerberos; return true; }
+    if (value == "pam_suppression") { backend = MutationBackend::PamSuppression; return true; }
     if (value == "pam") { backend = MutationBackend::Pam; return true; }
     if (value == "user_creation") { backend = MutationBackend::UserCreation; return true; }
     if (value == "identity_login_defs") { backend = MutationBackend::IdentityLoginDefs; return true; }
@@ -2650,6 +2689,7 @@ bool mutationBackendFromString(const std::string& value, MutationBackend& backen
 }
 
 std::string undoActionTypeName(const UndoAction& action) {
+    if (std::holds_alternative<UndoRestorePamSuppression>(action.payload)) return "restore_pam_suppression";
     if (std::holds_alternative<UndoAltGroupConfig>(action.payload)) return "alt_group_config";
     if (std::holds_alternative<UndoAltRoleFile>(action.payload)) return "alt_role_file";
     if (std::holds_alternative<UndoRemoveDisplayManagerBlock>(action.payload)) return "remove_display_manager_block";
@@ -3529,6 +3569,7 @@ bool MutationJournal::prepareMutation(MutationRecord record,MutationId& id,std::
     return prepareMutationImpl(std::move(record),id,error,false);
 }
 bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,std::string& error,bool sshInitial) {
+    if (!validPamSuppressionRecord(record, error)) return false;
     if (!alt::validRecord(record, error)) return false;
     if (std::holds_alternative<SssdJournalOwnership>(record.undo.payload)) {
         error="SSSD I4 ownership requires typed transaction API";return false;
@@ -3944,6 +3985,18 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
             existing.policy == record.policy &&
             existing.undo.backend == record.undo.backend &&
             existing.resource == record.resource) {
+            if (record.undo.backend == MutationBackend::PamSuppression) {
+                const auto* before = std::get_if<UndoRestorePamSuppression>(&existing.undo.payload);
+                const auto* after = std::get_if<UndoRestorePamSuppression>(&record.undo.payload);
+                if (!before || !after || before->service != after->service ||
+                    before->original != after->original ||
+                    before->previousAnchor != after->previousAnchor ||
+                    before->nextAnchor != after->nextAnchor ||
+                    (before->releasing && !after->releasing)) {
+                    error = "PAM suppression refresh cannot replace ownership proof";
+                    return false;
+                }
+            }
             if (record.undo.backend == MutationBackend::AltGroups) {
                 const auto* current = std::get_if<UndoAltGroupConfig>(&existing.undo.payload);
                 const auto* next = std::get_if<UndoAltGroupConfig>(&record.undo.payload);
@@ -4273,6 +4326,11 @@ bool MutationJournal::prepareMutationImpl(MutationRecord record,MutationId& id,s
     }
     if (const auto* role = std::get_if<UndoAltRoleFile>(&record.undo.payload); role && role->releasing) {
         error = "Fresh ALT role file record cannot release ownership";
+        return false;
+    }
+    if (const auto* suppression = std::get_if<UndoRestorePamSuppression>(&record.undo.payload);
+        suppression && suppression->releasing) {
+        error = "Fresh PAM suppression cannot release ownership";
         return false;
     }
     record.id = nextId_;
@@ -5127,7 +5185,7 @@ bool MutationJournal::setStatusWithMessage(MutationId id, MutationStatus status,
     }
     const MutationRecord previous = *record;
     record->status = status;
-    if (!alt::validRecord(*record, error)) {
+    if (!validPamSuppressionRecord(*record, error) || !alt::validRecord(*record, error)) {
         *record = previous;
         return false;
     }

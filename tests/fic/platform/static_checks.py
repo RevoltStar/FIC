@@ -263,7 +263,7 @@ def main():
         and '"sufficient", {"user", "ingroup", "nopasswdlogin"}'
         in profiles["alt-p11"]
         and '"/etc/pam.d/gdm-password"' in profiles["alt-p11"]
-        and "passwordlessLoginControl" in platform_profile,
+        and "passwordlessLoginTargets" in platform_profile,
         "ALT p11 exact passwordless-login contract is missing",
     )
     provider_metadata = (

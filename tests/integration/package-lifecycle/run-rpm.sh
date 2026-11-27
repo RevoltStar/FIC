@@ -3,7 +3,7 @@
 set -euo pipefail
 [[ $# -ge 2 && $# -le 3 ]] || { echo 'usage: run-rpm.sh IMAGE PACKAGE_DIRECTORY [DRIVER]' >&2; exit 2; }
 driver=${3:-rpm_native.py}
-case "$driver" in rpm_native.py|alt_group_native.py) ;; *) exit 2 ;; esac
+case "$driver" in rpm_native.py|alt_group_native.py|nopasswdlogin_native.py) ;; *) exit 2 ;; esac
 image=$1 packages=$(realpath "$2")
 repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)
 name="fic-rpm-lifecycle-$$"

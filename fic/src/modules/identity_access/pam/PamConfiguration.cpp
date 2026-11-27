@@ -277,6 +277,7 @@ bool PamConfiguration::parseRulesContent(
             PamRule rule;
             rule.source = source;
             rule.line = lineNumber;
+            rule.endLine = physicalLineNumber;
             rule.includeKind = PamIncludeKind::IncludeAll;
             rule.includeTarget = tokens[1];
             rules.push_back(std::move(rule));
@@ -293,6 +294,7 @@ bool PamConfiguration::parseRulesContent(
         PamRule rule;
         rule.source = source;
         rule.line = lineNumber;
+        rule.endLine = physicalLineNumber;
         rule.group = *group;
         rule.control = tokens[1];
         if (rule.control == "include" || rule.control == "substack") {

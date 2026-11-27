@@ -1535,6 +1535,65 @@ bool analyzeFaillockStack(PamConfiguration& configuration,
     return true;
 }
 
+bool sameExecutableRule(const PamRule& left, const PamRule& right) {
+    return left.source == right.source && left.group == right.group &&
+        left.control == right.control && left.module == right.module &&
+        left.arguments == right.arguments && left.includeKind == right.includeKind &&
+        left.includeTarget == right.includeTarget;
+}
+
+bool proveSuppressedScope(const std::vector<PamStackEntry>& original,
+                          const std::vector<PamStackEntry>& suppressed,
+                          const PamRule& target, std::size_t& removed,
+                          std::string& error) {
+    std::size_t next = 0;
+    std::optional<std::size_t> removedPosition;
+    for (std::size_t index = 0; index < original.size(); ++index) {
+        const auto& entry = original[index];
+        if (entry.rule.source == target.source && entry.rule.line == target.line &&
+            sameExecutableRule(entry.rule, target)) {
+            if (entry.isSubstack() || !entry.substack.empty() || index + 1 == original.size()) {
+                error = "suppression requires a following authentication path";
+                return false;
+            }
+            ++removed;
+            removedPosition = index;
+            continue;
+        }
+        if (next == suppressed.size() ||
+            !sameExecutableRule(entry.rule, suppressed[next].rule)) {
+            error = "suppression changes another executable PAM rule";
+            return false;
+        }
+        if (!proveSuppressedScope(entry.substack, suppressed[next].substack,
+                                   target, removed, error)) return false;
+        ++next;
+    }
+    if (next != suppressed.size()) {
+        error = "suppression introduces executable PAM rules";
+        return false;
+    }
+    if (removedPosition) {
+        for (std::size_t index = 0; index < *removedPosition; ++index) {
+            const auto& entry = original[index];
+            if (entry.isSubstack()) continue;
+            ParsedControl control;
+            if (!parseControl(entry.rule, control, error)) return false;
+            const auto crossesSuppression = [&](const ControlAction& action) {
+                return action.kind == ActionKind::Jump &&
+                    action.jump >= *removedPosition - index - 1;
+            };
+            if (crossesSuppression(control.defaultAction) ||
+                std::any_of(control.actions.begin(), control.actions.end(),
+                    [&](const auto& action) { return crossesSuppression(action.second); })) {
+                error = "numeric PAM jump changes target across the suppressed rule";
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 bool analyzePasswordFlow(
@@ -1820,6 +1879,30 @@ bool proveMfaAuthenticationPaths(
            (form != PamMfaForm::SshStagedAuthentication ||
             (proveSubject(IdentitySubject::Unknown, false, SshMfaStage::Totp) &&
              proveSubject(IdentitySubject::Unknown, false, SshMfaStage::Invalid)));
+}
+
+bool provePamRuleSuppression(const PamEffectiveStack& original,
+                             const PamEffectiveStack& suppressed,
+                             const PamRule& target,
+                             std::string& error) {
+    error.clear();
+    if (original.service != suppressed.service ||
+        original.group != PamManagementGroup::Auth ||
+        suppressed.group != PamManagementGroup::Auth ||
+        target.group != PamManagementGroup::Auth || target.control != "sufficient" ||
+        target.includeKind != PamIncludeKind::None || target.line == 0) {
+        error = "invalid PAM suppression graph contract";
+        return false;
+    }
+    std::size_t removed = 0;
+    if (!proveSuppressedScope(original.entries, suppressed.entries, target, removed, error)) {
+        return false;
+    }
+    if (removed != 1) {
+        error = "suppression target must occur exactly once in the effective stack";
+        return false;
+    }
+    return true;
 }
 
 } // namespace fic::identity::pam
