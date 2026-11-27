@@ -4,7 +4,7 @@
 #include <set>
 ControlledDisplayManagersPolicyTypeValue::ControlledDisplayManagersPolicyTypeValue(){defaultValue.clear();}
 PolicyEditorSpec ControlledDisplayManagersPolicyTypeValue::getEditorSpec() const {
-    PolicyEditorSpec spec;spec.editor="textedit";spec.textDelimiter=",";spec.validator="none";return spec;
+    PolicyEditorSpec spec;spec.editor="textedit";spec.textDelimiter=",";spec.validator="nonempty_scope_when_enabled";return spec;
 }
 bool ControlledDisplayManagersPolicyTypeValue::parse(const std::string& value,std::vector<std::string>& out) {
     out.clear();std::set<std::string> names;

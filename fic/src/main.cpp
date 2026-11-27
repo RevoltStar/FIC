@@ -923,7 +923,8 @@ json handle_request(json request,
             if (module.empty() || policy.empty()) {
                 return fic::ipc::make_error_response("module and policy are required");
             }
-            bool ok = set(policyRegistry, module, policy, value);
+            std::string validationError;
+            bool ok = setPolicyValue(policyRegistry, module, policy, value, validationError);
             if (ok) {
                 const bool scopeMutation = module == "OSS" &&
                     (policy == "controlled_desktop_environments" || policy == "controlled_display_managers");
@@ -948,7 +949,7 @@ json handle_request(json request,
                 }
             }
             return ok ? fic::ipc::make_ok_response("policy value updated")
-                      : fic::ipc::make_error_response("failed to update policy value");
+                      : fic::ipc::make_error_response("failed to update policy value: " + validationError);
         }
         if (command == "set_policy_violation_severity") {
             if (module.empty() || policy.empty()) {
@@ -975,7 +976,8 @@ json handle_request(json request,
                             "failed to update violation severity: " + error);
         }
         if (command == "enable_policy") {
-            bool ok = enable(policyRegistry, module, policy);
+            std::string validationError;
+            bool ok = enable(policyRegistry, module, policy, &validationError);
             if (ok) {
                 const auto reloadError = reloadRegistryAndGlobalConfig();
                 if (recoveryStatusMutation) return recoveryMutationResponse(reloadError);
@@ -989,7 +991,7 @@ json handle_request(json request,
                 }
             }
             return ok ? fic::ipc::make_ok_response("policy enabled")
-                      : fic::ipc::make_error_response("failed to enable policy");
+                      : fic::ipc::make_error_response(validationError.empty() ? "failed to enable policy" : validationError);
         }
         if (command == "disable_policy") {
             fic::daemon::PolicyMutationResult mutation = disable(

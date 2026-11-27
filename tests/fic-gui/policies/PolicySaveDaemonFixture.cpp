@@ -115,13 +115,26 @@ nlohmann::json Fixture::request(const nlohmann::json& request) {
                 if (!enabledRequiredDependents(current, identity).empty())
                     return respond(false, "enabled Required dependent");
                 enabled[name] = false;
-            } else if (command == "enable_policy") enabled[name] = true;
+            } else if (command == "enable_policy") {
+                Policy* policy = nullptr;
+                for (const auto& ref : current.policyRefs())
+                    if (ref.policyName == name) policy = current.findPolicy(ref);
+                ModuleConfigFileHandler config("OSS");
+                std::string error;
+                if (!policy || !config.loadConfig() ||
+                    !policy->validateValueBeforeEnable(config, error))
+                    return respond(false, error);
+                enabled[name] = true;
+            }
             else if (command == "set_policy_value") {
                 Policy* policy = nullptr;
                 for (const auto& ref : current.policyRefs())
                     if (ref.policyName == name) policy = current.findPolicy(ref);
                 const std::string logicalValue = request.at("value");
                 if (!policy || !policy->validate(logicalValue)) return respond(false, "invalid value");
+                std::string error;
+                if (enabled[name] && !policy->validateEnabledValue(logicalValue, error))
+                    return respond(false, error);
                 values[name] = policy->postprocessingValue(logicalValue);
             }
             persist();

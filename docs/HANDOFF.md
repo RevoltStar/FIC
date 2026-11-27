@@ -1,52 +1,21 @@
-# DM inventory property batching
+# DE/DM controlled scope configuration
 
-## Current base
+Branch main; base f15cd9e7a61795f6965de5abf5367aaf4775f720.
 
-Branch main; base 3fb17c7d7afe39e4ac6b0856dd983f3fa62b970b.
+Current task: reject empty administrative DE/DM scopes before enabling or
+clearing an enabled value. Preserve empty defaults and apply semantics.
 
-## Current task
+Implementation: Policy offers a narrow enabled-value validation hook, overridden
+only by the two controlled-scope policies using their existing parsers. Enable
+checks it before saving. setPolicyValue checks it against loaded status before
+writing. IPC returns the concrete validation error. The GUI's descriptor
+validator marks these two scopes and PolicyService checks the target state
+before the first mutating request. Save ordering from 9b86a211 is unchanged.
 
-Completed bounded systemctl show batching; local commit only, no push.
+Validation: fic target built. Root DM transaction suite passed in disposable
+Docker; five targeted CTests passed (controlled DE, GUI descriptor/service/save,
+policy execution planner). GUI target built. git diff --check passed.
+No host policies or package lifecycle were applied. Full platform native matrix
+was not run because the change is shared configuration validation.
 
-## Accepted architecture / invariants
-
-Sequential batches of at most 32 over the unchanged validated unit union.
-Exact Id/Names matching and per-request coverage, independent of response order.
-Identical canonical repeats accepted; missing/conflicting/ambiguous/truncated
-replies fail closed without fallback. Native empty/repeated ExecStart retains
-old empty/last-command classification. Existing ProcessExecutor limits remain.
-No changes to inventory modes, PackageQuery consumers, executable trust,
-default selection/logind, SDDM proof, ownership/journal or transaction rechecks.
-No atomic snapshot claim.
-
-## Completed / changed areas
-
-Production DisplayManagerInventory parser/query loop and existing DM suite.
-Native two-production-driver comparison in tests/integration/dm-inventory,
-including complete requested-name property coverage and retained plain JSON.
-Architecture/validation/native README updated.
-
-## Validation
-
-Target builds display_manager_transaction_tests, policy_save_dependency_tests,
-policy_execution_planner_tests passed. Root DM suite passed in disposable Docker;
-five planner/save/package/architecture/UI CTests passed.
-Logs /tmp/fic-dm-opt/batch-tests-final.log, batch-contract-tests.log,
-batch-final-build.log. Shell syntax, Python compile and git diff --check passed.
-Native final results and limitations: docs/graphical-scope-validation.md and
-tests/integration/dm-inventory/batch-evidence/. The runner uses systemd PID1,
-real ProcessExecutor and the inventory Run seam; not the executable-trust
-constructor. Existing deterministic tests retain trust/full-mode coverage.
-
-## Native results
-
-All five native property/classification comparisons passed (Debian12/13,
-Ubuntu24/26, ALT p11); three repetitions each. Show calls 110–157 → 4–5.
-No control probe exceeded 250 ms. Final logs: /tmp/fic-dm-opt/*-batch-complete.log.
-Implementation complete; one local completion commit, no push.
-
-## Remaining / limits
-
-No unfinished implementation or known task blockers.
-No full project build/CTest, real DM/login enforcement, host state changes or
-cold-HDD tests. Historical research evidence remains separate from this matrix.
+Remaining: no unfinished implementation; one local completion commit, no push.

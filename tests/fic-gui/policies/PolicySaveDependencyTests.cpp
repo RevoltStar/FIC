@@ -1,6 +1,8 @@
 #include "features/policies/services/PolicyService.h"
 #include "PolicySaveDaemonFixture.h"
 #include <iostream>
+#include <fstream>
+#include <iterator>
 
 using namespace policy_save_test;
 namespace {
@@ -53,12 +55,58 @@ void run() {
         if (apply) expected.push_back("apply_module");
         f.expect(expected);
     }
+    // The target state is checked before the first mutating IPC request.
+    for (const auto& name : {de, dm}) {
+        f.reset();
+        require(!service(f).saveChanges("OSS", {state(name, true)}, error),
+                "empty scope enable accepted by GUI");
+        f.expect({});
+        require(error.toStdString().find(name) != std::string::npos,
+                "scope diagnostic omitted policy name");
+        f.reset(); f.enabled[name] = true; f.values[name] = "[]"; f.persist();
+        require(!service(f).saveChanges("OSS", {value(name, "")}, error),
+                "enabled scope clear accepted by GUI");
+        f.expect({});
+        require(service(f).saveChanges("OSS", {value(name, name == de ? "GNOME" : "SDDM")}, error),
+                error.toStdString());
+        f.expect({"set_policy_value:" + name});
+    }
+    f.reset();
+    require(!service(f).saveChanges("OSS", {state(deConsumer, true),
+        state(dmConsumer, true), state(de, true), state(dm, true)}, error),
+        "all scopes enabled with empty defaults");
+    f.expect({});
+    // Daemon-side validation also rejects direct mutations before persistence.
+    for (const auto& name : {de, dm}) {
+        f.reset();
+        const auto before = f.values[name];
+        const auto configBytes = [&] {
+            std::ifstream input(f.root / "config/OSS.conf");
+            return std::string(std::istreambuf_iterator<char>(input), {});
+        };
+        const auto original = configBytes();
+        auto denied = f.request({{"command", "enable_policy"}, {"policy", name}});
+        require(!denied.at("ok").get<bool>() && f.values[name] == before && !f.enabled[name] && configBytes() == original,
+                "direct empty enable changed configuration");
+        f.reset(); f.enabled[name] = true; f.values[name] = "[\"" +
+            std::string(name == de ? "GNOME" : "SDDM") + "\"]"; f.persist();
+        const auto enabledOriginal = configBytes();
+        denied = f.request({{"command", "set_policy_value"}, {"policy", name}, {"value", ""}});
+        require(!denied.at("ok").get<bool>() && f.values[name] != "[]" && configBytes() == enabledOriginal,
+                "direct clear of enabled scope changed configuration");
+    }
     // Disable dependents before changing (or disabling) their old scope.
     f.reset(); f.enabled[de] = f.enabled[deConsumer] = true;
     f.values[de] = "[\"GNOME\"]"; f.persist();
     auto scope = value(de, ""); scope.enabledChanged = true; scope.enabled = false;
     require(service(f).saveChanges("OSS", {scope, state(deConsumer, false)}, error), error.toStdString());
     f.expect({"disable_policy:" + deConsumer, "disable_policy:" + de, "set_policy_value:" + de});
+
+    f.reset(); f.enabled[dm] = true; f.values[dm] = "[\"SDDM\"]"; f.persist();
+    auto clearManager = value(dm, "");
+    clearManager.enabledChanged = true; clearManager.enabled = false;
+    require(service(f).saveChanges("OSS", {clearManager}, error), error.toStdString());
+    f.expect({"disable_policy:" + dm, "set_policy_value:" + dm});
 
     f.reset(); f.enabled[dm] = f.enabled[dmConsumer] = f.enabled["disable_autologin"] = true;
     f.values[dm] = "[\"SDDM\"]"; f.persist();

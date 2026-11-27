@@ -128,16 +128,21 @@ public:
         throw std::runtime_error("policyTypeValue не был установлен. Требуются правки кода");
     }
 
-    // Existing defaulted policy enable semantics are unchanged. A no-default
-    // policy requires an explicitly configured, valid value before ENABLE write.
+    // A no-default policy requires a configured value; individual policies may
+    // additionally constrain the value permitted in ENABLE state.
+    virtual bool validateEnabledValue(const std::string&, std::string&) const { return true; }
     bool validateValueBeforeEnable(const ModuleConfigFileHandler& config, std::string& error) {
-        if (policyTypeValue->hasDefaultValue()) return true;
+        if (policyTypeValue->hasDefaultValue()) {
+            const auto stored = config.hasConfiguredValue(policyName)
+                ? config.getPolicyValue(policyName) : policyTypeValue->getDefaultValue();
+            return validateEnabledValue(reverse_postprocessingValue(stored), error);
+        }
         if (!config.hasConfiguredValue(policyName) ||
             !validate(reverse_postprocessingValue(config.getPolicyValue(policyName)))) {
             error = "explicit valid value required before enabling " + policyName;
             return false;
         }
-        return true;
+        return validateEnabledValue(reverse_postprocessingValue(config.getPolicyValue(policyName)), error);
     }
 
     //Включена ли указанная политика?

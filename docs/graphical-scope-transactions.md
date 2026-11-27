@@ -328,3 +328,13 @@ Command failure, timeout or output truncation fails the inventory without an
 individual-query fallback. Existing ProcessExecutor limits remain 5 seconds and
 4 MiB combined output per command. Batching neither creates an atomic systemd
 snapshot nor changes the transaction's repeated inventories.
+
+Enabling either `controlled_desktop_environments` or
+`controlled_display_managers` requires a nonempty parsed administrative scope.
+An enabled scope cannot be cleared through `set_policy_value`; disabled scopes
+may still hold `[]`. Validation runs before the configuration write and reports
+which scope needs a value. Existing `ENABLE + []` configurations can be repaired
+by setting a nonempty value or disabled subject to Required dependencies.
+The GUI checks the combined target status/value before its first mutation;
+the daemon independently enforces each command. An apply failure after a
+successful save retains the existing saved/applied distinction.

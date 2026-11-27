@@ -65,6 +65,16 @@ bool planSave(const std::string& module,
                 QString::fromStdString(change.policyName);
             return false;
         }
+        const bool targetEnabled = change.enabledChanged ? change.enabled : descriptor->enabled;
+        const auto& targetValue = change.valueConfigurable && change.valueChanged
+            ? change.value : (descriptor->valueValid ? descriptor->value : descriptor->defaultValue);
+        if (targetEnabled && descriptor->validator == "nonempty_scope_when_enabled" &&
+            targetValue.find_first_not_of(" \t\r\n,") == std::string::npos &&
+            (change.enabledChanged || change.valueChanged)) {
+            error = QString::fromStdString(change.policyName +
+                " requires a non-empty scope when enabled");
+            return false;
+        }
         descriptors.push_back(&*descriptor);
         if (change.enabledChanged && !change.enabled) add(i, "disable_policy");
     }

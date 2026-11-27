@@ -15,6 +15,7 @@ public:
     OSS_controlled_display_managers(std::shared_ptr<DisplayManagerInventory>,
         std::shared_ptr<DisplayManagerConfigTransaction>,fic::rollback::MutationJournal* journal=nullptr);
     bool apply() override;
+    bool validateEnabledValue(const std::string& value, std::string& error) const override;
     bool configured(std::vector<std::string>&,std::string&) override;
     bool ready(std::string&) override;
     bool reconcile(Policy& autologin,std::string& error) override;

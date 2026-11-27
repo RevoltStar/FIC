@@ -31,7 +31,7 @@ PolicyEditorSpec ControlledDesktopEnvironmentsPolicyTypeValue::getEditorSpec() c
     spec.textDelimiter = ",";
     // The daemon remains authoritative for enum validation. The GUI's shared
     // descriptor contract intentionally supports only its existing validators.
-    spec.validator = "none";
+    spec.validator = "nonempty_scope_when_enabled";
     return spec;
 }
 

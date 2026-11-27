@@ -268,7 +268,8 @@ bool parsePolicyDescriptors(
             if (policy.validator != "none" &&
                 policy.validator != "integer_range" &&
                 policy.validator != "unsigned_integer" &&
-                policy.validator != "allowed_values") {
+                policy.validator != "allowed_values" &&
+                policy.validator != "nonempty_scope_when_enabled") {
                 return fail(policies, error, "descriptor " + std::to_string(index) +
                     " has an unknown validator '" + policy.validator + "'");
             }
@@ -294,7 +295,7 @@ bool validatePolicyDescriptorValue(
     std::string& error)
 {
     error.clear();
-    if (policy.validator == "none") {
+    if (policy.validator == "none" || policy.validator == "nonempty_scope_when_enabled") {
         return true;
     }
     if (policy.validator == "integer_range") {

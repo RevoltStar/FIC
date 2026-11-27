@@ -48,3 +48,10 @@ bool OSS_controlled_desktop_environments::controlledDesktopEnvironments(
     error.clear();
     return true;
 }
+
+bool OSS_controlled_desktop_environments::validateEnabledValue(const std::string& value, std::string& error) const {
+    DesktopEnvironmentSet scope;
+    if (ControlledDesktopEnvironmentsPolicyTypeValue::parse(value, scope) && !scope.empty()) return true;
+    error = "controlled_desktop_environments requires a non-empty scope when enabled";
+    return false;
+}

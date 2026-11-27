@@ -167,7 +167,7 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
               const fic::platform::PlatformExecutableResolver& executables,
               std::string module, std::string policy);
 //Включить политику
-bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy);
+bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string* error = nullptr);
 
 bool set(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string value);
 

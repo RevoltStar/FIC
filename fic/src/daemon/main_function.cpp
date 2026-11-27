@@ -323,7 +323,7 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
         "policy was not found");
 }
 //Включить политику
-bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy){
+bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string* error){
     Policy* concretePolicy = getPolicyClass(policyRegistry, module, policy);
     if(concretePolicy!=nullptr){
         std::cout << "Производим включение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
@@ -335,6 +335,7 @@ bool enable(PolicyRegistry& policyRegistry, std::string module, std::string poli
         std::string valueError;
         if (!concretePolicy->validateValueBeforeEnable(mcfh, valueError)) {
             std::cout << valueError << '\n';
+            if (error) *error = valueError;
             return false;
         }
         if(!mcfh.enablePolicy(policy)){

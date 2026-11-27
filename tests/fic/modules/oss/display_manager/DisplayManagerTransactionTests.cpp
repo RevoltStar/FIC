@@ -707,7 +707,15 @@ void scopeLifecycle(){
         require(enabledRequiredDependents(registry,{"OSS","DisplayManager","controlled_display_managers"}).size()==1,"reverse dependency guard misses autologin");
         const auto before=get(f.config.sddmConfigPath);
         require(setPolicyValue(registry,"OSS","controlled_display_managers","LIGHTDM",error),error);
-        require(get(f.config.sddmConfigPath)==before,"set_value mutated DM configuration");}
+        require(get(f.config.sddmConfigPath)==before,"set_value mutated DM configuration");
+        configure("[]", "ENABLE");
+        const auto configBefore=get(f.root/"config/OSS.conf");
+        require(!setPolicyValue(registry,"OSS","controlled_display_managers","",error) &&
+            error.find("non-empty scope")!=std::string::npos &&
+            get(f.root/"config/OSS.conf")==configBefore,
+            "enabled empty DM value changed persistent config");
+        require(setPolicyValue(registry,"OSS","controlled_display_managers","SDDM",error),error);
+        configure("[\"SDDM\"]","DISABLE");}
     require(f.backend->releaseAll(f.journal,error),error);
 }
 int main(){try{

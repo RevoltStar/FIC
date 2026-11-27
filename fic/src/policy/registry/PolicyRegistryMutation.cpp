@@ -55,6 +55,8 @@ bool setPolicyValue(PolicyRegistry& registry,
         error = "could not load module configuration";
         return false;
     }
+    if (config.getPolicyStatus(policy) == "ENABLE" &&
+        !concretePolicy->validateEnabledValue(logicalValue, error)) return false;
     if (!config.setPolicyValue(policy, storageValue)) {
         error = "could not set policy value";
         return false;

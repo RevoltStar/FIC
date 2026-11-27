@@ -54,6 +54,17 @@ int main() {
             << "controlled_desktop_environments.status=" << status << '\n'
             << "controlled_desktop_environments.value=" << scope << '\n';
     };
+    configure("DISABLE", "[]");
+    ModuleConfigFileHandler config("OSS");
+    require(config.loadConfig(), "scope config load failed");
+    OSS_controlled_desktop_environments scopePolicy;
+    require(!scopePolicy.validateValueBeforeEnable(config, error) &&
+            error.find("non-empty scope") != std::string::npos,
+            "empty DE enable was accepted");
+    require(!scopePolicy.validateEnabledValue(" \n ", error),
+            "parsed empty DE scope was accepted");
+    require(scopePolicy.validateEnabledValue("GNOME", error),
+            "valid DE enable was rejected");
     configure("ENABLE", "[]");
     require(!OSS_controlled_desktop_environments().apply(),
             "enabled empty scope must fail UNCONFIGURED");

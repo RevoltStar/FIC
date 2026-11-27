@@ -66,3 +66,10 @@ bool reconcileDisplayManagerScope(PolicyRegistry& registry,std::string& error){
     if(!scope||!autologin){error="DM registry contract incomplete";return false;}
     return scope->reconcile(*autologin,error);
 }
+
+bool OSS_controlled_display_managers::validateEnabledValue(const std::string& value, std::string& error) const {
+    std::vector<std::string> scope;
+    if (ControlledDisplayManagersPolicyTypeValue::parse(value, scope) && !scope.empty()) return true;
+    error = "controlled_display_managers requires a non-empty scope when enabled";
+    return false;
+}
