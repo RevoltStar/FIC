@@ -19,10 +19,15 @@ struct DisplayManagerSnapshot {
     std::vector<std::string> unknownSelectedOrRunning;
     std::string diagnostic;
 };
+enum class DisplayManagerInventoryMode {
+    InstalledAndRuntime,
+    SelectedAndRunning
+};
 class DisplayManagerInventory {
 public:
     virtual ~DisplayManagerInventory() = default;
-    virtual bool inspect(DisplayManagerSnapshot&, std::string&) const = 0;
+    virtual bool inspect(DisplayManagerSnapshot&, std::string&,
+        DisplayManagerInventoryMode = DisplayManagerInventoryMode::InstalledAndRuntime) const = 0;
 };
 class SystemDisplayManagerInventory final : public DisplayManagerInventory {
 public:
@@ -30,7 +35,8 @@ public:
     SystemDisplayManagerInventory(const fic::platform::PlatformExecutableResolver& executables,
         fic::platform::DisplayManagerPlatformConfig config);
     SystemDisplayManagerInventory(Run run, fic::platform::DisplayManagerPlatformConfig config);
-    bool inspect(DisplayManagerSnapshot&, std::string&) const override;
+    bool inspect(DisplayManagerSnapshot&, std::string&,
+        DisplayManagerInventoryMode = DisplayManagerInventoryMode::InstalledAndRuntime) const override;
     static std::string canonicalName(const std::string& identity);
 private:
     Run run_;

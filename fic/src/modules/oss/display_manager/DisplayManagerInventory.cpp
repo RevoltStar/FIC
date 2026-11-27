@@ -58,7 +58,8 @@ std::string SystemDisplayManagerInventory::canonicalName(const std::string& iden
     if (name == "lightdm" || name == "lightdm.service" || name == "LIGHTDM") return "LIGHTDM";
     return {};
 }
-bool SystemDisplayManagerInventory::inspect(DisplayManagerSnapshot& result, std::string& error) const {
+bool SystemDisplayManagerInventory::inspect(DisplayManagerSnapshot& result, std::string& error,
+    DisplayManagerInventoryMode mode) const {
     result = {};
     for (const auto* name : {"SDDM", "GDM", "LIGHTDM"}) result.managers[name] = {};
     const auto query = [&](ExecutableId id, const std::vector<std::string>& args, std::string& output) {
@@ -67,17 +68,19 @@ bool SystemDisplayManagerInventory::inspect(DisplayManagerSnapshot& result, std:
         output = r.standardOutput; return true;
     };
     std::string output;
-    const auto packageArgs = config_.packageManagerKind == fic::platform::PackageManagerKind::Dpkg
-        ? std::vector<std::string>{"--show", "--showformat=${binary:Package}\t${db:Status-Status}\n"}
-        : std::vector<std::string>{"-qa", "--qf", "%{NAME}\tinstalled\n"};
-    if(!query(ExecutableId::PackageQuery,packageArgs,output))return false;
     std::string line;
-    std::istringstream packages(output);
-    while(std::getline(packages,line)) {
-        const auto tab=line.find('\t');if(tab==std::string::npos){error="incomplete native package inventory";return false;}
-        auto name=line.substr(0,tab);const auto architecture=name.find(':');if(architecture!=std::string::npos)name=name.substr(0,architecture);
-        const auto dm=canonicalName(name);
-        if(!dm.empty() && line.substr(tab+1)=="installed")result.managers[dm].installed=true;
+    if (mode == DisplayManagerInventoryMode::InstalledAndRuntime) {
+        const auto packageArgs = config_.packageManagerKind == fic::platform::PackageManagerKind::Dpkg
+            ? std::vector<std::string>{"--show", "--showformat=${binary:Package}\t${db:Status-Status}\n"}
+            : std::vector<std::string>{"-qa", "--qf", "%{NAME}\tinstalled\n"};
+        if(!query(ExecutableId::PackageQuery,packageArgs,output))return false;
+        std::istringstream packages(output);
+        while(std::getline(packages,line)) {
+            const auto tab=line.find('\t');if(tab==std::string::npos){error="incomplete native package inventory";return false;}
+            auto name=line.substr(0,tab);const auto architecture=name.find(':');if(architecture!=std::string::npos)name=name.substr(0,architecture);
+            const auto dm=canonicalName(name);
+            if(!dm.empty() && line.substr(tab+1)=="installed")result.managers[dm].installed=true;
+        }
     }
     // Enumerate actual unit files and loaded units. Querying nonexistent
     // well-known names can itself fail and must not turn a proven headless
@@ -170,7 +173,8 @@ bool SystemDisplayManagerInventory::inspect(DisplayManagerSnapshot& result, std:
         if (dm.empty()) result.unknownSelectedOrRunning.push_back("greeter " + id + ": " + p.at("Service"));
         else { result.managers[dm].running=true; result.managers[dm].installed=true; }
     }
-    if(executableProof_) for(const auto& [manager,state]:result.managers) if(state.installed && !executableProof_(manager,error)) {
+    if(executableProof_) for(const auto& [manager,state]:result.managers) if((mode == DisplayManagerInventoryMode::InstalledAndRuntime
+        ? state.installed : (state.selected || state.running)) && !executableProof_(manager,error)) {
         error="installed DM executable unavailable/untrusted: "+manager+": "+error;return false;
     }
     result.complete=true; error.clear(); return true;

@@ -24,7 +24,7 @@ std::string get(const fs::path& p){std::ifstream in(p);return {std::istreambuf_i
 struct Inventory final:DisplayManagerInventory{
     DisplayManagerSnapshot value;bool fail=false;
     Inventory(){value.complete=true;for(const auto* dm:{"SDDM","GDM","LIGHTDM"})value.managers[dm]={true,false,false};}
-    bool inspect(DisplayManagerSnapshot& out,std::string& error)const override{out=value;if(fail){error="injected inventory error";return false;}return true;}
+    bool inspect(DisplayManagerSnapshot& out,std::string& error,DisplayManagerInventoryMode = DisplayManagerInventoryMode::InstalledAndRuntime)const override{out=value;if(fail){error="injected inventory error";return false;}return true;}
 };
 struct Fixture{
     fs::path root;
@@ -277,6 +277,106 @@ void inventoryProof(){
     SystemDisplayManagerInventory incomplete([](ExecutableId,const std::vector<std::string>&){return ProcessResult{};},f.config);
     require(!incomplete.inspect(snapshot,error)&&!snapshot.complete,"inventory failure accepted headless");
 }
+void observationalInventoryProof() {
+    // Runtime paths initialize once per process; keep this scope fixture isolated.
+    const auto child = ::fork();
+    require(child >= 0, "observation fixture fork failed");
+    if (child != 0) {
+        int status = 0;
+        require(::waitpid(child, &status, 0) == child && WIFEXITED(status) &&
+                WEXITSTATUS(status) == 0, "observational policy regression failed");
+        return;
+    }
+    Fixture f("observational");
+    std::string error;
+    auto paths = fic::core::FicProductPaths::production();
+    paths.configDir = f.root/"config"; paths.defaultConfigDir = f.root/"defaults";
+    paths.logDir = f.root/"log"; paths.runtimeDir = f.root/"run";
+    paths.dataDir = f.root/"data"; paths.commandHashFile = f.root/"data/hash";
+    paths.deviceDatabaseFile = f.root/"data/db";
+    paths.deviceDatabaseLockFile = f.root/"log/db.lock";
+    paths.lockDebugLogFile = f.root/"log/lock.log";
+    require(fic::core::FicRuntimePaths::initialize(paths,error),error);
+    bool selected = true, running = false, unknown = false;
+    bool systemdFailure = false, logindFailure = false, greeter = false;
+    std::string greeterService = "unknown-greeter";
+    int packageCalls = 0;
+    auto inventory = std::make_shared<SystemDisplayManagerInventory>(
+        [&](ExecutableId id, const std::vector<std::string>& args) {
+            ProcessResult result; result.started = true; result.exitCode = 0;
+            if (id == ExecutableId::PackageQuery) {
+                ++packageCalls; result.exitCode = 1;
+                result.standardError = "injected unavailable package database";
+                return result;
+            }
+            if (id == ExecutableId::Loginctl) {
+                if (logindFailure) { result.exitCode = 1; return result; }
+                if (greeter) result.standardOutput = args.front() == "list-sessions"
+                    ? "9 1000 greeter seat0\n" : "Class=greeter\nService=" + greeterService + "\n";
+                return result;
+            }
+            require(id == ExecutableId::Systemctl, "unexpected inventory executable");
+            if (systemdFailure) { result.exitCode = 1; return result; }
+            if (args.front() == "--root=/") {
+                result.standardOutput = "custom.service disabled\n";
+            } else if (args.front() == "show") {
+                result.standardOutput =
+                    "Id=custom.service\nNames=custom.service" +
+                    std::string(selected ? " display-manager.service" : "") +
+                    "\nLoadState=loaded\nActiveState=" + (running ? "active" : "inactive") +
+                    "\nDescription=Display Manager\nExecStart={ path=/usr/bin/" +
+                    (unknown ? "unknown" : "sddm") + " ; }\n";
+            }
+            return result;
+        }, f.config);
+    put(f.root/"config/OSS.conf",
+        "controlled_display_managers.status=ENABLE\ncontrolled_display_managers.value=[\"SDDM\"]\ndisable_autologin.status=ENABLE\ndisable_autologin.value=ENABLE\n");
+    const auto compliant = [&] {
+        OSS_controlled_display_managers scope(inventory, f.backend, &f.journal);
+        OSS_absence_of_uncontrolled_display_managers policy(scope, inventory);
+        return policy.apply();
+    };
+    require(compliant(), "selected custom-name controlled DM must ignore broken packages");
+    require(packageCalls == 0, "observational policy called PackageQuery");
+    put(f.root/"config/OSS.conf",
+        "controlled_display_managers.status=ENABLE\ncontrolled_display_managers.value=[\"LIGHTDM\"]\ndisable_autologin.status=ENABLE\ndisable_autologin.value=ENABLE\n");
+    require(!compliant(), "selected uncontrolled DM accepted");
+    selected = false; running = true;
+    require(!compliant(), "independent running uncontrolled DM accepted");
+    unknown = true;
+    require(!compliant(), "unknown running DM accepted");
+    unknown = false; running = false;
+    require(compliant(), "inactive known DM outside scope must be allowed");
+    greeter = true;
+    require(!compliant(), "unknown greeter accepted");
+    greeterService = "sddm-greeter";
+    require(!compliant(), "uncontrolled known greeter accepted");
+    greeterService = "lightdm-greeter";
+    require(compliant(), "controlled known greeter refused");
+    greeter = false;
+    systemdFailure = true;
+    require(!compliant(), "missing systemd proof accepted");
+    systemdFailure = false; logindFailure = true;
+    require(!compliant(), "missing logind proof accepted");
+    logindFailure = false;
+    require(packageCalls == 0, "observational failures called PackageQuery");
+    DisplayManagerSnapshot snapshot;
+    require(!inventory->inspect(snapshot, error) &&
+            error.find("injected unavailable package database") != std::string::npos,
+            "full inventory must retain package failure");
+    OSS_controlled_display_managers scope(inventory, f.backend, &f.journal);
+    OSS_disable_autologin autologin(scope, inventory, f.backend, &f.journal);
+    require(!autologin.apply(), "autologin ignored unavailable package inventory");
+    require(packageCalls == 2, "full consumers did not query packages");
+    SystemDisplayManagerInventory headless([&](ExecutableId id,const auto&) {
+        require(id != ExecutableId::PackageQuery, "headless observation queried packages");
+        ProcessResult result; result.started=true; result.exitCode=0; return result;
+    }, f.config);
+    OSS_absence_of_uncontrolled_display_managers policy(scope, inventory);
+    require(headless.inspect(snapshot,error,DisplayManagerInventoryMode::SelectedAndRunning) &&
+            snapshot.complete && policy.evaluate(snapshot,error), "proven headless refused");
+    ::_exit(0);
+}
 void inventoryTemplateProof(){
     Fixture f("inventory-templates");std::string error;
     std::string files,loaded,packages="sddm\tinstalled\nlightdm\tinstalled\n";
@@ -489,6 +589,6 @@ int main(){try{
     require(type.validate("")&&type.postProcessingValue("")=="[]","empty typed scope invalid");
     require(type.postProcessingValue("sddm,GDM,lightdm")=="[\"GDM\",\"LIGHTDM\",\"SDDM\"]","canonical list invalid");
     require(!type.validate("SDDM,SDDM")&&!type.validate("GDM3")&&!type.validate("weird")&&!type.validate("SDDM,"),"invalid tokens accepted");
-    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();inventoryTemplateProof();inventoryLogindProof();scopeLifecycle();
+    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();observationalInventoryProof();inventoryTemplateProof();inventoryLogindProof();scopeLifecycle();
     std::cout<<"PASS: DM transaction, ownership, native failure, crash recovery, scope and inventory contracts\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

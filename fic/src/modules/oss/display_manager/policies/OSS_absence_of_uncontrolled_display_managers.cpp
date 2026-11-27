@@ -15,4 +15,4 @@ bool OSS_absence_of_uncontrolled_display_managers::evaluate(const DisplayManager
     error.clear();return true;
 }
 bool OSS_absence_of_uncontrolled_display_managers::apply(){DisplayManagerSnapshot snapshot;std::string error;
-    if(!inventory_->inspect(snapshot,error)||!evaluate(snapshot,error)){log(error,logLevel::ERROR);return false;}return true;}
+    if(!inventory_->inspect(snapshot,error,DisplayManagerInventoryMode::SelectedAndRunning)||!evaluate(snapshot,error)){log(error,logLevel::ERROR);return false;}return true;}

@@ -306,3 +306,11 @@ process filesystem view. Runtime properties and logind remain live queries.
 The shipped daemon unit shares the system unit-file view; custom root,
 mount-namespace or unit lookup overrides require independent validation.
 A failed client-side enumeration fails closed. There is no server-call retry.
+
+Observational `absence_of_uncontrolled_display_managers` requests only the
+selected/running inventory mode and never invokes PackageQuery. The shared
+unit/property/default-selection/greeter discovery and executable identity checks
+still fail closed. In that mode the snapshot does not prove the complete set
+of installed managers. `disable_autologin` and both transaction inventory
+checks retain the full installed-and-runtime mode and its package failures.
+SDDM's independent version query is unchanged.

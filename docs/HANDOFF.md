@@ -27,7 +27,15 @@ container; five targeted planner/save/static checks passed. Logs /tmp/fic-dm-opt
 Versioned upstream v252/255/257/258/259 sources were read: arg_root selects
 client-side enumeration; client and manager use unit_file_get_list.
 
+Task 2 adds an explicit SelectedAndRunning mode to the existing inventory.
+Only observational compliance selects it; PackageQuery is never called.
+Autologin and transaction pre/post checks retain InstalledAndRuntime.
+Unit/default-selection/logind and relevant executable trust remain.
+New deterministic policy tests inject package/systemd/logind errors and cover
+custom unit identities, selected/running/headless, unknown/known greeters and
+inactive out-of-scope managers. Full autologin package failures remain visible.
+
 ## Remaining
 
-Finish task 2 and targeted regression; task 3 research report. Retry/record
+Task 2 target build and DM root suite passed; task 3 research report remains. Retry/record
 Debian native checks if images become available. No full CI or host mutations.
