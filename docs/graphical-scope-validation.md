@@ -130,3 +130,22 @@ after native inspection; a mocked concurrent administrator write must fail.
 Full build log: `build-prelogin-validation/dm-evidence/dm-alt-route-build.log`;
 full CTest: `dm-alt-routes-ctest.log`; final ALT native log:
 `native-alt-routes-final.log`. Evidence artifacts are intentionally outside Git.
+
+## DM inventory optimization, 2026-11-27
+
+Client-side unit-file listing and observational inventory without PackageQuery
+have separate production commits. Existing DM transaction tests now assert the
+exact --root=/ argv, enumeration failure behavior, package-independent selected/
+running/greeter/headless compliance and unchanged full autologin failures.
+The root suite and five directly related planner/save/static checks passed.
+
+Native systemd equivalence and show transport measurements passed on ALT p11,
+Ubuntu 24.04 and Ubuntu 26.04, with retained JSON in
+tests/integration/dm-inventory/evidence/. Debian 12/13 APT image preparation
+stalled; those native results are unavailable. The comparison includes generated,
+transient, alias, masked, runtime-enabled, templates and concrete instances.
+Native tests run in disposable systemd PID1 containers without host bind mounts.
+
+The research-only comparison and remaining proof obligations are in
+[dm-inventory-optimization-research.md](dm-inventory-optimization-research.md).
+This does not establish live DM enforcement or production show batching.
