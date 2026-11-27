@@ -314,3 +314,17 @@ still fail closed. In that mode the snapshot does not prove the complete set
 of installed managers. `disable_autologin` and both transaction inventory
 checks retain the full installed-and-runtime mode and its package failures.
 SDDM's independent version query is unchanged.
+
+Concrete unit properties are queried sequentially in groups of at most 32.
+The union of client-side unit-file names and live unit names, template exclusion,
+name validation and 2048-unit limit are unchanged. Response order is not used:
+each requested name must occur in a block's exact `Names` set, with `Id` also
+present there. Identical repeated canonical blocks are accepted; conflicting
+blocks, ambiguous aliases, missing responses and incomplete identity/state fields
+fail closed. A missing block is never treated as `LoadState=not-found`.
+Native systemctl can omit empty `ExecStart`; older versions print multiple
+ExecStart lines. The existing empty/last-command classification is preserved.
+Command failure, timeout or output truncation fails the inventory without an
+individual-query fallback. Existing ProcessExecutor limits remain 5 seconds and
+4 MiB combined output per command. Batching neither creates an atomic systemd
+snapshot nor changes the transaction's repeated inventories.

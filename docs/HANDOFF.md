@@ -1,54 +1,52 @@
-# DM inventory optimization
+# DM inventory property batching
 
-Branch main. Task base a0fae90b073321ea8bb07c00d664d033ac91f19f.
+## Current base
 
-## Completed
+Branch main; base 3fb17c7d7afe39e4ac6b0856dd983f3fa62b970b.
 
-Task 1 commit 4735f8b4 moves unit-file enumeration to systemctl --root=/.
-No server fallback, prelogin timeout or IPC changes.
-Task 2 commit ade599b4 adds SelectedAndRunning mode to the same inventory.
-Only observational compliance uses it and never invokes PackageQuery.
-Autologin and transaction pre/post inventories retain InstalledAndRuntime;
-SDDM native version proof remains. Ownership/journal/rollback are unchanged.
+## Current task
 
-Task 3 is research only. Report docs/dm-inventory-optimization-research.md
-recommends future show batching over the complete existing unit set. No
-production show batching, filtering, caching or D-Bus replacement was added.
+Completed bounded systemctl show batching; local commit only, no push.
 
-## Accepted invariants
+## Accepted architecture / invariants
 
-The shipped daemon sees the same system root/unit-file view as PID1. Custom
-root/mount/unit lookup overrides require separate validation. Live systemd,
-default selection and logind discovery remain, including nonstandard DM unit
-names and greeters. Relevant executable identity checks remain fail-closed.
-Inactive installed out-of-scope managers remain compliant. Scope Required
-dependencies and autologin installed-manager semantics remain.
+Sequential batches of at most 32 over the unchanged validated unit union.
+Exact Id/Names matching and per-request coverage, independent of response order.
+Identical canonical repeats accepted; missing/conflicting/ambiguous/truncated
+replies fail closed without fallback. Native empty/repeated ExecStart retains
+old empty/last-command classification. Existing ProcessExecutor limits remain.
+No changes to inventory modes, PackageQuery consumers, executable trust,
+default selection/logind, SDDM proof, ownership/journal or transaction rechecks.
+No atomic snapshot claim.
+
+## Completed / changed areas
+
+Production DisplayManagerInventory parser/query loop and existing DM suite.
+Native two-production-driver comparison in tests/integration/dm-inventory,
+including complete requested-name property coverage and retained plain JSON.
+Architecture/validation/native README updated.
 
 ## Validation
 
-Logs /tmp/fic-dm-opt/. Fixture/evidence tests/integration/dm-inventory/.
 Target builds display_manager_transaction_tests, policy_save_dependency_tests,
-policy_execution_planner_tests passed. Root DM suite and five targeted
-planner/save/static CTests passed. Task 2 adds deterministic unavailable-package,
-systemd/logind, selected/running/headless, custom name, known/unknown greeter
-and inactive out-of-scope regressions; PackageQuery call count is zero for
-observation and nonzero/failing for full/autologin inventory.
+policy_execution_planner_tests passed. Root DM suite passed in disposable Docker;
+five planner/save/package/architecture/UI CTests passed.
+Logs /tmp/fic-dm-opt/batch-tests-final.log, batch-contract-tests.log,
+batch-final-build.log. Shell syntax, Python compile and git diff --check passed.
+Native final results and limitations: docs/graphical-scope-validation.md and
+tests/integration/dm-inventory/batch-evidence/. The runner uses systemd PID1,
+real ProcessExecutor and the inventory Run seam; not the executable-trust
+constructor. Existing deterministic tests retain trust/full-mode coverage.
 
-Native systemd PID1 equivalence passed ALT p11 258.9, Ubuntu24 255.4,
-Ubuntu26 259.9. All compared unit names/states matched, including enabled,
-enabled-runtime, disabled, masked, alias, generated, transient, templates;
-concrete instance discovery via loaded units remains. Selected show fields
-also matched for individual calls versus batches of 32. Server-list probe
-maxima 386–445 ms; client-list maxima 14–22 ms. Three repeat listing samples,
-one warm show pass per transport. JSON records exact measurements.
-Versioned upstream v252/255/257/258/259 implementation was inspected.
+## Native results
 
-## Limits
+All five native property/classification comparisons passed (Debian12/13,
+Ubuntu24/26, ALT p11); three repetitions each. Show calls 110–157 → 4–5.
+No control probe exceeded 250 ms. Final logs: /tmp/fic-dm-opt/*-batch-complete.log.
+Implementation complete; one local completion commit, no push.
 
-Debian12/13 native images could not finish APT main index downloads via HTTP,
-HTTPS/CA and direct-index retry. Own stalled clients were cancelled; no native
-PASS is claimed for Debian. Three completed test containers were removed.
-No host service/config changes, real graphical login, full CI, cold HDD or
-packet-level D-Bus message counts were tested. Custom vendor patchsets were
-not exhaustively audited. Native latency measurements do not prove correlation
-with every historical prelogin unavailable event. No push.
+## Remaining / limits
+
+No unfinished implementation or known task blockers.
+No full project build/CTest, real DM/login enforcement, host state changes or
+cold-HDD tests. Historical research evidence remains separate from this matrix.

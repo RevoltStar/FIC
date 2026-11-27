@@ -149,3 +149,45 @@ Native tests run in disposable systemd PID1 containers without host bind mounts.
 The research-only comparison and remaining proof obligations are in
 [dm-inventory-optimization-research.md](dm-inventory-optimization-research.md).
 This does not establish live DM enforcement or production show batching.
+
+
+## Production DM property batching, 2026-11-27
+
+The production parser and inventory now use bounded groups of 32. The root
+`display_manager_transaction_tests` suite passed, including 0/1/32/33/99 names,
+reordered blocks, canonical/alias coverage and repeated responses, native
+not-found, incomplete/conflicting/missing responses, timeout/output truncation
+and failure without retry. Existing classification, executable/default-selection,
+logind, package-independent observation and full autologin tests remain.
+Target builds and the five related planner/save/package/architecture/UI checks
+passed. Full project build/CTest was not run for this focused change.
+
+Native comparison against production source at `3fb17c7d` passed all five
+platforms, including Debian 12/13 previously blocked by image preparation.
+Evidence: `tests/integration/dm-inventory/batch-evidence/*.json`. All requested
+names and their property projections are compared, including aliases; production
+snapshots must match across three alternating repetitions per implementation.
+Unit-file client/server equivalence, generated/transient/masked/template-instance
+fixtures, native not-found replies and known DM behind an unrelated unit name
+are checked. The driver uses the production Run seam and real ProcessExecutor,
+not the trusted-executable constructor; the latter retains deterministic tests.
+
+Measurements below are warm disposable systemd PID1 containers, tested one
+platform at a time. Property/full durations are medians of three repetitions;
+probe maxima cover all three, and exceedance counts are summed.
+
+| Platform | Show processes | Property seconds | Inventory seconds | Max probe ms | >250 ms |
+|---|---:|---:|---:|---:|---:|
+| debian-12 | 110 → 4 | 2.266 → 0.304 | 2.676 → 0.712 | 12.4 → 16.2 | 0 → 0 |
+| debian-13 | 121 → 4 | 2.864 → 0.565 | 3.175 → 0.873 | 31.2 → 33.3 | 0 → 0 |
+| ubuntu-24.04 | 132 → 5 | 2.953 → 0.425 | 3.304 → 0.754 | 41.5 → 23.5 | 0 → 0 |
+| ubuntu-26.04 | 139 → 5 | 3.253 → 0.667 | 3.607 → 1.059 | 31.2 → 46.2 | 0 → 0 |
+| alt-p11 | 157 → 5 | 3.851 → 0.827 | 4.304 → 1.378 | 39.6 → 41.9 | 0 → 0 |
+
+Largest measured combined show output was 11506 bytes; longest individual
+show call was 0.202 seconds, within the unchanged limits.
+No parallel probe exceeded 250 ms. This bounds only these observed runs, not
+cold-HDD behavior or future PID1 latency. A batch remains subject to the existing
+output/time limits and fails closed if they are exceeded. Native tests do not
+establish real greeter/login enforcement, host namespace compatibility or a full
+FIC policy apply. No host configuration or production DM service was changed.

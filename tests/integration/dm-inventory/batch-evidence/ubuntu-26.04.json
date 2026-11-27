@@ -1,0 +1,433 @@
+{
+  "property_equivalence": true,
+  "missing_native_response": true,
+  "fixtures": {
+    "version": "systemd 259 (259.9-0ubuntu0.1)",
+    "unit_files_equivalent": true,
+    "fixtures": {
+      "fic-dm-enabled.service": "enabled",
+      "fic-dm-runtime.service": "enabled-runtime",
+      "fic-dm-disabled.service": "disabled",
+      "fic-dm-masked.service": "masked",
+      "fic-dm-alias.service": "alias",
+      "fic-dm-generated.service": "generated",
+      "fic-dm-template@.service": "disabled",
+      "fic-dm-transient.service": "transient",
+      "fic-dm-custom-dm.service": "disabled"
+    },
+    "instance_in_loaded": true
+  },
+  "requested_names": [
+    "NetworkManager.service",
+    "apt-daily-upgrade.service",
+    "apt-daily.service",
+    "breakpoint-pre-basic.service",
+    "breakpoint-pre-mount.service",
+    "breakpoint-pre-switch-root.service",
+    "breakpoint-pre-udev.service",
+    "connman.service",
+    "console-getty.service",
+    "cryptdisks-early.service",
+    "cryptdisks.service",
+    "dbus-org.freedesktop.hostname1.service",
+    "dbus-org.freedesktop.locale1.service",
+    "dbus-org.freedesktop.login1.service",
+    "dbus-org.freedesktop.timedate1.service",
+    "dbus.service",
+    "debug-shell.service",
+    "display-manager.service",
+    "dpkg-db-backup.service",
+    "e2scrub_all.service",
+    "e2scrub_reap.service",
+    "emergency.service",
+    "fic-dm-alias.service",
+    "fic-dm-custom-dm.service",
+    "fic-dm-disabled.service",
+    "fic-dm-enabled.service",
+    "fic-dm-generated.service",
+    "fic-dm-masked.service",
+    "fic-dm-runtime.service",
+    "fic-dm-template@instance.service",
+    "fic-dm-transient.service",
+    "fic-unrelated-name.service",
+    "fstrim.service",
+    "getty-static.service",
+    "getty@tty1.service",
+    "hwclock.service",
+    "initrd-cleanup.service",
+    "initrd-parse-etc.service",
+    "initrd-switch-root.service",
+    "initrd-udevadm-cleanup-db.service",
+    "kmod-static-nodes.service",
+    "kmod.service",
+    "ldconfig.service",
+    "modprobe@configfs.service",
+    "modprobe@dm_mod.service",
+    "modprobe@drm.service",
+    "modprobe@efi_pstore.service",
+    "modprobe@fuse.service",
+    "modprobe@loop.service",
+    "motd-news.service",
+    "pam_namespace.service",
+    "plymouth-quit-wait.service",
+    "plymouth-start.service",
+    "procps.service",
+    "quotaon-root.service",
+    "rc-local.service",
+    "rescue.service",
+    "syslog.service",
+    "system-update-cleanup.service",
+    "systemd-ask-password-console.service",
+    "systemd-ask-password-wall.service",
+    "systemd-battery-check.service",
+    "systemd-binfmt.service",
+    "systemd-boot-check-no-failures.service",
+    "systemd-bsod.service",
+    "systemd-confext-initrd.service",
+    "systemd-confext.service",
+    "systemd-exit.service",
+    "systemd-factory-reset-complete.service",
+    "systemd-factory-reset-reboot.service",
+    "systemd-factory-reset-request.service",
+    "systemd-firstboot.service",
+    "systemd-fsck-root.service",
+    "systemd-growfs-root.service",
+    "systemd-halt.service",
+    "systemd-hibernate-clear.service",
+    "systemd-hibernate-resume.service",
+    "systemd-hibernate.service",
+    "systemd-hostnamed.service",
+    "systemd-hybrid-sleep.service",
+    "systemd-journal-catalog-update.service",
+    "systemd-journal-flush.service",
+    "systemd-journald.service",
+    "systemd-kexec.service",
+    "systemd-localed.service",
+    "systemd-logind.service",
+    "systemd-machine-id-commit.service",
+    "systemd-modules-load.service",
+    "systemd-network-generator.service",
+    "systemd-networkd-persistent-storage.service",
+    "systemd-networkd-wait-online.service",
+    "systemd-networkd.service",
+    "systemd-pcrfs-root.service",
+    "systemd-pcrlock-file-system.service",
+    "systemd-pcrlock-firmware-code.service",
+    "systemd-pcrlock-firmware-config.service",
+    "systemd-pcrlock-machine-id.service",
+    "systemd-pcrlock-make-policy.service",
+    "systemd-pcrlock-secureboot-authority.service",
+    "systemd-pcrlock-secureboot-policy.service",
+    "systemd-pcrmachine.service",
+    "systemd-pcrnvdone.service",
+    "systemd-pcrphase-factory-reset.service",
+    "systemd-pcrphase-initrd.service",
+    "systemd-pcrphase-storage-target-mode.service",
+    "systemd-pcrphase-sysinit.service",
+    "systemd-pcrphase.service",
+    "systemd-pcrproduct.service",
+    "systemd-poweroff.service",
+    "systemd-pstore.service",
+    "systemd-quotacheck-root.service",
+    "systemd-random-seed.service",
+    "systemd-reboot.service",
+    "systemd-remount-fs.service",
+    "systemd-rfkill.service",
+    "systemd-soft-reboot.service",
+    "systemd-storagetm.service",
+    "systemd-suspend-then-hibernate.service",
+    "systemd-suspend.service",
+    "systemd-sysctl.service",
+    "systemd-sysext-initrd.service",
+    "systemd-sysext.service",
+    "systemd-sysusers.service",
+    "systemd-timedated.service",
+    "systemd-tmpfiles-clean.service",
+    "systemd-tmpfiles-setup-dev-early.service",
+    "systemd-tmpfiles-setup-dev.service",
+    "systemd-tmpfiles-setup.service",
+    "systemd-tpm2-clear.service",
+    "systemd-tpm2-setup-early.service",
+    "systemd-tpm2-setup.service",
+    "systemd-udev-settle.service",
+    "systemd-udev-trigger.service",
+    "systemd-udevd.service",
+    "systemd-update-done.service",
+    "systemd-user-sessions.service",
+    "systemd-vconsole-setup.service",
+    "systemd-volatile-root.service",
+    "x11-common.service"
+  ],
+  "classification": {
+    "complete": true,
+    "managers": {
+      "GDM": {
+        "configurationSupported": true,
+        "installed": false,
+        "running": false,
+        "selected": false
+      },
+      "LIGHTDM": {
+        "configurationSupported": true,
+        "installed": false,
+        "running": false,
+        "selected": false
+      },
+      "SDDM": {
+        "configurationSupported": true,
+        "installed": true,
+        "running": true,
+        "selected": false
+      }
+    },
+    "unknownSelectedOrRunning": []
+  },
+  "alias_raw_blocks": 3,
+  "alias_requested": [
+    "fic-dm-enabled.service",
+    "fic-dm-alias.service",
+    "fic-dm-enabled.service"
+  ],
+  "runs": [
+    {
+      "error": "",
+      "inventory_seconds": 3.462705568,
+      "max_show_bytes": 436,
+      "max_show_seconds": 0.040862673,
+      "ok": true,
+      "show_calls": 139,
+      "show_seconds": 3.090404366,
+      "snapshot": {
+        "complete": true,
+        "managers": {
+          "GDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "LIGHTDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "SDDM": {
+            "configurationSupported": true,
+            "installed": true,
+            "running": true,
+            "selected": false
+          }
+        },
+        "unknownSelectedOrRunning": []
+      },
+      "systemctl_calls": 141,
+      "mode": "individual",
+      "repetition": 0,
+      "requested_count": 139,
+      "max_probe_ms": 22.329078999973717,
+      "probe_samples": 194,
+      "over_250ms": 0
+    },
+    {
+      "error": "",
+      "inventory_seconds": 1.058724538,
+      "max_show_bytes": 11315,
+      "max_show_seconds": 0.201649269,
+      "ok": true,
+      "show_calls": 5,
+      "show_seconds": 0.7063875350000001,
+      "snapshot": {
+        "complete": true,
+        "managers": {
+          "GDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "LIGHTDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "SDDM": {
+            "configurationSupported": true,
+            "installed": true,
+            "running": true,
+            "selected": false
+          }
+        },
+        "unknownSelectedOrRunning": []
+      },
+      "systemctl_calls": 7,
+      "mode": "batch32",
+      "repetition": 0,
+      "requested_count": 139,
+      "max_probe_ms": 41.6672340002151,
+      "probe_samples": 86,
+      "over_250ms": 0
+    },
+    {
+      "error": "",
+      "inventory_seconds": 3.630897066,
+      "max_show_bytes": 436,
+      "max_show_seconds": 0.041187898,
+      "ok": true,
+      "show_calls": 139,
+      "show_seconds": 3.2570066390000014,
+      "snapshot": {
+        "complete": true,
+        "managers": {
+          "GDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "LIGHTDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "SDDM": {
+            "configurationSupported": true,
+            "installed": true,
+            "running": true,
+            "selected": false
+          }
+        },
+        "unknownSelectedOrRunning": []
+      },
+      "systemctl_calls": 141,
+      "mode": "individual",
+      "repetition": 1,
+      "requested_count": 139,
+      "max_probe_ms": 31.154843999956938,
+      "probe_samples": 207,
+      "over_250ms": 0
+    },
+    {
+      "error": "",
+      "inventory_seconds": 1.119040303,
+      "max_show_bytes": 11315,
+      "max_show_seconds": 0.181516243,
+      "ok": true,
+      "show_calls": 5,
+      "show_seconds": 0.666611902,
+      "snapshot": {
+        "complete": true,
+        "managers": {
+          "GDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "LIGHTDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "SDDM": {
+            "configurationSupported": true,
+            "installed": true,
+            "running": true,
+            "selected": false
+          }
+        },
+        "unknownSelectedOrRunning": []
+      },
+      "systemctl_calls": 7,
+      "mode": "batch32",
+      "repetition": 1,
+      "requested_count": 139,
+      "max_probe_ms": 46.20087200009948,
+      "probe_samples": 90,
+      "over_250ms": 0
+    },
+    {
+      "error": "",
+      "inventory_seconds": 3.60672587,
+      "max_show_bytes": 436,
+      "max_show_seconds": 0.040991981,
+      "ok": true,
+      "show_calls": 139,
+      "show_seconds": 3.2534989280000013,
+      "snapshot": {
+        "complete": true,
+        "managers": {
+          "GDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "LIGHTDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "SDDM": {
+            "configurationSupported": true,
+            "installed": true,
+            "running": true,
+            "selected": false
+          }
+        },
+        "unknownSelectedOrRunning": []
+      },
+      "systemctl_calls": 141,
+      "mode": "individual",
+      "repetition": 2,
+      "requested_count": 139,
+      "max_probe_ms": 30.58929899998475,
+      "probe_samples": 205,
+      "over_250ms": 0
+    },
+    {
+      "error": "",
+      "inventory_seconds": 1.020372319,
+      "max_show_bytes": 11315,
+      "max_show_seconds": 0.161607369,
+      "ok": true,
+      "show_calls": 5,
+      "show_seconds": 0.646409004,
+      "snapshot": {
+        "complete": true,
+        "managers": {
+          "GDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "LIGHTDM": {
+            "configurationSupported": true,
+            "installed": false,
+            "running": false,
+            "selected": false
+          },
+          "SDDM": {
+            "configurationSupported": true,
+            "installed": true,
+            "running": true,
+            "selected": false
+          }
+        },
+        "unknownSelectedOrRunning": []
+      },
+      "systemctl_calls": 7,
+      "mode": "batch32",
+      "repetition": 2,
+      "requested_count": 139,
+      "max_probe_ms": 41.708234999987326,
+      "probe_samples": 85,
+      "over_250ms": 0
+    }
+  ]
+}

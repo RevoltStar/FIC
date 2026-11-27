@@ -13,6 +13,77 @@ std::map<std::string, std::string> properties(const std::string& text) {
     }
     return p;
 }
+constexpr std::size_t kUnitPropertyBatchSize = 32;
+constexpr const char* kUnitProperties =
+    "--property=Id,Names,LoadState,ActiveState,Description,ExecStart,UnitFileState";
+using UnitProperties = std::map<std::string, std::string>;
+
+bool parseUnitBatch(const std::string& output, const std::vector<std::string>& requested,
+                    std::map<std::string, UnitProperties>& results, std::string& error) {
+    results.clear();
+    const auto fail = [&](const std::string& detail) {
+        error = "invalid systemctl show batch: " + detail;
+        return false;
+    };
+    if (output.empty() || output.back() != '\n') return fail("empty or truncated output");
+    std::map<std::string, UnitProperties> identities;
+    UnitProperties block;
+    const auto finish = [&]() {
+        if (block.empty()) return true;
+        for (const auto* field : {"Id", "Names", "Description", "LoadState", "ActiveState", "UnitFileState"})
+            if (!block.count(field)) return fail(std::string("missing ") + field);
+        if (block.at("Id").empty() || block.at("ActiveState").empty() ||
+            block.at("LoadState").empty()) return fail("empty identity/state");
+        // systemctl omits an empty ExecStart even for a loaded service.
+        // The existing classifier treats that as an empty executable.
+        std::istringstream input(block.at("Names"));
+        std::set<std::string> names;
+        std::string name;
+        while (input >> name) names.insert(name);
+        if (!names.count(block.at("Id"))) return fail("Id absent from Names");
+        bool matched = false;
+        for (const auto& unit : requested) matched = matched || names.count(unit);
+        if (!matched) return fail("unsolicited unit");
+        const auto [found, inserted] = identities.emplace(block.at("Id"), block);
+        if (!inserted && found->second != block) return fail("conflicting duplicate Id");
+        block.clear();
+        return true;
+    };
+    std::istringstream input(output);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.empty()) {
+            if (!finish()) return false;
+            continue;
+        }
+        const auto separator = line.find('=');
+        if (separator == std::string::npos || separator == 0)
+            return fail("malformed property");
+        const auto key = line.substr(0,separator);
+        const auto value = line.substr(separator+1);
+        if (key == "ExecStart") {
+            // systemctl prints one line per command on older releases.
+            // Preserve the existing classifier's last-command projection.
+            block.insert_or_assign(key, value);
+        } else if (!block.emplace(key,value).second) {
+            return fail("repeated property");
+        }
+    }
+    if (!finish()) return false;
+    for (const auto& unit : requested) {
+        for (const auto& [id, values] : identities) {
+            std::istringstream names(values.at("Names"));
+            std::string name;
+            while (names >> name) {
+                if (name != unit) continue;
+                if (!results.emplace(unit, values).second) return fail("ambiguous requested identity");
+                break;
+            }
+        }
+        if (!results.count(unit)) return fail("missing response for " + unit);
+    }
+    return true;
+}
 // list-unit-files includes templates; only concrete instances have runtime
 // properties. Keep malformed lookalikes on the ordinary fail-closed path.
 bool uninstantiatedServiceTemplate(const std::string& unit) {
@@ -105,40 +176,52 @@ bool SystemDisplayManagerInventory::inspect(DisplayManagerSnapshot& result, std:
         if (!unit.empty()) units.insert(unit); }
     if (units.size() > 2048) { error = "DM inventory service limit exceeded"; return false; }
     for (const auto& unit : units) {
-        if (unit.find('/') != std::string::npos || unit.front() == '-' || unit.size() > 256) { error = "invalid service identity"; return false; }
-        if (!query(ExecutableId::Systemctl, {"show", unit, "--no-pager",
-            "--property=Id,Names,LoadState,ActiveState,Description,ExecStart,UnitFileState"}, output)) return false;
-        const auto p = properties(output);
-        if (!p.count("LoadState") || !p.count("ActiveState")) { error = "incomplete service inventory: " + unit; return false; }
-        if (p.at("LoadState") == "not-found") continue;
-        if (p.at("LoadState") != "loaded" && p.at("LoadState") != "masked") { error = "unclassifiable service: " + unit; return false; }
-        auto get = [&](const char* k) { auto it=p.find(k); return it==p.end()?std::string():it->second; };
-        std::string dm = canonicalName(get("Id"));
-        const auto names = get("Names");
-        const bool alias = unit == "display-manager.service" || names.find("display-manager.service") != std::string::npos;
-        const bool running = active(p.at("ActiveState"));
-        const auto description = get("Description");
-        std::string lower = description; std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return std::tolower(c);});
-        const bool candidate = alias || !dm.empty() || lower.find("display manager") != std::string::npos ||
-            unit == "xdm.service" || unit == "lxdm.service" || unit == "greetd.service";
-        // A differently named unit invoking a known DM is still a DM; unit
-        // identity and executable must agree and custom config arguments fail closed.
-        const auto exec = get("ExecStart");
-        auto at = exec.find("path="); std::string executable;
-        if (at != std::string::npos) { at += 5; auto end=exec.find_first_of(" ;}",at); executable=exec.substr(at,end-at); }
-        const auto executableDm = canonicalName(executable);
-        if (!candidate && executableDm.empty()) continue;
-        if (dm.empty()) dm = executableDm;
-        if (dm.empty() || (!executableDm.empty() && executableDm != dm) || exec.find("--config") != std::string::npos ||
-            exec.find(" -c ") != std::string::npos || (!exec.empty() && executableDm.empty()) ||
-            (running && executableDm.empty()) ||
-            (!dm.empty() && !executable.empty() && unitExecutableProof_ && !unitExecutableProof_(dm,executable))) {
-            if (!dm.empty()) result.managers[dm].configurationSupported = false;
-            if (alias || running || get("UnitFileState") == "enabled") result.unknownSelectedOrRunning.push_back(unit);
-            continue;
+        if (unit.find('/') != std::string::npos || unit.front() == '-' || unit.size() > 256) {
+            error = "invalid service identity"; return false;
         }
-        auto& state = result.managers[dm]; state.installed = true;
-        state.running = state.running || running; state.selected = state.selected || alias;
+    }
+    const std::vector<std::string> orderedUnits(units.begin(), units.end());
+    for (std::size_t offset = 0; offset < orderedUnits.size(); offset += kUnitPropertyBatchSize) {
+        const auto end = std::min(orderedUnits.size(), offset + kUnitPropertyBatchSize);
+        const std::vector<std::string> batch(orderedUnits.begin() + offset, orderedUnits.begin() + end);
+        std::vector<std::string> args{"show"};
+        args.insert(args.end(), batch.begin(), batch.end());
+        args.insert(args.end(), {"--no-pager", kUnitProperties});
+        if (!query(ExecutableId::Systemctl, args, output)) return false;
+        std::map<std::string, UnitProperties> replies;
+        if (!parseUnitBatch(output, batch, replies, error)) return false;
+        for (const auto& unit : batch) {
+            const auto& p = replies.at(unit);
+            if (p.at("LoadState") == "not-found") continue;
+            if (p.at("LoadState") != "loaded" && p.at("LoadState") != "masked") { error = "unclassifiable service: " + unit; return false; }
+            auto get = [&](const char* k) { auto it=p.find(k); return it==p.end()?std::string():it->second; };
+            std::string dm = canonicalName(get("Id"));
+            const auto names = get("Names");
+            const bool alias = unit == "display-manager.service" || names.find("display-manager.service") != std::string::npos;
+            const bool running = active(p.at("ActiveState"));
+            const auto description = get("Description");
+            std::string lower = description; std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char c){return std::tolower(c);});
+            const bool candidate = alias || !dm.empty() || lower.find("display manager") != std::string::npos ||
+                unit == "xdm.service" || unit == "lxdm.service" || unit == "greetd.service";
+            // A differently named unit invoking a known DM is still a DM; unit
+            // identity and executable must agree and custom config arguments fail closed.
+            const auto exec = get("ExecStart");
+            auto at = exec.find("path="); std::string executable;
+            if (at != std::string::npos) { at += 5; auto end=exec.find_first_of(" ;}",at); executable=exec.substr(at,end-at); }
+            const auto executableDm = canonicalName(executable);
+            if (!candidate && executableDm.empty()) continue;
+            if (dm.empty()) dm = executableDm;
+            if (dm.empty() || (!executableDm.empty() && executableDm != dm) || exec.find("--config") != std::string::npos ||
+                exec.find(" -c ") != std::string::npos || (!exec.empty() && executableDm.empty()) ||
+                (running && executableDm.empty()) ||
+                (!dm.empty() && !executable.empty() && unitExecutableProof_ && !unitExecutableProof_(dm,executable))) {
+                if (!dm.empty()) result.managers[dm].configurationSupported = false;
+                if (alias || running || get("UnitFileState") == "enabled") result.unknownSelectedOrRunning.push_back(unit);
+                continue;
+            }
+            auto& state = result.managers[dm]; state.installed = true;
+            state.running = state.running || running; state.selected = state.selected || alias;
+        }
     }
     // Debian/Ubuntu's selected executable is independent of the systemd alias.
     if (!config_.defaultDisplayManagerPath.empty()) {

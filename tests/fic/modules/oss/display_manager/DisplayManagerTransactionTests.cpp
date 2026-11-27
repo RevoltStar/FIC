@@ -230,6 +230,31 @@ void journalGuards(){
     }
     put(f.root/"journal.json",original);
 }
+// Preserve the existing per-unit scenarios while asserting the actual batch argv.
+SystemDisplayManagerInventory::Run batchFixture(SystemDisplayManagerInventory::Run perUnit) {
+    return [perUnit](ExecutableId id, const std::vector<std::string>& args) {
+        if (id != ExecutableId::Systemctl || args.front() != "show") return perUnit(id,args);
+        require(args.size() >= 4 && args.size() <= 35 &&
+                args[args.size()-2] == "--no-pager" &&
+                args.back() == "--property=Id,Names,LoadState,ActiveState,Description,ExecStart,UnitFileState",
+                "batch show arguments changed");
+        ProcessResult result; result.started=true; result.exitCode=0;
+        for (std::size_t i=1; i+2<args.size(); ++i) {
+            auto one = perUnit(id, {"show",args[i],"--no-pager",args.back()});
+            if (!one.success()) return one;
+            // Old fixtures omitted optional textual fields. Supply explicit native
+            // fields without filling either of the original required state fields.
+            auto& text = one.standardOutput;
+            if (text.find("Id=") == std::string::npos) text += "Id="+args[i]+"\n";
+            if (text.find("Names=") == std::string::npos) text += "Names="+args[i]+"\n";
+            if (text.find("Description=") == std::string::npos) text += "Description=\n";
+            if (text.find("UnitFileState=") == std::string::npos) text += "UnitFileState=\n";
+            if (text.find("ExecStart=") == std::string::npos) text += "ExecStart=\n";
+            result.standardOutput += text + "\n";
+        }
+        return result;
+    };
+}
 void inventoryProof(){
     Fixture f("inventory");std::string error;
     bool enumerationFailure = false;
@@ -248,7 +273,7 @@ void inventoryProof(){
         else r.standardOutput="LoadState=not-found\nActiveState=inactive\n";
         return r;
     };
-    SystemDisplayManagerInventory inventory(runner,f.config);DisplayManagerSnapshot snapshot;
+    SystemDisplayManagerInventory inventory(batchFixture(runner),f.config);DisplayManagerSnapshot snapshot;
     require(inventory.inspect(snapshot,error),error);
     require(snapshot.managers["SDDM"].selected&&!snapshot.managers["SDDM"].running,"enabled inactive DM not selected");
     require(snapshot.managers["LIGHTDM"].installed&&!snapshot.managers["LIGHTDM"].selected,"installed unused not classified");
@@ -260,21 +285,21 @@ void inventoryProof(){
             "client enumeration failure must fail closed without server fallback");
     enumerationFailure = false;
 
-    SystemDisplayManagerInventory custom([&](ExecutableId id,const std::vector<std::string>& args){
+    SystemDisplayManagerInventory custom(batchFixture([&](ExecutableId id,const std::vector<std::string>& args){
         auto result=runner(id,args);
         if(id==ExecutableId::Systemctl && args.front()=="show" && args[1]=="sddm.service")
             result.standardOutput="Id=sddm.service\nLoadState=loaded\nActiveState=inactive\nExecStart={ path=/usr/bin/custom-wrapper ; }\n";
         return result;
-    },f.config);
+    }),f.config);
     require(custom.inspect(snapshot,error)&&!snapshot.managers["SDDM"].configurationSupported,
         "inactive custom DM wrapper falsely proved native configuration");
-    SystemDisplayManagerInventory headless([](ExecutableId,const std::vector<std::string>& args){
+    SystemDisplayManagerInventory headless(batchFixture([](ExecutableId,const std::vector<std::string>& args){
         ProcessResult result;result.started=true;result.exitCode=0;
         require(args.front()!="show","headless inventory queried a nonexistent unit");return result;
-    },f.config);
+    }),f.config);
     require(headless.inspect(snapshot,error)&&snapshot.complete,"complete headless inventory rejected");
     require(!snapshot.managers["SDDM"].installed&&!snapshot.managers["GDM"].installed,"headless inventory invented installation");
-    SystemDisplayManagerInventory incomplete([](ExecutableId,const std::vector<std::string>&){return ProcessResult{};},f.config);
+    SystemDisplayManagerInventory incomplete(batchFixture([](ExecutableId,const std::vector<std::string>&){return ProcessResult{};}),f.config);
     require(!incomplete.inspect(snapshot,error)&&!snapshot.complete,"inventory failure accepted headless");
 }
 void observationalInventoryProof() {
@@ -302,7 +327,7 @@ void observationalInventoryProof() {
     std::string greeterService = "unknown-greeter";
     int packageCalls = 0;
     auto inventory = std::make_shared<SystemDisplayManagerInventory>(
-        [&](ExecutableId id, const std::vector<std::string>& args) {
+        batchFixture([&](ExecutableId id, const std::vector<std::string>& args) {
             ProcessResult result; result.started = true; result.exitCode = 0;
             if (id == ExecutableId::PackageQuery) {
                 ++packageCalls; result.exitCode = 1;
@@ -328,7 +353,7 @@ void observationalInventoryProof() {
                     (unknown ? "unknown" : "sddm") + " ; }\n";
             }
             return result;
-        }, f.config);
+        }), f.config);
     put(f.root/"config/OSS.conf",
         "controlled_display_managers.status=ENABLE\ncontrolled_display_managers.value=[\"SDDM\"]\ndisable_autologin.status=ENABLE\ndisable_autologin.value=ENABLE\n");
     const auto compliant = [&] {
@@ -368,14 +393,116 @@ void observationalInventoryProof() {
     OSS_disable_autologin autologin(scope, inventory, f.backend, &f.journal);
     require(!autologin.apply(), "autologin ignored unavailable package inventory");
     require(packageCalls == 2, "full consumers did not query packages");
-    SystemDisplayManagerInventory headless([&](ExecutableId id,const auto&) {
+    SystemDisplayManagerInventory headless(batchFixture([&](ExecutableId id,const auto&) {
         require(id != ExecutableId::PackageQuery, "headless observation queried packages");
         ProcessResult result; result.started=true; result.exitCode=0; return result;
-    }, f.config);
+    }), f.config);
     OSS_absence_of_uncontrolled_display_managers policy(scope, inventory);
     require(headless.inspect(snapshot,error,DisplayManagerInventoryMode::SelectedAndRunning) &&
             snapshot.complete && policy.evaluate(snapshot,error), "proven headless refused");
     ::_exit(0);
+}
+void inventoryBatchProof() {
+    Fixture f("batch"); std::string error;
+    std::vector<std::string> names;
+    std::vector<std::vector<std::string>> calls;
+    std::function<void(ProcessResult&)> alter;
+    int failCall = 0;
+    const auto reply = [](const std::string& id, const std::string& aliases,
+                          const std::string& state = "loaded") {
+        return "Id="+id+"\nNames="+aliases+"\nDescription=ordinary service\nLoadState="+state+
+            "\nActiveState=inactive\nUnitFileState=disabled\n" +
+            (state=="not-found" ? std::string{} : "ExecStart={ path=/usr/bin/true ; }\n");
+    };
+    SystemDisplayManagerInventory inventory([&](ExecutableId id,const auto& args) {
+        ProcessResult result; result.started=true; result.exitCode=0;
+        require(id!=ExecutableId::PackageQuery, "batch observation queried packages");
+        if (id==ExecutableId::Loginctl || args.front()=="list-units") return result;
+        if (args.front()=="--root=/") {
+            for (const auto& name:names) result.standardOutput+=name+" disabled\n";
+            return result;
+        }
+        require(args.front()=="show" && args.size()>=4 && args.size()<=35 &&
+                args[args.size()-2]=="--no-pager" &&
+                args.back()=="--property=Id,Names,LoadState,ActiveState,Description,ExecStart,UnitFileState",
+                "wrong batch argv");
+        calls.emplace_back(args.begin()+1,args.end()-2);
+        if (failCall==static_cast<int>(calls.size())) {
+            result.exitCode=1; result.standardError="injected batch failure"; return result;
+        }
+        // Reverse response order deliberately; matching must use identities.
+        for(auto it=calls.back().rbegin();it!=calls.back().rend();++it)
+            result.standardOutput+=reply(*it,*it)+"\n";
+        if(alter) alter(result);
+        return result;
+    }, f.config);
+    DisplayManagerSnapshot snapshot;
+    const auto inspect = [&] {
+        calls.clear();
+        return inventory.inspect(snapshot,error,DisplayManagerInventoryMode::SelectedAndRunning);
+    };
+    for (int count:{0,1,32,33,99}) {
+        names.clear();
+        for(int i=0;i<count;++i) names.push_back("unit"+std::to_string(i)+".service");
+        require(inspect(), error);
+        require(calls.size()==static_cast<std::size_t>((count+31)/32), "wrong show count");
+        std::set<std::string> observed;
+        for(const auto& batch:calls) for(const auto& name:batch)
+            require(observed.insert(name).second, "requested unit duplicated across batches");
+        require(observed==std::set<std::string>(names.begin(),names.end()),"batch lost requested names");
+    }
+    failCall=2;
+    require(!inspect()&&!snapshot.complete&&calls.size()==2, "failed batch became complete/retried");
+    failCall=0;
+    names={"unit.service"};
+    alter=[&](ProcessResult& r){r.standardOutput=reply("unit.service","unit.service","not-found")+"\n";};
+    require(inspect()&&!snapshot.managers.at("SDDM").installed, "proven not-found refused");
+    const auto invalid = [&](const std::string& text) {
+        alter=[&](ProcessResult& r){r.standardOutput=text;};
+        require(!inspect()&&!snapshot.complete,"invalid batch accepted: "+text);
+        alter={};
+    };
+    invalid("");
+    alter=[&](ProcessResult& r){
+        r.standardOutput="ExecStart={ path=/usr/bin/first ; }\n"+
+            reply("unit.service","unit.service")+"\n";
+    };
+    require(inspect(), "native repeated ExecStart refused");
+    alter={};
+    invalid(reply("foreign.service","foreign.service")+"\n");
+    for(const auto* key:{"Id","Names","Description","LoadState","ActiveState","UnitFileState"}) {
+        auto incomplete=reply("unit.service","unit.service");
+        const auto start=incomplete.find(std::string(key)+"=");
+        incomplete.erase(start,incomplete.find('\n',start)-start+1);
+        invalid(incomplete);
+    }
+    auto missing=reply("unit.service","unit.service");
+    missing.erase(missing.find("ActiveState="),std::string("ActiveState=inactive\n").size());
+    invalid(missing);
+    invalid(reply("unit.service","unit.service")+"LoadState=loaded\n");
+    auto truncated=reply("unit.service","unit.service");truncated.pop_back();invalid(truncated);
+    invalid(reply("unit.service","unit.service")+"\n"+
+            reply("unit.service","unit.service","not-found")+"\n");
+    for(bool timeout:{false,true}) {
+        alter=[&](ProcessResult& r){r.outputLimitExceeded=!timeout;r.timedOut=timeout;};
+        require(!inspect()&&!snapshot.complete,"executor truncation/timeout ignored");
+    }
+    alter={};names={"first.service","second.service"};
+    alter=[&](ProcessResult& r){r.standardOutput=reply("first.service","first.service")+"\n";};
+    require(!inspect()&&!snapshot.complete,"missing block treated as not-found");
+    names={"sddm.service","display-manager.service","alias.service"};
+    const auto shared=std::string("Id=sddm.service\nNames=sddm.service display-manager.service alias.service\n")+
+        "Description=SDDM\nLoadState=loaded\nActiveState=active\nUnitFileState=enabled\n"+
+        "ExecStart={ path=/usr/bin/sddm ; }\n";
+    for(int duplicates:{1,3}) {
+        alter=[&](ProcessResult& r){r.standardOutput.clear();for(int i=0;i<duplicates;++i)r.standardOutput+=shared+"\n";};
+        require(inspect()&&snapshot.managers.at("SDDM").selected&&snapshot.managers.at("SDDM").running,
+                "canonical/aliases lost: "+error);
+    }
+    alter=[&](ProcessResult& r){r.standardOutput=shared+"\n"+
+        reply("other.service","other.service alias.service")+"\n";};
+    require(!inspect()&&!snapshot.complete,"ambiguous alias accepted");
+    std::cout<<"PASS: batch sizes, coverage, reordered/duplicate aliases, incomplete/failed/truncated replies\n";
 }
 void inventoryTemplateProof(){
     Fixture f("inventory-templates");std::string error;
@@ -405,7 +532,7 @@ void inventoryTemplateProof(){
         if(unit=="lightdm.service")r.standardOutput="Id=lightdm.service\nNames=lightdm.service\nLoadState=loaded\nActiveState=inactive\nExecStart={ path=/usr/sbin/lightdm ; }\n";
         return r;
     };
-    SystemDisplayManagerInventory inventory(runner,f.config);DisplayManagerSnapshot snapshot;
+    SystemDisplayManagerInventory inventory(batchFixture(runner),f.config);DisplayManagerSnapshot snapshot;
     const auto saw=[&](const std::string& unit){return std::find(shown.begin(),shown.end(),unit)!=shown.end();};
     const auto noTemplates=[&]{require(!saw("alsa-card-wait@.service")&&!saw("getty@.service"),
         "uninstantiated template was queried");};
@@ -430,7 +557,7 @@ void inventoryTemplateProof(){
     }
     overrides["getty@tty1.service"]="LoadState=loaded\n";shown.clear();
     require(!inventory.inspect(snapshot,error)&&!snapshot.complete&&saw("getty@tty1.service")&&
-        error.find("incomplete service inventory: getty@tty1.service")!=std::string::npos,
+        error.find("missing ActiveState")!=std::string::npos,
         "instance properties were not validated");
     overrides.clear();
 
@@ -488,7 +615,7 @@ void inventoryLogindProof(){
     Fixture f("inventory-logind");std::string error;
     std::string sessions="3 1000 user seat0\n",reply="Class=user\nService=sddm\n";
     bool refuse=false;int showCalls=0;
-    SystemDisplayManagerInventory inventory([&](ExecutableId id,const std::vector<std::string>& args){
+    SystemDisplayManagerInventory inventory(batchFixture([&](ExecutableId id,const std::vector<std::string>& args){
         ProcessResult r;r.started=true;r.exitCode=0;
         if(id!=ExecutableId::Loginctl)return r;
         if(args==std::vector<std::string>{"list-sessions","--no-legend","--no-pager"}){
@@ -499,7 +626,7 @@ void inventoryLogindProof(){
         ++showCalls;
         if(refuse){r.exitCode=1;r.standardError="injected loginctl failure";return r;}
         r.standardOutput=reply;return r;
-    },f.config);
+    }),f.config);
     DisplayManagerSnapshot snapshot;
     for(const std::string userReply:{"Class=user\nService=sddm\n","Class=user\n","Class=user\nService=\n"}){
         reply=userReply;
@@ -589,6 +716,6 @@ int main(){try{
     require(type.validate("")&&type.postProcessingValue("")=="[]","empty typed scope invalid");
     require(type.postProcessingValue("sddm,GDM,lightdm")=="[\"GDM\",\"LIGHTDM\",\"SDDM\"]","canonical list invalid");
     require(!type.validate("SDDM,SDDM")&&!type.validate("GDM3")&&!type.validate("weird")&&!type.validate("SDDM,"),"invalid tokens accepted");
-    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();observationalInventoryProof();inventoryTemplateProof();inventoryLogindProof();scopeLifecycle();
+    filesystemLifecycle();alreadyDisabledStillOwned();conflicts();durabilityAndCrash();actualProofAndReleaseRetry();journalGuards();inventoryProof();observationalInventoryProof();inventoryTemplateProof();inventoryBatchProof();inventoryLogindProof();scopeLifecycle();
     std::cout<<"PASS: DM transaction, ownership, native failure, crash recovery, scope and inventory contracts\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

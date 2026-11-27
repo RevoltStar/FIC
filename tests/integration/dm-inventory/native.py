@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import threading
 import time
 
@@ -50,6 +51,12 @@ loaded = systemctl("list-units", "--all", "--type=service", "--no-legend", "--no
 assert "fic-dm-template@instance.service" in loaded
 units = sorted(set(server) | {line.split()[0] for line in loaded.splitlines() if line.strip()})
 units = [u for u in units if not u.endswith("@.service")]
+if "--setup-only" in sys.argv:
+    Path("/evidence/fixtures.json").write_text(json.dumps({
+        "version": systemctl("--version").stdout.splitlines()[0],
+        "unit_files_equivalent": server == client, "fixtures": fixtures,
+        "instance_in_loaded": True}, indent=2) + "\n")
+    sys.exit(0)
 prop = "--property=Id,Names,LoadState,ActiveState,Description,ExecStart,UnitFileState"
 def blocks(text):
     result = {}
