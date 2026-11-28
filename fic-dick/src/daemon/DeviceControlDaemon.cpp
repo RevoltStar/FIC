@@ -2,6 +2,7 @@
 #include <fic/device-db/DeviceCategoryPolicy.h>
 #include "DeviceControlDaemon.h"
 #include "daemon/DeviceAudit.h"
+#include "daemon/DeviceIncidentSender.h"
 #include "daemon/DeviceRuleChange.h"
 #include "daemon/PermanentDeviceIncident.h"
 #include "daemon/PermanentDeviceRetry.h"
@@ -10,6 +11,7 @@
 #include "device/DeviceLifecycle.h"
 #include "device/DevicePaths.h"
 #include "device/DeviceTreeSnapshot.h"
+#include "device/StaticInventoryProof.h"
 #include "policy/DevicePolicyCompiler.h"
 
 #include <algorithm>
@@ -79,6 +81,14 @@ std::atomic_bool g_stop{false};
 // same bounded interval, so a persistent failure cannot become a busy loop.
 std::chrono::steady_clock::time_point g_nextPermanentIncidentRetry{};
 std::chrono::steady_clock::time_point g_nextReconciliationAttempt{};
+
+// The last observed per-boot static inventory proof (boot id + proven
+// subsystems). The static checks run once per distinct proof, so a collector
+// that finishes after the daemon started is picked up without a new subsystem
+// and without waiting for a udev event.
+std::string g_observedStaticProofKey;
+std::chrono::steady_clock::time_point g_nextStaticProofCheck{};
+std::chrono::steady_clock::time_point g_nextStaticIncidentRetry{};
 
 using PeerCredentials = fic::core::security_audit::PeerCredentials;
 
@@ -333,66 +343,16 @@ bool enforce_connected_category_denials(DB& db, std::string& error) {
     return true;
 }
 
-// Reports the established permanent-device violation to the main fic daemon.
+// Reports the established device violation to the main fic daemon.
 //
-// TRUST BOUNDARY: the event carries the FACT only. The main daemon resolves
-// the reaction severity from its own configuration and owns the
-// IncidentController, so a compromised or misconfigured device daemon can
-// never choose the host's containment level.
-struct DeviceIncidentDelivery {
-    // True only when the main daemon ACKNOWLEDGED the event: it processed a
-    // valid event and durably recorded the required severity, or intentionally
-    // ignored it (OFF/NONE/DISABLE). A DEGRADED containment does NOT un-
-    // acknowledge a durably persisted severity.
-    bool delivered = false;
-    bool escalated = false;
-    bool ignored = false;
-    std::string mode;
-    std::string requestedSeverity;
-    std::string effectiveSeverity;
-    std::string runtime;
-    std::string message;
-};
-
+// The delivery mechanics (bounded request, strict acknowledgement validation)
+// live in daemon/DeviceIncidentSender.*, so every violation kind shares ONE
+// implementation. The incident kind selects the command and therefore the
+// policy the main daemon resolves.
 DeviceIncidentDelivery call_fic_device_incident(
+    fic::ipc::DeviceIncidentKind kind,
     const std::vector<PermanentViolation>& violations) {
-    DeviceIncidentDelivery delivery;
-    const json request = permanent_device_incident_request(violations);
-    std::string schemaError;
-    if (!is_valid_permanent_device_incident_request(request, schemaError)) {
-        // A malformed detector event must never be sent: the main daemon would
-        // correctly refuse it, but the bug should not be masked as a network
-        // problem.
-        delivery.message = "detector event schema is invalid: " + schemaError;
-        return delivery;
-    }
-    const fic::ipc::Client::RequestResult result =
-        fic::ipc::Client().requestWithStatus(request);
-    if (!result.hasResponse) {
-        delivery.message = result.error.empty()
-            ? "main fic daemon did not respond"
-            : result.error;
-        return delivery;
-    }
-    // STRICT acknowledgement validation: the response must name THIS command,
-    // be well-typed and carry a consistent acknowledged/persistence pair. A
-    // response from an old daemon, a wrong command or a malformed shape is a
-    // delivery failure, never a success.
-    const DeviceIncidentAcknowledgement acknowledgement =
-        parse_device_incident_acknowledgement(result.response);
-    if (!acknowledgement.valid) {
-        delivery.message = acknowledgement.error;
-        return delivery;
-    }
-    delivery.delivered = acknowledgement.acknowledged;
-    delivery.escalated = acknowledgement.escalated;
-    delivery.ignored = acknowledgement.ignored;
-    delivery.mode = acknowledgement.mode;
-    delivery.requestedSeverity = acknowledgement.requestedSeverity;
-    delivery.effectiveSeverity = acknowledgement.effectiveSeverity;
-    delivery.runtime = acknowledgement.runtime;
-    delivery.message = acknowledgement.message;
-    return delivery;
+    return deliver_device_incident(kind, violations);
 }
 
 void add_event(DB& db,
@@ -510,8 +470,35 @@ bool permanent_satisfied(DB& db, const DeviceInfo& device, const EffectivePolicy
 struct PermanentViolationScan {
     bool ok = true;
     std::string error;
+    // False when at least one static subsystem could not be proven for the
+    // current boot, so its obligations were skipped. Such a pass examined
+    // every PROVABLE obligation only and must never discharge a global retry
+    // obligation.
+    bool staticInventoryProven = true;
     std::vector<PermanentViolation> violations;
 };
+
+// The per-boot static inventory proof, as observed by the device daemon. An
+// absent, unsafe, malformed or foreign-boot proof leaves every static
+// subsystem unproven; the diagnostic explains why.
+std::optional<StaticInventoryProof> current_static_inventory_proof(
+    std::string& diagnostic) {
+    std::string error;
+    const std::optional<StaticInventoryProof> proof =
+        read_static_inventory_proof(error);
+    if (!proof.has_value()) {
+        diagnostic = error;
+        return std::nullopt;
+    }
+    return proof;
+}
+
+bool static_subsystem_proven(
+    const std::optional<StaticInventoryProof>& proof,
+    const std::string& subsystem,
+    const std::string& bootId) {
+    return proof.has_value() && proof->proven(subsystem, bootId);
+}
 
 PermanentViolationScan collect_missing_permanent_devices_checked(
     DB& db,
@@ -539,7 +526,19 @@ PermanentViolationScan collect_missing_permanent_devices_checked(
     }
 
     std::set<std::string> seenObligations;
+    const std::string bootId = current_boot_id();
+    // Static hardware presence/absence is only meaningful when this boot's
+    // static inventory is PROVEN. A placeholder record or a not-yet-finished
+    // collector must never produce a "permanent device is missing" incident.
+    std::string proofDiagnostic;
+    const std::optional<StaticInventoryProof> staticProof =
+        current_static_inventory_proof(proofDiagnostic);
     for (const DeviceInfo& device : candidates) {
+        if (is_static_hardware_subsystem(device.subsystem) &&
+            !static_subsystem_proven(staticProof, device.subsystem, bootId)) {
+            scan.staticInventoryProven = false;
+            continue;
+        }
         const EffectivePolicy policy = effective_device_policy(db, device);
         if (policy.level != "permanent") {
             continue;
@@ -575,6 +574,211 @@ std::vector<PermanentViolation> collect_missing_permanent_devices(DB& db,
     return scan.violations;
 }
 
+// ---- Forbidden static hardware -------------------------------------------
+//
+// Static hardware (cpu/board/memory) is never deactivated by the device
+// daemon: a blocked PRESENT device is reported to the main daemon, which owns
+// the incident reaction. Detection is gated on the per-boot inventory proof,
+// so an unfinished or unproven collection never produces an incident.
+struct StaticViolationScan {
+    bool ok = true;
+    std::string error;
+    // True only when cpu, board and memory are all proven for this boot.
+    bool inventoryProven = false;
+    std::vector<PermanentViolation> violations;
+};
+
+StaticViolationScan collect_blocked_static_devices_checked(
+    DB& db, const std::string& bootId) {
+    StaticViolationScan scan;
+    if (bootId.empty()) {
+        scan.ok = false;
+        scan.error = "current boot_id is unavailable";
+        return scan;
+    }
+    DB::DeviceListResult inventory = db.getAllDevicesChecked();
+    if (!inventory.ok) {
+        scan.ok = false;
+        scan.error = inventory.error;
+        return scan;
+    }
+    std::string proofDiagnostic;
+    const std::optional<StaticInventoryProof> proof =
+        current_static_inventory_proof(proofDiagnostic);
+    scan.inventoryProven = true;
+    for (const char* subsystem : {"cpu", "board", "memory"}) {
+        if (!static_subsystem_proven(proof, subsystem, bootId)) {
+            scan.inventoryProven = false;
+        }
+    }
+    for (const DeviceInfo& device : inventory.devices) {
+        if (!is_static_hardware_subsystem(device.subsystem)) {
+            continue;
+        }
+        // Presence must be proven for THIS boot.
+        if (device.boot_id != bootId) {
+            continue;
+        }
+        if (!static_subsystem_proven(proof, device.subsystem, bootId)) {
+            continue;
+        }
+        const EffectivePolicy policy = effective_device_policy(db, device);
+        if (policy.level != "blocked") {
+            continue;
+        }
+        scan.violations.push_back(
+            PermanentViolation{device.id, device.id, device.devpath, policy.source});
+    }
+    return scan;
+}
+
+// Static violations already acknowledged during THIS daemon lifetime. A
+// restart re-derives them (the IncidentController deduplicates the escalation)
+// and a device that stops being blocked is pruned, so a later block is
+// reported again.
+std::set<int> g_reportedStaticViolations;
+
+std::vector<PermanentViolation> pending_static_violations(
+    const std::vector<PermanentViolation>& violations) {
+    std::set<int> currentlyBlocked;
+    std::vector<PermanentViolation> pending;
+    for (const PermanentViolation& violation : violations) {
+        currentlyBlocked.insert(violation.deviceId);
+        if (g_reportedStaticViolations.count(violation.deviceId) == 0) {
+            pending.push_back(violation);
+        }
+    }
+    for (auto it = g_reportedStaticViolations.begin();
+         it != g_reportedStaticViolations.end();) {
+        if (currentlyBlocked.count(*it) == 0) {
+            it = g_reportedStaticViolations.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return pending;
+}
+
+json check_static_device_violations(DB& db);
+json missing_permanent_to_json(const std::vector<PermanentViolation>& violations);
+
+json deliver_static_present_violations(
+    DB& db,
+    const std::vector<PermanentViolation>& violations,
+    bool fullCheck) {
+    const std::vector<PermanentViolation> pending =
+        pending_static_violations(violations);
+    if (pending.empty()) {
+        updateDeviceIncidentRetry(DeviceIncidentRetryKind::StaticPresent,
+                                  /*scanOk=*/true, fullCheck,
+                                  /*violationsEmpty=*/violations.empty(),
+                                  /*delivered=*/true);
+        return json{
+            {"ok", true},
+            {"message", violations.empty()
+                ? "no forbidden static device is present"
+                : "forbidden static devices were already reported"},
+            {"static_blocked", missing_permanent_to_json(violations)},
+            {"static_incident_delivered", true},
+            {"retry_required",
+             deviceIncidentRetryRequired(DeviceIncidentRetryKind::StaticPresent)}
+        };
+    }
+
+    const DeviceIncidentDelivery delivery = call_fic_device_incident(
+        fic::ipc::DeviceIncidentKind::StaticDevicePresent, pending);
+    const bool success = delivery.delivered;
+    if (success) {
+        for (const PermanentViolation& violation : pending) {
+            g_reportedStaticViolations.insert(violation.deviceId);
+        }
+    }
+    updateDeviceIncidentRetry(DeviceIncidentRetryKind::StaticPresent,
+                              /*scanOk=*/true, fullCheck,
+                              /*violationsEmpty=*/false, /*delivered=*/success);
+
+    for (const PermanentViolation& violation : pending) {
+        add_event(db,
+                  violation.deviceId,
+                  "incident",
+                  success ? "success" : "error",
+                  std::string("forbidden static device is present; ") +
+                      fic::ipc::deviceIncidentCommand(
+                          fic::ipc::DeviceIncidentKind::StaticDevicePresent) +
+                      ": " + (success ? "delivered" : "delivery failed") +
+                      "; mode=" + delivery.mode +
+                      "; requested=" + delivery.requestedSeverity +
+                      "; effective=" + delivery.effectiveSeverity +
+                      "; escalated=" + (delivery.escalated ? "true" : "false") +
+                      "; runtime=" + delivery.runtime +
+                      "; detail=" + delivery.message);
+    }
+
+    return json{
+        {"ok", success},
+        {"message", success
+            ? "forbidden static device present; incident reported"
+            : "forbidden static device present; incident delivery failed"},
+        {"static_blocked", missing_permanent_to_json(pending)},
+        {"static_incident_delivered", success},
+        {"incident_mode", delivery.mode},
+        {"incident_requested_severity", delivery.requestedSeverity},
+        {"incident_effective_severity", delivery.effectiveSeverity},
+        {"incident_escalated", delivery.escalated},
+        {"incident_ignored", delivery.ignored},
+        {"retry_required",
+         deviceIncidentRetryRequired(DeviceIncidentRetryKind::StaticPresent)}
+    };
+}
+
+json check_static_device_violations(DB& db) {
+    const std::string bootId = current_boot_id();
+    const StaticViolationScan scan =
+        collect_blocked_static_devices_checked(db, bootId);
+    if (!scan.ok) {
+        return fic::ipc::make_error_response(
+            "static device inventory is unproven: " + scan.error);
+    }
+    json response = deliver_static_present_violations(
+        db, scan.violations, /*fullCheck=*/scan.inventoryProven);
+    response["static_inventory_proven"] = scan.inventoryProven;
+    return response;
+}
+
+// After a rule change was persisted: report a PRESENT static device that the
+// rule just made effectively blocked. The device daemon only reports the FACT;
+// the main daemon chooses the severity and owns the IncidentController. The
+// persistent rule is never rolled back because of a failed incident delivery.
+json attach_static_rule_change_incident(
+    DB& db, json response, const DeviceRuleChangeAssessment& assessment) {
+    if (assessment.connected_static_blockers.empty()) {
+        return response;
+    }
+    std::string proofDiagnostic;
+    const std::optional<StaticInventoryProof> proof =
+        current_static_inventory_proof(proofDiagnostic);
+    const std::string bootId = current_boot_id();
+    std::vector<PermanentViolation> violations;
+    for (const DeviceInfo& device : assessment.connected_static_blockers) {
+        if (!static_subsystem_proven(proof, device.subsystem, bootId)) {
+            continue;
+        }
+        violations.push_back(PermanentViolation{
+            device.id, device.id, device.devpath, "rule-change"});
+    }
+    if (violations.empty()) {
+        response["static_device_incident"] = json{
+            {"ok", true},
+            {"reported", false},
+            {"reason", "the static inventory of the affected hardware is "
+                       "unproven; no incident is derived from it"}};
+        return response;
+    }
+    response["static_device_incident"] =
+        deliver_static_present_violations(db, violations, /*fullCheck=*/false);
+    return response;
+}
+
 json missing_permanent_to_json(const std::vector<PermanentViolation>& violations) {
     json result = json::array();
     for (const PermanentViolation& violation : violations) {
@@ -605,6 +809,10 @@ json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& cand
         return fic::ipc::make_error_response(
             "permanent device inventory is unproven: " + scan.error);
     }
+    // A pass that had to skip a static subsystem is a PARTIAL pass: it cannot
+    // prove that no static obligation is violated, so it must never clear the
+    // global retry obligation.
+    const bool provenFullCheck = fullCheck && scan.staticInventoryProven;
     const std::vector<PermanentViolation>& violations = scan.violations;
 
     if (violations.empty()) {
@@ -614,9 +822,16 @@ json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& cand
             // inventory and none is violated any more, so nothing must be
             // re-reported.
             updatePermanentIncidentRetry(
-                /*scanOk=*/true, /*fullCheck=*/true,
+                /*scanOk=*/true, /*fullCheck=*/provenFullCheck,
                 /*violationsEmpty=*/true, /*delivered=*/false);
-            return fic::ipc::make_ok_response("all permanent devices are connected");
+            return json{
+                {"ok", true},
+                {"message", provenFullCheck
+                    ? "all permanent devices are connected"
+                    : "all provable permanent devices are connected; static "
+                      "inventory is unproven"},
+                {"static_inventory_proven", scan.staticInventoryProven}
+            };
         }
         // Partial empty: the global retry obligation, if any, stays untouched.
         return fic::ipc::make_ok_response(
@@ -625,10 +840,11 @@ json check_permanent_devices(DB& db, const std::optional<std::vector<int>>& cand
 
     // ONE aggregated detector event per pass: the main daemon resolves the
     // severity once and the IncidentController deduplicates the escalation.
-    const DeviceIncidentDelivery delivery = call_fic_device_incident(violations);
+    const DeviceIncidentDelivery delivery = call_fic_device_incident(
+        fic::ipc::DeviceIncidentKind::PermanentDeviceMissing, violations);
     const bool success = delivery.delivered;
     updatePermanentIncidentRetry(
-        /*scanOk=*/true, /*fullCheck=*/fullCheck,
+        /*scanOk=*/true, /*fullCheck=*/provenFullCheck,
         /*violationsEmpty=*/false, /*delivered=*/success);
 
     // Device-local audit records the FACT of the violation and the delivery
@@ -872,7 +1088,10 @@ json update_device_control(DB& db, const json& request) {
 
     std::string activationError;
     if (!regenerate_device_policy(db, "device control update", activationError)) {
-        return policy_activation_error(db, "device control update", activationError);
+        // The persistent rule is saved: an activation failure is a DIFFERENT
+        // state, and a static violation it creates must still be reported.
+        return attach_static_rule_change_incident(
+            db, policy_activation_error(db, "device control update", activationError), assessment);
     }
 
     DeviceInfo updated = db.getDeviceById(deviceId);
@@ -883,7 +1102,9 @@ json update_device_control(DB& db, const json& request) {
         {"desired_policy_revision", db.getDesiredPolicyRevision()},
         {"active_policy_revision", db.getActivePolicyRevision()}
     };
-    return response;
+    // The persistent rule is saved: report a present static device that it
+    // just made effectively blocked (the main daemon owns the reaction).
+    return attach_static_rule_change_incident(db, std::move(response), assessment);
 }
 
 json update_device_ignore_hierarchy(DB& db, const json& request) {
@@ -917,7 +1138,10 @@ json update_device_ignore_hierarchy(DB& db, const json& request) {
 
     std::string activationError;
     if (!regenerate_device_policy(db, "ignore_hierarchy update", activationError)) {
-        return policy_activation_error(db, "ignore_hierarchy update", activationError);
+        // The persistent rule is saved: an activation failure is a DIFFERENT
+        // state, and a static violation it creates must still be reported.
+        return attach_static_rule_change_incident(
+            db, policy_activation_error(db, "ignore_hierarchy update", activationError), assessment);
     }
 
     DeviceInfo updated = db.getDeviceById(deviceId);
@@ -928,7 +1152,9 @@ json update_device_ignore_hierarchy(DB& db, const json& request) {
         {"desired_policy_revision", db.getDesiredPolicyRevision()},
         {"active_policy_revision", db.getActivePolicyRevision()}
     };
-    return response;
+    // The persistent rule is saved: report a present static device that it
+    // just made effectively blocked (the main daemon owns the reaction).
+    return attach_static_rule_change_incident(db, std::move(response), assessment);
 }
 
 json update_device_children_control(DB& db, const json& request) {
@@ -960,7 +1186,10 @@ json update_device_children_control(DB& db, const json& request) {
     }
     std::string activationError;
     if (!regenerate_device_policy(db, "children_control update", activationError)) {
-        return policy_activation_error(db, "children_control update", activationError);
+        // The persistent rule is saved: an activation failure is a DIFFERENT
+        // state, and a static violation it creates must still be reported.
+        return attach_static_rule_change_incident(
+            db, policy_activation_error(db, "children_control update", activationError), assessment);
     }
 
     json response = json{
@@ -970,7 +1199,9 @@ json update_device_children_control(DB& db, const json& request) {
         {"desired_policy_revision", db.getDesiredPolicyRevision()},
         {"active_policy_revision", db.getActivePolicyRevision()}
     };
-    return response;
+    // The persistent rule is saved: report a present static device that it
+    // just made effectively blocked (the main daemon owns the reaction).
+    return attach_static_rule_change_incident(db, std::move(response), assessment);
 }
 
 json reset_device_control(DB& db, const json& request) {
@@ -997,7 +1228,10 @@ json reset_device_control(DB& db, const json& request) {
 
     std::string activationError;
     if (!regenerate_device_policy(db, "device policy reset", activationError)) {
-        return policy_activation_error(db, "device policy reset", activationError);
+        // The persistent rule is saved: an activation failure is a DIFFERENT
+        // state, and a static violation it creates must still be reported.
+        return attach_static_rule_change_incident(
+            db, policy_activation_error(db, "device policy reset", activationError), assessment);
     }
 
     DeviceInfo updated = db.getDeviceById(deviceId);
@@ -1008,7 +1242,9 @@ json reset_device_control(DB& db, const json& request) {
         {"desired_policy_revision", db.getDesiredPolicyRevision()},
         {"active_policy_revision", db.getActivePolicyRevision()}
     };
-    return response;
+    // The persistent rule is saved: report a present static device that it
+    // just made effectively blocked (the main daemon owns the reaction).
+    return attach_static_rule_change_incident(db, std::move(response), assessment);
 }
 
 bool can_delete_subtree(DB& db, const DeviceInfo& device, const std::string& bootId) {
@@ -1162,7 +1398,31 @@ json handle_db_request(const json& request) {
         return json{{"ok", true}, {"message", "device events loaded"}, {"events", events}};
     }
     if (command == "device_check_permanent") {
-        return check_permanent_devices(db);
+        // Two independent checks: dynamic reconciliation owns dynamic devices,
+        // the static check owns cpu/board/memory. Both must report their own
+        // result, and a failed delivery of one kind must not hide the other.
+        json response = check_permanent_devices(db);
+        const json staticCheck = check_static_device_violations(db);
+        response["static_blocked"] = staticCheck.value("static_blocked", json::array());
+        response["static_inventory_proven"] =
+            staticCheck.value("static_inventory_proven", false);
+        response["static_incident_delivered"] =
+            staticCheck.value("static_incident_delivered", false);
+        response["static_retry_required"] = deviceIncidentRetryRequired(
+            DeviceIncidentRetryKind::StaticPresent);
+        if (!staticCheck.value("ok", false)) {
+            response["ok"] = false;
+            response["static_message"] =
+                staticCheck.value("message", "static device check failed");
+            if (response.value("message", "") ==
+                    "all permanent devices are connected" ||
+                response.value("message", "") ==
+                    "all provable permanent devices are connected; static "
+                    "inventory is unproven") {
+                response["message"] = response["static_message"];
+            }
+        }
+        return response;
     }
 
     return fic::ipc::make_error_response("unknown device command: " + command);
@@ -2004,6 +2264,103 @@ int run_daemon(const std::string& socketPathArg) {
                 log_device(
                     std::string("permanent device incident retry skipped: "
                                 "device database error: ") +
+                        databaseError.what(),
+                    logLevel::ERROR);
+            }
+        }
+
+        // Static inventory watch. The static collector publishes a per-boot
+        // proof; the static checks (missing permanent hardware and forbidden
+        // present hardware) run as soon as that proof is available, so a
+        // collector that finishes after the daemon started is handled without
+        // delaying any dynamic device check.
+        if (std::chrono::steady_clock::now() >= g_nextStaticProofCheck) {
+            g_nextStaticProofCheck =
+                std::chrono::steady_clock::now() + std::chrono::seconds(1);
+            std::string proofDiagnostic;
+            const std::optional<StaticInventoryProof> proof =
+                current_static_inventory_proof(proofDiagnostic);
+            const std::string proofKey = proof.has_value()
+                ? proof->bootId + "|" + (proof->cpu ? "1" : "0") +
+                      (proof->board ? "1" : "0") + (proof->memory ? "1" : "0")
+                : std::string("unproven");
+            if (proofKey != g_observedStaticProofKey) {
+                g_observedStaticProofKey = proofKey;
+                if (!proof.has_value()) {
+                    log_device("static inventory proof is unavailable: " +
+                                   proofDiagnostic +
+                                   "; static device checks are suspended",
+                               logLevel::WARN);
+                } else {
+                    log_device(
+                        "static inventory proof observed: boot=" + proof->bootId +
+                            " cpu=" + (proof->cpu ? "proven" : "unproven") +
+                            " board=" + (proof->board ? "proven" : "unproven") +
+                            " memory=" + (proof->memory ? "proven" : "unproven"),
+                        logLevel::INFO);
+                }
+                try {
+                    DB db(DeviceRuntimePaths::get().databaseOptions());
+                    if (!db.initializeDatabase()) {
+                        log_device(
+                            "static device checks skipped: device database is "
+                            "unavailable: " + db.lastError(),
+                            logLevel::ERROR);
+                    } else {
+                        const json permanentCheck = check_permanent_devices(db);
+                        if (!permanentCheck.value("ok", false)) {
+                            log_device(
+                                "static inventory permanent check failed: " +
+                                    permanentCheck.value("message",
+                                                         "unknown error"),
+                                logLevel::ERROR);
+                        }
+                        const json staticCheck = check_static_device_violations(db);
+                        if (!staticCheck.value("ok", false)) {
+                            log_device(
+                                "forbidden static device check failed: " +
+                                    staticCheck.value("message",
+                                                      "unknown error"),
+                                logLevel::ERROR);
+                        }
+                    }
+                } catch (const std::exception& databaseError) {
+                    log_device(
+                        std::string("static device checks skipped: device "
+                                    "database error: ") +
+                            databaseError.what(),
+                        logLevel::ERROR);
+                }
+            }
+        }
+
+        // Bounded retry for an undelivered forbidden-static-device incident.
+        // The violation is re-derived from the authoritative database, so a
+        // rule that no longer blocks anything is simply not re-reported.
+        if (deviceIncidentRetryRequired(DeviceIncidentRetryKind::StaticPresent) &&
+            std::chrono::steady_clock::now() >= g_nextStaticIncidentRetry) {
+            g_nextStaticIncidentRetry =
+                std::chrono::steady_clock::now() +
+                PERMANENT_INCIDENT_RETRY_INTERVAL;
+            try {
+                DB db(DeviceRuntimePaths::get().databaseOptions());
+                if (!db.initializeDatabase()) {
+                    log_device(
+                        "forbidden static device incident retry skipped: device "
+                        "database is unavailable: " + db.lastError(),
+                        logLevel::ERROR);
+                } else {
+                    const json retryCheck = check_static_device_violations(db);
+                    if (retryCheck.value("ok", false)) {
+                        log_device(
+                            "forbidden static device incident retry delivered",
+                            logLevel::INFO);
+                    }
+                }
+            } catch (const std::exception& databaseError) {
+                log_device(
+                    std::string("forbidden static device incident retry "
+                                "skipped: device database error: ") +
                         databaseError.what(),
                     logLevel::ERROR);
             }

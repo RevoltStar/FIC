@@ -30,6 +30,14 @@ protected:
     //В первую очередь для USB и block
     std::vector<std::string> additionalControlList;
 
+    // Proven static-inventory identity.
+    //
+    // A placeholder record (the tool failed, or the identity could not be
+    // established) is still useful for display but must never be treated as
+    // evidence that a concrete device is present or absent. The flag starts
+    // proven and is cleared by every fallback path.
+    bool inventoryProven_ = true;
+
 
     //Обрезать лишнее
     void trim(std::string& val);
@@ -49,6 +57,8 @@ public:
     InfoCollector(std::vector<std::string> _controlList);
     //Вычисляем хэш для папки
     std::string create_hash();
+    // True only when the collected identities are trustworthy.
+    bool inventory_proven() const { return inventoryProven_; }
     virtual ~InfoCollector() = default;
 
 };

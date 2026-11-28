@@ -659,6 +659,18 @@ target_link_libraries(device_rule_change_tests PRIVATE
 )
 add_test(NAME device_rule_change_tests COMMAND device_rule_change_tests)
 
+add_executable(static_inventory_proof_tests
+    fic-dick/device/StaticInventoryProofTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/device/StaticInventoryProof.cpp
+)
+target_include_directories(static_inventory_proof_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+target_link_libraries(static_inventory_proof_tests PRIVATE
+    fic-core
+)
+add_test(NAME static_inventory_proof_tests COMMAND static_inventory_proof_tests)
+
 add_executable(device_lifecycle_tests
     fic-dick/device/DeviceLifecycleTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/device/DeviceLifecycle.cpp
@@ -2941,6 +2953,22 @@ target_include_directories(device_incident_event_tests PRIVATE
 target_link_libraries(device_incident_event_tests PRIVATE
     fic-core fic-ipc Threads::Threads)
 add_test(NAME device_incident_event_tests COMMAND device_incident_event_tests)
+
+add_executable(device_severity_config_upgrade_tests
+    fic/daemon/DeviceSeverityConfigUpgradeTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/daemon/DeviceIncidentEvent.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/modules/dc/DC.cpp
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/src/Policy.cpp
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/src/PolicyTypeValue.cpp
+)
+target_include_directories(device_severity_config_upgrade_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-policy/include
+)
+target_link_libraries(device_severity_config_upgrade_tests PRIVATE
+    fic-core fic-ipc Threads::Threads)
+add_test(NAME device_severity_config_upgrade_tests
+         COMMAND device_severity_config_upgrade_tests)
 
 add_executable(device_incident_response_compat_tests
     fic/daemon/DeviceIncidentResponseCompatTests.cpp

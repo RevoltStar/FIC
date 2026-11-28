@@ -141,6 +141,21 @@ void testConfigContract(const fs::path& root) {
             assert(upgraded.rfind(readFile(defaults / fileName), 0) == 0);
             assert(upgraded.find("check_interval.status=ENABLE\ncheck_interval.value=1800\n") != std::string::npos);
             assert(upgraded.find("periodic_apply_min_pause.status=ENABLE\nperiodic_apply_min_pause.value=30\n") != std::string::npos);
+        } else if (std::string(fileName) == "DC.conf") {
+            // The DC detector severity settings are an additive upgrade too:
+            // an installation from before them receives the packaged factory
+            // values instead of an unproven (ISOLATE) configuration.
+            const auto upgraded = readFile(working / fileName);
+            assert(upgraded.rfind(readFile(defaults / fileName), 0) == 0);
+            assert(upgraded.find("permanent_device_missing_severity.status=ENABLE\n"
+                                 "permanent_device_missing_severity.value=STANDARD\n") !=
+                   std::string::npos);
+            assert(upgraded.find("static_device_present_severity.status=ENABLE\n"
+                                 "static_device_present_severity.value=NONE\n") !=
+                   std::string::npos);
+            assert(upgraded.find("device_block_failed_severity.status=ENABLE\n"
+                                 "device_block_failed_severity.value=STANDARD\n") !=
+                   std::string::npos);
         } else {
             assert(readFile(working / fileName) == readFile(defaults / fileName));
         }

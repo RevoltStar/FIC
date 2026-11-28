@@ -172,15 +172,43 @@ int main() {
     IncidentSource deviceSource;
     deviceSource.name = "device";
     const std::string reason = "PERMANENT_DEVICE_MISSING: device_id=123";
+    const auto kind = fic::ipc::DeviceIncidentKind::PermanentDeviceMissing;
+
+    // ---- Every incident kind owns its own command token --------------------
+    // The production builder must name the command of the acknowledged kind,
+    // and the production parser must reject a reply that names another kind.
+    for (const auto incidentKind : {fic::ipc::DeviceIncidentKind::PermanentDeviceMissing,
+                                    fic::ipc::DeviceIncidentKind::StaticDevicePresent,
+                                    fic::ipc::DeviceIncidentKind::DeviceBlockFailed}) {
+        const nlohmann::json response = make_device_incident_ack_response(
+            incidentKind, reactionOf(DeviceMissingReactionKind::Severity),
+            /*ignoredByMode=*/false, /*persistenceConfirmed=*/true,
+            /*incidentOk=*/true, "STANDARD", "STANDARD", "PASSIVE", "inactive",
+            true, false, "");
+        require(response.value("command", "") ==
+                    fic::ipc::deviceIncidentCommand(incidentKind),
+                "the acknowledgement must name the acknowledged command");
+        const auto ack = parse_device_incident_acknowledgement(response, incidentKind);
+        require(ack.valid && ack.acknowledged,
+                "the matching acknowledgement must be accepted: " + ack.error);
+        const auto crossKind = parse_device_incident_acknowledgement(
+            response, fic::ipc::DeviceIncidentKind::PermanentDeviceMissing);
+        if (incidentKind != fic::ipc::DeviceIncidentKind::PermanentDeviceMissing) {
+            require(!crossKind.valid,
+                    "an acknowledgement of another kind must be a delivery "
+                    "failure");
+        }
+    }
 
     // ---- NONE: intentional ignore, no incident write ----------------------
     {
         const nlohmann::json response = make_device_incident_ack_response(
+            kind,
             reactionOf(DeviceMissingReactionKind::None),
             /*ignoredByMode=*/true, /*persistenceConfirmed=*/false,
             /*incidentOk=*/true, "NONE", "UNLOCKED", "ACTIVE", "inactive",
             false, false, "");
-        const auto ack = parse_device_incident_acknowledgement(response);
+        const auto ack = parse_device_incident_acknowledgement(response, kind);
         require(ack.valid, "NONE must be accepted: " + ack.error);
         require(ack.acknowledged, "NONE must close the delivery obligation");
         require(!ack.persistenceConfirmed,
@@ -194,11 +222,12 @@ int main() {
     // ---- DISABLE: intentional ignore, no incident write -------------------
     {
         const nlohmann::json response = make_device_incident_ack_response(
+            kind,
             reactionOf(DeviceMissingReactionKind::Disabled),
             /*ignoredByMode=*/true, /*persistenceConfirmed=*/false,
             /*incidentOk=*/true, "NONE", "UNLOCKED", "ACTIVE", "inactive",
             false, false, "");
-        const auto ack = parse_device_incident_acknowledgement(response);
+        const auto ack = parse_device_incident_acknowledgement(response, kind);
         require(ack.valid && ack.acknowledged && !ack.persistenceConfirmed &&
                     ack.ignored,
                 "DISABLE must be accepted as an intentional ignore: " +
@@ -216,6 +245,7 @@ int main() {
         require(raised.ignoredByMode,
                 "OFF must ignore the raise without incident mutation");
         const nlohmann::json response = make_device_incident_ack_response(
+            kind,
             reactionOf(DeviceMissingReactionKind::Severity),
             /*ignoredByMode=*/raised.ignoredByMode,
             /*persistenceConfirmed=*/raised.persistenceConfirmed,
@@ -223,7 +253,7 @@ int main() {
             fic::core::incidentSeverityToken(raised.effectiveSeverity), "OFF",
             fic::incident::runtimeStateToString(raised.runtime),
             raised.escalated, raised.persistentStateBroken, raised.detail);
-        const auto ack = parse_device_incident_acknowledgement(response);
+        const auto ack = parse_device_incident_acknowledgement(response, kind);
         require(ack.valid,
                 "OFF with a proven lockstatus must be accepted: " + ack.error);
         require(ack.acknowledged && !ack.persistenceConfirmed && ack.ignored,
@@ -241,13 +271,14 @@ int main() {
         require(raised.persistenceConfirmed && raised.ok,
                 "PASSIVE must durably record the severity: " + raised.detail);
         const nlohmann::json response = make_device_incident_ack_response(
+            kind,
             reactionOf(DeviceMissingReactionKind::Severity),
             raised.ignoredByMode, raised.persistenceConfirmed, raised.ok,
             "STANDARD",
             fic::core::incidentSeverityToken(raised.effectiveSeverity),
             "PASSIVE", fic::incident::runtimeStateToString(raised.runtime),
             raised.escalated, raised.persistentStateBroken, raised.detail);
-        const auto ack = parse_device_incident_acknowledgement(response);
+        const auto ack = parse_device_incident_acknowledgement(response, kind);
         require(ack.valid && ack.acknowledged && ack.persistenceConfirmed &&
                     !ack.ignored,
                 "PASSIVE durable must be a full acknowledgement: " + ack.error);
@@ -272,13 +303,14 @@ int main() {
         require(!raised.ok && raised.runtime == RuntimeState::Degraded,
                 "a failed containment must be DEGRADED, not proven");
         const nlohmann::json response = make_device_incident_ack_response(
+            kind,
             reactionOf(DeviceMissingReactionKind::Severity),
             raised.ignoredByMode, raised.persistenceConfirmed, raised.ok,
             "STANDARD",
             fic::core::incidentSeverityToken(raised.effectiveSeverity),
             "ACTIVE", fic::incident::runtimeStateToString(raised.runtime),
             raised.escalated, raised.persistentStateBroken, raised.detail);
-        const auto ack = parse_device_incident_acknowledgement(response);
+        const auto ack = parse_device_incident_acknowledgement(response, kind);
         require(ack.valid && ack.acknowledged && ack.persistenceConfirmed,
                 "ACTIVE durable + DEGRADED is still a full acknowledgement: " +
                     ack.error);
@@ -295,11 +327,12 @@ int main() {
     // ---- Persistence failure ----------------------------------------------
     {
         const nlohmann::json response = make_device_incident_ack_response(
+            kind,
             reactionOf(DeviceMissingReactionKind::Severity),
             /*ignoredByMode=*/false, /*persistenceConfirmed=*/false,
             /*incidentOk=*/false, "STANDARD", "ISOLATE", "ACTIVE", "degraded",
             false, true, "incident state could not be persisted");
-        const auto ack = parse_device_incident_acknowledgement(response);
+        const auto ack = parse_device_incident_acknowledgement(response, kind);
         require(ack.valid && !ack.acknowledged && !ack.persistenceConfirmed &&
                     !ack.ignored,
                 "a persistence failure must be a non-acknowledgement: " +
@@ -325,7 +358,8 @@ int main() {
             {"effective_severity", "UNLOCKED"},
             {"ignored", true},
             {"runtime", "inactive"},
-            {"api_version", 1}});
+            {"api_version", 1}},
+            kind);
         require(!ack.valid,
                 "an unacknowledged ignore must be rejected, never repaired");
     }
@@ -343,7 +377,8 @@ int main() {
             {"effective_severity", "UNLOCKED"},
             {"ignored", true},
             {"runtime", "inactive"},
-            {"api_version", 1}});
+            {"api_version", 1}},
+            kind);
         require(!ack.valid,
                 "an ignored event claiming persistence must be rejected");
     }
@@ -356,7 +391,8 @@ int main() {
             {"persistence_confirmed", false},
             {"ignored", true},
             {"response_mode", "ACTIVE"},
-            {"api_version", 1}});
+            {"api_version", 1}},
+            kind);
         require(!ack.valid,
                 "a wrongly typed acknowledged field must be rejected");
     }

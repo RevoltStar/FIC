@@ -15,7 +15,8 @@ using json = nlohmann::json;
 
 } // namespace
 
-json permanent_device_incident_request(
+json device_incident_request(
+    fic::ipc::DeviceIncidentKind kind,
     const std::vector<PermanentViolation>& violations) {
     json ids = json::array();
     // Truncate, never drop: the fact of the violation is the security-relevant
@@ -27,14 +28,16 @@ json permanent_device_incident_request(
         ids.push_back(violations[index].deviceId);
     }
     return json{
-        {"command", "incident_device_missing"},
+        {"command", fic::ipc::deviceIncidentCommand(kind)},
         {"device_ids", ids},
         {"device_ids_total", violations.size()}
     };
 }
 
-bool is_valid_permanent_device_incident_request(
-    const json& request, std::string& error) {
+bool is_valid_device_incident_request(
+    const json& request,
+    fic::ipc::DeviceIncidentKind expectedKind,
+    std::string& error) {
     if (!request.is_object()) {
         error = "request must be an object";
         return false;
@@ -47,10 +50,12 @@ bool is_valid_permanent_device_incident_request(
         error = "unknown request field: " + item.key();
         return false;
     }
+    const std::string expectedCommand =
+        fic::ipc::deviceIncidentCommand(expectedKind);
     const auto command = request.find("command");
     if (command == request.end() || !command->is_string() ||
-        command->get<std::string>() != "incident_device_missing") {
-        error = "request.command must be \"incident_device_missing\"";
+        command->get<std::string>() != expectedCommand) {
+        error = "request.command must be \"" + expectedCommand + "\"";
         return false;
     }
     const auto ids = request.find("device_ids");
@@ -91,7 +96,8 @@ bool is_valid_permanent_device_incident_request(
 }
 
 DeviceIncidentAcknowledgement parse_device_incident_acknowledgement(
-    const json& response) {
+    const json& response,
+    fic::ipc::DeviceIncidentKind expectedKind) {
     DeviceIncidentAcknowledgement acknowledgement;
     if (!response.is_object()) {
         acknowledgement.error = "main fic daemon returned a malformed response";
@@ -99,9 +105,11 @@ DeviceIncidentAcknowledgement parse_device_incident_acknowledgement(
     }
     // An old main daemon answers "unknown command" or an unrelated shape; that
     // is a delivery failure, never an acknowledgement.
+    const std::string expectedCommand =
+        fic::ipc::deviceIncidentCommand(expectedKind);
     const auto command = response.find("command");
     if (command == response.end() || !command->is_string() ||
-        command->get<std::string>() != "incident_device_missing") {
+        command->get<std::string>() != expectedCommand) {
         acknowledgement.error =
             "main fic daemon did not process the device incident: " +
             response.value("message", "unknown response");

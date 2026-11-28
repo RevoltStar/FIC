@@ -102,7 +102,11 @@ bool InfoCollector::process_device(
             this->log("Устройство уже существует. Обновляем boot_id", logLevel::DEBUG);
             //Это устройство уже есть => Обновляем boot_id.
             if(!db.updateBootId(existing_device.id, boot_id)){
+                // The presence record of this boot could not be written, so the
+                // inventory of this subsystem is unproven.
+                this->inventoryProven_ = false;
                 this->log("Ошибка при обновлении boot_id для", logLevel::FATAL);
+                return false;
             }
         }else{
             DeviceInfo parent_device = db.getDeviceByPath(devpath_parent);
@@ -132,16 +136,19 @@ bool InfoCollector::process_device(
                 for(auto it = this->deviceParam.begin(); it != this->deviceParam.end(); ++it) {
                       if (!db.addDeviceAttribute(device_id, it->first,  it->second)) {
                           db.rollbackTransaction();
+                          this->inventoryProven_ = false;
                           this->log("Ошибка записи атрибута для " + device_type, logLevel::FATAL);
                           return false;
                       }
                   }
                 if (!db.commitTransaction()) {
+                    this->inventoryProven_ = false;
                     this->log("Ошибка фиксации транзакции для " + device_type, logLevel::FATAL);
                     return false;
                 }
             } else {
                 db.rollbackTransaction();
+                this->inventoryProven_ = false;
                 this->log("Ошибка создания устройства для " + device_type, logLevel::FATAL);
                 return false;
             }

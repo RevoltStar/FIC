@@ -19,7 +19,10 @@ bool BoardInfoCollector::process_device_concrete(){
     ProcessResult result = VerifiedProcessExecutor::execute("/usr/sbin/dmidecode", {"-t", "2"});
     if (!result.success()) {
         std::string error = result.error.empty() ? result.standardError : result.error;
-        this->log("Verified dmidecode execution failed; creating unknown board placeholder: " + error, logLevel::WARN);
+        // Placeholder only: without DMI data no concrete board identity exists,
+        // so the subsystem stays unproven.
+        this->inventoryProven_ = false;
+        this->log("Verified dmidecode execution failed; creating unknown board placeholder: " + error, logLevel::ERROR);
         for (auto& [key, value] : this->deviceParam) {
             value = "unknown";
         }

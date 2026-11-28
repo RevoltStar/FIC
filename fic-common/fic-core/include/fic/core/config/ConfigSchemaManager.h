@@ -24,6 +24,15 @@ public:
         const std::filesystem::path& configDirectory, std::string& error,
         std::optional<ConfigAuthorityIdentity> testIdentity = std::nullopt);
 
+    // Targeted additive upgrade for the DC detector severity settings. Only
+    // entirely missing entries are appended with the packaged factory values;
+    // existing configuration is never rewritten. Called by ensureConfigs()
+    // during package upgrade, so an installation from before these policies
+    // never resolves them as an unproven (ISOLATE) configuration.
+    static bool ensureDeviceIncidentSeverityDefaults(
+        const std::filesystem::path& configDirectory, std::string& error,
+        std::optional<ConfigAuthorityIdentity> testIdentity = std::nullopt);
+
     static bool verifyConfigs(const std::filesystem::path& configDirectory,
                               std::string& error,
                               std::optional<ConfigAuthorityIdentity> testIdentity =

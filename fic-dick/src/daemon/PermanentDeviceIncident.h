@@ -6,12 +6,13 @@
 #include <string>
 #include <vector>
 
+#include <fic/ipc/DeviceIncidentProtocol.h>
 #include <nlohmann/json_fwd.hpp>
 
 namespace fic::device_control {
 
-// One missing permanent-device obligation, as established by the device
-// daemon's own database and observed presence.
+// One established device violation, as proven by the device daemon's own
+// database and observed device presence.
 struct PermanentViolation {
     int deviceId = -1;
     int sourceDeviceId = -1;
@@ -24,9 +25,9 @@ struct PermanentViolation {
 // TRUST BOUNDARY: the device daemon reports the FACT of a violation only. The
 // request deliberately carries NO severity and NO response-mode authority:
 // the main daemon resolves the reaction from its own configuration
-// (DC/DeviceControl/permanent_device_missing_severity) and owns the
-// IncidentController. A compromised or misconfigured device daemon must never
-// be able to choose ISOLATE for the host.
+// (DC/DeviceControl/<kind>_severity) and owns the IncidentController. A
+// compromised or misconfigured device daemon must never be able to choose
+// ISOLATE for the host.
 //
 // The payload is bounded: at most MAX_DEVICE_INCIDENT_IDS device ids are
 // carried, and the list is truncated rather than dropped, so an oversized
@@ -34,13 +35,17 @@ struct PermanentViolation {
 // still delivered.
 inline constexpr std::size_t MAX_DEVICE_INCIDENT_IDS = 64U;
 
-nlohmann::json permanent_device_incident_request(
+nlohmann::json device_incident_request(
+    fic::ipc::DeviceIncidentKind kind,
     const std::vector<PermanentViolation>& violations);
 
-// True when the request is a well-formed bounded detector event. Used by the
-// sender before dispatch and by tests to pin the schema.
-bool is_valid_permanent_device_incident_request(
-    const nlohmann::json& request, std::string& error);
+// True when the request is a well-formed bounded detector event of the
+// expected kind. Used by the sender before dispatch and by tests to pin the
+// schema.
+bool is_valid_device_incident_request(
+    const nlohmann::json& request,
+    fic::ipc::DeviceIncidentKind expectedKind,
+    std::string& error);
 
 // The acknowledgement the main daemon must return for a detector event.
 //
@@ -67,7 +72,8 @@ struct DeviceIncidentAcknowledgement {
 // from an old daemon, a wrong command, or a malformed shape is a delivery
 // failure, never a success.
 DeviceIncidentAcknowledgement parse_device_incident_acknowledgement(
-    const nlohmann::json& response);
+    const nlohmann::json& response,
+    fic::ipc::DeviceIncidentKind expectedKind);
 
 } // namespace fic::device_control
 

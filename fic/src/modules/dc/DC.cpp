@@ -37,7 +37,12 @@ bool DC::reconcile(std::string& error) {
 }
 
 bool DC::apply() {
-    if (policyName == "permanent_device_missing_severity")
+    // Detector severity settings are not udev configuration: their apply only
+    // proves that the configured value is valid and readable. They never
+    // regenerate udev rules and never require the device daemon to be ready.
+    if (policyName == "permanent_device_missing_severity" ||
+        policyName == "static_device_present_severity" ||
+        policyName == "device_block_failed_severity")
         return moduleConf && moduleConf->loadConfig() && getValue().has_value();
     std::string error;
     const bool ok = reconcile(error);
@@ -65,6 +70,24 @@ DC_permanent_device_missing_severity::DC_permanent_device_missing_severity()
 {
     // The detector reaction is a severity token, chosen by the administrator.
     // STANDARD first keeps the generated default, the rest are selectable.
+    this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
+        std::vector<std::string>{"STANDARD", "NONE", "SOFT", "HARD", "ISOLATE"});
+}
+
+DC_static_device_present_severity::DC_static_device_present_severity()
+    : DC("static_device_present_severity")
+{
+    // Factory default NONE: blocking static hardware is an administrative
+    // decision, and the factory configuration must not contain the host.
+    this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
+        std::vector<std::string>{"NONE", "SOFT", "STANDARD", "HARD", "ISOLATE"});
+}
+
+DC_device_block_failed_severity::DC_device_block_failed_severity()
+    : DC("device_block_failed_severity")
+{
+    // Factory default STANDARD: a forbidden dynamic device that could not be
+    // restricted is a real violation of the configured policy.
     this->policyTypeValue = std::make_unique<PossibleListPolicyTypeValue>(
         std::vector<std::string>{"STANDARD", "NONE", "SOFT", "HARD", "ISOLATE"});
 }

@@ -23,7 +23,10 @@ bool CPUInfoCollector::process_device_concrete(){
     ProcessResult result = VerifiedProcessExecutor::execute("/usr/bin/lscpu", {}, options);
     if (!result.success()) {
         std::string error = result.error.empty() ? result.standardError : result.error;
-        this->log("Verified lscpu execution failed; creating unknown CPU placeholder: " + error, logLevel::WARN);
+        // The placeholder keeps the inventory visible, but it cannot prove the
+        // identity of any concrete CPU, so the subsystem stays unproven.
+        this->inventoryProven_ = false;
+        this->log("Verified lscpu execution failed; creating unknown CPU placeholder: " + error, logLevel::ERROR);
         for (auto& [key, value] : this->deviceParam) {
             value = "unknown";
         }

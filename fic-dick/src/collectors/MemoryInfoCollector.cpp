@@ -57,7 +57,11 @@ bool MemoryInfoCollector::process_device_concrete(){
         this->deviceParam["Type"] = "System RAM";
         this->deviceParam["Locator"] = "system";
 
-        this->log("dmidecode did not provide usable memory modules; using /proc/meminfo fallback", logLevel::WARN);
+        // /proc/meminfo only reports the total amount: it cannot prove the
+        // identity of any individual module, so the subsystem stays unproven
+        // while the fallback record keeps the inventory visible.
+        this->inventoryProven_ = false;
+        this->log("dmidecode did not provide usable memory modules; using /proc/meminfo fallback", logLevel::ERROR);
         return this->process_device("memory", memory_list_dir);
     };
 
@@ -65,7 +69,9 @@ bool MemoryInfoCollector::process_device_concrete(){
     ProcessResult result = VerifiedProcessExecutor::execute("/usr/sbin/dmidecode", {"-t", "17"});
     if (!result.success()) {
         std::string error = result.error.empty() ? result.standardError : result.error;
-        this->log("Verified dmidecode execution failed; creating unknown memory placeholder: " + error, logLevel::WARN);
+        // Placeholder only: no module identity could be established.
+        this->inventoryProven_ = false;
+        this->log("Verified dmidecode execution failed; creating unknown memory placeholder: " + error, logLevel::ERROR);
         for (auto& [key, value] : this->deviceParam) {
             value = "unknown";
         }
@@ -82,6 +88,7 @@ bool MemoryInfoCollector::process_device_concrete(){
     bool inMemorySection = false;
     std::unordered_map<std::string, std::string> currentModule;
     int moduleCount = 0;
+    int failedModules = 0;
 
     // Функция для обработки собранных данных одного модуля памяти
     auto processCurrentModule = [&]() {
@@ -127,7 +134,11 @@ bool MemoryInfoCollector::process_device_concrete(){
                     moduleCount++;
                     //std::cout << "Модуль успешно добавлен в БД" << std::endl;
                 } else {
-                    //std::cerr << "Ошибка добавления модуля в БД" << std::endl;
+                    // A module that could not be stored makes the whole module
+                    // inventory unproven: a partial set must never be read as
+                    // the complete memory configuration.
+                    this->inventoryProven_ = false;
+                    failedModules++;
                 }
             } else {
                 //std::cout << "Пропущен модуль (Size: " << size << ", Form Factor: " << formFactor << ")" << std::endl;
@@ -188,6 +199,14 @@ bool MemoryInfoCollector::process_device_concrete(){
     //std::cout << "Обработка завершена. Всего обработано модулей памяти: " << moduleCount << std::endl;
 
     if (moduleCount > 0) {
+        // A stored module whose write failed is a real failure of the whole
+        // collection, not a silently partial inventory.
+        if (failedModules > 0) {
+            this->log("Memory module inventory is incomplete: " +
+                          std::to_string(failedModules) + " module(s) failed",
+                      logLevel::ERROR);
+            return false;
+        }
         return true;
     }
 

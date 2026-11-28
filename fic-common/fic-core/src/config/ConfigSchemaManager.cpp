@@ -24,6 +24,42 @@ bool validAbsoluteNormalized(const std::filesystem::path& path) {
     return !path.empty() && path.is_absolute() && path.lexically_normal() == path;
 }
 
+// Appends the keys that are entirely missing from `content`.
+//
+// Match ConfigFileHandler key/comment semantics, but append to the exact
+// original bytes instead of rewriting unrelated user formatting/settings.
+bool appendMissingEntries(
+    const std::string& content,
+    const std::vector<std::pair<const char*, const char*>>& defaults,
+    std::string& updated,
+    std::string& error) {
+    std::set<std::string> keys;
+    std::istringstream input(content);
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.find('#') != std::string::npos) continue;
+        const auto equals = line.find('=');
+        if (equals == std::string::npos) continue;
+        std::string key = line.substr(0, equals);
+        // Known keys contain no inner whitespace. ConfigFileHandler retains
+        // inner whitespace, and trims only these characters at the edges.
+        key.erase(0, key.find_first_not_of(" \t\r\n"));
+        key.erase(key.find_last_not_of(" \t\r\n") + 1);
+        keys.insert(key);
+    }
+    updated = content;
+    for (const auto& [key, value] : defaults) {
+        if (keys.count(key)) continue;
+        if (!updated.empty() && updated.back() != '\n') updated += '\n';
+        updated += std::string(key) + "=" + value + "\n";
+    }
+    if (updated.size() > MAX_WORKING_CONFIG_BYTES) {
+        error = "configuration defaults would exceed configuration size limit";
+        return false;
+    }
+    return true;
+}
+
 bool ensureRealDirectory(const std::filesystem::path& path,
                          bool allowRecoveryBootstrap,
                          bool& created,
@@ -327,6 +363,7 @@ bool ConfigSchemaManager::ensureConfigs(
         }
     }
     return ensurePeriodicApplyDefaults(configDirectory, error, identity) &&
+        ensureDeviceIncidentSeverityDefaults(configDirectory, error, identity) &&
         proveConfigDirectory(configDirectory, identity, error);
 }
 
@@ -348,38 +385,60 @@ bool ConfigSchemaManager::ensurePeriodicApplyDefaults(
     if (!readRegularFile(path, content, error, identity, &before) ||
         !verifyConfigContent("GLOBAL.conf", content, error)) return false;
 
-    // Match ConfigFileHandler key/comment semantics, but append to the exact
-    // original bytes instead of rewriting unrelated user formatting/settings.
-    std::set<std::string> keys;
-    std::istringstream input(content);
-    std::string line;
-    while (std::getline(input, line)) {
-        if (line.find('#') != std::string::npos) continue;
-        const auto equals = line.find('=');
-        if (equals == std::string::npos) continue;
-        std::string key = line.substr(0, equals);
-        // Known keys contain no inner whitespace. ConfigFileHandler retains
-        // inner whitespace, and trims only these characters at the edges.
-        key.erase(0, key.find_first_not_of(" \t\r\n"));
-        key.erase(key.find_last_not_of(" \t\r\n") + 1);
-        keys.insert(key);
-    }
-    const std::pair<const char*, const char*> defaults[] = {
+    const std::vector<std::pair<const char*, const char*>> defaults = {
         {"check_interval.status", "ENABLE"}, {"check_interval.value", "1800"},
         {"periodic_apply_min_pause.status", "ENABLE"},
         {"periodic_apply_min_pause.value", "30"}
     };
-    std::string updated = content;
-    for (const auto& [key, value] : defaults) {
-        if (keys.count(key)) continue;
-        if (!updated.empty() && updated.back() != '\n') updated += '\n';
-        updated += std::string(key) + "=" + value + "\n";
-    }
-    if (updated == content) return true;
-    if (updated.size() > MAX_WORKING_CONFIG_BYTES) {
-        error = "GLOBAL scheduling defaults would exceed configuration size limit";
+    std::string updated;
+    if (!appendMissingEntries(content, defaults, updated, error)) {
+        error = "GLOBAL scheduling " + error;
         return false;
     }
+    if (updated == content) return true;
+    AtomicWriteOptions options;
+    options.rejectSymlink = true;
+    options.expectedTargetState = before;
+    return AtomicFileWriter::write(path.string(), updated, options, &error) &&
+        proveConfigDirectory(configDirectory, identity, error);
+}
+
+bool ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults(
+    const std::filesystem::path& configDirectory, std::string& error,
+    std::optional<ConfigAuthorityIdentity> testIdentity) {
+    error.clear();
+    ConfigAuthorityIdentity identity;
+    if (testIdentity) identity = *testIdentity;
+    else if (!productionConfigAuthority(identity, error)) return false;
+    if (!validAbsoluteNormalized(configDirectory)) {
+        error = "config directory must be absolute and normalized";
+        return false;
+    }
+    if (!proveConfigDirectory(configDirectory, identity, error)) return false;
+    const auto path = configDirectory / "DC.conf";
+    std::string content;
+    AtomicTargetState before;
+    if (!readRegularFile(path, content, error, identity, &before) ||
+        !verifyConfigContent("DC.conf", content, error)) return false;
+
+    // Detector severity settings added after the first development builds. An
+    // existing installation keeps every configured value; only the missing
+    // entries are appended with the packaged factory values, so an upgraded
+    // host never falls back to an unintended ISOLATE reaction.
+    const std::vector<std::pair<const char*, const char*>> defaults = {
+        {"permanent_device_missing_severity.status", "ENABLE"},
+        {"permanent_device_missing_severity.value", "STANDARD"},
+        {"static_device_present_severity.status", "ENABLE"},
+        {"static_device_present_severity.value", "NONE"},
+        {"device_block_failed_severity.status", "ENABLE"},
+        {"device_block_failed_severity.value", "STANDARD"}
+    };
+    std::string updated;
+    if (!appendMissingEntries(content, defaults, updated, error)) {
+        error = "DC detector severity " + error;
+        return false;
+    }
+    if (updated == content) return true;
     AtomicWriteOptions options;
     options.rejectSymlink = true;
     options.expectedTargetState = before;

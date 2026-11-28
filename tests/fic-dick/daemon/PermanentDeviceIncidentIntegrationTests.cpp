@@ -163,8 +163,9 @@ IncidentSource deviceSource() {
 }
 
 int main() {
-    using fic::device_control::is_valid_permanent_device_incident_request;
-    using fic::device_control::permanent_device_incident_request;
+    using fic::device_control::device_incident_request;
+    using fic::device_control::is_valid_device_incident_request;
+    const auto kind = fic::ipc::DeviceIncidentKind::PermanentDeviceMissing;
 
     // The state store proves root ownership in production; tests run as the
     // invoking user, so the expectation is overridden for the whole run.
@@ -187,9 +188,9 @@ int main() {
     const std::vector<PermanentViolation> violations{
         {123, 100, "/devices/usb1", "dc:block_usb_storage"}};
     const nlohmann::json request =
-        permanent_device_incident_request(violations);
+        device_incident_request(kind, violations);
     std::string schemaError;
-    require(is_valid_permanent_device_incident_request(request, schemaError),
+    require(is_valid_device_incident_request(request, kind, schemaError),
             schemaError);
 
     MainDaemonFixture fixture;

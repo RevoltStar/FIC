@@ -58,4 +58,22 @@ public:
     DC_permanent_device_missing_severity();
 };
 
+// Detector setting for a PRESENT static device (cpu/board/memory) whose
+// effective rule is `blocked`. fic-dick reports the fact; the reaction is
+// chosen here. Factory default NONE: the rule itself is the administrator's
+// decision and no containment is implied.
+class DC_static_device_present_severity : public DC
+{
+public:
+    DC_static_device_present_severity();
+};
+
+// Detector setting for a forbidden DYNAMIC device that could not be
+// restricted by the existing udev/sysfs enforcement. Factory default STANDARD.
+class DC_device_block_failed_severity : public DC
+{
+public:
+    DC_device_block_failed_severity();
+};
+
 #endif // D_H

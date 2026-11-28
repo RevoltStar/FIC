@@ -606,7 +606,13 @@ bool run_daemon_apply_all_pass(
     PolicyExecutionPlanner::OwnExecutor startupAdmission;
     if (startupDevice && !startupDevice->ready()) {
         startupAdmission = [&](const PolicyRef& ref, Policy&) -> std::optional<PolicyApplyResult> {
-            if (ref.moduleName != "DC" || ref.policyName == "permanent_device_missing_severity")
+            // Detector severity settings are not udev configuration: they only
+            // validate their own configured value, so they are applied even
+            // while the device daemon is not ready.
+            if (ref.moduleName != "DC" ||
+                ref.policyName == "permanent_device_missing_severity" ||
+                ref.policyName == "static_device_present_severity" ||
+                ref.policyName == "device_block_failed_severity")
                 return std::nullopt;
             PolicyApplyResult result{ref.moduleName, ref.submoduleName, ref.policyName,
                 PolicyApplyStatus::Failed, startupDevice->diagnostic};
@@ -723,15 +729,17 @@ json log_records_json(
         limit);
 }
 
-// ---- Device-detector incident events (incident_device_missing) ------------
+// ---- Device-detector incident events --------------------------------------
 //
 // TRUST BOUNDARY. The privileged FIC device daemon (fic-dick) reports an
-// ESTABLISHED violation: a permanent-device obligation whose device is absent.
-// The event carries the FACT only; the main daemon resolves the reaction from
-// its own trusted configuration (DC/DeviceControl/permanent_device_missing_severity)
-// and owns IncidentController. Access to the administrative socket alone does
-// NOT make a sender a trusted device detector: the peer must be the root-UID
-// system device daemon, which is how fic-dick runs in production.
+// ESTABLISHED violation: a permanent obligation whose device is absent, a
+// present static device whose effective rule is blocked, or a forbidden
+// dynamic device that could not be restricted. The event carries the FACT
+// only; the main daemon resolves the reaction from its own trusted
+// configuration (DC/DeviceControl/<kind>_severity) and owns the
+// IncidentController. Access to the administrative socket alone does NOT make
+// a sender a trusted device detector: the peer must be the root-UID system
+// device daemon, which is how fic-dick runs in production.
 
 // The production fic-dick runs as root; a non-root peer cannot be the device
 // daemon by construction.
@@ -742,7 +750,7 @@ bool is_trusted_device_daemon_peer(const PeerCredentials& peer) {
 // Bounded event schema: command + non-empty bounded id list + truthful total.
 inline constexpr std::size_t MAX_DEVICE_MISSING_IDS = 64U;
 
-bool validate_device_missing_event(
+bool validate_device_incident_event(
     const json& request, std::vector<int>& deviceIds, std::string& error) {
     if (!fic::ipc::request_has_only_fields(
             request, {"command", "device_ids", "device_ids_total"}, error)) {
@@ -783,8 +791,8 @@ bool validate_device_missing_event(
     return true;
 }
 
-// The authoritative detector reaction for a permanent-device-missing event is
-// resolved by fic::daemon::resolve_device_missing_severity() (see
+// The authoritative detector reaction for a device violation event is
+// resolved by fic::daemon::resolve_device_incident_severity() (see
 // daemon/DeviceIncidentEvent.h): the typed outcome separates an INTENTIONAL
 // ignore from an UNPROVEN configuration, which fails closed to ISOLATE.
 
@@ -1203,36 +1211,42 @@ json handle_request(json request,
                 {"runtime", fic::incident::runtimeStateToString(raised.runtime)}
             };
         }
-        if (command == "incident_device_missing") {
+        fic::ipc::DeviceIncidentKind incidentKind{};
+        if (fic::ipc::deviceIncidentKindFromCommand(command, incidentKind)) {
+            const std::string incidentCommand =
+                fic::ipc::deviceIncidentCommand(incidentKind);
             // 1. Trusted peer: only the root system device daemon may report
             //    established device violations. Socket membership in the fic
             //    group is NOT sufficient.
             if (!is_trusted_device_daemon_peer(peer)) {
                 write_audit_log(fic::core::security_audit::makeEvent("fic", {
                     {"event", "device_incident_rejected"},
-                    {"message", "untrusted peer for incident_device_missing"},
+                    {"message", "untrusted peer for " + incidentCommand},
                     {"peer_uid", peer.uid},
                     {"peer_available", peer.available}
                 }));
                 return fic::ipc::make_error_response(
-                    "incident_device_missing requires the trusted device daemon");
+                    incidentCommand + " requires the trusted device daemon");
             }
             // 2. Strict bounded schema.
             std::vector<int> deviceIds;
             std::string eventError;
-            if (!validate_device_missing_event(request, deviceIds, eventError)) {
+            if (!validate_device_incident_event(request, deviceIds, eventError)) {
                 return fic::ipc::make_error_response(eventError);
             }
             // 3. The authoritative reaction is resolved HERE, from the trusted
             //    configuration; the detector never chooses it. The typed
             //    outcome separates an INTENTIONAL ignore from an UNPROVEN
             //    configuration, which must fail closed to ISOLATE.
+            const fic::daemon::DeviceIncidentSeveritySpec severitySpec =
+                fic::daemon::device_incident_severity_spec(incidentKind);
             Policy* detectorPolicy = getPolicyClass(
-                policyRegistry, "DC", "permanent_device_missing_severity");
+                policyRegistry, "DC", severitySpec.policyName);
             const fic::daemon::DeviceMissingReaction reaction =
                 detectorPolicy == nullptr
                     ? fic::daemon::DeviceMissingReaction{}
-                    : fic::daemon::resolve_device_missing_severity(*detectorPolicy);
+                    : fic::daemon::resolve_device_incident_severity(
+                          *detectorPolicy, severitySpec);
             const fic::incident::IncidentResponseModeResult mode =
                 fic::incident::IncidentResponseModeResolver::production();
 
@@ -1244,6 +1258,7 @@ json handle_request(json request,
             if (reaction.kind == fic::daemon::DeviceMissingReactionKind::Disabled ||
                 reaction.kind == fic::daemon::DeviceMissingReactionKind::None) {
                 return fic::daemon::make_device_incident_ack_response(
+                    incidentKind,
                     reaction,
                     /*ignoredByMode=*/true,
                     /*persistenceConfirmed=*/false,
@@ -1265,7 +1280,7 @@ json handle_request(json request,
             //    fail-closed ISOLATE instead of suppressing the incident.
             fic::incident::IncidentSource source;
             source.name = "device";
-            std::string reason = "PERMANENT_DEVICE_MISSING:";
+            std::string reason = fic::ipc::deviceIncidentReasonPrefix(incidentKind);
             for (const int deviceId : deviceIds) {
                 reason += " device_id=" + std::to_string(deviceId);
             }
@@ -1278,6 +1293,7 @@ json handle_request(json request,
             //    actual store outcome, independent of the containment result,
             //    and incident_ok carries the combined containment outcome.
             return fic::daemon::make_device_incident_ack_response(
+                incidentKind,
                 reaction,
                 /*ignoredByMode=*/raised.ignoredByMode,
                 /*persistenceConfirmed=*/raised.persistenceConfirmed,
@@ -1353,7 +1369,9 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
         return fic::ipc::request_has_only_fields(
             request, {"command", "value"}, error);
     }
-    if (command == "incident_device_missing") {
+    if (command == "incident_device_missing" ||
+        command == "incident_device_present" ||
+        command == "incident_device_block_failed") {
         // Strict bounded schema: the detector event carries the FACT only.
         // The full field/type/limit validation runs in the handler, which also
         // rejects an empty list.

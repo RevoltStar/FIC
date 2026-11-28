@@ -73,9 +73,35 @@ try:
                 ('gate-' + subsystem, '/' + subsystem + '_list/gate-' + subsystem, subsystem, subsystem, parent, 'allowed', boot_id)).lastrowid
         parent = db.execute("SELECT id FROM devices WHERE subsystem='__udev__'").fetchone()[0]
         usb_id = db.execute("INSERT INTO devices(device_hash,devpath,subsystem,device_type,parent_id,control_level,control_explicit,boot_id) VALUES('gate-usb','/devices/gate-usb','usb','usb_device',?,'allowed',0,'old-boot')", (parent,)).lastrowid
+    proof_path = Path('/run/fic/static-inventory.state')
+    # Before ANY reliable static inventory exists, a blocked present CPU must
+    # not produce an incident: its presence is not proven for this boot.
+    result = ipc({'command':'device_update_control_level','device_id':static_ids['cpu'], 'control_level':'blocked','ignore_hierarchy':True})
+    assert result['ok'], result
+    assert result['static_device_incident']['reported'] is False, result
+    result = ipc({'command':'device_update_control_level','device_id':static_ids['cpu'], 'control_level':'allowed','ignore_hierarchy':True})
+    assert result['ok'], result
+    unproven = ipc({'command':'device_check_permanent'})
+    assert unproven['static_inventory_proven'] is False, unproven
+    assert unproven['static_blocked'] == [], unproven
+
+    # A completed reliable inventory publishes the per-boot proof.
+    proof_path.write_text(json.dumps({
+        'boot_id': boot_id, 'cpu': True, 'board': True, 'memory': True}) + '\n')
+    proof_path.chmod(0o600)
+
     for subsystem, level in (('cpu','permanent'),('board','blocked'),('memory','ignored')):
         result = ipc({'command':'device_update_control_level','device_id':static_ids[subsystem], 'control_level':level,'ignore_hierarchy':True})
         assert result['ok'], result
+        if level == 'blocked':
+            # The rule is persisted and the present board is reported at once.
+            # No main daemon socket exists in this fixture, so the delivery
+            # itself is a recorded failure - not a rejected rule.
+            incident = result.get('static_device_incident', {})
+            assert incident.get('static_blocked'), result
+            assert incident.get('static_incident_delivered') is False, result
+        else:
+            assert 'static_device_incident' not in result, result
         if rules_path.read_bytes() != baseline:
             import difflib
             print(''.join(difflib.unified_diff(baseline.decode().splitlines(True), rules_path.read_text().splitlines(True))), file=sys.stderr)
@@ -83,7 +109,20 @@ try:
         with sqlite3.connect(db_path) as db:
             desired, active = db.execute('SELECT desired_revision,active_revision FROM device_policy_state').fetchone()
             assert desired == active, (desired,active)
-    assert ipc({'command':'device_check_permanent'})['ok']
+    result = ipc({'command':'device_check_permanent'})
+    assert result['missing'] == [], result
+    assert result['static_inventory_proven'] is True, result
+    assert [item['device_id'] for item in result['static_blocked']] == [static_ids['board']], result
+    assert result['static_incident_delivered'] is False and result['ok'] is False, result
+    # Losing the proof suspends every static check again: no violation and no
+    # missing static device is derived from an unproven inventory.
+    proof_path.unlink()
+    suspended = ipc({'command':'device_check_permanent'})
+    assert suspended['static_inventory_proven'] is False, suspended
+    assert suspended['static_blocked'] == [] and suspended['missing'] == [], suspended
+    proof_path.write_text(json.dumps({
+        'boot_id': boot_id, 'cpu': True, 'board': True, 'memory': True}) + '\n')
+    proof_path.chmod(0o600)
     result = ipc({'command':'device_update_control_level','device_id':usb_id,'control_level':'blocked','ignore_hierarchy':False})
     assert result['ok'], result
     changed = rules_path.read_bytes()

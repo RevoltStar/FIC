@@ -210,11 +210,17 @@ def main():
     dc_policy_source = read_text(dc_policy)
     require('std::vector<std::string>{"all", "new"}' in dc_policy_source,
             "DC category policies must expose all/new select values")
-    require(dc_policy_source.count("PossibleListPolicyTypeValue") == 2,
-            "category mode and detector severity must expose distinct select lists")
+    require(dc_policy_source.count("PossibleListPolicyTypeValue") == 4,
+            "the category mode and the three detector severity settings must "
+            "expose distinct select lists")
     require(
-        '{"STANDARD", "NONE", "SOFT", "HARD", "ISOLATE"}' in dc_policy_source,
-        "the detector severity list must be the severity tokens")
+        dc_policy_source.count('{"STANDARD", "NONE", "SOFT", "HARD", "ISOLATE"}') == 2,
+        "permanent-device-missing and block-failure severities must default to "
+        "STANDARD with every severity token selectable")
+    require(
+        dc_policy_source.count('{"NONE", "SOFT", "STANDARD", "HARD", "ISOLATE"}') == 1,
+        "forbidden static hardware severity must default to NONE with every "
+        "severity token selectable")
 
     dc_config_values = {}
     for line in read_text(dc_config).splitlines():
@@ -228,6 +234,15 @@ def main():
     ]:
         require(dc_config_values.get(f"{policy}.value") == "all",
                 f"{policy} seed value must be all")
+    for policy, factory in (
+        ("permanent_device_missing_severity", "STANDARD"),
+        ("static_device_present_severity", "NONE"),
+        ("device_block_failed_severity", "STANDARD"),
+    ):
+        require(dc_config_values.get(f"{policy}.status") == "ENABLE",
+                f"{policy} must be enabled by default")
+        require(dc_config_values.get(f"{policy}.value") == factory,
+                f"{policy} factory value must be {factory}")
 
     udev_source = read_text(udev_collector)
     require("/devices/virtual/block/" in udev_source, "virtual block devices must be accepted")

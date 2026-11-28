@@ -26,7 +26,13 @@ callback = re.search(
     r'(?P<body>.*?)\n\s*\};', startup_pass, re.S)
 assert callback, 'missing production startup device admission callback'
 expected = '''
-    if (ref.moduleName != "DC" || ref.policyName == "permanent_device_missing_severity")
+    // Detector severity settings are not udev configuration: they only
+    // validate their own configured value, so they are applied even
+    // while the device daemon is not ready.
+    if (ref.moduleName != "DC" ||
+        ref.policyName == "permanent_device_missing_severity" ||
+        ref.policyName == "static_device_present_severity" ||
+        ref.policyName == "device_block_failed_severity")
         return std::nullopt;
     PolicyApplyResult result{ref.moduleName, ref.submoduleName, ref.policyName,
         PolicyApplyStatus::Failed, startupDevice->diagnostic};

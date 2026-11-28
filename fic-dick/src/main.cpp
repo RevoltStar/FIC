@@ -8,6 +8,7 @@
 #include <vector>
 #include <fic/core/runtime/FicRuntimePaths.h>
 #include <fic/core/runtime/PackageState.h>
+#include <fic/core/runtime/SystemBootInfo.h>
 #include <fic/core/config/ConfigSchemaManager.h>
 #include <fic/device-db/DB.h>
 #include <fic/version/BuildInfo.h>
@@ -15,6 +16,7 @@
 #include "daemon/DeviceControlDaemon.h"
 #include "enforcement/DeviceEnforcer.h"
 #include "device/DevicePaths.h"
+#include "device/StaticInventoryProof.h"
 #include "collectors/UDEVInfoCollector.h"
 #include "collectors/USBInfoCollector.h"
 #include "collectors/PCIInfoCollector.h"
@@ -230,10 +232,36 @@ int main(int argc, char* argv[], char* envp[]) {
             BoardInfoCollector bic;
             MemoryInfoCollector mic;
 
-            if (!cic.process_device_concrete() || !bic.process_device_concrete() || !mic.process_device_concrete()) {
+            // The three collectors are independent: a failure of one subsystem
+            // must not hide the results of the other two.
+            const bool cpuCollected = cic.process_device_concrete();
+            const bool boardCollected = bic.process_device_concrete();
+            const bool memoryCollected = mic.process_device_concrete();
+
+            // Publish the per-boot proof of which static subsystems are
+            // trustworthy. The device daemon accepts only this proof before it
+            // derives static presence/absence violations; a failed or
+            // placeholder-only collection stays unproven and can never cause a
+            // false incident. A successful process exit alone is not proof.
+            fic::device_control::StaticInventoryProof proof;
+            proof.bootId = SystemBootInfo::get_boot_id();
+            proof.cpu = cpuCollected && cic.inventory_proven();
+            proof.board = boardCollected && bic.inventory_proven();
+            proof.memory = memoryCollected && mic.inventory_proven();
+            std::string proofError;
+            if (!fic::device_control::write_static_inventory_proof(
+                    proof, proofError)) {
+                log("Не удалось записать результат инвентаризации статического "
+                    "оборудования: " + proofError,
+                    logLevel::ERROR);
+            }
+
+            if (!cpuCollected || !boardCollected || !memoryCollected) {
                 log("Ошибка сбора информации о ЦПУ, ОЗУ и материнской плате", logLevel::FATAL);
                 return 1;
             }
+            // The device daemon observes the proof and runs the static checks
+            // itself, so this collector never depends on the daemon being up.
             return 0;
         }
         else {

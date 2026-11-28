@@ -6,34 +6,58 @@
 
 namespace fic::device_control {
 
-// The in-memory retry obligation for an undelivered permanent-device incident.
+// A scan-based retry obligation exists per violation kind that can be
+// re-derived from the authoritative device database. A successful check of one
+// kind never discharges the delivery obligation of another continuing
+// violation, so the flags are independent.
 //
-// It is deliberately in-memory only: a restart recovers through the startup
-// reconciliation, which re-derives every violation from the authoritative
-// database plus the observed device presence, so no persistent queue is
-// needed. The flag is GLOBAL: a partial check of one subtree knows nothing
-// about undelivered violations elsewhere, so only a proven FULL check may
-// clear it.
-inline std::atomic_bool g_permanentIncidentRetryRequired{false};
+// The obligation is deliberately in-memory only: a restart recovers through the
+// startup reconciliation, which re-derives every violation from the
+// authoritative database plus the observed device presence, so no persistent
+// queue is needed. Each flag is GLOBAL for its kind: a partial check of one
+// subtree knows nothing about undelivered violations elsewhere, so only a
+// proven FULL check may clear it.
+enum class DeviceIncidentRetryKind {
+    // A permanent obligation whose device is absent.
+    PermanentMissing,
+    // A present static device whose effective rule is `blocked`.
+    StaticPresent
+};
+
+inline std::atomic_bool& deviceIncidentRetryFlag(DeviceIncidentRetryKind kind) {
+    static std::atomic_bool missing{false};
+    static std::atomic_bool present{false};
+    return kind == DeviceIncidentRetryKind::StaticPresent ? present : missing;
+}
+
+inline bool deviceIncidentRetryRequired(DeviceIncidentRetryKind kind) {
+    return deviceIncidentRetryFlag(kind).load();
+}
+
+inline void setDeviceIncidentRetryRequired(DeviceIncidentRetryKind kind,
+                                           bool required) {
+    deviceIncidentRetryFlag(kind).store(required);
+}
 
 inline bool permanentIncidentRetryRequired() {
-    return g_permanentIncidentRetryRequired.load();
+    return deviceIncidentRetryRequired(DeviceIncidentRetryKind::PermanentMissing);
 }
 
 inline void setPermanentIncidentRetryRequired(bool required) {
-    g_permanentIncidentRetryRequired.store(required);
+    setDeviceIncidentRetryRequired(DeviceIncidentRetryKind::PermanentMissing,
+                                   required);
 }
 
-// The single production authority for a retry transition after one
-// permanent-device check pass. The daemon's check_permanent_devices() calls
-// exactly this function; the tests exercise the same code.
+// The single production authority for a retry transition after one check pass
+// of `kind`. The daemon's check functions call exactly this function; the
+// tests exercise the same code.
 //
 //   scanOk        — the underlying inventory read was PROVEN successful (for
 //                   a full check this means a complete SQLite scan to
 //                   SQLITE_DONE; a failed read is an unproven inventory);
 //   fullCheck     — the pass examined every permanent obligation, not just an
 //                   affected subtree;
-//   violationsEmpty — the pass found no missing permanent devices;
+//   violationsEmpty — the pass found no violation of this kind;
 //   delivered     — the found violations were all acknowledged by the main
 //                   daemon.
 //
@@ -48,7 +72,8 @@ inline void setPermanentIncidentRetryRequired(bool required) {
 //   full proven empty        -> the obligation clears;
 //   full proven, all delivered -> the obligation clears;
 //   full proven, delivery failed -> the obligation is set.
-inline void updatePermanentIncidentRetry(
+inline void updateDeviceIncidentRetry(
+    DeviceIncidentRetryKind kind,
     bool scanOk,
     bool fullCheck,
     bool violationsEmpty,
@@ -65,16 +90,25 @@ inline void updatePermanentIncidentRetry(
         // prove the absence of violations elsewhere, so it must not clear
         // the global obligation.
         if (!violationsEmpty && !delivered) {
-            setPermanentIncidentRetryRequired(true);
+            setDeviceIncidentRetryRequired(kind, true);
         }
         return;
     }
     if (violationsEmpty || delivered) {
-        setPermanentIncidentRetryRequired(false);
+        setDeviceIncidentRetryRequired(kind, false);
         return;
     }
     // A proven full scan still found unacknowledged violations.
-    setPermanentIncidentRetryRequired(true);
+    setDeviceIncidentRetryRequired(kind, true);
+}
+
+inline void updatePermanentIncidentRetry(
+    bool scanOk,
+    bool fullCheck,
+    bool violationsEmpty,
+    bool delivered) {
+    updateDeviceIncidentRetry(DeviceIncidentRetryKind::PermanentMissing,
+                              scanOk, fullCheck, violationsEmpty, delivered);
 }
 
 inline constexpr std::chrono::seconds PERMANENT_INCIDENT_RETRY_INTERVAL{5};
