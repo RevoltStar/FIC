@@ -89,6 +89,7 @@ std::chrono::steady_clock::time_point g_nextReconciliationAttempt{};
 std::string g_observedStaticProofKey;
 std::chrono::steady_clock::time_point g_nextStaticProofCheck{};
 std::chrono::steady_clock::time_point g_nextStaticIncidentRetry{};
+std::chrono::steady_clock::time_point g_nextBlockFailureRetry{};
 
 using PeerCredentials = fic::core::security_audit::PeerCredentials;
 
@@ -193,6 +194,12 @@ void audit_device_request(const PeerCredentials& peer, const json& request, cons
 std::optional<std::string> find_udevadm();
 
 bool enforce_connected_category_denials(DB& db, std::string& error);
+
+// The failed-dynamic-block detector (defined with the other incident paths).
+// Declared here because both the sysfs enforcement pass and the udev event
+// pipeline report the same established fact.
+json report_block_failed_violations(
+    DB& db, const std::vector<PermanentViolation>& violations);
 
 bool regenerate_device_policy(DB& db, const std::string& reason, std::string& error) {
     log_device("device policy compilation started: " + reason, logLevel::INFO);
@@ -337,7 +344,20 @@ bool enforce_connected_category_denials(DB& db, std::string& error) {
         if (deny_enforcement_observed(live, details)) continue;
         if (!internal::enforceDenyThroughSysfs(live.subsystem, live.devpath, {}, details) ||
             !deny_enforcement_observed(live, details)) {
-            error = live.devpath + ": " + details; return false;
+            error = live.devpath + ": " + details;
+            // A forbidden CONNECTED device that the existing backend could not
+            // restrict is an ESTABLISHED violation of the configured category
+            // policy: report the fact before failing the pass. A device-local
+            // record failure must never suppress it.
+            log_device("category DENY enforcement failed for " + live.devpath +
+                           ": " + details,
+                       logLevel::ERROR);
+            if (live.id > 0) {
+                (void)report_block_failed_violations(
+                    db, {PermanentViolation{live.id, live.id, live.devpath,
+                                            "dc:category"}});
+            }
+            return false;
         }
     }
     return true;
@@ -745,6 +765,76 @@ json check_static_device_violations(DB& db) {
     return response;
 }
 
+// ---- Failed dynamic block ------------------------------------------------
+//
+// A forbidden dynamic device that the existing udev/sysfs enforcement could not
+// restrict is an established violation of the configured policy. The device
+// daemon reports the FACT only; the main daemon chooses the severity and owns
+// the IncidentController.
+//
+// The fact can NOT be re-derived from the inventory: reconciliation never
+// re-attempts enforcement, so it must not report a failure it never observed.
+// The pending ids therefore live in memory and are retried with the same
+// bounded interval as the other detector events. After a daemon restart the
+// device's next add/change event re-establishes the fact.
+std::vector<PermanentViolation> g_pendingBlockFailures;
+
+bool blockFailureIncidentPending() {
+    return !g_pendingBlockFailures.empty();
+}
+
+json report_block_failed_violations(
+    DB& db, const std::vector<PermanentViolation>& violations) {
+    if (violations.empty()) {
+        return json{{"ok", true}, {"message", "no failed block to report"}};
+    }
+    // Remember the obligation BEFORE the attempt: a crash between the attempt
+    // and the record must not lose an established fact.
+    g_pendingBlockFailures = violations;
+    const DeviceIncidentDelivery delivery = call_fic_device_incident(
+        fic::ipc::DeviceIncidentKind::DeviceBlockFailed, violations);
+    const bool success = delivery.delivered;
+    if (success) {
+        g_pendingBlockFailures.clear();
+    }
+    for (const PermanentViolation& violation : violations) {
+        add_event(db,
+                  violation.deviceId,
+                  "incident",
+                  success ? "success" : "error",
+                  std::string("block enforcement failed; ") +
+                      fic::ipc::deviceIncidentCommand(
+                          fic::ipc::DeviceIncidentKind::DeviceBlockFailed) +
+                      ": " + (success ? "delivered" : "delivery failed") +
+                      "; mode=" + delivery.mode +
+                      "; requested=" + delivery.requestedSeverity +
+                      "; effective=" + delivery.effectiveSeverity +
+                      "; escalated=" + (delivery.escalated ? "true" : "false") +
+                      "; runtime=" + delivery.runtime +
+                      "; detail=" + delivery.message);
+    }
+    return json{
+        {"ok", success},
+        {"message", success
+            ? "failed block incident reported"
+            : "failed block incident delivery failed"},
+        {"incident_delivered", success},
+        {"incident_mode", delivery.mode},
+        {"incident_requested_severity", delivery.requestedSeverity},
+        {"incident_effective_severity", delivery.effectiveSeverity},
+        {"incident_escalated", delivery.escalated},
+        {"incident_ignored", delivery.ignored},
+        {"retry_required", blockFailureIncidentPending()}
+    };
+}
+
+json retry_block_failed_violations(DB& db) {
+    if (g_pendingBlockFailures.empty()) {
+        return json{{"ok", true}, {"message", "no pending failed block incident"}};
+    }
+    return report_block_failed_violations(db, g_pendingBlockFailures);
+}
+
 // After a rule change was persisted: report a PRESENT static device that the
 // rule just made effectively blocked. The device daemon only reports the FACT;
 // the main daemon chooses the severity and owns the IncidentController. The
@@ -972,22 +1062,54 @@ json process_device_event(const DeviceEventEnvelope& event) {
                 };
             }
             std::string enforcementDetails;
-            const bool enforced = deny_enforcement_observed(device, enforcementDetails);
+            bool enforced = deny_enforcement_observed(device, enforcementDetails);
+            if (!enforced) {
+                // One bounded attempt through the EXISTING sysfs backend: the
+                // udev rule may have run before the device was ready.
+                std::string attemptDetails;
+                if (internal::enforceDenyThroughSysfs(subsystem, devpath, {},
+                                                      attemptDetails)) {
+                    enforced =
+                        deny_enforcement_observed(device, enforcementDetails);
+                    if (!enforced) {
+                        enforcementDetails += "; attempt: " + attemptDetails;
+                    }
+                } else {
+                    enforcementDetails +=
+                        "; enforcement attempt failed: " + attemptDetails;
+                }
+            }
             DeviceLifecycle lifecycle(db);
             std::string lifecycleError;
-            if (!lifecycle.recordDenyResult(
-                    device.id,
-                    enforced,
-                    enforcementDetails + "; source=" + effectiveSource,
-                    lifecycleError)) {
-                return fic::ipc::make_error_response(lifecycleError);
-            }
-            return json{
+            const bool recorded = lifecycle.recordDenyResult(
+                device.id, enforced,
+                enforcementDetails + "; source=" + effectiveSource,
+                lifecycleError);
+            json response = json{
                 {"ok", enforced},
-                {"message", enforced ? "device blocked by policy" : "device is blocked but enforcement failed"},
+                {"message", enforced ? "device blocked by policy"
+                                     : "device is blocked but enforcement failed"},
                 {"device", device_to_json(db, device)},
                 {"enforcement", enforcementDetails}
             };
+            if (!recorded) {
+                // A journaling failure is a DIFFERENT state: it is reported,
+                // never confused with the enforcement result, and it never
+                // suppresses the incident an actual failure establishes.
+                response["log_recorded"] = false;
+                response["log_error"] = lifecycleError;
+                log_device("failed to record deny enforcement result for " +
+                               devpath + ": " + lifecycleError,
+                           logLevel::ERROR);
+            } else {
+                response["log_recorded"] = true;
+            }
+            if (!enforced) {
+                response["incident"] = report_block_failed_violations(
+                    db, {PermanentViolation{device.id, device.id, device.devpath,
+                                            effectiveSource}});
+            }
+            return response;
         }
 
         add_event(db, device.id, "allow", "success",
@@ -2361,6 +2483,38 @@ int run_daemon(const std::string& socketPathArg) {
                 log_device(
                     std::string("forbidden static device incident retry "
                                 "skipped: device database error: ") +
+                        databaseError.what(),
+                    logLevel::ERROR);
+            }
+        }
+
+        // Bounded retry of an undelivered failed-block incident. The fact is
+        // not re-derivable from the inventory (reconciliation never re-attempts
+        // enforcement), so the established ids stay in memory until the main
+        // daemon acknowledges them.
+        if (blockFailureIncidentPending() &&
+            std::chrono::steady_clock::now() >= g_nextBlockFailureRetry) {
+            g_nextBlockFailureRetry =
+                std::chrono::steady_clock::now() +
+                PERMANENT_INCIDENT_RETRY_INTERVAL;
+            try {
+                DB db(DeviceRuntimePaths::get().databaseOptions());
+                if (!db.initializeDatabase()) {
+                    log_device(
+                        "failed block incident retry skipped: device database is "
+                        "unavailable: " + db.lastError(),
+                        logLevel::ERROR);
+                } else {
+                    const json retryCheck = retry_block_failed_violations(db);
+                    if (retryCheck.value("ok", false)) {
+                        log_device("failed block incident retry delivered",
+                                   logLevel::INFO);
+                    }
+                }
+            } catch (const std::exception& databaseError) {
+                log_device(
+                    std::string("failed block incident retry skipped: device "
+                                "database error: ") +
                         databaseError.what(),
                     logLevel::ERROR);
             }

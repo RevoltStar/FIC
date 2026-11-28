@@ -69,6 +69,12 @@
 [module:DC][policy:block_usb_storage][description]=all: absolute category deny. new: deny physical identities unknown at epoch start; explicit rules take priority. Disabling does not reconnect physically deactivated devices.
 [module:DC][policy:block_printers_scanners][description]=all: absolute category deny. new: deny physical identities unknown at epoch start; explicit rules take priority. Disabling does not reconnect physically deactivated devices.
 [module:DC][policy:block_optical_drives][description]=all: absolute category deny. new: deny physical identities unknown at epoch start; explicit rules take priority. Disabling does not reconnect physically deactivated devices.
+[module:DC][policy:permanent_device_missing_severity]=Incident severity for a missing mandatory device
+[module:DC][policy:permanent_device_missing_severity][description]=Reaction to the established fact that a mandatory (permanent) device is absent: NONE means no reaction, SOFT/STANDARD/HARD/ISOLATE select the incident severity owned by the main daemon. This is not a udev setting: applying it never regenerates udev rules and never requires the device daemon. A returning device does not clear an already raised incident automatically.
+[module:DC][policy:static_device_present_severity]=Incident severity for present forbidden static hardware
+[module:DC][policy:static_device_present_severity][description]=Reaction to the fact that an installed CPU, motherboard or memory is effectively blocked. Factory value NONE: blocking static hardware is an administrative decision that implies no reaction by itself. Static hardware is never physically deactivated.
+[module:DC][policy:device_block_failed_severity]=Incident severity for a failed forbidden-device block
+[module:DC][policy:device_block_failed_severity][description]=Reaction to a failed or unconfirmed block of a forbidden dynamic device through the existing udev/sysfs mechanism. Factory value STANDARD. A successful block creates no incident, and a failed journal write never replaces the fact of a failed block.
 
 # Identity and access: PAM
 [module:IDENTITY_ACCESS][policy:password_min_length]=Minimum password length

@@ -11,6 +11,7 @@
 // The main-daemon side is exercised through the real IncidentController with
 // fake containment backends, so no real host state is touched.
 #include "daemon/PermanentDeviceIncident.h"
+#include "daemon/DeviceIncidentSender.h"
 #include "incident/IncidentController.h"
 #include "incident/IncidentStateStore.h"
 #include "incident/IncidentResponseMode.h"
@@ -304,6 +305,81 @@ int main() {
         server.join();
         require(!malformed.hasResponse || !malformed.response.is_object(),
                 "a malformed response must be diagnosable");
+    }
+
+    // --- T14: the production sender drives every incident kind -------------
+    // deliver_device_incident() is the SAME function the daemon uses, so the
+    // per-kind command, schema validation and strict acknowledgement handling
+    // are proven against the real code.
+    {
+        using fic::device_control::deliver_device_incident;
+        const std::vector<PermanentViolation> blockFailed{
+            {321, 321, "/devices/pci0000:00/usb1/1-9", "placement:321"}};
+
+        // Acknowledged block-failure event.
+        {
+            auto server = fixture.answer(nlohmann::json{
+                {"ok", true},
+                {"message", "device incident processed"},
+                {"command", "incident_device_block_failed"},
+                {"acknowledged", true},
+                {"persistence_confirmed", true},
+                {"ignored", false},
+                {"escalated", true},
+                {"response_mode", "PASSIVE"},
+                {"requested_severity", "STANDARD"},
+                {"effective_severity", "STANDARD"},
+                {"runtime", "inactive"},
+                {"api_version", 1}}.dump());
+            const auto delivery = deliver_device_incident(
+                fic::ipc::DeviceIncidentKind::DeviceBlockFailed, blockFailed);
+            server.join();
+            require(delivery.delivered,
+                    "an acknowledged block-failure event must be delivered: " +
+                        delivery.message);
+            require(fixture.lastRequest().find("incident_device_block_failed") !=
+                        std::string::npos,
+                    "the sender must use the block-failure command");
+            require(fixture.lastRequest().find("STANDARD") == std::string::npos,
+                    "the detector must not carry an authoritative severity");
+        }
+
+        // The main daemon refuses the event: never a false success.
+        {
+            auto server = fixture.answer(nlohmann::json{
+                {"ok", false},
+                {"message", "request.device_ids must not be empty"},
+                {"api_version", 1}}.dump());
+            const auto delivery = deliver_device_incident(
+                fic::ipc::DeviceIncidentKind::DeviceBlockFailed, blockFailed);
+            server.join();
+            require(!delivery.delivered,
+                    "a refused block-failure event must not be delivered");
+        }
+
+        // An intentional ignore still closes the delivery obligation.
+        {
+            const std::vector<PermanentViolation> staticPresent{
+                {7, 7, "/cpu_list/7", "placement:7"}};
+            auto server = fixture.answer(nlohmann::json{
+                {"ok", true},
+                {"message", "device incident intentionally ignored"},
+                {"command", "incident_device_present"},
+                {"acknowledged", true},
+                {"persistence_confirmed", false},
+                {"ignored", true},
+                {"response_mode", "ACTIVE"},
+                {"requested_severity", "NONE"},
+                {"effective_severity", "UNLOCKED"},
+                {"runtime", "inactive"},
+                {"api_version", 1}}.dump());
+            const auto delivery = deliver_device_incident(
+                fic::ipc::DeviceIncidentKind::StaticDevicePresent, staticPresent);
+            server.join();
+            require(delivery.delivered && delivery.ignored,
+                    "an intentionally ignored static-present event must be "
+                    "delivered without persistence: " + delivery.message);
+        }
     }
 
     ::unsetenv("FIC_SOCKET_PATH");

@@ -126,10 +126,10 @@ private:
     std::optional<DeviceTreeSnapshotData> fetchDeviceTreeSnapshot(bool includeDisconnected) const;
     std::vector<DeviceInfo> fetchChildDevices(int parentId, bool includeDisconnected = false) const;
     std::map<std::string, std::string> fetchDeviceAttributes(int deviceId) const;
-    bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
+    bool updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage = nullptr, QString *warningMessage = nullptr, bool reactivatedDevice = false) const;
     bool updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHierarchy, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
     bool updateDeviceChildrenControlRemote(int deviceId, const std::string& childrenControl, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
-    bool resetDeviceControlRemote(int deviceId, QString *errorMessage = nullptr, QString *warningMessage = nullptr) const;
+    bool resetDeviceControlRemote(int deviceId, QString *errorMessage = nullptr, QString *warningMessage = nullptr, bool reactivatedDevice = false) const;
     bool deleteDeviceRemote(int deviceId, QString *errorMessage = nullptr) const;
 
     std::string getSystemBootId();

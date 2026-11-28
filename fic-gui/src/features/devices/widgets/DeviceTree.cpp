@@ -556,36 +556,89 @@ std::map<std::string, std::string> DeviceTree::fetchDeviceAttributes(int deviceI
 }
 
 namespace {
-QString deferredBlockWarningFromResponse(const nlohmann::json& response)
+QString connectedDevicesSummary(const nlohmann::json& blockers)
 {
-    if (!response.value("deferred_block", false)) {
-        return {};
-    }
-
-    QString message = QString::fromStdString(response.value(
-        "warning",
-        "connected devices were not deactivated; block will be enforced on reconnect"));
-    if (response.contains("deferred_blockers") && response["deferred_blockers"].is_array()) {
-        message += "\n\nЗатронутые подключенные устройства:";
-        int shown = 0;
-        for (const auto& blocker : response["deferred_blockers"]) {
-            if (!blocker.is_object()) {
-                continue;
-            }
-            message += "\n- id=" + QString::number(blocker.value("device_id", 0)) +
-                       " " + QString::fromStdString(blocker.value("devpath", ""));
-            ++shown;
-            if (shown >= 5) {
-                message += "\n- ...";
-                break;
-            }
+    QString summary;
+    int shown = 0;
+    for (const auto& blocker : blockers) {
+        if (!blocker.is_object()) {
+            continue;
         }
+        summary += "\n- id=" + QString::number(blocker.value("device_id", 0)) +
+                   " " + QString::fromStdString(blocker.value("devpath", ""));
+        ++shown;
+        if (shown >= 5) {
+            summary += "\n- ...";
+            break;
+        }
+    }
+    return summary;
+}
+
+// A rule change that would restrict a CONNECTED dynamic device is rejected by
+// the daemon before anything is stored. The refusal must tell the
+// administrator that the affected devices have to be detached first.
+QString ruleChangeRejectionMessage(const nlohmann::json& response,
+                                   const QString& fallback)
+{
+    QString message = QString::fromStdString(response.value("message", ""));
+    if (message.isEmpty()) {
+        message = fallback;
+    }
+    if (response.contains("blocking_connected_devices") &&
+        response["blocking_connected_devices"].is_array() &&
+        !response["blocking_connected_devices"].empty()) {
+        message += "\n\nПодключённые устройства стали бы запрещёнными. "
+                   "Правило не сохранено — предварительно извлеките эти устройства:" +
+                   connectedDevicesSummary(response["blocking_connected_devices"]);
     }
     return message;
 }
+
+// The rule was persisted. Report the consequences the administrator must know:
+// present static hardware may trigger an incident immediately, and a device
+// that was deactivated needs a reconnect or reboot to come back.
+QString ruleChangeNotice(const nlohmann::json& response,
+                         bool reactivatedDevice)
+{
+    QString notice;
+    if (response.contains("static_device_incident") &&
+        response["static_device_incident"].is_object()) {
+        const auto& incident = response["static_device_incident"];
+        if (!incident.value("reported", true)) {
+            notice += "Правило применено. Присутствующее статическое "
+                      "оборудование (процессор, материнская плата или ОЗУ) "
+                      "стало запрещённым, но инвентаризация этого оборудования "
+                      "недостоверна, поэтому событие нарушения не сформировано.";
+        } else {
+            notice += "Правило применено. Присутствующее статическое "
+                      "оборудование (процессор, материнская плата или ОЗУ) "
+                      "стало запрещённым: система может немедленно "
+                      "инициировать обработку инцидента.";
+            if (!incident.value("ok", true)) {
+                notice += "\nДоставка события инцидента основному демону не "
+                          "подтверждена; она будет повторена автоматически.";
+            }
+        }
+    }
+    if (reactivatedDevice) {
+        if (!notice.isEmpty()) {
+            notice += "\n\n";
+        }
+        notice += "Устройство было деактивировано политикой. Для восстановления "
+                  "работы устройства может потребоваться переподключение или "
+                  "перезагрузка.";
+    }
+    return notice;
 }
 
-bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage, QString *warningMessage) const
+bool deviceWasEffectivelyBlocked(const DeviceInfo& device)
+{
+    return device.effective_control_level == "blocked";
+}
+}
+
+bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string& controlLevel, QString *errorMessage, QString *warningMessage, bool reactivatedDevice) const
 {
     auto response = deviceClient().request({
         {"command", "device_update_control_level"},
@@ -593,7 +646,8 @@ bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string&
         {"control_level", controlLevel}
     });
     if (!response.value("ok", false)) {
-        const QString message = QString::fromStdString(response.value("message", "unknown daemon error"));
+        const QString message = ruleChangeRejectionMessage(
+            response, "Не удалось обновить уровень контроля.");
         if (errorMessage != nullptr) {
             *errorMessage = message;
         }
@@ -601,7 +655,7 @@ bool DeviceTree::updateDeviceControlLevelRemote(int deviceId, const std::string&
         return false;
     }
     if (warningMessage != nullptr) {
-        *warningMessage = deferredBlockWarningFromResponse(response);
+        *warningMessage = ruleChangeNotice(response, reactivatedDevice);
     }
     return true;
 }
@@ -614,7 +668,8 @@ bool DeviceTree::updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHier
         {"ignore_hierarchy", ignoreHierarchy}
     });
     if (!response.value("ok", false)) {
-        const QString message = QString::fromStdString(response.value("message", "unknown daemon error"));
+        const QString message = ruleChangeRejectionMessage(
+            response, "Не удалось обновить область действия правила.");
         if (errorMessage != nullptr) {
             *errorMessage = message;
         }
@@ -622,7 +677,7 @@ bool DeviceTree::updateDeviceIgnoreHierarchyRemote(int deviceId, bool ignoreHier
         return false;
     }
     if (warningMessage != nullptr) {
-        *warningMessage = deferredBlockWarningFromResponse(response);
+        *warningMessage = ruleChangeNotice(response, false);
     }
     return true;
 }
@@ -638,27 +693,28 @@ bool DeviceTree::updateDeviceChildrenControlRemote(int deviceId,
         {"children_control", childrenControl}
     });
     if (!response.value("ok", false)) {
-        const QString message = QString::fromStdString(
-            response.value("message", "unknown daemon error"));
+        const QString message = ruleChangeRejectionMessage(
+            response, "Не удалось обновить политику потомков.");
         if (errorMessage != nullptr) {
             *errorMessage = message;
         }
         return false;
     }
     if (warningMessage != nullptr) {
-        *warningMessage = deferredBlockWarningFromResponse(response);
+        *warningMessage = ruleChangeNotice(response, false);
     }
     return true;
 }
 
-bool DeviceTree::resetDeviceControlRemote(int deviceId, QString *errorMessage, QString *warningMessage) const
+bool DeviceTree::resetDeviceControlRemote(int deviceId, QString *errorMessage, QString *warningMessage, bool reactivatedDevice) const
 {
     auto response = deviceClient().request({
         {"command", "device_reset_control"},
         {"device_id", deviceId}
     });
     if (!response.value("ok", false)) {
-        const QString message = QString::fromStdString(response.value("message", "unknown daemon error"));
+        const QString message = ruleChangeRejectionMessage(
+            response, "Не удалось сбросить правило до наследования.");
         if (errorMessage != nullptr) {
             *errorMessage = message;
         }
@@ -666,7 +722,7 @@ bool DeviceTree::resetDeviceControlRemote(int deviceId, QString *errorMessage, Q
         return false;
     }
     if (warningMessage != nullptr) {
-        *warningMessage = deferredBlockWarningFromResponse(response);
+        *warningMessage = ruleChangeNotice(response, reactivatedDevice);
     }
     return true;
 }
@@ -846,7 +902,10 @@ void DeviceTree::setDeviceControlLevel(int deviceId, const std::string &controlL
 
     QString errorMessage;
     QString warningMessage;
-    bool updated = updateDeviceControlLevelRemote(deviceId, controlLevel, &errorMessage, &warningMessage);
+    // A device that was effectively blocked is reactivated by this change: the
+    // kernel-level deactivation is not reverted by a rule edit.
+    const bool reactivated = deviceWasEffectivelyBlocked(device) && controlLevel != "blocked";
+    bool updated = updateDeviceControlLevelRemote(deviceId, controlLevel, &errorMessage, &warningMessage, reactivated);
     if (updated)
     {
         device.control_level = controlLevel;
@@ -928,7 +987,9 @@ void DeviceTree::resetDeviceControl(int deviceId)
 
     QString errorMessage;
     QString warningMessage;
-    if (!resetDeviceControlRemote(deviceId, &errorMessage, &warningMessage))
+    const DeviceInfo device = fetchDeviceById(deviceId);
+    const bool reactivated = device.id != -1 && deviceWasEffectivelyBlocked(device);
+    if (!resetDeviceControlRemote(deviceId, &errorMessage, &warningMessage, reactivated))
     {
         QMessageBox::warning(this,
                              "Контроль устройств",

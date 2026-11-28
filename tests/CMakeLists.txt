@@ -2921,6 +2921,7 @@ add_test(NAME permanent_device_incident_tests COMMAND permanent_device_incident_
 add_executable(permanent_device_incident_integration_tests
     fic-dick/daemon/PermanentDeviceIncidentIntegrationTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/PermanentDeviceIncident.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/DeviceIncidentSender.cpp
     ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/src/FicIpcClient.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentController.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/incident/IncidentSessionTargetStore.cpp

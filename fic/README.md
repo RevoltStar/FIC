@@ -805,18 +805,30 @@ FIC снимаются, а ранее завершённые процессы и
 Переход обратно в `ACTIVE` применяет containment к уже сохранённой severity.
 Административный `incident clear` доступен в любом режиме.
 
-Device-detector события идут по той же единой подсистеме: `fic-dick` сообщает
-факт отсутствия permanent-устройства через команду `incident_device_missing`
-(только `device_ids`, без severity), основной daemon проверяет peer credentials
-(только root-UID device daemon), резолвит реакцию из политики
-`DC/DeviceControl/permanent_device_missing_severity` (NONE/SOFT/STANDARD/HARD/
-ISOLATE; заводской default STANDARD) и вызывает `IncidentController.raise()`.
-`NONE` и `DISABLE` не создают incident state; `OFF` не выполняет audit/
-notification/containment. Недоказуемая настройка (политика отсутствует,
-статус не ENABLE/DISABLE, значение отсутствует или не распознано) является
-fail-closed: реакция `ISOLATE` через `IncidentController.raise()`, а не
-намеренное игнорирование. Восстановление устройства не снижает severity и не
-вызывает автоматический clear.
+Device-detector события идут по той же единой подсистеме. Поддерживаются три
+независимых вида установленных нарушений, у каждого своя команда, своя политика
+серьёзности и своё обязательство повторной доставки:
+
+| Вид нарушения | IPC-команда | Политика серьёзности | Заводское значение |
+|---|---|---|---|
+| Отсутствует обязательное (permanent) устройство | `incident_device_missing` | `permanent_device_missing_severity` | `STANDARD` |
+| Присутствует запрещённое статическое оборудование | `incident_device_present` | `static_device_present_severity` | `NONE` |
+| Неудачная блокировка запрещённого динамического устройства | `incident_device_block_failed` | `device_block_failed_severity` | `STANDARD` |
+
+Во всех случаях `fic-dick` сообщает только `device_ids`, без severity;
+основной daemon проверяет peer credentials (только root-UID device daemon),
+резолвит реакцию из своей конфигурации (NONE/SOFT/STANDARD/HARD/ISOLATE) и
+вызывает `IncidentController.raise()`. Эти политики не являются настройками
+udev: их применение не перегенерирует udev-правила и не требует доступности
+демона устройств. `NONE` и `DISABLE` не создают incident state; `OFF` не
+выполняет audit/notification/containment. Недоказуемая настройка (статус не
+ENABLE/DISABLE, значение отсутствует или не распознано) является fail-closed:
+реакция `ISOLATE` через `IncidentController.raise()`, а не намеренное
+игнорирование. Политика, полностью отсутствующая в конфигурации предыдущей
+версии, получает заводское значение через аддитивное обновление
+`ensure-config`, поэтому обновление установки не приводит к ошибочному
+`ISOLATE`. Восстановление устройства не снижает severity и не вызывает
+автоматический clear.
 
 Ответ daemon'а формируется единым production-билдером
 (`fic::daemon::make_device_incident_ack_response`) и несёт три независимых

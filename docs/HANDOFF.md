@@ -1,29 +1,71 @@
-# Prelogin confirmation keyboard tests
+# Контроль устройств: правила, статическая инвентаризация, инциденты
 
 ### Current base
 
-Branch `main`; pre-task commit `b5f7b86e064a84dc47bac6eb41f3331ef8091b3f`.
+Branch `main`; исходный commit задачи `cf07f42bcc8afaccf8dec6e5a9dee8fbf10fd2ff`.
 
 ### Current task
 
-Stabilize `prelogin_qt_view_tests` after CI failures on Debian 12 and ALT p11 without changing production behavior.
+Привести модуль контроля устройств в соответствие с согласованной архитектурой:
+предварительный отказ изменения индивидуальных правил, наследование `/` и
+`/devices`, три политики серьёзности и три вида detector-событий, достоверность
+статической инвентаризации, инцидент неудачной блокировки динамического
+устройства, GUI/локализация.
 
 ### Accepted architecture / invariants
 
-`QtPreLoginView` owns the confirmation overlay and removes it with `deleteLater()` after cancel or confirm. The test must use Qt keyboard event delivery, retain both `R` and `P` scenarios, and must not dereference the overlay after event processing without a guarded pointer.
+* Авторитетный контракт: `docs/device-control.md`. Он описывает отказ изменения
+  правил для подключённых динамических устройств, сохранение правила для
+  присутствующего статического оборудования, наследование виртуальных
+  контейнеров, по-бутовый proof статической инвентаризации и три вида нарушений
+  с независимыми политиками и retry-обязательствами.
+* Общий расчёт эффективного правила: `fic-dick/src/device/EffectiveDevicePolicy.*`
+  (используется демоном и предварительной оценкой правил). Предварительная
+  оценка — `fic-dick/src/daemon/DeviceRuleChange.*`, одна на все четыре команды.
+* IPC kinds/commands/policy mapping: `fic-common/fic-ipc/include/fic/ipc/DeviceIncidentProtocol.h`.
+  Отправитель и строгий разбор ACK: `fic-dick/src/daemon/DeviceIncidentSender.*`.
+* Политики `static_device_present_severity` (NONE) и
+  `device_block_failed_severity` (STANDARD) включены по умолчанию и не являются
+  настройками udev. Аддитивное обновление существующей установки:
+  `ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults()`; полностью
+  отсутствующая политика использует заводское значение, присутствующая но
+  недостоверная — fail-closed ISOLATE.
+* Статический proof: `/run/fic/static-inventory.state`
+  (`fic-dick/src/device/StaticInventoryProof.*`). Демон сам наблюдает proof,
+  коллектор не вызывает IPC (нет циклической зависимости сервисов).
+* failed-block нельзя перепроверить из инвентаризации: установленный факт
+  хранится в памяти демона и повторяется; после рестарта восстанавливается
+  следующим udev-событием.
 
 ### Completed
 
-The held-Return test uses `QPointer` for the overlay, QTest key press/release and QTest's window event path for autorepeat. It checks cancel, no action during held Return, focus transfer to handoff, and exactly one `H` after release and a fresh press. Compound assertions were split. Production code was not changed.
+Этапы 1–4 реализованы: предварительный отказ правил и наследование `/`,
+`/devices`; обобщённый IPC трёх видов нарушений и три политики серьёзности с
+аддитивным обновлением конфигурации; достоверность статической инвентаризации и
+обнаружение запрещённого статического оборудования; инцидент неудачной
+блокировки; GUI/CLI-сообщения, локализация, документация; регрессионные тесты.
 
 ### Changed areas
 
-`tests/fic/incident/QtPreLoginViewTests.cpp`.
+`fic-dick/src/{daemon,device,collectors,policy}`, `fic/src/{main.cpp,daemon,modules/dc,resources}`,
+`fic-common/{fic-core,fic-ipc}`, `fic-gui/.../DeviceTree.*`, `fic-cli/src/main.cpp`,
+`tests/{fic-dick,fic,common,integration}`, `docs/device-control.md`, README,
+`docs/architecture-diagrams.md`.
 
 ### Validation
 
-Debian 12, Qt 6.4.2: original test passed 4/10 and failed 6/10 with `initial Return did not cancel safely`; changed test passed 10/10. ALT p11, Qt 6.11.2: AddressSanitizer on the original test reported heap-use-after-free at `QtPreLoginViewTests.cpp:277`, reading `overlay->isVisible()` after `PowerConfirmationOverlay` destruction; changed test passed 10/10 and one AddressSanitizer run passed. A local Qt 6.10.2 build and 10 test runs passed on an intermediate version. Only targeted builds and tests were run.
+Host (Ubuntu 26.04, g++ 15), `build-dc`: полная сборка проекта и полный CTest.
+Целевые наборы: `device_rule_change_tests`, `static_inventory_proof_tests`,
+`device_severity_config_upgrade_tests`, `device_policy_compiler_tests`,
+`device_incident_*`, `permanent_device_*`, `schema_contract_tests`,
+`device_control_static_checks`, `IncidentApplyRoutingChecks.py`.
+Docker/VM device-control suites не запускались.
 
 ### Remaining
 
-At the user's request, Debian 13, Ubuntu 24.04 and Ubuntu 26.04 tests were not run. The Debian 12 failure's individual contributions from the stale overlay pointer and manual key-event delivery were not isolated. The ALT p11 use-after-free is proven by AddressSanitizer; ordinary gdb runs did not reproduce a crash, so there is no gdb crash backtrace. Do not infer production defects from these test failures.
+Не выполнялись: Docker-гейт `static_hardware_ipc_gate.py` (обновлён под новый
+контракт), VM device-control suites (`enforcement.sh` обновлён), матрица пяти
+дистрибутивов. Известное ограничение: после перезапуска демона до подтверждения
+доставки failed-block восстанавливается только следующим udev `add/change`.
+Посторонняя неточность: `docs/architecture-diagrams.md` всё ещё описывает
+категорийные политики как `true`-политики (устарело до этой задачи).

@@ -241,8 +241,20 @@ Udev event stream не является единственным источни�
 текущего udev/sysfs inventory. Поэтому потеря runtime event во время downtime
 или overflow восстанавливается full reconciliation.
 
-Изменение явной per-device policy не деактивирует уже подключённое устройство. Category `all` имеет отдельный проверяемый enforcement для подключённых устройств. Новый generated
-файл гарантированно используется при следующем подходящем `add/change`.
+Изменение явной per-device policy оценивается ДО сохранения. Правило, которое
+перевело бы хотя бы одно **подключённое динамическое** устройство из состояния,
+отличного от `blocked`, в эффективное `blocked`, отклоняется целиком: ничего не
+записывается, desired/active revision не меняются, а ответ содержит
+`blocking_connected_devices[]`. Администратор должен сначала извлечь устройство.
+Уже существующее эффективное состояние `blocked` операции не препятствует,
+поэтому ранее запрещённое устройство всегда можно разрешить или сбросить.
+
+Правило, которое переводит **присутствующее статическое** оборудование
+(`cpu`, `board`, `memory`) в эффективное `blocked`, сохраняется, и факт
+нарушения немедленно передаётся основному daemon'у. Само статическое
+оборудование не отключается физически. Category `all` имеет отдельный
+проверяемый enforcement для подключённых устройств. Новый generated файл
+гарантированно используется при следующем подходящем `add/change`.
 
 ## Режим check-permanent
 
@@ -253,12 +265,19 @@ fic-dick check-permanent
 Отправляет daemon команду проверки `permanent` устройств. Если обязательное
 устройство отсутствует, daemon устанавливает **detector event** и отправляет
 его основному `fic` daemon'у через IPC-команду `incident_device_missing`.
+Тот же механизм передаёт ещё два вида установленных нарушений:
+`incident_device_present` (присутствует запрещённое статическое оборудование) и
+`incident_device_block_failed` (неудачная блокировка запрещённого динамического
+устройства). Полный контракт правил, инвентаризации и инцидентов:
+[`docs/device-control.md`](../docs/device-control.md).
 
 Граница доверия: fic-dick сообщает **факт** нарушения (ограниченный список
 `device_ids`), но **не** выбирает severity и не выполняет containment. Основной
 daemon проверяет peer credentials (`SO_PEERCRED`, только root-UID device
-daemon), резолвит реакцию из собственной конфигурации
-(`DC/DeviceControl/permanent_device_missing_severity`, токен
+daemon), резолвит реакцию из собственной конфигурации (для отсутствующего
+устройства — `DC/DeviceControl/permanent_device_missing_severity`, для
+запрещённого статического оборудования — `static_device_present_severity`, для
+неудачной блокировки — `device_block_failed_severity`; токен
 NONE/SOFT/STANDARD/HARD/ISOLATE) и вызывает `IncidentController.raise()`, где
 уже реализованы severity-персистенция, audit, notification и
 OFF/PASSIVE/ACTIVE containment semantics. Восстановление устройства **не**
@@ -270,8 +289,10 @@ OFF/PASSIVE/ACTIVE containment semantics. Восстановление устр�
 перезапуске device daemon'а проверка восстанавливается через startup
 reconciliation.
 
-Retry-обязательство глобальное. Точная семантика переходов
-(`updatePermanentIncidentRetry()` — единая production-функция):
+Retry-обязательство глобальное для каждого вида нарушения отдельно
+(`updateDeviceIncidentRetry()` — единая production-функция;
+`updatePermanentIncidentRetry()` — её обёртка для отсутствующих устройств).
+Успешная проверка одного вида не снимает обязательство другого:
 
 ```text
 Partial check:
@@ -306,8 +327,10 @@ busy-loop); новые udev-события при этом продолжают 
 завершается успешно и снимает обязательство.
 
 Событие считается доставленным (acknowledged) только при явном подтверждении
-основного daemon'а. Ответ должен называть команду `incident_device_missing`,
-содержать типизированные поля и согласованную комбинацию:
+основного daemon'а. Ответ должен называть ту же команду, что и отправленное
+событие (`incident_device_missing`, `incident_device_present` или
+`incident_device_block_failed`), содержать типизированные поля и
+согласованную комбинацию:
 
 | Случай | acknowledged | persistence_confirmed | ignored |
 |---|---|---|---|

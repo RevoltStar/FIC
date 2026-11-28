@@ -319,19 +319,30 @@ int print_device_response(const json& response)
     if (response.contains("device") && response["device"].is_object()) {
         print_device_item(response["device"]);
     }
-    if (response.value("deferred_block", false)) {
-        std::cout << "warning: " << response.value(
-            "warning",
-            "connected devices were not deactivated; block will be enforced on reconnect")
+    if (response.contains("static_device_incident") &&
+        response["static_device_incident"].is_object()) {
+        const auto& incident = response["static_device_incident"];
+        std::cout << "notice: the rule was applied; present static hardware "
+                     "(CPU, board or memory) is now blocked and the system may "
+                     "process an incident immediately"
                   << std::endl;
-        if (response.contains("deferred_blockers") && response["deferred_blockers"].is_array()) {
-            for (const auto& blocker : response["deferred_blockers"]) {
-                std::cout << "deferred_blocker: id=" << blocker.value("device_id", 0)
-                          << " source=" << blocker.value("source", "")
-                          << " devpath=" << blocker.value("devpath", "")
-                          << std::endl;
-            }
+        if (!incident.value("ok", true)) {
+            std::cout << "warning: the incident event could not be delivered; "
+                         "delivery will be retried"
+                      << std::endl;
         }
+    }
+    if (response.contains("incident") && response["incident"].is_object()) {
+        const auto& incident = response["incident"];
+        std::cout << "warning: the device could not be blocked; incident "
+                  << (incident.value("ok", false)
+                          ? "reported"
+                          : "delivery failed and will be retried")
+                  << std::endl;
+    }
+    if (response.contains("log_error")) {
+        std::cout << "warning: the enforcement result could not be recorded: "
+                  << response.value("log_error", "") << std::endl;
     }
     if (response.contains("children") && response["children"].is_array()) {
         for (const auto& child : response["children"]) {

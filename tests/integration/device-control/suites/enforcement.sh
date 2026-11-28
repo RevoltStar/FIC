@@ -55,7 +55,7 @@ test_explicit_allowed_effective_policy() {
 
 test_explicit_blocked_reconnect_enforces_block() {
     ensure_enforcement_usb_allowed_fixture || return
-    local response id effective source connected events
+    local response id effective source connected events incidents
     response=$(find_device_any_attr "ID_SERIAL,ID_SERIAL_SHORT,SERIAL" "$USB_ALLOWED_SERIAL" true) || return
     id=$(printf '%s\n' "$response" | device_field id)
     detach_disk "$USB_ALLOWED_TARGET"
@@ -73,12 +73,16 @@ test_explicit_blocked_reconnect_enforces_block() {
     source=$(printf '%s\n' "$response" | device_field effective_source)
     connected=$(printf '%s\n' "$response" | device_field connected)
     events=$(enforcement_event_count "$id" block)
+    incidents=$(enforcement_event_count "$id" incident)
     enforcement_reset_id "$id"
     detach_disk "$USB_ALLOWED_TARGET"
     expect_eq "$effective" "blocked" "explicit blocked device must be effectively blocked on reconnect" || return
     expect_eq "$source" "placement:$id" "explicit blocked source must be the device placement" || return
     expect_eq "$connected" "False" "explicit blocked device must be disconnected after enforcement" || return
-    [[ "$events" -ge 1 ]] || fail "explicit blocked reconnect must record a block event"
+    [[ "$events" -ge 1 ]] || fail "explicit blocked reconnect must record a block event" || return
+    # A successful enforcement is the expected outcome: it must not raise a
+    # block-failure incident, and the mere inventory pass must not either.
+    [[ "$incidents" -eq 0 ]] || fail "successful block enforcement must not report an incident"
 }
 
 test_direct_allow_overrides_parent_children_deny() {
