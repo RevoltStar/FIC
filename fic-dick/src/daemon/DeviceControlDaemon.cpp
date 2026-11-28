@@ -2,9 +2,11 @@
 #include <fic/device-db/DeviceCategoryPolicy.h>
 #include "DeviceControlDaemon.h"
 #include "daemon/DeviceAudit.h"
+#include "daemon/DeviceRuleChange.h"
 #include "daemon/PermanentDeviceIncident.h"
 #include "daemon/PermanentDeviceRetry.h"
 #include "daemon/ReconciliationOutcome.h"
+#include "device/EffectiveDevicePolicy.h"
 #include "device/DeviceLifecycle.h"
 #include "device/DevicePaths.h"
 #include "device/DeviceTreeSnapshot.h"
@@ -77,21 +79,6 @@ std::atomic_bool g_stop{false};
 // same bounded interval, so a persistent failure cannot become a busy loop.
 std::chrono::steady_clock::time_point g_nextPermanentIncidentRetry{};
 std::chrono::steady_clock::time_point g_nextReconciliationAttempt{};
-
-struct EffectivePolicy {
-    std::string level = "allowed";
-    std::string source = "default";
-    int sourceDeviceId = -1;
-    std::string reason;
-};
-
-struct ControlOverride {
-    int deviceId = -1;
-    std::string controlLevel;
-    bool controlExplicit = false;
-    bool ignoreHierarchy = false;
-    std::string childrenControl = "inherit";
-};
 
 using PeerCredentials = fic::core::security_audit::PeerCredentials;
 
@@ -193,37 +180,6 @@ void audit_device_request(const PeerCredentials& peer, const json& request, cons
     write_device_audit_log(make_device_ipc_audit_event(peer, request, response));
 }
 
-DeviceInfo with_override(DeviceInfo device, const std::optional<ControlOverride>& override) {
-    if (override.has_value() && device.id == override->deviceId) {
-        device.control_level = override->controlLevel;
-        device.control_explicit = override->controlExplicit;
-        device.ignore_hierarchy = override->ignoreHierarchy;
-        device.children_control = override->childrenControl;
-    }
-    return device;
-}
-
-std::vector<DeviceInfo> device_path_to_root(DB& db,
-                                            DeviceInfo device,
-                                            const std::optional<ControlOverride>& override = std::nullopt) {
-    std::vector<DeviceInfo> path;
-    std::set<int> seen;
-
-    device = with_override(device, override);
-    while (device.id > 0 && seen.insert(device.id).second) {
-        path.push_back(device);
-        if (device.parent_id <= 0) {
-            break;
-        }
-        device = with_override(db.getDeviceById(device.parent_id), override);
-        if (device.id == -1) {
-            break;
-        }
-    }
-
-    return path;
-}
-
 std::optional<std::string> find_udevadm();
 
 bool enforce_connected_category_denials(DB& db, std::string& error);
@@ -288,57 +244,6 @@ std::string attribute_value(const std::map<std::string, std::string>& attributes
     return it == attributes.end() ? "" : it->second;
 }
 
-
-EffectivePolicy effective_policy(DB& db,
-                                 DeviceInfo device,
-                                 const std::optional<ControlOverride>& override = std::nullopt,
-                                 const std::optional<DeviceIdentityTerms>& liveAttributes = std::nullopt) {
-    device = with_override(device, override);
-    const auto categories = db.getDeviceCategoryPolicyState();
-    const auto attributes = liveAttributes ? *liveAttributes : db.getDeviceAttributes(device.id);
-    const auto category = [&](bool hardOnly) -> std::optional<EffectivePolicy> {
-        const auto denial = categoryDenial(categories, device, attributes, hardOnly);
-        if (!denial) return std::nullopt;
-        return EffectivePolicy{"blocked", "dc:" + denial->category + ":" + denial->mode,
-            device.id, denial->mode == "all" ? "absolute category all DENY" : "identity absent from category epoch"};
-    };
-    if (const auto hard = category(true)) return *hard;
-
-    const std::vector<DeviceInfo> path = device_path_to_root(db, device, override);
-
-    for (DeviceInfo candidate : db.getDevicesByHashAndSubsystem(device.device_hash, device.subsystem)) {
-        candidate = with_override(candidate, override);
-        if (candidate.control_explicit && candidate.ignore_hierarchy) {
-            return EffectivePolicy{candidate.control_level,
-                                   "identity:" + std::to_string(candidate.id),
-                                   candidate.id,
-                                   "explicit same-identity rule with ignore_hierarchy=true"};
-        }
-    }
-
-    if (device.control_explicit) {
-        return EffectivePolicy{device.control_level,
-                               "placement:" + std::to_string(device.id),
-                               device.id,
-                               "explicit placement rule"};
-    }
-
-    if (std::optional<EffectivePolicy> categoryPolicy = category(false)) {
-        return categoryPolicy.value();
-    }
-
-    for (std::size_t i = 1; i < path.size(); ++i) {
-        const DeviceInfo& parent = path[i];
-        if (parent.children_control != "inherit") {
-            return EffectivePolicy{parent.children_control == "deny" ? "blocked" : "allowed",
-                                   "children:" + std::to_string(parent.id),
-                                   parent.id,
-                                   "nearest explicit ancestor children rule"};
-        }
-    }
-
-    return EffectivePolicy{"allowed", "default", -1, "default allow"};
-}
 
 std::optional<std::filesystem::path> find_parent_sysfs_file(const std::string& devpath,
                                                             const std::string& filename) {
@@ -413,7 +318,7 @@ bool enforce_connected_category_denials(DB& db, std::string& error) {
         live.device_hash = collector->create_hash();
         if (live.id <= 0) live.control_explicit = false;
         const bool mustDeny = categoryDenial(state, live, attributes, false).has_value() &&
-                              effective_policy(db, live, std::nullopt, attributes).level == "blocked";
+                              effective_device_policy(db, live, std::nullopt, attributes).level == "blocked";
         if (!mustDeny) continue;
         if (live.devpath.rfind("/devices/", 0) != 0) {
             error = "category DENY has unsafe device path"; return false;
@@ -517,7 +422,7 @@ bool identity_connected(DB& db, const DeviceInfo& device, const std::string& boo
 }
 
 json device_to_json(DB& db, const DeviceInfo& device) {
-    const EffectivePolicy policy = effective_policy(db, device);
+    const EffectivePolicy policy = effective_device_policy(db, device);
     const std::string bootId = current_boot_id();
     return json{
         {"id", device.id},
@@ -553,60 +458,34 @@ json event_to_json(const DeviceEvent& event) {
     };
 }
 
-std::vector<DeviceInfo> affected_devices_for_override(DB& db, const DeviceInfo& target) {
-    std::vector<DeviceInfo> devices;
-    std::set<int> seen;
-
-    auto addDevice = [&](const DeviceInfo& device) {
-        if (device.id > 0 && seen.insert(device.id).second) {
-            devices.push_back(device);
-        }
-    };
-
-    addDevice(target);
-    for (const DeviceInfo& child : db.getDescendantDevices(target.id)) {
-        addDevice(child);
-    }
-    for (const DeviceInfo& occurrence : db.getDevicesByHashAndSubsystem(target.device_hash, target.subsystem)) {
-        addDevice(occurrence);
-    }
-
-    return devices;
-}
-
-json connected_blockers_for_override(DB& db,
-                                      const DeviceInfo& target,
-                                      const ControlOverride& override) {
-    const std::string bootId = current_boot_id();
-    json blockers = json::array();
-
-    for (const DeviceInfo& device : affected_devices_for_override(db, target)) {
-        if (!is_connected(device, bootId)) {
-            continue;
-        }
-        const EffectivePolicy after = effective_policy(db, device, override);
-        if (after.level != "blocked") {
-            continue;
-        }
-
-        blockers.push_back({
+json connected_devices_to_json(const std::vector<DeviceInfo>& devices) {
+    json result = json::array();
+    for (const DeviceInfo& device : devices) {
+        result.push_back({
             {"device_id", device.id},
             {"devpath", device.devpath},
-            {"source", after.source},
-            {"reason", after.reason}
+            {"subsystem", device.subsystem},
+            {"device_type", device.device_type}
         });
     }
-
-    return blockers;
+    return result;
 }
 
-void add_deferred_block_warning(json& response, const json& blockers) {
-    if (!blockers.empty()) {
-        response["deferred_block"] = true;
-        response["deferred_blockers"] = blockers;
-        response["warning"] =
-            "connected devices were not deactivated; block will be enforced on reconnect";
-    }
+// Rejection of an individual rule change that would restrict CONNECTED dynamic
+// devices. Nothing is persisted: the administrator must detach the devices
+// first (the same contract the GUI and CLI surface).
+json rule_change_blocked_response(DB& db,
+                                  const DeviceRuleChangeAssessment& assessment) {
+    return json{
+        {"ok", false},
+        {"message",
+         "connected devices must be disconnected before they can be blocked; "
+         "the rule change was not applied"},
+        {"blocking_connected_devices",
+         connected_devices_to_json(assessment.connected_dynamic_blockers)},
+        {"desired_policy_revision", db.getDesiredPolicyRevision()},
+        {"active_policy_revision", db.getActivePolicyRevision()}
+    };
 }
 
 bool permanent_satisfied(DB& db, const DeviceInfo& device, const EffectivePolicy& policy) {
@@ -661,7 +540,7 @@ PermanentViolationScan collect_missing_permanent_devices_checked(
 
     std::set<std::string> seenObligations;
     for (const DeviceInfo& device : candidates) {
-        const EffectivePolicy policy = effective_policy(db, device);
+        const EffectivePolicy policy = effective_device_policy(db, device);
         if (policy.level != "permanent") {
             continue;
         }
@@ -978,7 +857,13 @@ json update_device_control(DB& db, const json& request) {
     ControlOverride override{
         deviceId, controlLevel, true, ignoreHierarchy, device.children_control
     };
-    const json blockers = connected_blockers_for_override(db, device, override);
+    // Pre-flight: a rule that would restrict an already connected dynamic
+    // device is rejected HERE, before any persistent change.
+    const DeviceRuleChangeAssessment assessment =
+        assess_device_rule_change(db, device, override, bootId);
+    if (assessment.rejected()) {
+        return rule_change_blocked_response(db, assessment);
+    }
 
     if (!db.updateDeviceControl(
             deviceId, controlLevel, true, ignoreHierarchy, device.children_control)) {
@@ -998,7 +883,6 @@ json update_device_control(DB& db, const json& request) {
         {"desired_policy_revision", db.getDesiredPolicyRevision()},
         {"active_policy_revision", db.getActivePolicyRevision()}
     };
-    add_deferred_block_warning(response, blockers);
     return response;
 }
 
@@ -1021,7 +905,11 @@ json update_device_ignore_hierarchy(DB& db, const json& request) {
         ignoreHierarchy,
         device.children_control
     };
-    const json blockers = connected_blockers_for_override(db, device, override);
+    const DeviceRuleChangeAssessment assessment = assess_device_rule_change(
+        db, device, override, current_boot_id());
+    if (assessment.rejected()) {
+        return rule_change_blocked_response(db, assessment);
+    }
 
     if (!db.updateDeviceIgnoreHierarchy(deviceId, ignoreHierarchy)) {
         return fic::ipc::make_error_response("failed to update ignore_hierarchy");
@@ -1040,7 +928,6 @@ json update_device_ignore_hierarchy(DB& db, const json& request) {
         {"desired_policy_revision", db.getDesiredPolicyRevision()},
         {"active_policy_revision", db.getActivePolicyRevision()}
     };
-    add_deferred_block_warning(response, blockers);
     return response;
 }
 
@@ -1063,7 +950,11 @@ json update_device_children_control(DB& db, const json& request) {
         device.ignore_hierarchy,
         childrenControl
     };
-    const json blockers = connected_blockers_for_override(db, device, override);
+    const DeviceRuleChangeAssessment assessment = assess_device_rule_change(
+        db, device, override, current_boot_id());
+    if (assessment.rejected()) {
+        return rule_change_blocked_response(db, assessment);
+    }
     if (!db.updateDeviceChildrenControl(deviceId, childrenControl)) {
         return fic::ipc::make_error_response("failed to update children_control");
     }
@@ -1079,7 +970,6 @@ json update_device_children_control(DB& db, const json& request) {
         {"desired_policy_revision", db.getDesiredPolicyRevision()},
         {"active_policy_revision", db.getActivePolicyRevision()}
     };
-    add_deferred_block_warning(response, blockers);
     return response;
 }
 
@@ -1095,7 +985,11 @@ json reset_device_control(DB& db, const json& request) {
     }
 
     ControlOverride override{deviceId, device.control_level, false, false, "inherit"};
-    const json blockers = connected_blockers_for_override(db, device, override);
+    const DeviceRuleChangeAssessment assessment = assess_device_rule_change(
+        db, device, override, current_boot_id());
+    if (assessment.rejected()) {
+        return rule_change_blocked_response(db, assessment);
+    }
 
     if (!db.updateDeviceControl(deviceId, device.control_level, false, false, "inherit")) {
         return fic::ipc::make_error_response("failed to reset device control");
@@ -1114,7 +1008,6 @@ json reset_device_control(DB& db, const json& request) {
         {"desired_policy_revision", db.getDesiredPolicyRevision()},
         {"active_policy_revision", db.getActivePolicyRevision()}
     };
-    add_deferred_block_warning(response, blockers);
     return response;
 }
 

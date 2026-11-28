@@ -35,6 +35,28 @@ bool managedDevpath(const std::string& path)
     return path.rfind("/devices/", 0) == 0 && path.find_first_of("*?[") == std::string::npos;
 }
 
+// Virtual containers of the device tree that still govern udev devices.
+// "/" is the computer root and "/devices" is the dynamic-device container: a
+// children rule stored on either of them applies to every udev device, so both
+// translate to the managed "/devices" prefix. No other non-managed path is
+// accepted, so the strict DEVPATH validation is not weakened.
+constexpr const char* COMPUTER_ROOT_DEVPATH = "/";
+constexpr const char* DEVICES_CONTAINER_DEVPATH = "/devices";
+constexpr const char* MANAGED_DEVPATH_PREFIX = "/devices";
+
+bool inheritedRuleTarget(const std::string& path, std::string& target)
+{
+    if (path == COMPUTER_ROOT_DEVPATH || path == DEVICES_CONTAINER_DEVPATH) {
+        target = MANAGED_DEVPATH_PREFIX;
+        return true;
+    }
+    if (!managedDevpath(path)) {
+        return false;
+    }
+    target = path;
+    return true;
+}
+
 bool udevSubsystem(const std::string& subsystem)
 {
     // Keep in sync with the generated ADD/CHANGE and REMOVE filters below.
@@ -259,12 +281,17 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
     out << "# INHERITED RULES\n";
     for (const DeviceInfo& device : devices) {
         // A non-udev ancestor may still govern a future udev descendant.
-        if (staticHardware(device) || device.children_control == "inherit" ||
-            !managedDevpath(device.devpath)) {
+        if (staticHardware(device) || device.children_control == "inherit") {
+            continue;
+        }
+        // "/" and "/devices" are the only virtual containers whose children
+        // rule reaches the udev tree; every other path must be managed.
+        std::string target;
+        if (!inheritedRuleTarget(device.devpath, target)) {
             continue;
         }
         std::string devpath;
-        if (!escapeUdevValue(device.devpath, devpath, escapingError)) {
+        if (!escapeUdevValue(target, devpath, escapingError)) {
             result.error = "cannot escape inherited DEVPATH for device " +
                 std::to_string(device.id) + ": " + escapingError;
             return result;

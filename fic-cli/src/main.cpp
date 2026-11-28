@@ -291,6 +291,15 @@ int print_device_response(const json& response)
                           << std::endl;
             }
         }
+        if (response.contains("blocking_connected_devices") &&
+            response["blocking_connected_devices"].is_array()) {
+            for (const auto& blocker : response["blocking_connected_devices"]) {
+                std::cout << "connected_device: id=" << blocker.value("device_id", 0)
+                          << " subsystem=" << blocker.value("subsystem", "")
+                          << " devpath=" << blocker.value("devpath", "")
+                          << std::endl;
+            }
+        }
         return 1;
     }
 

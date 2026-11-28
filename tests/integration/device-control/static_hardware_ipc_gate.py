@@ -88,6 +88,25 @@ try:
     assert result['ok'], result
     changed = rules_path.read_bytes()
     assert changed != baseline and b'/devices/gate-usb' in changed
+    # A connected dynamic device can not be blocked: the change is rejected
+    # before any persistent write, so rows, revisions and udev rules stay
+    # untouched.
+    with sqlite3.connect(db_path) as db:
+        parent = db.execute("SELECT id FROM devices WHERE subsystem='__udev__'").fetchone()[0]
+        connected_usb = db.execute(
+            "INSERT INTO devices(device_hash,devpath,subsystem,device_type,parent_id,control_level,control_explicit,boot_id) "
+            "VALUES('gate-usb-connected','/devices/gate-usb-connected','usb','usb_device',?,'allowed',0,?)",
+            (parent, boot_id)).lastrowid
+        before = db.execute('SELECT desired_revision,active_revision FROM device_policy_state').fetchone()
+    rejected = ipc({'command':'device_update_control_level','device_id':connected_usb,'control_level':'blocked'})
+    assert not rejected['ok'], rejected
+    assert rejected['blocking_connected_devices'], rejected
+    with sqlite3.connect(db_path) as db:
+        stored = db.execute('SELECT control_level,control_explicit FROM devices WHERE id=?', (connected_usb,)).fetchone()
+        after = db.execute('SELECT desired_revision,active_revision FROM device_policy_state').fetchone()
+    assert stored == ('allowed', 0), stored
+    assert after == before, (before, after)
+    assert rules_path.read_bytes() == changed
     with sqlite3.connect(db_path) as db:
         db.execute("UPDATE devices SET boot_id='old-boot' WHERE id=?", (static_ids['cpu'],))
     result = ipc({'command':'device_check_permanent'})

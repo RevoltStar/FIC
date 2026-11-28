@@ -645,6 +645,20 @@ target_link_libraries(device_policy_compiler_tests PRIVATE
 )
 add_test(NAME device_policy_compiler_tests COMMAND device_policy_compiler_tests)
 
+add_executable(device_rule_change_tests
+    fic-dick/daemon/DeviceRuleChangeTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/daemon/DeviceRuleChange.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/device/EffectiveDevicePolicy.cpp
+)
+target_include_directories(device_rule_change_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+target_link_libraries(device_rule_change_tests PRIVATE
+    fic-core
+    fic-device-db
+)
+add_test(NAME device_rule_change_tests COMMAND device_rule_change_tests)
+
 add_executable(device_lifecycle_tests
     fic-dick/device/DeviceLifecycleTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/device/DeviceLifecycle.cpp

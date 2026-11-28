@@ -185,6 +185,49 @@ int main()
     const DevicePolicyCompilation afterNonUdevDirect = compiler.compile(db);
     assert(afterNonUdevDirect.ok && afterNonUdevDirect.rules == first.rules);
 
+    // Virtual containers "/" and "/devices" govern the whole udev tree. Their
+    // children rules must reach the generated file, while the strict managed
+    // DEVPATH requirement stays in place for every other path.
+    {
+        const DeviceInfo computerRoot = db.getComputerRoot();
+        assert(computerRoot.id > 0);
+        assert(db.updateDeviceChildrenControl(computerRoot.id, "deny"));
+        const DevicePolicyCompilation withRootDeny = compiler.compile(db);
+        assert(withRootDeny.ok);
+        assert(withRootDeny.rules.find(
+                   "ENV{DEVPATH}==\"/devices/*\", ENV{FIC_INHERITED_LEVEL}=\"DENY\"") !=
+               std::string::npos);
+
+        const DeviceInfo devicesContainer = db.getDeviceByPath("/devices");
+        assert(devicesContainer.id > 0);
+        assert(db.updateDeviceChildrenControl(devicesContainer.id, "allow"));
+        const DevicePolicyCompilation withDevicesAllow = compiler.compile(db);
+        assert(withDevicesAllow.ok);
+        assert(withDevicesAllow.rules.find(
+                   "ENV{DEVPATH}==\"/devices/*\", ENV{FIC_INHERITED_LEVEL}=\"ALLOW\"") !=
+               std::string::npos);
+        // The nearest container rule is emitted last, so udev applies it after
+        // the computer-root rule.
+        assert(withDevicesAllow.rules.find(
+                   "ENV{DEVPATH}==\"/devices/*\", ENV{FIC_INHERITED_LEVEL}=\"DENY\"") <
+               withDevicesAllow.rules.find(
+                   "ENV{DEVPATH}==\"/devices/*\", ENV{FIC_INHERITED_LEVEL}=\"ALLOW\""));
+
+        // A static container must never reach the generated file.
+        const DeviceInfo cpuContainer = db.getDeviceByPath("/cpu_list");
+        assert(cpuContainer.id > 0);
+        assert(db.updateDeviceChildrenControl(cpuContainer.id, "deny"));
+        const DevicePolicyCompilation withStaticContainer = compiler.compile(db);
+        assert(withStaticContainer.ok);
+        assert(withStaticContainer.rules == withDevicesAllow.rules);
+
+        assert(db.updateDeviceChildrenControl(computerRoot.id, "inherit"));
+        assert(db.updateDeviceChildrenControl(devicesContainer.id, "inherit"));
+        assert(db.updateDeviceChildrenControl(cpuContainer.id, "inherit"));
+        const DevicePolicyCompilation restored = compiler.compile(db);
+        assert(restored.ok && restored.rules == first.rules);
+    }
+
     std::string escaped;
     assert(DevicePolicyCompiler::escapeUdevValue("serial\"\\\n, rule", escaped, error));
     assert(escaped == "serial\\\"\\\\\\x0a, rule");
