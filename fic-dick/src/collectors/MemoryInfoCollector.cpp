@@ -3,11 +3,116 @@
 #include <fic/core/process/VerifiedProcessExecutor.h>
 
 #include <sstream>
-#include <unordered_map>
 
 MemoryInfoCollector::MemoryInfoCollector()
     :InfoCollector({"Manufacturer", "Part Number", "Serial Number", "Size", "Speed", "Type", "Locator"}){
 
+}
+
+std::vector<MemoryModuleRecord> MemoryInfoCollector::parse_dmidecode_modules(
+    const std::string& output) const {
+    std::vector<MemoryModuleRecord> modules;
+    std::map<std::string, std::string> currentModule;
+    bool inMemorySection = false;
+
+    auto finishSection = [&]() {
+        if (!inMemorySection) {
+            return;
+        }
+        inMemorySection = false;
+        if (currentModule.empty()) {
+            return;
+        }
+
+        MemoryModuleRecord record;
+        for (const std::string& key : this->controlList) {
+            record.values[key] = "";
+        }
+        // Только контролируемые атрибуты попадают в запись устройства.
+        for (auto& [key, value] : currentModule) {
+            this->trim(value);
+            const auto target = record.values.find(key);
+            if (target != record.values.end()) {
+                target->second = value;
+            }
+        }
+
+        const auto sizeIt = currentModule.find("Size");
+        const auto formFactorIt = currentModule.find("Form Factor");
+        std::string size = sizeIt != currentModule.end() ? sizeIt->second : "";
+        std::string formFactor =
+            formFactorIt != currentModule.end() ? formFactorIt->second : "";
+        this->trim(size);
+        this->trim(formFactor);
+
+        // Пустой слот: размер нулевой либо модуль не установлен.
+        const bool emptySlot =
+            size == "0" || size.rfind("0 ", 0) == 0 ||
+            size.find("No Module Installed") != std::string::npos;
+        const bool physicalFormFactor = formFactor == "DIMM" ||
+            formFactor == "SO-DIMM" || formFactor == "SODIMM";
+
+        if (!physicalFormFactor) {
+            // Форм-фактор вне модели идентификации: запись не создаётся и
+            // достоверность инвентаризации не затрагивается.
+            record.kind = MemoryModuleKind::NotPhysical;
+        } else if (emptySlot) {
+            record.kind = MemoryModuleKind::NotPhysical;
+        } else if (size.empty() || size == "Unknown") {
+            // Модуль установлен, но размер не сообщён: идентифицировать его
+            // нельзя, значит инвентаризация неполна.
+            record.kind = MemoryModuleKind::Incomplete;
+            record.diagnostic = "memory module section has no usable size";
+        } else if (record.values["Locator"].empty()) {
+            record.kind = MemoryModuleKind::Incomplete;
+            record.diagnostic = "memory module section has no slot locator";
+        } else {
+            record.kind = MemoryModuleKind::Physical;
+        }
+
+        modules.push_back(std::move(record));
+        currentModule.clear();
+    };
+
+    std::istringstream lines(output);
+    std::string line;
+    while (std::getline(lines, line)) {
+        // Проверяем начало секции Memory Device
+        if (line.find("Memory Device") != std::string::npos) {
+            finishSection();
+            inMemorySection = true;
+            continue;
+        }
+
+        // Если внутри секции памяти, обрабатываем строку
+        if (inMemorySection) {
+            // Проверяем конец секции (пустая строка или табуляция)
+            if (line.find_first_not_of(" \t\r\n") == std::string::npos) {
+                // Пустая строка - продолжаем собирать данные
+                continue;
+            }
+
+            // Проверяем, не началась ли следующая секция
+            if (line.find("Handle ") == 0) {
+                finishSection();
+                continue;
+            }
+
+            const size_t colonPos = line.find(':');
+            if (colonPos != std::string::npos) {
+                std::string key = line.substr(0, colonPos);
+                std::string value = line.substr(colonPos + 1);
+
+                this->trim(key);
+                this->trim(value);
+                currentModule[key] = value;
+            }
+        }
+    }
+
+    // Обрабатываем последний модуль (после окончания чтения)
+    finishSection();
+    return modules;
 }
 
 bool MemoryInfoCollector::process_device_concrete(){
@@ -85,130 +190,51 @@ bool MemoryInfoCollector::process_device_concrete(){
         return process_device("memory", memory_list_dir);
     }
 
-    bool inMemorySection = false;
-    std::unordered_map<std::string, std::string> currentModule;
-    int moduleCount = 0;
-    int failedModules = 0;
-
-    // Функция для обработки собранных данных одного модуля памяти
-    auto processCurrentModule = [&]() {
-        if (!inMemorySection || currentModule.empty()) {
-            return;
-        }
-
-        // Проверяем, является ли модуль физическим
-        auto sizeIt = currentModule.find("Size");
-        auto formFactorIt = currentModule.find("Form Factor");
-
-        if (sizeIt != currentModule.end() && formFactorIt != currentModule.end()) {
-            std::string size = sizeIt->second;
-            std::string formFactor = formFactorIt->second;
-
-            // Используем trim() для очистки
-            this->trim(size);
-            this->trim(formFactor);
-
-            // Пропускаем виртуальные модули
-            if (size != "0" &&
-                size.find("No Module Installed") == std::string::npos &&
-                (formFactor == "DIMM" || formFactor == "SO-DIMM" || formFactor == "SODIMM")) {
-
-                // Инициализируем deviceParam значениями по умолчанию "not found"
-                for (auto& [key, value] : this->deviceParam) {
-                    value = "not found";
-                }
-
-                // Заполняем параметры текущей плашки ОЗУ
-                for (auto& [key, value] : currentModule) {
-                    // Используем trim() для очистки значения
-                    this->trim(value);
-
-                    // Если параметр есть в controlList, сохраняем его
-                    if (this->deviceParam.find(key) != this->deviceParam.end()) {
-                        this->deviceParam[key] = value;
-                    }
-                }
-
-                // Обрабатываем устройство
-                if (this->process_device("memory", memory_list_dir)) {
-                    moduleCount++;
-                    //std::cout << "Модуль успешно добавлен в БД" << std::endl;
-                } else {
-                    // A module that could not be stored makes the whole module
-                    // inventory unproven: a partial set must never be read as
-                    // the complete memory configuration.
-                    this->inventoryProven_ = false;
-                    failedModules++;
-                }
-            } else {
-                //std::cout << "Пропущен модуль (Size: " << size << ", Form Factor: " << formFactor << ")" << std::endl;
-            }
-        }
-
-        // Очищаем для следующего модуля
-        currentModule.clear();
-        inMemorySection = false;
-    };
-
-    std::istringstream output(result.standardOutput);
-    std::string line;
-    while (std::getline(output, line)) {
-        // Проверяем начало секции Memory Device
-        if (line.find("Memory Device") != std::string::npos) {
-            // Обрабатываем предыдущий модуль (если есть)
-            processCurrentModule();
-
-            // Начинаем новый модуль
-            inMemorySection = true;
-            //std::cout << "Найдена новая секция Memory Device" << std::endl;
+    // A successful command is NOT proof of a complete module inventory.
+    const std::vector<MemoryModuleRecord> modules =
+        parse_dmidecode_modules(result.standardOutput);
+    std::size_t storedModules = 0;
+    std::size_t failedModules = 0;
+    std::size_t incompleteModules = 0;
+    for (const MemoryModuleRecord& module : modules) {
+        if (module.kind == MemoryModuleKind::Incomplete) {
+            ++incompleteModules;
+            this->log("Memory module inventory is incomplete: " +
+                          module.diagnostic,
+                      logLevel::ERROR);
             continue;
         }
-
-        // Если внутри секции памяти, обрабатываем строку
-        if (inMemorySection) {
-            // Проверяем конец секции (пустая строка или табуляция)
-            if (line.find_first_not_of(" \t\r\n") == std::string::npos) {
-                // Пустая строка - продолжаем собирать данные
-                continue;
-            }
-
-            // Проверяем, не началась ли следующая секция
-            if (line.find("Handle ") == 0) {
-                processCurrentModule();
-                continue;
-            }
-
-            size_t colonPos = line.find(':');
-            if (colonPos != std::string::npos) {
-                std::string key = line.substr(0, colonPos);
-                std::string value = line.substr(colonPos + 1);
-
-                // Используем trim() для очистки
-                this->trim(key);
-                this->trim(value);
-
-                // Сохраняем в текущий модуль
-                currentModule[key] = value;
-            }
+        if (module.kind != MemoryModuleKind::Physical) {
+            continue;
+        }
+        this->deviceParam = module.values;
+        if (this->process_device("memory", memory_list_dir)) {
+            ++storedModules;
+        } else {
+            ++failedModules;
         }
     }
 
-    // Обрабатываем последний модуль (после окончания чтения)
-    processCurrentModule();
-
-    //std::cout << "Обработка завершена. Всего обработано модулей памяти: " << moduleCount << std::endl;
-
-    if (moduleCount > 0) {
-        // A stored module whose write failed is a real failure of the whole
-        // collection, not a silently partial inventory.
-        if (failedModules > 0) {
-            this->log("Memory module inventory is incomplete: " +
-                          std::to_string(failedModules) + " module(s) failed",
-                      logLevel::ERROR);
-            return false;
-        }
-        return true;
+    if (storedModules == 0) {
+        // No identifiable module was reported at all: keep the inventory
+        // visible through the existing fallback, which stays unproven.
+        return collectFromProcMeminfo();
     }
 
-    return collectFromProcMeminfo();
+    if (failedModules > 0 || incompleteModules > 0) {
+        // A module that could not be stored or identified makes the whole
+        // module inventory unproven: a partial set must never be read as the
+        // complete memory configuration. A storage failure is also a failure of
+        // the collection itself.
+        this->inventoryProven_ = false;
+        this->log("Memory module inventory is incomplete: " +
+                      std::to_string(failedModules) +
+                      " module(s) failed and " +
+                      std::to_string(incompleteModules) +
+                      " module(s) could not be identified",
+                  logLevel::ERROR);
+        return failedModules == 0;
+    }
+
+    return true;
 }

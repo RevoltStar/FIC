@@ -275,6 +275,86 @@ int main() {
                     ownKind.error);
     }
 
+    // R8: a failed block may be established for a device without a database
+    // record (the category-all enforcement observes LIVE udev state), so this
+    // kind carries the managed DEVPATH and never invents a synthetic id. The
+    // other kinds keep the strict non-empty positive id list.
+    {
+        const auto blockKind = fic::ipc::DeviceIncidentKind::DeviceBlockFailed;
+        const std::vector<PermanentViolation> pathOnly{
+            {0, 0, "/devices/pci0000:00/usb1/1-1", "dc:category"}};
+        const nlohmann::json event = device_incident_request(blockKind, pathOnly);
+        require(event.value("command", "") == "incident_device_block_failed",
+                "the event must name the failed-block command");
+        require(event["device_ids"].empty(),
+                "no synthetic device id may be invented");
+        require(event["device_paths"].size() == 1 &&
+                    event["device_paths"][0] ==
+                        "/devices/pci0000:00/usb1/1-1",
+                "the managed DEVPATH must identify the subject");
+        require(event.value("device_ids_total", 0U) == 1U,
+                "the total must count the established fact");
+        require(is_valid_device_incident_request(event, blockKind, error),
+                "a path-only failed block must be a valid event: " + error);
+
+        // An event with neither ids nor paths is not a violation.
+        require(!is_valid_device_incident_request(
+                    nlohmann::json{
+                        {"command", "incident_device_block_failed"},
+                        {"device_ids", nlohmann::json::array()},
+                        {"device_ids_total", 0U},
+                        {"device_paths", nlohmann::json::array()}},
+                    blockKind, error),
+                "an event without an identifiable subject must be rejected");
+
+        // Only managed DEVPATHs are accepted.
+        require(!is_valid_device_incident_request(
+                    nlohmann::json{
+                        {"command", "incident_device_block_failed"},
+                        {"device_ids", nlohmann::json::array()},
+                        {"device_ids_total", 1U},
+                        {"device_paths", nlohmann::json{"/etc/passwd"}}},
+                    blockKind, error),
+                "an unmanaged path must be rejected");
+        require(!is_valid_device_incident_request(
+                    nlohmann::json{
+                        {"command", "incident_device_block_failed"},
+                        {"device_ids", nlohmann::json::array()},
+                        {"device_ids_total", 1U},
+                        {"device_paths", nlohmann::json{42}}},
+                    blockKind, error),
+                "a non-string path must be rejected");
+
+        // The id-based failed block keeps working, and the DEVPATH travels as
+        // additional diagnostics.
+        const std::vector<PermanentViolation> withId{
+            {77, 77, "/devices/pci0000:00/usb1/1-2", "udev"}};
+        const nlohmann::json idEvent = device_incident_request(blockKind, withId);
+        require(idEvent["device_ids"].size() == 1 &&
+                    idEvent["device_ids"][0] == 77,
+                "the real device id must be carried");
+        require(idEvent["device_paths"].size() == 1,
+                "the DEVPATH must travel with the id");
+        require(is_valid_device_incident_request(idEvent, blockKind, error),
+                "an id-based failed block must validate: " + error);
+
+        // The OTHER kinds must not accept `device_paths`: their contract is
+        // unchanged.
+        require(!is_valid_device_incident_request(
+                    nlohmann::json{
+                        {"command", "incident_device_missing"},
+                        {"device_ids", nlohmann::json{123}},
+                        {"device_ids_total", 1U},
+                        {"device_paths",
+                         nlohmann::json{"/devices/pci0000:00/usb1/1-1"}}},
+                    kind, error),
+                "the device-missing contract must not accept device_paths");
+        const nlohmann::json missingEvent =
+            device_incident_request(kind, violations);
+        require(!missingEvent.contains("device_paths"),
+                "the other kinds must not emit device_paths");
+    }
+
     std::cout << "Permanent-device incident detector contract proven\n";
     return 0;
 }

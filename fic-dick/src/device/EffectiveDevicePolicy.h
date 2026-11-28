@@ -52,6 +52,12 @@ EffectivePolicy effective_device_policy(
 // cpu / board / memory are the static (non-udev) hardware subsystems.
 bool is_static_hardware_subsystem(const std::string& subsystem);
 
+// The managed dynamic (udev-controlled) hardware subsystems. Virtual containers
+// (`__virtual__`, `__udev__`, `__pci__`, ...) and other intermediate tree nodes
+// are deliberately NOT hardware: they carry hierarchy only and must never be
+// treated as a connected device on their own.
+bool is_dynamic_hardware_subsystem(const std::string& subsystem);
+
 } // namespace fic::device_control
 
 #endif // FIC_DEVICE_EFFECTIVE_DEVICE_POLICY_H

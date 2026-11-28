@@ -387,6 +387,90 @@ int main() {
                 "identity occurrences");
     }
 
+    // R12: virtual tree nodes are NOT hardware.
+    //
+    // UDEVInfoCollector::create_virtual_device_config() stores intermediate
+    // tree nodes with subsystem "__virtual__" and the CURRENT boot id, so a
+    // present virtual node must never reject a rule change on its own. Its
+    // influence on real descendants is preserved through their own effective
+    // policy, which the same assessment evaluates.
+    {
+        const DeviceInfo virtualNode = addDevice(
+            db, hub.id, "virtual_hash_for_device[/devices/pci0000:00/usb1/1-7]",
+            "/devices/pci0000:00/usb1/1-7", "__virtual__", kBoot);
+        const DeviceRuleChangeAssessment loneVirtual =
+            assess_device_rule_change(
+                db, virtualNode,
+                ControlOverride{virtualNode.id, "blocked", true, false,
+                                "inherit"},
+                kBoot);
+        require(!loneVirtual.rejected(),
+                "a virtual node without a real descendant must not be rejected");
+        require(loneVirtual.connected_dynamic_blockers.empty(),
+                "a virtual node must not be reported as a dynamic blocker");
+
+        // A real connected descendant that would inherit a denied container
+        // still rejects the change and is the only reported blocker.
+        const DeviceInfo realChildUnderVirtual = addDevice(
+            db, virtualNode.id, "usb-real-under-virtual",
+            "/devices/pci0000:00/usb1/1-7/1-7:1.0", "usb", kBoot);
+        const DeviceRuleChangeAssessment withRealChild =
+            assess_device_rule_change(
+                db, virtualNode,
+                ControlOverride{virtualNode.id, virtualNode.control_level,
+                                virtualNode.control_explicit,
+                                virtualNode.ignore_hierarchy, "deny"},
+                kBoot);
+        require(withRealChild.rejected(),
+                "a real connected descendant of a virtual node must reject the "
+                "change");
+        require(containsDevice(withRealChild.connected_dynamic_blockers,
+                              realChildUnderVirtual.id),
+                "the real descendant must be reported as the blocker");
+        require(!containsDevice(withRealChild.connected_dynamic_blockers,
+                                virtualNode.id),
+                "the virtual node itself must never be a blocker");
+
+        // Every real connected descendant explicitly allowed: the change is
+        // accepted.
+        require(db.updateDeviceControl(realChildUnderVirtual.id, "allowed",
+                                       true, false, "inherit"),
+                "explicit allow must be stored");
+        const DeviceInfo virtualNodeNow = db.getDeviceById(virtualNode.id);
+        require(!assess_device_rule_change(
+                     db, virtualNodeNow,
+                     ControlOverride{virtualNode.id, virtualNode.control_level,
+                                     virtualNode.control_explicit,
+                                     virtualNode.ignore_hierarchy, "deny"},
+                     kBoot)
+                     .rejected(),
+                "explicitly allowed real descendants must permit the change");
+    }
+
+    // R13: a static container change still reaches the real static devices.
+    // `/board_list` is a hierarchy node; the installed board is the hardware.
+    {
+        const DeviceInfo boardContainer = db.getDeviceByPath("/board_list");
+        require(boardContainer.id > 0, "board container must exist");
+        const DeviceInfo presentBoard = addDevice(
+            db, boardContainer.id, "board-0", "/board_list/board-0", "board",
+            kBoot);
+        const DeviceInfo boardContainerNow = db.getDeviceById(boardContainer.id);
+        const DeviceRuleChangeAssessment assessment =
+            assess_device_rule_change(
+                db, boardContainerNow,
+                ControlOverride{boardContainer.id, "allowed", true, false,
+                                "deny"},
+                kBoot);
+        require(!assessment.rejected(),
+                "a static container children deny must not be rejected");
+        require(containsDevice(assessment.connected_static_blockers,
+                               presentBoard.id),
+                "the installed board must be a static violation");
+        require(assessment.connected_static_blockers.size() == 1,
+                "only real static hardware must be reported, not the container");
+    }
+
     fs::remove_all(root);
     std::cout << "Device rule change pre-flight contract proven\n";
     return 0;

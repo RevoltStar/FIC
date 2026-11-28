@@ -228,6 +228,19 @@ int main(int argc, char* argv[], char* envp[]) {
                 return 1;
             }
 
+            // Invalidate the PREVIOUS publication before collecting: a failed
+            // or unproven run must never leave an old proof standing in for its
+            // own result, and the device daemon suspends static checks while no
+            // proof exists.
+            std::string proofError;
+            if (!fic::device_control::remove_static_inventory_proof(
+                    proofError)) {
+                log("Не удалось аннулировать предыдущий результат инвентаризации "
+                    "статического оборудования: " + proofError,
+                    logLevel::ERROR);
+                return 1;
+            }
+
             CPUInfoCollector cic;
             BoardInfoCollector bic;
             MemoryInfoCollector mic;
@@ -240,20 +253,23 @@ int main(int argc, char* argv[], char* envp[]) {
 
             // Publish the per-boot proof of which static subsystems are
             // trustworthy. The device daemon accepts only this proof before it
-            // derives static presence/absence violations; a failed or
-            // placeholder-only collection stays unproven and can never cause a
-            // false incident. A successful process exit alone is not proof.
+            // derives static presence/absence violations; a failed, incomplete
+            // or placeholder-only collection stays unproven and can never cause
+            // a false incident. A successful process exit alone is not proof.
             fic::device_control::StaticInventoryProof proof;
             proof.bootId = SystemBootInfo::get_boot_id();
             proof.cpu = cpuCollected && cic.inventory_proven();
             proof.board = boardCollected && bic.inventory_proven();
             proof.memory = memoryCollected && mic.inventory_proven();
-            std::string proofError;
             if (!fic::device_control::write_static_inventory_proof(
                     proof, proofError)) {
                 log("Не удалось записать результат инвентаризации статического "
                     "оборудования: " + proofError,
                     logLevel::ERROR);
+                // The result of this run could not be published: the unit must
+                // fail instead of reporting a successful inventory whose result
+                // the device daemon can never accept.
+                return 1;
             }
 
             if (!cpuCollected || !boardCollected || !memoryCollected) {

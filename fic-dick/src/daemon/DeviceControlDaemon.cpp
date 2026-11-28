@@ -2,11 +2,13 @@
 #include <fic/device-db/DeviceCategoryPolicy.h>
 #include "DeviceControlDaemon.h"
 #include "daemon/DeviceAudit.h"
+#include "daemon/BlockFailureObligation.h"
 #include "daemon/DeviceIncidentSender.h"
 #include "daemon/DeviceRuleChange.h"
 #include "daemon/PermanentDeviceIncident.h"
 #include "daemon/PermanentDeviceRetry.h"
 #include "daemon/ReconciliationOutcome.h"
+#include "daemon/StaticProofWatch.h"
 #include "device/EffectiveDevicePolicy.h"
 #include "device/DeviceLifecycle.h"
 #include "device/DevicePaths.h"
@@ -82,12 +84,12 @@ std::atomic_bool g_stop{false};
 std::chrono::steady_clock::time_point g_nextPermanentIncidentRetry{};
 std::chrono::steady_clock::time_point g_nextReconciliationAttempt{};
 
-// The last observed per-boot static inventory proof (boot id + proven
-// subsystems). The static checks run once per distinct proof, so a collector
-// that finishes after the daemon started is picked up without a new subsystem
-// and without waiting for a udev event.
-std::string g_observedStaticProofKey;
+// The static-inventory watch: which publication was fully processed, plus the
+// bounded retry timestamps. A collector that finishes after the daemon started
+// is picked up without a new subsystem and without waiting for a udev event.
+StaticProofWatch g_staticProofWatch;
 std::chrono::steady_clock::time_point g_nextStaticProofCheck{};
+std::chrono::steady_clock::time_point g_nextStaticProofRetry{};
 std::chrono::steady_clock::time_point g_nextStaticIncidentRetry{};
 std::chrono::steady_clock::time_point g_nextBlockFailureRetry{};
 
@@ -107,7 +109,6 @@ inline constexpr std::size_t MAX_DEVICE_EVENT_BYTES = 64U * 1024U;
 inline constexpr std::size_t MAX_DEVICE_EVENT_QUEUE = 256U;
 inline constexpr const char* DEVICE_EVENT_SOCKET_BASENAME = "fic-device-events.sock";
 inline constexpr const char* DEVICE_RECONCILE_MARKER_BASENAME = "fic-device-reconcile.required";
-const std::set<std::string> MANAGED_UDEV_SUBSYSTEMS = {"usb", "usbmisc", "pci", "block"};
 
 void handle_signal(int) {
     g_stop = true;
@@ -349,14 +350,20 @@ bool enforce_connected_category_denials(DB& db, std::string& error) {
             // restrict is an ESTABLISHED violation of the configured category
             // policy: report the fact before failing the pass. A device-local
             // record failure must never suppress it.
+            //
+            // The category policy is evaluated against LIVE udev state, so the
+            // device may legitimately have no database record yet (the daemon
+            // can enforce before the startup reconciliation finished). The
+            // event therefore carries the real occurrence id when it is known
+            // and always the managed DEVPATH of the live device; a synthetic id
+            // is never invented.
             log_device("category DENY enforcement failed for " + live.devpath +
                            ": " + details,
                        logLevel::ERROR);
-            if (live.id > 0) {
-                (void)report_block_failed_violations(
-                    db, {PermanentViolation{live.id, live.id, live.devpath,
-                                            "dc:category"}});
-            }
+            const int knownId = live.id > 0 ? live.id : 0;
+            (void)report_block_failed_violations(
+                db, {PermanentViolation{knownId, knownId, live.devpath,
+                                        "dc:category"}});
             return false;
         }
     }
@@ -652,53 +659,29 @@ StaticViolationScan collect_blocked_static_devices_checked(
     return scan;
 }
 
-// Static violations already acknowledged during THIS daemon lifetime. A
-// restart re-derives them (the IncidentController deduplicates the escalation)
-// and a device that stops being blocked is pruned, so a later block is
-// reported again.
-std::set<int> g_reportedStaticViolations;
-
-std::vector<PermanentViolation> pending_static_violations(
-    const std::vector<PermanentViolation>& violations) {
-    std::set<int> currentlyBlocked;
-    std::vector<PermanentViolation> pending;
-    for (const PermanentViolation& violation : violations) {
-        currentlyBlocked.insert(violation.deviceId);
-        if (g_reportedStaticViolations.count(violation.deviceId) == 0) {
-            pending.push_back(violation);
-        }
-    }
-    for (auto it = g_reportedStaticViolations.begin();
-         it != g_reportedStaticViolations.end();) {
-        if (currentlyBlocked.count(*it) == 0) {
-            it = g_reportedStaticViolations.erase(it);
-        } else {
-            ++it;
-        }
-    }
-    return pending;
-}
-
 json check_static_device_violations(DB& db);
 json missing_permanent_to_json(const std::vector<PermanentViolation>& violations);
 
+// Reports every forbidden static device a pass could prove.
+//
+// There is deliberately NO per-device "already reported" cache: the Incident
+// Controller is monotonic and deduplicates the escalation, exactly like the
+// permanent-device path. A cache would suppress a legitimate NEW violation
+// after the device was allowed and blocked again, and a partial set produced by
+// a single rule change proves nothing about the rest of the inventory.
 json deliver_static_present_violations(
     DB& db,
     const std::vector<PermanentViolation>& violations,
     bool fullCheck) {
-    const std::vector<PermanentViolation> pending =
-        pending_static_violations(violations);
-    if (pending.empty()) {
+    if (violations.empty()) {
         updateDeviceIncidentRetry(DeviceIncidentRetryKind::StaticPresent,
                                   /*scanOk=*/true, fullCheck,
-                                  /*violationsEmpty=*/violations.empty(),
+                                  /*violationsEmpty=*/true,
                                   /*delivered=*/true);
         return json{
             {"ok", true},
-            {"message", violations.empty()
-                ? "no forbidden static device is present"
-                : "forbidden static devices were already reported"},
-            {"static_blocked", missing_permanent_to_json(violations)},
+            {"message", "no forbidden static device is present"},
+            {"static_blocked", json::array()},
             {"static_incident_delivered", true},
             {"retry_required",
              deviceIncidentRetryRequired(DeviceIncidentRetryKind::StaticPresent)}
@@ -706,18 +689,13 @@ json deliver_static_present_violations(
     }
 
     const DeviceIncidentDelivery delivery = call_fic_device_incident(
-        fic::ipc::DeviceIncidentKind::StaticDevicePresent, pending);
+        fic::ipc::DeviceIncidentKind::StaticDevicePresent, violations);
     const bool success = delivery.delivered;
-    if (success) {
-        for (const PermanentViolation& violation : pending) {
-            g_reportedStaticViolations.insert(violation.deviceId);
-        }
-    }
     updateDeviceIncidentRetry(DeviceIncidentRetryKind::StaticPresent,
                               /*scanOk=*/true, fullCheck,
                               /*violationsEmpty=*/false, /*delivered=*/success);
 
-    for (const PermanentViolation& violation : pending) {
+    for (const PermanentViolation& violation : violations) {
         add_event(db,
                   violation.deviceId,
                   "incident",
@@ -739,7 +717,7 @@ json deliver_static_present_violations(
         {"message", success
             ? "forbidden static device present; incident reported"
             : "forbidden static device present; incident delivery failed"},
-        {"static_blocked", missing_permanent_to_json(pending)},
+        {"static_blocked", missing_permanent_to_json(violations)},
         {"static_incident_delivered", success},
         {"incident_mode", delivery.mode},
         {"incident_requested_severity", delivery.requestedSeverity},
@@ -774,13 +752,14 @@ json check_static_device_violations(DB& db) {
 //
 // The fact can NOT be re-derived from the inventory: reconciliation never
 // re-attempts enforcement, so it must not report a failure it never observed.
-// The pending ids therefore live in memory and are retried with the same
-// bounded interval as the other detector events. After a daemon restart the
-// device's next add/change event re-establishes the fact.
-std::vector<PermanentViolation> g_pendingBlockFailures;
+// The obligations therefore live in memory (daemon/BlockFailureObligation.h)
+// and are retried with the same bounded interval as the other detector events.
+// After a daemon restart the device's next add/change event re-establishes the
+// fact.
+BlockFailureObligation g_blockFailureObligations;
 
 bool blockFailureIncidentPending() {
-    return !g_pendingBlockFailures.empty();
+    return !g_blockFailureObligations.empty();
 }
 
 json report_block_failed_violations(
@@ -788,16 +767,20 @@ json report_block_failed_violations(
     if (violations.empty()) {
         return json{{"ok", true}, {"message", "no failed block to report"}};
     }
-    // Remember the obligation BEFORE the attempt: a crash between the attempt
-    // and the record must not lose an established fact.
-    g_pendingBlockFailures = violations;
+    // MERGE before the attempt: a crash between the attempt and the record must
+    // not lose an established fact, and a new violation must never replace an
+    // obligation that is still undelivered.
+    g_blockFailureObligations.remember(violations);
+    const std::vector<PermanentViolation> attempted =
+        g_blockFailureObligations.snapshot();
     const DeviceIncidentDelivery delivery = call_fic_device_incident(
-        fic::ipc::DeviceIncidentKind::DeviceBlockFailed, violations);
+        fic::ipc::DeviceIncidentKind::DeviceBlockFailed, attempted);
     const bool success = delivery.delivered;
     if (success) {
-        g_pendingBlockFailures.clear();
+        // Close exactly the obligations carried by the acknowledged event.
+        g_blockFailureObligations.acknowledge(attempted);
     }
-    for (const PermanentViolation& violation : violations) {
+    for (const PermanentViolation& violation : attempted) {
         add_event(db,
                   violation.deviceId,
                   "incident",
@@ -806,6 +789,8 @@ json report_block_failed_violations(
                       fic::ipc::deviceIncidentCommand(
                           fic::ipc::DeviceIncidentKind::DeviceBlockFailed) +
                       ": " + (success ? "delivered" : "delivery failed") +
+                      "; pending=" +
+                      std::to_string(g_blockFailureObligations.size()) +
                       "; mode=" + delivery.mode +
                       "; requested=" + delivery.requestedSeverity +
                       "; effective=" + delivery.effectiveSeverity +
@@ -824,15 +809,18 @@ json report_block_failed_violations(
         {"incident_effective_severity", delivery.effectiveSeverity},
         {"incident_escalated", delivery.escalated},
         {"incident_ignored", delivery.ignored},
+        {"pending_incidents", g_blockFailureObligations.size()},
         {"retry_required", blockFailureIncidentPending()}
     };
 }
 
 json retry_block_failed_violations(DB& db) {
-    if (g_pendingBlockFailures.empty()) {
+    if (g_blockFailureObligations.empty()) {
         return json{{"ok", true}, {"message", "no pending failed block incident"}};
     }
-    return report_block_failed_violations(db, g_pendingBlockFailures);
+    // Re-deliver the WHOLE pending set: the aggregated event carries the fact
+    // for every still-unacknowledged occurrence.
+    return report_block_failed_violations(db, g_blockFailureObligations.snapshot());
 }
 
 // After a rule change was persisted: report a PRESENT static device that the
@@ -993,7 +981,7 @@ std::unique_ptr<UDEVInfoCollector> create_collector_for_subsystem(const std::str
 }
 
 bool is_managed_subsystem(const std::string& subsystem) {
-    return MANAGED_UDEV_SUBSYSTEMS.find(subsystem) != MANAGED_UDEV_SUBSYSTEMS.end();
+    return is_dynamic_hardware_subsystem(subsystem);
 }
 
 DeviceEventEnvelope envelope_from_request(const json& request) {
@@ -1062,23 +1050,7 @@ json process_device_event(const DeviceEventEnvelope& event) {
                 };
             }
             std::string enforcementDetails;
-            bool enforced = deny_enforcement_observed(device, enforcementDetails);
-            if (!enforced) {
-                // One bounded attempt through the EXISTING sysfs backend: the
-                // udev rule may have run before the device was ready.
-                std::string attemptDetails;
-                if (internal::enforceDenyThroughSysfs(subsystem, devpath, {},
-                                                      attemptDetails)) {
-                    enforced =
-                        deny_enforcement_observed(device, enforcementDetails);
-                    if (!enforced) {
-                        enforcementDetails += "; attempt: " + attemptDetails;
-                    }
-                } else {
-                    enforcementDetails +=
-                        "; enforcement attempt failed: " + attemptDetails;
-                }
-            }
+            const bool enforced = deny_enforcement_observed(device, enforcementDetails);
             DeviceLifecycle lifecycle(db);
             std::string lifecycleError;
             const bool recorded = lifecycle.recordDenyResult(
@@ -2393,7 +2365,7 @@ int run_daemon(const std::string& socketPathArg) {
 
         // Static inventory watch. The static collector publishes a per-boot
         // proof; the static checks (missing permanent hardware and forbidden
-        // present hardware) run as soon as that proof is available, so a
+        // present hardware) run as soon as a NEW publication is available, so a
         // collector that finishes after the daemon started is handled without
         // delaying any dynamic device check.
         if (std::chrono::steady_clock::now() >= g_nextStaticProofCheck) {
@@ -2402,12 +2374,10 @@ int run_daemon(const std::string& socketPathArg) {
             std::string proofDiagnostic;
             const std::optional<StaticInventoryProof> proof =
                 current_static_inventory_proof(proofDiagnostic);
-            const std::string proofKey = proof.has_value()
-                ? proof->bootId + "|" + (proof->cpu ? "1" : "0") +
-                      (proof->board ? "1" : "0") + (proof->memory ? "1" : "0")
-                : std::string("unproven");
-            if (proofKey != g_observedStaticProofKey) {
-                g_observedStaticProofKey = proofKey;
+            const std::string proofKey =
+                static_inventory_proof_key(proof, current_boot_id());
+            if (g_staticProofWatch.pending(proofKey) &&
+                std::chrono::steady_clock::now() >= g_nextStaticProofRetry) {
                 if (!proof.has_value()) {
                     log_device("static inventory proof is unavailable: " +
                                    proofDiagnostic +
@@ -2418,9 +2388,17 @@ int run_daemon(const std::string& socketPathArg) {
                         "static inventory proof observed: boot=" + proof->bootId +
                             " cpu=" + (proof->cpu ? "proven" : "unproven") +
                             " board=" + (proof->board ? "proven" : "unproven") +
-                            " memory=" + (proof->memory ? "proven" : "unproven"),
+                            " memory=" + (proof->memory ? "proven" : "unproven") +
+                            " published_at_ns=" +
+                            std::to_string(proof->publishedAtNs),
                         logLevel::INFO);
                 }
+                // The publication is marked processed ONLY when both checks
+                // actually ran. A failed database read keeps it pending so it
+                // is retried with the bounded interval set below instead of
+                // being silently dropped; a failed incident DELIVERY is a
+                // different state and keeps its own retry obligation.
+                bool checksRan = false;
                 try {
                     DB db(DeviceRuntimePaths::get().databaseOptions());
                     if (!db.initializeDatabase()) {
@@ -2430,20 +2408,25 @@ int run_daemon(const std::string& socketPathArg) {
                             logLevel::ERROR);
                     } else {
                         const json permanentCheck = check_permanent_devices(db);
+                        const json staticCheck = check_static_device_violations(db);
+                        // A response without the derived violation list means
+                        // the inventory itself was unproven (database read
+                        // failure), not that there was nothing to report.
+                        checksRan = permanentCheck.contains("missing") &&
+                                    staticCheck.contains("static_blocked");
                         if (!permanentCheck.value("ok", false)) {
                             log_device(
-                                "static inventory permanent check failed: " +
+                                "static inventory permanent check incomplete: " +
                                     permanentCheck.value("message",
                                                          "unknown error"),
-                                logLevel::ERROR);
+                                logLevel::WARN);
                         }
-                        const json staticCheck = check_static_device_violations(db);
                         if (!staticCheck.value("ok", false)) {
                             log_device(
-                                "forbidden static device check failed: " +
+                                "forbidden static device check incomplete: " +
                                     staticCheck.value("message",
                                                       "unknown error"),
-                                logLevel::ERROR);
+                                logLevel::WARN);
                         }
                     }
                 } catch (const std::exception& databaseError) {
@@ -2452,6 +2435,13 @@ int run_daemon(const std::string& socketPathArg) {
                                     "database error: ") +
                             databaseError.what(),
                         logLevel::ERROR);
+                }
+                if (checksRan) {
+                    g_staticProofWatch.markProcessed(proofKey);
+                } else {
+                    g_nextStaticProofRetry =
+                        std::chrono::steady_clock::now() +
+                        PERMANENT_INCIDENT_RETRY_INTERVAL;
                 }
             }
         }

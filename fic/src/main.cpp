@@ -747,17 +747,48 @@ bool is_trusted_device_daemon_peer(const PeerCredentials& peer) {
     return peer.available && peer.uid == 0;
 }
 
-// Bounded event schema: command + non-empty bounded id list + truthful total.
+// Bounded event schema: command + bounded id list + truthful total.
+//
+// A failed block may be established for a device that has no database record
+// yet, so `incident_device_block_failed` may carry bounded managed DEVPATH
+// diagnostics in addition to (or instead of) device ids. The device-missing and
+// static-present kinds keep the strict non-empty positive id list, so their
+// existing contract is not weakened.
 inline constexpr std::size_t MAX_DEVICE_MISSING_IDS = 64U;
+inline constexpr std::size_t MAX_DEVICE_PATHS = 64U;
+inline constexpr std::size_t MAX_DEVICE_PATH_BYTES = 512U;
+
+bool valid_device_path(const std::string& path) {
+    if (path.size() < 9U || path.size() > MAX_DEVICE_PATH_BYTES) return false;
+    if (path.rfind("/devices/", 0) != 0) return false;
+    for (const char ch : path) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (byte < 0x20 || byte == 0x7f) return false;
+    }
+    return true;
+}
 
 bool validate_device_incident_event(
-    const json& request, std::vector<int>& deviceIds, std::string& error) {
-    if (!fic::ipc::request_has_only_fields(
-            request, {"command", "device_ids", "device_ids_total"}, error)) {
+    const json& request,
+    fic::ipc::DeviceIncidentKind kind,
+    std::vector<int>& deviceIds,
+    std::vector<std::string>& devicePaths,
+    std::string& error) {
+    const bool blockFailed =
+        kind == fic::ipc::DeviceIncidentKind::DeviceBlockFailed;
+    const bool fieldsOk = blockFailed
+        ? fic::ipc::request_has_only_fields(
+              request, {"command", "device_ids", "device_ids_total",
+                        "device_paths"}, error)
+        : fic::ipc::request_has_only_fields(
+              request, {"command", "device_ids", "device_ids_total"}, error);
+    if (!fieldsOk) return false;
+    const auto& ids = request.at("device_ids");
+    if (!ids.is_array()) {
+        error = "request.device_ids must be an array";
         return false;
     }
-    const auto& ids = request.at("device_ids");
-    if (!ids.is_array() || ids.empty()) {
+    if (ids.empty() && !blockFailed) {
         error = "request.device_ids must be a non-empty array";
         return false;
     }
@@ -777,6 +808,28 @@ bool validate_device_incident_event(
             return false;
         }
         deviceIds.push_back(static_cast<int>(value));
+    }
+    if (blockFailed) {
+        if (request.contains("device_paths")) {
+            const auto& paths = request.at("device_paths");
+            if (!paths.is_array() || paths.size() > MAX_DEVICE_PATHS) {
+                error = "request.device_paths must be a bounded array";
+                return false;
+            }
+            for (const auto& path : paths) {
+                if (!path.is_string() ||
+                    !valid_device_path(path.get<std::string>())) {
+                    error = "request.device_paths entries must be managed "
+                            "DEVPATHs";
+                    return false;
+                }
+                devicePaths.push_back(path.get<std::string>());
+            }
+        }
+        if (deviceIds.empty() && devicePaths.empty()) {
+            error = "request must carry device_ids or device_paths";
+            return false;
+        }
     }
     const auto& total = request.at("device_ids_total");
     if (!total.is_number_unsigned() ||
@@ -1230,8 +1283,10 @@ json handle_request(json request,
             }
             // 2. Strict bounded schema.
             std::vector<int> deviceIds;
+            std::vector<std::string> devicePaths;
             std::string eventError;
-            if (!validate_device_incident_event(request, deviceIds, eventError)) {
+            if (!validate_device_incident_event(request, incidentKind, deviceIds,
+                                                devicePaths, eventError)) {
                 return fic::ipc::make_error_response(eventError);
             }
             // 3. The authoritative reaction is resolved HERE, from the trusted
@@ -1283,6 +1338,9 @@ json handle_request(json request,
             std::string reason = fic::ipc::deviceIncidentReasonPrefix(incidentKind);
             for (const int deviceId : deviceIds) {
                 reason += " device_id=" + std::to_string(deviceId);
+            }
+            for (const std::string& devicePath : devicePaths) {
+                reason += " devpath=" + devicePath;
             }
             const fic::incident::IncidentResult raised =
                 incidentController().raise(reaction.severity, source, reason);
@@ -1374,7 +1432,13 @@ bool validate_policy_request_schema(const json& request, std::string& error) {
         command == "incident_device_block_failed") {
         // Strict bounded schema: the detector event carries the FACT only.
         // The full field/type/limit validation runs in the handler, which also
-        // rejects an empty list.
+        // rejects an event with no identifiable subject.
+        if (command == "incident_device_block_failed") {
+            return fic::ipc::request_has_only_fields(
+                request,
+                {"command", "device_ids", "device_ids_total", "device_paths"},
+                error);
+        }
         return fic::ipc::request_has_only_fields(
             request, {"command", "device_ids", "device_ids_total"}, error);
     }

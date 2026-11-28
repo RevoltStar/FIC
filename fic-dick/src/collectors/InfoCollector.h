@@ -14,6 +14,17 @@
 
 namespace fs = std::filesystem;
 
+// Result of parsing one external static-inventory tool output.
+//
+// A successful command exit only means the tool ran; `usable` says whether the
+// parsed values can identify a concrete device. A placeholder record may still
+// be stored for display while the subsystem stays unproven.
+struct StaticInventoryParse {
+    std::map<std::string, std::string> values;
+    bool usable = false;
+    std::string diagnostic;
+};
+
 
 //Собиратель информации об ОС
 class InfoCollector{
@@ -40,7 +51,7 @@ protected:
 
 
     //Обрезать лишнее
-    void trim(std::string& val);
+    void trim(std::string& val) const;
     //Вычисляем boot_time
     std::string get_boot_id();
     std::filesystem::path data_directory() const;

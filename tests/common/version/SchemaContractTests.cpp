@@ -142,13 +142,14 @@ void testConfigContract(const fs::path& root) {
             assert(upgraded.find("check_interval.status=ENABLE\ncheck_interval.value=1800\n") != std::string::npos);
             assert(upgraded.find("periodic_apply_min_pause.status=ENABLE\nperiodic_apply_min_pause.value=30\n") != std::string::npos);
         } else if (std::string(fileName) == "DC.conf") {
-            // The DC detector severity settings are an additive upgrade too:
+            // The two NEW detector severity policies are an additive upgrade:
             // an installation from before them receives the packaged factory
-            // values instead of an unproven (ISOLATE) configuration.
+            // values instead of an unproven (ISOLATE) configuration. The
+            // pre-existing permanent-missing policy is NOT part of this
+            // migration and is never invented here.
             const auto upgraded = readFile(working / fileName);
             assert(upgraded.rfind(readFile(defaults / fileName), 0) == 0);
-            assert(upgraded.find("permanent_device_missing_severity.status=ENABLE\n"
-                                 "permanent_device_missing_severity.value=STANDARD\n") !=
+            assert(upgraded.find("permanent_device_missing_severity") ==
                    std::string::npos);
             assert(upgraded.find("static_device_present_severity.status=ENABLE\n"
                                  "static_device_present_severity.value=NONE\n") !=

@@ -293,6 +293,116 @@ def main():
         "ENOENT/ENOTDIR handling must occur before reconciliation-marker fallback",
     )
 
+    # A new failed block must MERGE into the pending delivery obligations and
+    # never replace an undelivered one; an acknowledgement closes exactly the
+    # obligations it carried.
+    block_obligation = (root / "fic-dick" / "src" / "daemon" /
+                        "BlockFailureObligation.h")
+    block_obligation_source = read_text(block_obligation)
+    for marker in ["remember(", "acknowledge(", "MAX_PENDING_BLOCK_FAILURES"]:
+        require(marker in block_obligation_source,
+                f"missing failed-block delivery obligation: {marker}")
+    require("g_pendingBlockFailures = violations" not in daemon_source,
+            "a new failed block must never replace the pending obligations")
+    require("g_blockFailureObligations.remember(violations)" in daemon_source and
+            "g_blockFailureObligations.acknowledge(attempted)" in daemon_source,
+            "the failed-block obligations must be merged and acknowledged "
+            "through the shared container")
+
+    # Repeating an existing block transition must produce a new event: no
+    # per-device "already reported" cache may suppress it.
+    require("g_reportedStaticViolations" not in daemon_source,
+            "static incident deduplication must stay with the IncidentController")
+    require("pending_static_violations" not in daemon_source,
+            "static violations must be reported as found, not cached")
+
+    # A category DENY of a live device that has no database record yet is an
+    # established violation and must be reported with its DEVPATH (never with a
+    # synthetic id).
+    category_marker = "bool enforce_connected_category_denials(DB& db, std::string& error) {"
+    category_start = daemon_source.find(category_marker)
+    category_body = daemon_source[category_start:category_start + 4000]
+    require(category_start >= 0, "category enforcement must exist")
+    require("if (live.id > 0) {" not in category_body,
+            "a category failed block must be reported without a database record")
+    require("dc:category" in category_body and
+            "report_block_failed_violations" in category_body,
+            "a category failed block must be reported")
+
+    # The delayed connect/change handler relies on the existing udev enforcement
+    # and reports an unconfirmed result; it must not re-run sysfs enforcement.
+    require('"; attempt: "' not in event_handler and
+            "enforcement attempt failed" not in event_handler,
+            "the event handler must not retry sysfs enforcement")
+    require("deny_enforcement_observed" in event_handler,
+            "the event handler must verify the udev enforcement result")
+
+    # Virtual tree nodes carry hierarchy only and must never be classified as
+    # connected hardware.
+    rule_change_source = read_text(
+        root / "fic-dick" / "src" / "daemon" / "DeviceRuleChange.cpp")
+    require("is_dynamic_hardware_subsystem(device.subsystem)" in rule_change_source,
+            "a rule change must classify only real dynamic subsystems")
+    require("} else {" not in rule_change_source,
+            "a rule change must not treat virtual nodes as dynamic devices")
+
+    # Collector trust: a successful tool exit is not usable data.
+    collectors = root / "fic-dick" / "src" / "collectors"
+    for name in ["CPUInfoCollector.cpp", "BoardInfoCollector.cpp",
+                 "MemoryInfoCollector.cpp"]:
+        require("inventoryProven_ = false" in read_text(collectors / name),
+                f"{name} must mark an unusable inventory as unproven")
+    for parser, header in [("parse_lscpu_output", "CPUInfoCollector.h"),
+                           ("parse_dmidecode_output", "BoardInfoCollector.h"),
+                           ("parse_dmidecode_modules", "MemoryInfoCollector.h")]:
+        require(parser in read_text(collectors / header),
+                f"missing static inventory parse contract: {parser}")
+    require("MemoryModuleKind::Incomplete" in
+            read_text(collectors / "MemoryInfoCollector.cpp"),
+            "an unidentifiable memory module must make the inventory incomplete")
+
+    # Proof lifecycle: type-strict reader, publication stamp, invalidation before
+    # a new run and a failing exit when the result cannot be published.
+    proof_source = read_text(
+        root / "fic-dick" / "src" / "device" / "StaticInventoryProof.cpp")
+    require("is_boolean()" in proof_source and "is_string()" in proof_source,
+            "the proof reader must validate field types")
+    require("published_at_ns" in proof_source,
+            "the proof must carry a publication stamp")
+    require("remove_static_inventory_proof" in proof_source,
+            "the proof must be invalidatable")
+    collector_main = read_text(root / "fic-dick" / "src" / "main.cpp")
+    require(0 <= collector_main.find("remove_static_inventory_proof") <
+                collector_main.find("CPUInfoCollector cic;"),
+            "the previous proof must be invalidated BEFORE collecting")
+    publish_body = collector_main[
+        collector_main.find("write_static_inventory_proof"):
+        collector_main.find("write_static_inventory_proof") + 900
+    ]
+    require("return 1;" in publish_body,
+            "a failing inventory publication must fail the collector unit")
+    watch_source = read_text(
+        root / "fic-dick" / "src" / "daemon" / "StaticProofWatch.h")
+    require("markProcessed" in watch_source and "pending" in watch_source,
+            "the static proof watch must only close a fully processed "
+            "publication")
+    require("g_staticProofWatch.markProcessed(proofKey)" in daemon_source and
+            "g_nextStaticProofRetry" in daemon_source,
+            "a failed static check must be retried with a bounded interval")
+
+    # Configuration migration: only completely absent NEW policies are added.
+    schema_source = read_text(
+        root / "fic-common" / "fic-core" / "src" / "config" /
+        "ConfigSchemaManager.cpp")
+    migration_start = schema_source.find(
+        "bool ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults(")
+    require(migration_start >= 0, "the severity migration must exist")
+    migration_body = schema_source[migration_start:migration_start + 3000]
+    require("appendMissingDefaultGroups" in migration_body,
+            "the severity migration must add whole policy groups only")
+    require("permanent_device_missing_severity.status" not in migration_body,
+            "the severity migration must not restore the permanent policy")
+
     return 0
 
 

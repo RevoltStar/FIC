@@ -671,6 +671,42 @@ target_link_libraries(static_inventory_proof_tests PRIVATE
 )
 add_test(NAME static_inventory_proof_tests COMMAND static_inventory_proof_tests)
 
+add_executable(static_proof_watch_tests
+    fic-dick/daemon/StaticProofWatchTests.cpp
+)
+target_include_directories(static_proof_watch_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+add_test(NAME static_proof_watch_tests COMMAND static_proof_watch_tests)
+
+add_executable(block_failure_obligation_tests
+    fic-dick/daemon/BlockFailureObligationTests.cpp
+)
+target_include_directories(block_failure_obligation_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+    ${CMAKE_SOURCE_DIR}/fic-common/fic-ipc/include
+)
+add_test(NAME block_failure_obligation_tests
+         COMMAND block_failure_obligation_tests)
+
+add_executable(static_inventory_parse_tests
+    fic-dick/collectors/StaticInventoryParseTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/collectors/CPUInfoCollector.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/collectors/BoardInfoCollector.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/collectors/MemoryInfoCollector.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/collectors/InfoCollector.cpp
+    ${CMAKE_SOURCE_DIR}/fic-dick/src/device/DevicePaths.cpp
+)
+target_include_directories(static_inventory_parse_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/fic-dick/src
+)
+target_link_libraries(static_inventory_parse_tests PRIVATE
+    fic-core
+    fic-device-db
+    OpenSSL::Crypto
+)
+add_test(NAME static_inventory_parse_tests COMMAND static_inventory_parse_tests)
+
 add_executable(device_lifecycle_tests
     fic-dick/device/DeviceLifecycleTests.cpp
     ${CMAKE_SOURCE_DIR}/fic-dick/src/device/DeviceLifecycle.cpp

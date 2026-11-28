@@ -13,25 +13,61 @@ namespace {
 
 using json = nlohmann::json;
 
+// Bound for one devpath carried as failed-block diagnostics. DEVPATH values are
+// short sysfs paths; the limit only prevents an oversized event.
+constexpr std::size_t MAX_DEVPATH_BYTES = 512U;
+
+bool is_safe_devpath(const std::string& path) {
+    if (path.size() < 9U || path.size() > MAX_DEVPATH_BYTES) return false;
+    if (path.rfind("/devices/", 0) != 0) return false;
+    for (const char ch : path) {
+        const unsigned char byte = static_cast<unsigned char>(ch);
+        if (byte < 0x20 || byte == 0x7f) return false;
+    }
+    return true;
+}
+
 } // namespace
 
+// Builds the bounded detector event.
+//
+// The security-relevant content is the FACT: `device_ids_total` is always
+// truthful and the id list is bounded diagnostics. A failed block can be
+// established for a device that is not in the device database yet (the
+// category-all enforcement observes live udev state), so this kind additionally
+// carries bounded `device_paths`; no synthetic device id is ever invented to
+// satisfy the id contract.
 json device_incident_request(
     fic::ipc::DeviceIncidentKind kind,
     const std::vector<PermanentViolation>& violations) {
     json ids = json::array();
+    json paths = json::array();
+    std::size_t carriedPaths = 0;
     // Truncate, never drop: the fact of the violation is the security-relevant
-    // part of the event, and the id list is bounded diagnostics.
+    // part of the event, and both lists are bounded diagnostics.
     const std::size_t carried = violations.size() < MAX_DEVICE_INCIDENT_IDS
         ? violations.size()
         : MAX_DEVICE_INCIDENT_IDS;
     for (std::size_t index = 0; index < carried; ++index) {
-        ids.push_back(violations[index].deviceId);
+        if (violations[index].deviceId > 0) {
+            ids.push_back(violations[index].deviceId);
+        }
+        if (kind == fic::ipc::DeviceIncidentKind::DeviceBlockFailed &&
+            is_safe_devpath(violations[index].devpath) &&
+            carriedPaths < MAX_DEVICE_INCIDENT_IDS) {
+            paths.push_back(violations[index].devpath);
+            ++carriedPaths;
+        }
     }
-    return json{
+    json request{
         {"command", fic::ipc::deviceIncidentCommand(kind)},
         {"device_ids", ids},
         {"device_ids_total", violations.size()}
     };
+    if (kind == fic::ipc::DeviceIncidentKind::DeviceBlockFailed) {
+        request["device_paths"] = paths;
+    }
+    return request;
 }
 
 bool is_valid_device_incident_request(
@@ -42,9 +78,14 @@ bool is_valid_device_incident_request(
         error = "request must be an object";
         return false;
     }
+    const bool blockFailed =
+        expectedKind == fic::ipc::DeviceIncidentKind::DeviceBlockFailed;
     for (auto item = request.begin(); item != request.end(); ++item) {
         if (item.key() == "command" || item.key() == "device_ids" ||
             item.key() == "device_ids_total" || item.key() == "api_version") {
+            continue;
+        }
+        if (blockFailed && item.key() == "device_paths") {
             continue;
         }
         error = "unknown request field: " + item.key();
@@ -63,7 +104,7 @@ bool is_valid_device_incident_request(
         error = "request.device_ids must be an array";
         return false;
     }
-    if (ids->empty()) {
+    if (ids->empty() && !blockFailed) {
         // An empty list is not a device-missing event: accepting it would let a
         // trusted peer's bug erase the violation instead of reporting it.
         error = "request.device_ids must not be empty";
@@ -81,6 +122,39 @@ bool is_valid_device_incident_request(
         const std::int64_t value = id.get<std::int64_t>();
         if (value <= 0 || value > std::numeric_limits<int>::max()) {
             error = "request.device_ids entries must be positive device ids";
+            return false;
+        }
+    }
+    std::size_t pathCount = 0;
+    if (blockFailed) {
+        // A failed block may be established for a device that has no database
+        // record yet, so this kind may carry managed DEVPATHs instead of ids -
+        // but it must still identify at least one subject.
+        const auto paths = request.find("device_paths");
+        if (paths != request.end()) {
+            if (!paths->is_array()) {
+                error = "request.device_paths must be an array";
+                return false;
+            }
+            if (paths->size() > MAX_DEVICE_INCIDENT_IDS) {
+                error = "request.device_paths exceeds the bounded payload";
+                return false;
+            }
+            for (const auto& path : *paths) {
+                if (!path.is_string()) {
+                    error = "request.device_paths entries must be strings";
+                    return false;
+                }
+                if (!is_safe_devpath(path.get<std::string>())) {
+                    error =
+                        "request.device_paths entries must be managed DEVPATHs";
+                    return false;
+                }
+                ++pathCount;
+            }
+        }
+        if (ids->empty() && pathCount == 0) {
+            error = "request must carry device_ids or device_paths";
             return false;
         }
     }

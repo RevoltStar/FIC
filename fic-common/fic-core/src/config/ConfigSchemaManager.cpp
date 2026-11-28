@@ -24,15 +24,9 @@ bool validAbsoluteNormalized(const std::filesystem::path& path) {
     return !path.empty() && path.is_absolute() && path.lexically_normal() == path;
 }
 
-// Appends the keys that are entirely missing from `content`.
-//
-// Match ConfigFileHandler key/comment semantics, but append to the exact
-// original bytes instead of rewriting unrelated user formatting/settings.
-bool appendMissingEntries(
-    const std::string& content,
-    const std::vector<std::pair<const char*, const char*>>& defaults,
-    std::string& updated,
-    std::string& error) {
+// Keys present in `content`, using the ConfigFileHandler semantics: `#` starts
+// a comment anywhere in the line, and only outer whitespace is trimmed.
+std::set<std::string> configKeys(const std::string& content) {
     std::set<std::string> keys;
     std::istringstream input(content);
     std::string line;
@@ -47,11 +41,58 @@ bool appendMissingEntries(
         key.erase(key.find_last_not_of(" \t\r\n") + 1);
         keys.insert(key);
     }
+    return keys;
+}
+
+// Appends the keys that are entirely missing from `content`.
+//
+// Match ConfigFileHandler key/comment semantics, but append to the exact
+// original bytes instead of rewriting unrelated user formatting/settings.
+bool appendMissingEntries(
+    const std::string& content,
+    const std::vector<std::pair<const char*, const char*>>& defaults,
+    std::string& updated,
+    std::string& error) {
+    const std::set<std::string> keys = configKeys(content);
     updated = content;
     for (const auto& [key, value] : defaults) {
         if (keys.count(key)) continue;
         if (!updated.empty() && updated.back() != '\n') updated += '\n';
         updated += std::string(key) + "=" + value + "\n";
+    }
+    if (updated.size() > MAX_WORKING_CONFIG_BYTES) {
+        error = "configuration defaults would exceed configuration size limit";
+        return false;
+    }
+    return true;
+}
+
+// Appends a whole default group only when NONE of its keys is present.
+//
+// A partially present group is ambiguous state (for example `.status` without
+// `.value`): repairing it here would turn a damaged configuration into a valid
+// one with a factory value, so it is left untouched for the existing
+// fail-closed handling.
+bool appendMissingDefaultGroups(
+    const std::string& content,
+    const std::vector<std::vector<std::pair<const char*, const char*>>>& groups,
+    std::string& updated,
+    std::string& error) {
+    const std::set<std::string> keys = configKeys(content);
+    updated = content;
+    for (const auto& group : groups) {
+        bool present = false;
+        for (const auto& entry : group) {
+            if (keys.count(entry.first)) {
+                present = true;
+                break;
+            }
+        }
+        if (present) continue;
+        for (const auto& entry : group) {
+            if (!updated.empty() && updated.back() != '\n') updated += '\n';
+            updated += std::string(entry.first) + "=" + entry.second + "\n";
+        }
     }
     if (updated.size() > MAX_WORKING_CONFIG_BYTES) {
         error = "configuration defaults would exceed configuration size limit";
@@ -421,20 +462,22 @@ bool ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults(
     if (!readRegularFile(path, content, error, identity, &before) ||
         !verifyConfigContent("DC.conf", content, error)) return false;
 
-    // Detector severity settings added after the first development builds. An
-    // existing installation keeps every configured value; only the missing
-    // entries are appended with the packaged factory values, so an upgraded
-    // host never falls back to an unintended ISOLATE reaction.
-    const std::vector<std::pair<const char*, const char*>> defaults = {
-        {"permanent_device_missing_severity.status", "ENABLE"},
-        {"permanent_device_missing_severity.value", "STANDARD"},
-        {"static_device_present_severity.status", "ENABLE"},
-        {"static_device_present_severity.value", "NONE"},
-        {"device_block_failed_severity.status", "ENABLE"},
-        {"device_block_failed_severity.value", "STANDARD"}
+    // Detector severity settings added after the first development builds.
+    //
+    // Only the two NEW policies are migrated, and only when a policy is
+    // COMPLETELY absent (neither `.status` nor `.value`). A partially present
+    // entry is ambiguous state and is left to the existing fail-closed
+    // resolution; existing administrator settings are never overwritten. The
+    // pre-existing `permanent_device_missing_severity` is not part of this
+    // migration and is never restored here.
+    const std::vector<std::vector<std::pair<const char*, const char*>>> groups = {
+        {{"static_device_present_severity.status", "ENABLE"},
+         {"static_device_present_severity.value", "NONE"}},
+        {{"device_block_failed_severity.status", "ENABLE"},
+         {"device_block_failed_severity.value", "STANDARD"}}
     };
     std::string updated;
-    if (!appendMissingEntries(content, defaults, updated, error)) {
+    if (!appendMissingDefaultGroups(content, groups, updated, error)) {
         error = "DC detector severity " + error;
         return false;
     }

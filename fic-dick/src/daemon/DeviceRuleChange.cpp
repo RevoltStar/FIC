@@ -60,9 +60,14 @@ DeviceRuleChangeAssessment assess_device_rule_change(
         }
         if (is_static_hardware_subsystem(device.subsystem)) {
             assessment.connected_static_blockers.push_back(device);
-        } else {
+        } else if (is_dynamic_hardware_subsystem(device.subsystem)) {
             assessment.connected_dynamic_blockers.push_back(device);
         }
+        // Anything else is a virtual container or an intermediate tree node.
+        // Such a node carries hierarchy only: it is never a connected device on
+        // its own, so it can neither reject the change nor create an incident.
+        // Its influence on real devices is preserved through the effective
+        // policy of those devices, which the caller evaluates separately.
     }
 
     return assessment;

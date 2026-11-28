@@ -100,4 +100,10 @@ bool is_static_hardware_subsystem(const std::string& subsystem) {
     return subsystem == "cpu" || subsystem == "board" || subsystem == "memory";
 }
 
+bool is_dynamic_hardware_subsystem(const std::string& subsystem) {
+    // Keep in sync with the managed udev subsystems of the generated rules.
+    return subsystem == "usb" || subsystem == "usbmisc" ||
+           subsystem == "pci" || subsystem == "block";
+}
+
 } // namespace fic::device_control

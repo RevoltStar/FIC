@@ -1,11 +1,11 @@
 // Additive configuration upgrade for the device incident severity settings.
 //
-// An existing installation keeps every configured DC value; only entirely
-// missing severity entries are appended with the packaged factory values. The
-// test then resolves the production detector reaction from that upgraded
-// configuration, proving that an upgraded host does not fall back to an
-// unintended ISOLATE reaction (or to a silent NONE where a reaction is
-// expected).
+// An existing installation keeps every configured DC value; the migration adds
+// ONLY the two new detector policies, and only when a policy is COMPLETELY
+// absent. A partially present policy is damaged state and must stay untouched so
+// the existing fail-closed resolution reports it instead of silently turning it
+// into a valid factory setting. The pre-existing
+// `permanent_device_missing_severity` is not part of this migration.
 #include "daemon/DeviceIncidentEvent.h"
 
 #include <fic/core/config/ConfigSchemaManager.h>
@@ -46,6 +46,19 @@ void writeFile(const fs::path& path, const std::string& content) {
     require(::chmod(path.c_str(), 0640) == 0, "fixture chmod failed");
 }
 
+std::size_t countOccurrences(const std::string& haystack,
+                             const std::string& needle) {
+    std::size_t count = 0;
+    for (std::size_t pos = haystack.find(needle); pos != std::string::npos;
+         pos = haystack.find(needle, pos + needle.size())) {
+        ++count;
+    }
+    return count;
+}
+
+// A configuration written by the PREVIOUS version: the category policies and
+// the pre-existing permanent-missing severity are configured, the two new
+// detector policies do not exist yet.
 const std::string kLegacyConfig =
     "_schema_version=1\n"
     "block_usb_storage.status=DISABLE\n"
@@ -53,7 +66,9 @@ const std::string kLegacyConfig =
     "block_printers_scanners.status=DISABLE\n"
     "block_printers_scanners.value=all\n"
     "block_optical_drives.status=DISABLE\n"
-    "block_optical_drives.value=all\n";
+    "block_optical_drives.value=all\n"
+    "permanent_device_missing_severity.status=ENABLE\n"
+    "permanent_device_missing_severity.value=STANDARD\n";
 
 } // namespace
 
@@ -103,7 +118,9 @@ int main() {
                 "the factory STANDARD severity must be STANDARD");
     }
 
-    // The additive upgrade appends only the missing entries.
+    // The additive upgrade appends ONLY the two new policies as complete
+    // groups; the pre-existing permanent policy is neither restored nor
+    // rewritten.
     require(fic::core::ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults(
                 configDir, error, identity),
             "DC severity upgrade failed: " + error);
@@ -111,8 +128,6 @@ int main() {
     require(upgraded.rfind(kLegacyConfig, 0) == 0,
             "the upgrade must preserve the existing configuration bytes");
     for (const char* expected : {
-             "permanent_device_missing_severity.status=ENABLE\n",
-             "permanent_device_missing_severity.value=STANDARD\n",
              "static_device_present_severity.status=ENABLE\n",
              "static_device_present_severity.value=NONE\n",
              "device_block_failed_severity.status=ENABLE\n",
@@ -120,10 +135,102 @@ int main() {
         require(upgraded.find(expected) != std::string::npos,
                 std::string("missing upgraded default: ") + expected);
     }
+    require(countOccurrences(upgraded, "permanent_device_missing_severity") == 2,
+            "the migration must not touch the pre-existing permanent policy");
+    require(upgraded.find("block_usb_storage.value=all\n") != std::string::npos,
+            "the upgrade must keep every other DC setting");
     require(fic::core::ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults(
                 configDir, error, identity) &&
                 readFile(dcConf) == upgraded,
             "the upgrade must be idempotent");
+
+    // A completely absent new policy uses the packaged factory value (see the
+    // resolver check above and below); a PARTIALLY present policy must not be
+    // repaired by the migration.
+    {
+        const std::string statusOnly =
+            kLegacyConfig + "static_device_present_severity.status=ENABLE\n";
+        writeFile(dcConf, statusOnly);
+        require(fic::core::ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults(
+                    configDir, error, identity),
+                "DC severity upgrade failed on a partial policy: " + error);
+        const std::string after = readFile(dcConf);
+        require(countOccurrences(after, "static_device_present_severity") == 1,
+                "a partially present policy must not be completed");
+        require(after.find("static_device_present_severity.value") ==
+                    std::string::npos,
+                "a missing value of a partially present policy must stay "
+                "missing");
+        require(after.find("static_device_present_severity.status=ENABLE\n") !=
+                    std::string::npos,
+                "an existing status must never be rewritten");
+        require(after.find("device_block_failed_severity.value=STANDARD\n") !=
+                    std::string::npos,
+                "the completely absent policy must still be added");
+
+        // The remaining damaged entry stays fail-closed: ENABLE without a value
+        // must never degrade to the factory NONE.
+        DC_static_device_present_severity staticPolicy;
+        const auto reaction = fic::daemon::resolve_device_incident_severity(
+            staticPolicy,
+            fic::daemon::device_incident_severity_spec(
+                fic::ipc::DeviceIncidentKind::StaticDevicePresent));
+        require(reaction.kind ==
+                    fic::daemon::DeviceMissingReactionKind::Unproven &&
+                reaction.severity == fic::core::IncidentSeverity::Isolate,
+                "a partially present policy must stay fail-closed ISOLATE: " +
+                    reaction.diagnostic);
+    }
+    {
+        const std::string valueOnly =
+            kLegacyConfig + "device_block_failed_severity.value=HARD\n";
+        writeFile(dcConf, valueOnly);
+        require(fic::core::ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults(
+                    configDir, error, identity),
+                "DC severity upgrade failed on a partial policy: " + error);
+        const std::string after = readFile(dcConf);
+        require(countOccurrences(after, "device_block_failed_severity") == 1,
+                "a partially present policy must not be completed");
+        require(after.find("device_block_failed_severity.status") ==
+                    std::string::npos,
+                "a missing status of a partially present policy must stay "
+                "missing");
+        require(after.find("device_block_failed_severity.value=HARD\n") !=
+                    std::string::npos,
+                "an existing value must never be rewritten");
+        require(after.find("static_device_present_severity.status=ENABLE\n") !=
+                    std::string::npos,
+                "the completely absent policy must still be added");
+    }
+
+    // A completely absent PERMANENT policy is not restored by this migration:
+    // only the two new policies are in scope.
+    {
+        std::string withoutPermanent;
+        {
+            std::istringstream input(kLegacyConfig);
+            std::string line;
+            while (std::getline(input, line)) {
+                if (line.rfind("permanent_device_missing_severity", 0) == 0) {
+                    continue;
+                }
+                withoutPermanent += line + "\n";
+            }
+        }
+        writeFile(dcConf, withoutPermanent);
+        require(fic::core::ConfigSchemaManager::ensureDeviceIncidentSeverityDefaults(
+                    configDir, error, identity),
+                "DC severity upgrade failed without the permanent policy: " +
+                    error);
+        const std::string after = readFile(dcConf);
+        require(after.find("permanent_device_missing_severity") ==
+                    std::string::npos,
+                "the migration must not restore the pre-existing permanent "
+                "policy");
+        require(after.find("static_device_present_severity.value=NONE\n") !=
+                    std::string::npos,
+                "the new policies must still be added");
+    }
 
     // Explicit operator choices and unproven values are never rewritten.
     const std::string explicitConfig =

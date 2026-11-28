@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
+#include <chrono>
 #include <cstring>
 #include <fcntl.h>
 #include <fstream>
@@ -51,12 +52,17 @@ bool StaticInventoryProof::proven(const std::string& subsystem,
     return false;
 }
 
-bool write_static_inventory_proof(const StaticInventoryProof& proof,
+bool write_static_inventory_proof(StaticInventoryProof& proof,
                                   std::string& error) {
     error.clear();
     if (proof.bootId.empty()) {
         error = "static inventory proof requires the current boot id";
         return false;
+    }
+    if (proof.publishedAtNs <= 0) {
+        const auto now = std::chrono::system_clock::now().time_since_epoch();
+        proof.publishedAtNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
     }
     const std::filesystem::path path = static_inventory_proof_path();
     std::error_code filesystemError;
@@ -70,7 +76,8 @@ bool write_static_inventory_proof(const StaticInventoryProof& proof,
         {"boot_id", proof.bootId},
         {"cpu", proof.cpu},
         {"board", proof.board},
-        {"memory", proof.memory}};
+        {"memory", proof.memory},
+        {"published_at_ns", proof.publishedAtNs}};
     const std::string content = payload.dump() + "\n";
 
     const std::filesystem::path temporary = path.string() + ".tmp";
@@ -153,16 +160,70 @@ std::optional<StaticInventoryProof> read_static_inventory_proof(
         error = "static inventory proof is malformed";
         return std::nullopt;
     }
-    StaticInventoryProof proof;
-    proof.bootId = payload.value("boot_id", "");
-    proof.cpu = payload.value("cpu", false);
-    proof.board = payload.value("board", false);
-    proof.memory = payload.value("memory", false);
-    if (proof.bootId.empty()) {
-        error = "static inventory proof has no boot id";
+    // Type-strict field reading: a syntactically valid JSON with a wrong field
+    // type is a damaged proof, never a proven one, and must not throw.
+    const auto bootId = payload.find("boot_id");
+    if (bootId == payload.end() || !bootId->is_string() ||
+        bootId->get_ref<const std::string&>().empty()) {
+        error = "static inventory proof has no usable boot id";
         return std::nullopt;
     }
+    StaticInventoryProof proof;
+    proof.bootId = bootId->get<std::string>();
+    const auto readFlag = [&payload](const char* name, bool& target) {
+        const auto value = payload.find(name);
+        if (value == payload.end()) {
+            target = false;
+            return true;
+        }
+        if (!value->is_boolean()) return false;
+        target = value->get<bool>();
+        return true;
+    };
+    if (!readFlag("cpu", proof.cpu) || !readFlag("board", proof.board) ||
+        !readFlag("memory", proof.memory)) {
+        error = "static inventory proof has an invalid subsystem flag";
+        return std::nullopt;
+    }
+    const auto publishedAt = payload.find("published_at_ns");
+    if (publishedAt != payload.end()) {
+        if (!publishedAt->is_number_integer()) {
+            error = "static inventory proof has an invalid publication stamp";
+            return std::nullopt;
+        }
+        proof.publishedAtNs = publishedAt->get<std::int64_t>();
+        if (proof.publishedAtNs < 0) {
+            error = "static inventory proof has a negative publication stamp";
+            return std::nullopt;
+        }
+    }
     return proof;
+}
+
+bool remove_static_inventory_proof(std::string& error) {
+    error.clear();
+    const std::filesystem::path path = static_inventory_proof_path();
+    if (::unlink(path.c_str()) == 0) {
+        return true;
+    }
+    if (errno == ENOENT) {
+        return true;
+    }
+    error = "cannot remove static inventory proof: " +
+            std::string(std::strerror(errno));
+    return false;
+}
+
+std::string static_inventory_proof_key(
+    const std::optional<StaticInventoryProof>& proof,
+    const std::string& currentBootId) {
+    if (!proof.has_value() || currentBootId.empty() ||
+        proof->bootId != currentBootId) {
+        return "unproven";
+    }
+    return proof->bootId + "|" + (proof->cpu ? "1" : "0") +
+           (proof->board ? "1" : "0") + (proof->memory ? "1" : "0") + "|" +
+           std::to_string(proof->publishedAtNs);
 }
 
 } // namespace fic::device_control

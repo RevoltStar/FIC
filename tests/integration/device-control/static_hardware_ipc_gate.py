@@ -109,8 +109,18 @@ try:
         with sqlite3.connect(db_path) as db:
             desired, active = db.execute('SELECT desired_revision,active_revision FROM device_policy_state').fetchone()
             assert desired == active, (desired,active)
+    # Relaxing and re-blocking the same static device must report a NEW
+    # violation: the device daemon keeps no per-device "already reported" cache,
+    # so a second established violation is never suppressed.
+    result = ipc({'command':'device_update_control_level','device_id':static_ids['board'],'control_level':'allowed','ignore_hierarchy':True})
+    assert result['ok'] and 'static_device_incident' not in result, result
+    result = ipc({'command':'device_update_control_level','device_id':static_ids['board'],'control_level':'blocked','ignore_hierarchy':True})
+    assert result['ok'], result
+    reblocked = result.get('static_device_incident', {})
+    assert [item['device_id'] for item in reblocked.get('static_blocked', [])] == [static_ids['board']], result
+    assert reblocked.get('static_incident_delivered') is False, result
     result = ipc({'command':'device_check_permanent'})
-    assert result['missing'] == [], result
+    assert result.get('missing', []) == [], result
     assert result['static_inventory_proven'] is True, result
     assert [item['device_id'] for item in result['static_blocked']] == [static_ids['board']], result
     assert result['static_incident_delivered'] is False and result['ok'] is False, result
@@ -119,7 +129,7 @@ try:
     proof_path.unlink()
     suspended = ipc({'command':'device_check_permanent'})
     assert suspended['static_inventory_proven'] is False, suspended
-    assert suspended['static_blocked'] == [] and suspended['missing'] == [], suspended
+    assert suspended['static_blocked'] == [] and suspended.get('missing', []) == [], suspended
     proof_path.write_text(json.dumps({
         'boot_id': boot_id, 'cpu': True, 'board': True, 'memory': True}) + '\n')
     proof_path.chmod(0o600)
@@ -149,7 +159,7 @@ try:
     with sqlite3.connect(db_path) as db:
         db.execute("UPDATE devices SET boot_id='old-boot' WHERE id=?", (static_ids['cpu'],))
     result = ipc({'command':'device_check_permanent'})
-    assert any(item['device_id'] == static_ids['cpu'] for item in result['missing']), result
+    assert any(item['device_id'] == static_ids['cpu'] for item in result.get('missing', [])), result
     assert 'incident_requested_severity' in result, result
     print('PASS: static IPC updates, unchanged udev rules, later USB activation, missing permanent CPU scan')
 finally:

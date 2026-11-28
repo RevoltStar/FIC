@@ -10,7 +10,7 @@ bool InfoCollector::log(std::string message, logLevel logLev){
 }
 
 
-void InfoCollector::trim(std::string& val){
+void InfoCollector::trim(std::string& val) const{
     //val.erase(0, val.find_first_not_of(" \t"));
     //val.erase(val.find_last_not_of(" \t") + 1);
 
