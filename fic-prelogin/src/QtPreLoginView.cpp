@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QResizeEvent>
+#include <QKeyEvent>
 #include <map>
 #include <iostream>
 #include <cstdlib>
@@ -119,7 +120,6 @@ class PowerConfirmationOverlay final : public QWidget {
 public:
     explicit PowerConfirmationOverlay(char action, QWidget* parent) : QWidget(parent) {
         setObjectName(QStringLiteral("powerConfirmation"));
-        setFocusPolicy(Qt::StrongFocus);
         const bool reboot = action == 'R';
         auto* root = new QVBoxLayout(this);
         root->setContentsMargins(20, 20, 20, 20);
@@ -172,12 +172,15 @@ public:
         root->addLayout(row);
         root->addStretch();
         QWidget::setTabOrder(cancel, confirm);
+        cancel->installEventFilter(this);
+        confirm->installEventFilter(this);
         auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
         escape->setContext(Qt::WidgetWithChildrenShortcut);
         connect(escape, &QShortcut::activated, cancel, &AnimatedButton::click);
         for (auto key : {Qt::Key_Return, Qt::Key_Enter}) {
             auto* shortcut = new QShortcut(QKeySequence(key), this);
             shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+            shortcut->setAutoRepeat(false);
             connect(shortcut, &QShortcut::activated, this, [this] {
                 (confirm->hasFocus() ? confirm : cancel)->click();
             });
@@ -187,6 +190,19 @@ public:
     AnimatedButton* cancel;
     AnimatedButton* confirm;
 protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::KeyPress && (watched == cancel || watched == confirm)) {
+            const auto* key = static_cast<QKeyEvent*>(event);
+            if (key->key() == Qt::Key_Tab || key->key() == Qt::Key_Backtab) {
+                const bool backward = key->key() == Qt::Key_Backtab ||
+                    key->modifiers().testFlag(Qt::ShiftModifier);
+                (watched == cancel ? confirm : cancel)->setFocus(
+                    backward ? Qt::BacktabFocusReason : Qt::TabFocusReason);
+                return true;
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.fillRect(rect(), QColor(22, 50, 79, 75));
@@ -329,6 +345,7 @@ QtPreLoginView::QtPreLoginView(std::function<void(char)> action) : action_(std::
     cardLayout->addWidget(note);
 
     handoffShortcut_ = new QShortcut(QKeySequence(Qt::Key_Return), this);
+    handoffShortcut_->setAutoRepeat(false);
     connect(handoffShortcut_, &QShortcut::activated, handoff_, &AnimatedButton::click);
 
     // Центрирование панели: по горизонтали и по возможности по вертикали.

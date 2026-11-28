@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QTest>
 #include <QEnterEvent>
+#include <QKeyEvent>
 #include <stdexcept>
 #include <filesystem>
 #include <iostream>
@@ -239,6 +240,49 @@ int main(int argc,char** argv){
    trigger->click();handoff->click();
    require(actions.size()==1,"pending action sent twice");
   }
+ }
+ // A held Return must not become a new handoff when its first press cancels.
+ for(const char action:{'R','P'}){
+  std::vector<char> actions;
+  QtPreLoginView view([&](char sent){actions.push_back(sent);});
+  view.resize(800,600);view.show();app.processEvents();
+  view.findChild<QPushButton*>(action=='R'?"reboot":"poweroff")->click();
+  auto* overlay=view.findChild<QWidget*>("powerConfirmation");
+  auto* cancel=overlay->findChild<AnimatedButton*>("confirmationCancel");
+  auto* accept=overlay->findChild<AnimatedButton*>("confirmationAccept");
+  require(cancel->hasFocus(),"keyboard regression lost initial cancel focus");
+  const auto tab=[&](bool backward,QWidget* expected){
+   auto* focused=QApplication::focusWidget();
+   require(focused==cancel||focused==accept,"focus left confirmation before tab");
+   QTest::keyClick(focused,Qt::Key_Tab,backward?Qt::ShiftModifier:Qt::NoModifier);
+   app.processEvents();
+   require(QApplication::focusWidget()==expected,"focus escaped confirmation tab cycle");
+  };
+  for(int i=0;i<3;++i){
+   tab(false,accept);
+   tab(false,cancel);
+  }
+  for(int i=0;i<3;++i){
+   tab(true,accept);
+   tab(true,cancel);
+  }
+  const auto sendReturn=[&](QEvent::Type type,bool repeat){
+   auto* focused=QApplication::focusWidget();
+   require(focused,"keyboard regression lost focus");
+   QKeyEvent event(type,Qt::Key_Return,Qt::NoModifier,QStringLiteral("\r"),repeat,1);
+   QApplication::sendEvent(focused,&event);
+   app.processEvents();
+  };
+  sendReturn(QEvent::KeyPress,false);
+  require(!overlay->isVisible()&&actions.empty(),"initial Return did not cancel safely");
+  for(int i=0;i<5;++i){
+   sendReturn(QEvent::KeyPress,true);
+   require(actions.empty(),"held Return triggered handoff");
+  }
+  sendReturn(QEvent::KeyRelease,false);
+  sendReturn(QEvent::KeyPress,false);
+  sendReturn(QEvent::KeyRelease,false);
+  require(actions.size()==1&&actions.front()=='H',"fresh Return did not hand off exactly once");
  }
  {
   QtPreLoginView view([](char){throw std::runtime_error("action on frontend close");});
