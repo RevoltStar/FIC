@@ -6,6 +6,7 @@
 #include <QTest>
 #include <QEnterEvent>
 #include <QKeyEvent>
+#include <QPointer>
 #include <stdexcept>
 #include <filesystem>
 #include <iostream>
@@ -247,9 +248,12 @@ int main(int argc,char** argv){
   QtPreLoginView view([&](char sent){actions.push_back(sent);});
   view.resize(800,600);view.show();app.processEvents();
   view.findChild<QPushButton*>(action=='R'?"reboot":"poweroff")->click();
-  auto* overlay=view.findChild<QWidget*>("powerConfirmation");
+  QPointer<QWidget> overlay=view.findChild<QWidget*>("powerConfirmation");
+  require(overlay,"keyboard regression confirmation missing");
   auto* cancel=overlay->findChild<AnimatedButton*>("confirmationCancel");
   auto* accept=overlay->findChild<AnimatedButton*>("confirmationAccept");
+  auto* handoff=view.findChild<QPushButton*>("handoff");
+  require(cancel&&accept&&handoff,"keyboard regression buttons missing");
   require(cancel->hasFocus(),"keyboard regression lost initial cancel focus");
   const auto tab=[&](bool backward,QWidget* expected){
    auto* focused=QApplication::focusWidget();
@@ -266,23 +270,23 @@ int main(int argc,char** argv){
    tab(true,accept);
    tab(true,cancel);
   }
-  const auto sendReturn=[&](QEvent::Type type,bool repeat){
-   auto* focused=QApplication::focusWidget();
-   require(focused,"keyboard regression lost focus");
-   QKeyEvent event(type,Qt::Key_Return,Qt::NoModifier,QStringLiteral("\r"),repeat,1);
-   QApplication::sendEvent(focused,&event);
-   app.processEvents();
-  };
-  sendReturn(QEvent::KeyPress,false);
-  require(!overlay->isVisible()&&actions.empty(),"initial Return did not cancel safely");
+  QTest::keyPress(cancel,Qt::Key_Return);
+  app.processEvents();
+  require(!overlay||!overlay->isVisible(),"initial Return did not close confirmation");
+  require(actions.empty(),"initial Return sent an action");
   for(int i=0;i<5;++i){
-   sendReturn(QEvent::KeyPress,true);
+   require(QApplication::focusWidget()==handoff,
+       "keyboard regression lost handoff focus after cancel");
+   // QTest::keyPress cannot mark a key as autorepeat. Use its window event path.
+   QTest::simulateEvent(view.windowHandle(),true,Qt::Key_Return,
+       Qt::NoModifier,QStringLiteral("\r"),true,1);
    require(actions.empty(),"held Return triggered handoff");
   }
-  sendReturn(QEvent::KeyRelease,false);
-  sendReturn(QEvent::KeyPress,false);
-  sendReturn(QEvent::KeyRelease,false);
-  require(actions.size()==1&&actions.front()=='H',"fresh Return did not hand off exactly once");
+  QTest::keyRelease(handoff,Qt::Key_Return);
+  QTest::keyPress(handoff,Qt::Key_Return);
+  QTest::keyRelease(handoff,Qt::Key_Return);
+  require(actions.size()==1,"fresh Return did not hand off exactly once");
+  require(actions.front()=='H',"fresh Return sent the wrong action");
  }
  {
   QtPreLoginView view([](char){throw std::runtime_error("action on frontend close");});

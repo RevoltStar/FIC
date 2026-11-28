@@ -1,29 +1,29 @@
-# Static hardware and udev policy scope
+# Prelogin confirmation keyboard tests
 
 ### Current base
 
-Branch `main`; pre-task base `3539deb40d9b890bf3f13e480116f9001a7d152b`.
+Branch `main`; pre-task commit `b5f7b86e064a84dc47bac6eb41f3331ef8091b3f`.
 
 ### Current task
 
-Prevent explicit CPU, board and memory policy from breaking generated udev rules while preserving permanent-device checks and desired/active activation behavior.
+Stabilize `prelogin_qt_view_tests` after CI failures on Debian 12 and ALT p11 without changing production behavior.
 
 ### Accepted architecture / invariants
 
-`DevicePolicyCompiler` generates rules for udev events in `usb`, `usbmisc`, `pci` and `block`. Direct placement/identity rules outside that scope are omitted. A non-udev ancestor inside `/devices/` can still supply inherited `children_control` to future udev descendants; static hardware is omitted from every generated rule section. Static policy remains in the DB and separate permanent-device scan. Unsafe identity for in-scope udev devices remains a compilation error.
+`QtPreLoginView` owns the confirmation overlay and removes it with `deleteLater()` after cancel or confirm. The test must use Qt keyboard event delivery, retain both `R` and `P` scenarios, and must not dereference the overlay after event processing without a guarded pointer.
 
 ### Completed
 
-Compiler scope filter, regression matrix for CPU/board/memory and all four levels, unchanged rule bytes after static updates, later USB compilation/activation, weak USB identity failure, non-udev ancestor inheritance and static permanent snapshot. A focused disposable Docker IPC gate exercises real `fic-dick` update and activation, plus a missing permanent CPU scan. `fic-dick/README.md` describes the boundary.
+The held-Return test uses `QPointer` for the overlay, QTest key press/release and QTest's window event path for autorepeat. It checks cancel, no action during held Return, focus transfer to handoff, and exactly one `H` after release and a fresh press. Compound assertions were split. Production code was not changed.
 
 ### Changed areas
 
-`fic-dick/src/policy/DevicePolicyCompiler.cpp`, `fic-dick/README.md`, `tests/fic-dick/policy/DevicePolicyCompilerTests.cpp`, `tests/fic-dick/device/DeviceTreeSnapshotTests.cpp`, `tests/integration/device-control/static_hardware_ipc_gate.py`.
+`tests/fic/incident/QtPreLoginViewTests.cpp`.
 
 ### Validation
 
-Native `fic-dick` and affected unit targets built. Native compiler, snapshot, category, permanent incident and device-control static CTests passed. Permanent incident integration passed outside sandbox because AF_UNIX bind is denied inside it. Ubuntu 26 Docker builder passed compiler, snapshot, category and permanent incident integration CTests. The focused Docker IPC gate passed with a test-only lifecycle and udevadm fixture. `git diff --check` passed.
+Debian 12, Qt 6.4.2: original test passed 4/10 and failed 6/10 with `initial Return did not cancel safely`; changed test passed 10/10. ALT p11, Qt 6.11.2: AddressSanitizer on the original test reported heap-use-after-free at `QtPreLoginViewTests.cpp:277`, reading `overlay->isVisible()` after `PowerConfirmationOverlay` destruction; changed test passed 10/10 and one AddressSanitizer run passed. A local Qt 6.10.2 build and 10 test runs passed on an intermediate version. Only targeted builds and tests were run.
 
 ### Remaining
 
-The pre-existing broad `category_ipc_gate.py` cannot reach its tests on this checkout: its lifecycle fixture lacks `INSTALLED` admission; this task did not change that separate gate. The focused Docker gate checks missing-CPU detection and incident request fields, while the existing incident integration test checks delivery separately. Physical udev/sysfs enforcement, host activation and full native distro matrix were not run.
+At the user's request, Debian 13, Ubuntu 24.04 and Ubuntu 26.04 tests were not run. The Debian 12 failure's individual contributions from the stale overlay pointer and manual key-event delivery were not isolated. The ALT p11 use-after-free is proven by AddressSanitizer; ordinary gdb runs did not reproduce a crash, so there is no gdb crash backtrace. Do not infer production defects from these test failures.
