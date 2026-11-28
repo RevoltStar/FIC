@@ -322,41 +322,6 @@ fic::daemon::PolicyMutationResult disable (PolicyRegistry& policyRegistry,
     return fic::daemon::PolicyMutationResult::failure(
         "policy was not found");
 }
-//Включить политику
-bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string* error){
-    Policy* concretePolicy = getPolicyClass(policyRegistry, module, policy);
-    if(concretePolicy!=nullptr){
-        std::cout << "Производим включение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
-        ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
-        if(!mcfh.loadConfig()){
-            std::cout << "Не удалось загрузить конфигурационный файл" << '\n';
-            return false;
-        }
-        std::string valueError;
-        if (!concretePolicy->validateValueBeforeEnable(mcfh, valueError)) {
-            std::cout << valueError << '\n';
-            if (error) *error = valueError;
-            return false;
-        }
-        if(!mcfh.enablePolicy(policy)){
-            std::cout << "Не удалось включить параметр" << '\n';
-            return false;
-        }
-        std::cout << "Параметр " + policy + " включен" << '\n';
-        //mcfh.printConfig();
-        if(!mcfh.saveConfig()){
-            std::cout << "Не удалось включить политику" << '\n';
-            return false;
-        }else{
-            std::cout << "Политика была успешна активирована" << '\n';
-            return true;
-        }
-    } else {
-        std::cout << "Указанная политика не существует" << '\n';
-        return false;
-    }
-    return false;
-}
 
 bool set(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string value){
     std::cout << "Производим попытку смены значения политики " + policy +

@@ -1,5 +1,6 @@
 #include "modules/oss/grub/Grub.h"
 #include "modules/oss/grub/policies/OSS_grub_cmdline_linux.h"
+#include "policy/registry/PolicyRegistryMutation.h"
 #include "modules/oss/grub/policies/OSS_grub_disable_recovery.h"
 #include "modules/oss/grub/policies/OSS_grub_timeout.h"
 #include "modules/oss/grub/GrubConfiguration.h"
@@ -1325,6 +1326,53 @@ int main() {
             "grub_cmdline_linux.value=[]\n"
             "grub_disable_recovery.status=DISABLE\n"
             "grub_disable_recovery.value=ENABLE\n");
+
+        // A defaulted policy must not deserialize a missing value during ENABLE.
+        writeFile(root / "config/OSS.conf",
+            "_schema_version=1\ngrub_cmdline_linux.status=DISABLE\n");
+        ModuleConfigFileHandler missingValueConfig("OSS");
+        require(missingValueConfig.loadConfig(), "load missing GRUB value");
+        const fic::platform::GrubPlatformConfig grubConfig{
+            fic::platform::GrubConfigTopology::OwnedDefaultsDropIn,
+            {}, "/etc/default/grub.d/zzzz-fic.cfg", {}, {}};
+        OSS_grub_cmdline_linux missingValuePolicy(grubConfig, resolver);
+        std::string enableError;
+        require(missingValuePolicy.validateValueBeforeEnable(missingValueConfig, enableError),
+                "defaulted GRUB enable rejected missing value");
+        {
+            PolicyRegistry registry;
+            require(registry.addModule("OSS", ModuleView::Standard, 0, enableError), enableError);
+            require(registry.addPolicy(
+                std::make_unique<OSS_grub_cmdline_linux>(grubConfig, resolver), enableError), enableError);
+            require(enable(registry, "OSS", "grub_cmdline_linux", &enableError),
+                    "production enable rejected absent GRUB value: " + enableError);
+            ModuleConfigFileHandler enabled("OSS");
+            require(enabled.loadConfig() &&
+                    enabled.getPolicyStatus("grub_cmdline_linux") == "ENABLE",
+                    "production GRUB enable did not save status");
+        }
+        writeFile(root / "config/OSS.conf",
+            "_schema_version=1\ngrub_cmdline_linux.status=DISABLE\n"
+            "grub_cmdline_linux.value=not-json\n");
+        ModuleConfigFileHandler malformedConfig("OSS");
+        require(malformedConfig.loadConfig(), "load malformed GRUB value");
+        require(missingValuePolicy.validateValueBeforeEnable(malformedConfig, enableError),
+                "defaulted GRUB enable unexpectedly parsed stored value");
+        {
+            PolicyRegistry registry;
+            require(registry.addModule("OSS", ModuleView::Standard, 0, enableError), enableError);
+            require(registry.addPolicy(
+                std::make_unique<OSS_grub_cmdline_linux>(grubConfig, resolver), enableError), enableError);
+            require(enable(registry, "OSS", "grub_cmdline_linux", &enableError),
+                    "production enable parsed malformed GRUB value: " + enableError);
+        }
+        writeFile(root / "config/OSS.conf",
+            "_schema_version=1\n"
+            "grub_test_policy.status=ENABLE\ngrub_test_policy.value=expected\n"
+            "grub_apply_test_policy.status=ENABLE\ngrub_apply_test_policy.value=expected\n"
+            "grub_timeout.status=DISABLE\ngrub_timeout.value=5\n"
+            "grub_cmdline_linux.status=DISABLE\ngrub_cmdline_linux.value=[]\n"
+            "grub_disable_recovery.status=DISABLE\ngrub_disable_recovery.value=ENABLE\n");
 
         RecordingGrubPolicy policy(resolver);
         require(policy.moduleName == "OSS" && policy.submoduleName == "Grub",

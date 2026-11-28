@@ -1484,6 +1484,7 @@ add_test(NAME sudo_scoped_defaults_lifecycle_tests
 
 add_executable(grub_policy_tests
     fic/modules/oss/grub/GrubPolicyTests.cpp
+    ${CMAKE_SOURCE_DIR}/fic/src/policy/registry/PolicyRegistryMutation.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/OSS.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/Grub.cpp
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/grub/GrubConfiguration.cpp
@@ -3181,6 +3182,7 @@ list(FILTER POLICY_SAVE_SOURCES EXCLUDE REGEX "Tests\\.cpp$")
 list(REMOVE_DUPLICATES POLICY_SAVE_SOURCES)
 add_executable(policy_save_dependency_tests
     fic-gui/policies/PolicySaveDependencyTests.cpp
+    fic-gui/policies/PolicyScopeProductionTests.cpp
     fic-gui/policies/PolicySaveDaemonFixture.cpp
     ${POLICY_SAVE_SOURCES}
     ${CMAKE_SOURCE_DIR}/fic/src/modules/oss/desktop_environment/policies/OSS_absence_of_uncontrolled_desktop_environments.cpp

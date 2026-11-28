@@ -11,6 +11,7 @@ public:
     OSS_controlled_desktop_environments();
 
     bool apply() override;
+    bool requiresEnabledValueValidation() const override { return true; }
     bool validateEnabledValue(const std::string& value, std::string& error) const override;
     bool readyForApply(std::string& error) override;
     bool controlledDesktopEnvironments(

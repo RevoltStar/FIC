@@ -5,6 +5,7 @@
 #include <iterator>
 
 using namespace policy_save_test;
+void productionScopeMutations(Fixture&);
 namespace {
 PolicyService service(Fixture& fixture) {
     return PolicyService([&fixture](const nlohmann::json& request) {
@@ -27,8 +28,10 @@ PolicyDependency edge(PolicyDependencyStrength strength, PolicyDependencyConditi
     return {{"OSS", "fixture", "z_dependency"}, strength, std::move(condition)};
 }
 
+
 void run() {
     Fixture f; QString error;
+    productionScopeMutations(f);
     // Both public save paths, actual DE/DM constructors and daemon JSON producer.
     for (const bool apply : {false, true}) {
         f.reset();

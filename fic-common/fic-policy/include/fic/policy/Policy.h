@@ -130,18 +130,22 @@ public:
 
     // A no-default policy requires a configured value; individual policies may
     // additionally constrain the value permitted in ENABLE state.
+    virtual bool requiresEnabledValueValidation() const { return false; }
     virtual bool validateEnabledValue(const std::string&, std::string&) const { return true; }
     bool validateValueBeforeEnable(const ModuleConfigFileHandler& config, std::string& error) {
         if (policyTypeValue->hasDefaultValue()) {
-            const auto stored = config.hasConfiguredValue(policyName)
-                ? config.getPolicyValue(policyName) : policyTypeValue->getDefaultValue();
-            return validateEnabledValue(reverse_postprocessingValue(stored), error);
+            if (!requiresEnabledValueValidation()) return true;
+            const auto logical = config.hasConfiguredValue(policyName)
+                ? reverse_postprocessingValue(config.getPolicyValue(policyName))
+                : policyTypeValue->getDefaultValue();
+            return validateEnabledValue(logical, error);
         }
         if (!config.hasConfiguredValue(policyName) ||
             !validate(reverse_postprocessingValue(config.getPolicyValue(policyName)))) {
             error = "explicit valid value required before enabling " + policyName;
             return false;
         }
+        if (!requiresEnabledValueValidation()) return true;
         return validateEnabledValue(reverse_postprocessingValue(config.getPolicyValue(policyName)), error);
     }
 

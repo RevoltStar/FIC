@@ -1,6 +1,7 @@
 #include "policy/registry/PolicyRegistryMutation.h"
 
 #include <fic/core/config/ModuleConfigFileHandler.h>
+#include <iostream>
 #include <fic/core/incident/IncidentSeverity.h>
 
 #include "policy/registry/PolicyRegistryJson.h"
@@ -102,4 +103,40 @@ bool setPolicyViolationSeverity(PolicyRegistry& registry,
     }
     error.clear();
     return true;
+}
+
+//Включить политику
+bool enable(PolicyRegistry& policyRegistry, std::string module, std::string policy, std::string* error){
+    Policy* concretePolicy = findPolicy(policyRegistry, module, policy);
+    if(concretePolicy!=nullptr){
+        std::cout << "Производим включение политики: '" + policy + "' в модуле '" + module + "'"<<std::endl;
+        ModuleConfigFileHandler mcfh = ModuleConfigFileHandler(module);
+        if(!mcfh.loadConfig()){
+            std::cout << "Не удалось загрузить конфигурационный файл" << '\n';
+            return false;
+        }
+        std::string valueError;
+        if (!concretePolicy->validateValueBeforeEnable(mcfh, valueError)) {
+            std::cout << valueError << '\n';
+            if (error) *error = valueError;
+            return false;
+        }
+        if(!mcfh.enablePolicy(policy)){
+            std::cout << "Не удалось включить параметр" << '\n';
+            return false;
+        }
+        std::cout << "Параметр " + policy + " включен" << '\n';
+        //mcfh.printConfig();
+        if(!mcfh.saveConfig()){
+            std::cout << "Не удалось включить политику" << '\n';
+            return false;
+        }else{
+            std::cout << "Политика была успешна активирована" << '\n';
+            return true;
+        }
+    } else {
+        std::cout << "Указанная политика не существует" << '\n';
+        return false;
+    }
+    return false;
 }

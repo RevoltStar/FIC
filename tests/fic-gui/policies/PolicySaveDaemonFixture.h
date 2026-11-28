@@ -32,7 +32,6 @@ struct Fixture {
     void persist();
     nlohmann::json request(const nlohmann::json& request);
     void expect(const std::vector<std::string>& expected);
-private:
     PolicyRegistry registry();
 };
 }
