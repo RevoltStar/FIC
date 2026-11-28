@@ -67,6 +67,19 @@ int main()
 
     const DeviceInfo root = database.getComputerRoot();
     assert(root.id > 0);
+    DeviceInfo staticCpu;
+    staticCpu.device_hash = "required-cpu";
+    staticCpu.devpath = "/cpu_list/required-cpu";
+    staticCpu.subsystem = "cpu";
+    staticCpu.device_type = "cpu";
+    staticCpu.parent_id = database.getVirtualContainerId("cpu");
+    assert(staticCpu.parent_id > 0);
+    staticCpu.control_level = "permanent";
+    staticCpu.control_explicit = true;
+    staticCpu.ignore_hierarchy = true;
+    staticCpu.boot_id = "boot-old";
+    const int staticCpuId = database.addDevice(staticCpu);
+    assert(staticCpuId > 0);
     DeviceInfo standalone;
     standalone.device_hash = "snapshot-standalone";
     standalone.devpath = "/snapshot-standalone";
@@ -192,6 +205,11 @@ int main()
         "boot-current");
     assert(historyResponse.value("ok", false));
     assert(findJsonDevice(historyResponse, oldId) != nullptr);
+    const nlohmann::json* staticCpuJson = findJsonDevice(historyResponse, staticCpuId);
+    assert(staticCpuJson != nullptr);
+    assert((*staticCpuJson)["effective_control_level"] == "permanent");
+    assert((*staticCpuJson)["effective_source"] == "identity:" + std::to_string(staticCpuId));
+    assert((*staticCpuJson)["connected"] == false);
 
     const auto malformed = fic::device_control::device_tree_snapshot_response(
         database, nlohmann::json{{"include_disconnected", "yes"}},

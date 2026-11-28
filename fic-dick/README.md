@@ -101,7 +101,16 @@ physical identity. Это модель сообщаемых устройство
 ## Компиляция и активация policy
 
 `DevicePolicyCompiler` читает один snapshot `devices.db` и детерминированно
-генерирует `/etc/udev/rules.d/99-fic-devices.rules`. Приоритет решения:
+генерирует `/etc/udev/rules.d/99-fic-devices.rules`.
+
+Файл применяется к `usb`, `usbmisc`, `pci` и `block`. Прямые правила других
+подсистем в него не попадают; CPU, board и memory не участвуют в генерации
+udev-правил, даже если их явная policy уже сохранена в БД. Наследуемое правило
+не-udev предка с `DEVPATH` внутри `/devices/` сохраняется: оно может относиться
+к будущему udev-потомку. Статическое оборудование по-прежнему учитывается
+отдельной проверкой `permanent` и механизмом инцидентов.
+
+Приоритет решения:
 
 1. абсолютный category `all` DENY;
 2. direct identity для `ignore_hierarchy=true`, затем direct placement;

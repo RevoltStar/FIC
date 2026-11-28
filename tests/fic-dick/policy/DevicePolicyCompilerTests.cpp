@@ -95,6 +95,11 @@ int main()
     assert(db.updateDeviceChildrenControl(parent.id, "allow"));
     parent = db.getDeviceById(parent.id);
 
+    // A non-udev ancestor can still govern a future udev descendant.
+    DeviceInfo nonUdevAncestor = addDevice(
+        db, hierarchyRoot.id, "host", "/devices/pci-test/host0", "scsi");
+    assert(db.updateDeviceChildrenControl(nonUdevAncestor.id, "deny"));
+
     DeviceInfo child = addDevice(
         db, parent.id, "child", "/devices/pci-test/usb1/1-1", "usb");
     assert(db.updateDeviceControl(child.id, "blocked", true, false, "inherit"));
@@ -135,6 +140,8 @@ int main()
            std::string::npos);
     assert(first.rules.find("ENV{DEVPATH}==\"/devices/pci-test/usb1/*\", ENV{FIC_INHERITED_LEVEL}=\"ALLOW\"") !=
            std::string::npos);
+    assert(first.rules.find("ENV{DEVPATH}==\"/devices/pci-test/host0/*\", ENV{FIC_INHERITED_LEVEL}=\"DENY\"") !=
+           std::string::npos);
     assert(first.rules.find("ENV{DEVPATH}==\"/devices/pci-test/usb1/1-1\", ENV{FIC_DIRECT_MATCH}=\"1\", ENV{FIC_DEVICE_LEVEL}=\"DENY\"") !=
            std::string::npos);
     assert(first.rules.find("ENV{DEVPATH}==\"/devices/pci-test/usb1/1-3\", ENV{FIC_DIRECT_MATCH}=\"1\", ENV{FIC_DEVICE_LEVEL}=\"ALLOW\"") !=
@@ -154,6 +161,29 @@ int main()
     assert(first.rules.find("fic-dick enforce") != std::string::npos);
     assert(first.rules.find("fic-dick udev") != std::string::npos);
     assert(first.rules.find("block_usb_storage:all") != std::string::npos);
+
+    // Persisted explicit static rules must not affect any section of the udev file.
+    // Exercise every level and all three collector subsystems, including a
+    // defensive managed DEVPATH/children_control case.
+    for (const auto* subsystem : {"cpu", "board", "memory"}) {
+        for (const auto* level : {"allowed", "blocked", "permanent", "ignored"}) {
+            const std::string hash = std::string(subsystem) + "-" + level;
+            const std::string path = hash == "cpu-blocked"
+                ? "/devices/pci-test/cpu-placeholder" : "/" + std::string(subsystem) + "_list/" + hash;
+            DeviceInfo staticDevice = addDevice(db, devicesRoot.id, hash, path, subsystem);
+            assert(db.updateDeviceControl(staticDevice.id, level, true, true, "inherit"));
+            if (hash == "cpu-blocked")
+                assert(db.updateDeviceChildrenControl(staticDevice.id, "deny"));
+            const DeviceInfo saved = db.getDeviceById(staticDevice.id);
+            assert(saved.control_explicit && saved.ignore_hierarchy && saved.control_level == level);
+            const DevicePolicyCompilation afterStatic = compiler.compile(db);
+            assert(afterStatic.ok);
+            assert(afterStatic.rules == first.rules);
+        }
+    }
+    assert(db.updateDeviceControl(nonUdevAncestor.id, "blocked", true, true, "deny"));
+    const DevicePolicyCompilation afterNonUdevDirect = compiler.compile(db);
+    assert(afterNonUdevDirect.ok && afterNonUdevDirect.rules == first.rules);
 
     std::string escaped;
     assert(DevicePolicyCompiler::escapeUdevValue("serial\"\\\n, rule", escaped, error));
@@ -175,6 +205,16 @@ int main()
     assert(!failingActivator.activate("candidate that must be rolled back\n", error));
     assert(readFile(active) == first.rules);
 
+    // A later USB change can still compile and activate with the static rules
+    // already stored in the same database.
+    assert(db.updateDeviceControl(child.id, "allowed", true, false, "inherit"));
+    const DevicePolicyCompilation afterUsb = compiler.compile(db);
+    assert(afterUsb.ok && afterUsb.rules != first.rules);
+    assert(afterUsb.rules.find("ENV{DEVPATH}==\"/devices/pci-test/usb1/1-1\", ENV{FIC_DIRECT_MATCH}=\"1\", ENV{FIC_DEVICE_LEVEL}=\"ALLOW\"") !=
+           std::string::npos);
+    assert(activator.activate(afterUsb.rules, error));
+    assert(readFile(active) == afterUsb.rules);
+
     DeviceInfo unsafe = addDevice(
         db, parent.id, "unsafe", "/devices/pci-test/usb1/1-6", "usb");
     assert(db.addDeviceAttribute(unsafe.id, "DEVTYPE", "usb_interface"));
@@ -182,7 +222,7 @@ int main()
     const DevicePolicyCompilation failed = compiler.compile(db);
     assert(!failed.ok);
     assert(failed.error.find("identity rule cannot be compiled") != std::string::npos);
-    assert(readFile(active) == first.rules);
+    assert(readFile(active) == afterUsb.rules);
 
     fs::remove_all(root);
     return 0;

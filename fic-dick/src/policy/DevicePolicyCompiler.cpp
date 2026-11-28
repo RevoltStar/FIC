@@ -35,6 +35,19 @@ bool managedDevpath(const std::string& path)
     return path.rfind("/devices/", 0) == 0 && path.find_first_of("*?[") == std::string::npos;
 }
 
+bool udevSubsystem(const std::string& subsystem)
+{
+    // Keep in sync with the generated ADD/CHANGE and REMOVE filters below.
+    return subsystem == "usb" || subsystem == "usbmisc" ||
+           subsystem == "pci" || subsystem == "block";
+}
+
+bool staticHardware(const DeviceInfo& device)
+{
+    return device.subsystem == "cpu" || device.subsystem == "board" ||
+           device.subsystem == "memory";
+}
+
 std::string policyLevel(const std::string& level)
 {
     if (level == "blocked") {
@@ -245,7 +258,9 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
 
     out << "# INHERITED RULES\n";
     for (const DeviceInfo& device : devices) {
-        if (device.children_control == "inherit" || !managedDevpath(device.devpath)) {
+        // A non-udev ancestor may still govern a future udev descendant.
+        if (staticHardware(device) || device.children_control == "inherit" ||
+            !managedDevpath(device.devpath)) {
             continue;
         }
         std::string devpath;
@@ -304,7 +319,8 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
 
     out << "\n# DIRECT PLACEMENT RULES\n";
     for (const DeviceInfo& device : devices) {
-        if (!device.control_explicit || device.ignore_hierarchy || !managedDevpath(device.devpath)) {
+        if (!udevSubsystem(device.subsystem) || !device.control_explicit ||
+            device.ignore_hierarchy || !managedDevpath(device.devpath)) {
             continue;
         }
         std::string devpath;
@@ -326,7 +342,8 @@ DevicePolicyCompilation DevicePolicyCompiler::compile(DB& db) const
     });
     std::set<std::pair<std::string, std::string>> selectedIdentities;
     for (const DeviceInfo& device : identityDevices) {
-        if (!device.control_explicit || !device.ignore_hierarchy) {
+        if (!udevSubsystem(device.subsystem) || !device.control_explicit ||
+            !device.ignore_hierarchy) {
             continue;
         }
         // Runtime/snapshot resolve the first explicit occurrence by ascending

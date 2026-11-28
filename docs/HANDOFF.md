@@ -1,29 +1,29 @@
-# fic-prelogin confirmation keyboard follow-up
+# Static hardware and udev policy scope
 
 ### Current base
 
-Branch `main`; pre-task base `d445af99d4cdb127fc3533ac0172ea9945b0ce6f`.
+Branch `main`; pre-task base `3539deb40d9b890bf3f13e480116f9001a7d152b`.
 
 ### Current task
 
-Prevent Enter autorepeat from handing off after confirmation cancellation and keep Tab traversal inside the open power confirmation.
+Prevent explicit CPU, board and memory policy from breaking generated udev rules while preserving permanent-device checks and desired/active activation behavior.
 
 ### Accepted architecture / invariants
 
-The child QWidget overlay and its visual design are retained. Only explicit confirmation sends `R` or `P`. Cancellation restores the main controls; a fresh Return still triggers one `H`. IPC display updates remain live while the overlay is open.
+`DevicePolicyCompiler` generates rules for udev events in `usb`, `usbmisc`, `pci` and `block`. Direct placement/identity rules outside that scope are omitted. A non-udev ancestor inside `/devices/` can still supply inherited `children_control` to future udev descendants; static hardware is omitted from every generated rule section. Static policy remains in the DB and separate permanent-device scan. Unsafe identity for in-scope udev devices remains a compilation error.
 
 ### Completed
 
-`QtPreLoginView` disables autorepeat on the handoff and confirmation Enter shortcuts. A local event filter on the two confirmation buttons loops Tab and Shift+Tab between them; the overlay itself is not focusable. Regression tests use `QKeyEvent(isAutoRepeat=true)` and multiple real focus cycles for both actions. The tests failed on the previous code for both focus escape and held Return, then passed after the respective fixes.
+Compiler scope filter, regression matrix for CPU/board/memory and all four levels, unchanged rule bytes after static updates, later USB compilation/activation, weak USB identity failure, non-udev ancestor inheritance and static permanent snapshot. A focused disposable Docker IPC gate exercises real `fic-dick` update and activation, plus a missing permanent CPU scan. `fic-dick/README.md` describes the boundary.
 
 ### Changed areas
 
-`fic-prelogin/src/QtPreLoginView.cpp`, `tests/fic/incident/QtPreLoginViewTests.cpp`.
+`fic-dick/src/policy/DevicePolicyCompiler.cpp`, `fic-dick/README.md`, `tests/fic-dick/policy/DevicePolicyCompilerTests.cpp`, `tests/fic-dick/device/DeviceTreeSnapshotTests.cpp`, `tests/integration/device-control/static_hardware_ipc_gate.py`.
 
 ### Validation
 
-`fic-prelogin-frontend` and `prelogin_qt_view_tests` built in `build-periodic`. `prelogin_qt_view_tests` and `prelogin_package_lifecycle_tests` passed in the sandbox. `prelogin_controller_tests` and `prelogin_frontend_process_tests` passed outside it because the sandbox denies AF_UNIX bind/send with EPERM. `git diff --check` passed.
+Native `fic-dick` and affected unit targets built. Native compiler, snapshot, category, permanent incident and device-control static CTests passed. Permanent incident integration passed outside sandbox because AF_UNIX bind is denied inside it. Ubuntu 26 Docker builder passed compiler, snapshot, category and permanent incident integration CTests. The focused Docker IPC gate passed with a test-only lifecycle and udevadm fixture. `git diff --check` passed.
 
 ### Remaining
 
-Physical EGLFS/KMS keyboard input was not tested. No full CTest or native distro matrix was run. No host power action was performed.
+The pre-existing broad `category_ipc_gate.py` cannot reach its tests on this checkout: its lifecycle fixture lacks `INSTALLED` admission; this task did not change that separate gate. The focused Docker gate checks missing-CPU detection and incident request fields, while the existing incident integration test checks delivery separately. Physical udev/sysfs enforcement, host activation and full native distro matrix were not run.
