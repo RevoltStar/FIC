@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 class QLabel;
 class QScrollArea;
+class QShortcut;
 class AnimatedButton;
 namespace fic::prelogin { class PreLoginStepsWidget; }
 namespace fic::prelogin {
@@ -34,6 +35,8 @@ private:
     PreLoginStepsWidget* steps_;
     AnimatedButton *handoff_, *reboot_, *poweroff_;
     QWidget* card_ = nullptr;
+    QWidget* confirmation_ = nullptr;
+    QShortcut* handoffShortcut_ = nullptr;
     QPixmap background_;
     bool pending_ = false;
 };

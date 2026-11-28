@@ -1,28 +1,29 @@
-# DE/DM scope validation follow-up
+# fic-prelogin power confirmation follow-up
 
-Branch main; base 361b48ea7cce6ff3dbcbaad88efda4a29b789bbc.
+### Current base
 
-Current task: preserve legacy ENABLE behavior for ordinary defaulted policies,
-while retaining nonempty-scope checks for the two controlled DE/DM policies.
+Branch `main`; pre-task base `d60a26c6672263612f23f874ec256fce9a1a7ade`.
 
-Accepted contract: only policies opting into enabled-value validation deserialize
-the current stored value for that check. An absent value supplies the logical
-default directly. No-default policies retain explicit-value validation.
-`enable()` and `setPolicyValue()` remain the production configuration paths;
-GUI target-state preflight and apply/rollback semantics are unchanged.
+### Current task
 
-Completed: opted-in Policy validation, production `enable()` moved into the
-existing registry mutation translation unit so it can be exercised directly.
-Tests call actual enable/setPolicyValue on both controlled policies and verify
-failure diagnostics and unchanged config bytes. GRUB regression was RED before
-the fix and GREEN afterward, including absent and malformed stored values.
+Align reboot and poweroff confirmations with the light Qt Widgets prelogin view.
 
-Validation: the GRUB regression failed on the old code before the fix and
-passed afterward. `fic` and `fic-gui` built. All seven focused CTests passed:
-GRUB, module registry, DE scope, policy save/dependency, GUI descriptor/service,
-and execution planner. Final GRUB, registry and policy save tests also passed in
-disposable Ubuntu 26 Docker. The Ubuntu 24 builder image lacks Qt runtime, so
-the GUI-linked test was run in Ubuntu 26. `git diff --check` passed.
+### Accepted architecture / invariants
 
-No host system policies or package lifecycle were run. Full native distro matrix
-and live daemon IPC were not run. One local completion commit remains; no push.
+Confirmation is a child overlay of `QtPreLoginView`, with no extra EGLFS window or nested event loop. Broker display updates remain live. Only explicit acceptance sends `R` or `P`; cancellation restores the three main buttons and leaves `pending_` clear. Main handoff shortcuts are disabled during confirmation.
+
+### Completed
+
+Both actions share one centered card and dim backdrop, using existing vector symbols and `AnimatedButton`. The focus starts on Cancel; Enter, Escape, Tab and Shift+Tab are covered by the view tests. Four offscreen Qt Widgets screenshots are in `/tmp/fic-prelogin-confirmation-shots/`.
+
+### Changed areas
+
+`fic-prelogin/src/AnimatedButton.{h,cpp}`, `fic-prelogin/src/QtPreLoginView.{h,cpp}`, `tests/fic/incident/QtPreLoginViewTests.cpp`.
+
+### Validation
+
+`fic-prelogin-frontend` and the affected test targets built in `build-periodic` (Ubuntu 24.04 configuration). `prelogin_qt_view_tests` and `prelogin_package_lifecycle_tests` passed. `prelogin_controller_tests` and `prelogin_frontend_process_tests` passed outside the sandbox; inside it, AF_UNIX bind/send returned EPERM. `git diff --check` passed. Offscreen geometry and screenshots cover 800×600, 1024×768, 1280×720, 1536×1024 and 1920×1080.
+
+### Remaining
+
+Physical EGLFS/KMS rendering and input were not tested. No host power action was performed. No full CTest or native distro matrix was run.

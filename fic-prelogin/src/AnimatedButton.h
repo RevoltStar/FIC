@@ -6,6 +6,8 @@
 #include <QEvent>
 #include <QEnterEvent>
 #include <QPaintEvent>
+class QPainter;
+class QRectF;
 
 // Кнопка с плавной сменой цвета фона и границы при наведении указателя.
 // Не меняет геометрию, не вызывает setStyleSheet на каждом кадре,
@@ -24,6 +26,9 @@ public:
     explicit AnimatedButton(const QString& text, QWidget* parent = nullptr);
 
     void setSymbol(Symbol symbol);
+    void setAccentColor(const QColor& color);
+    static void drawSymbol(QPainter& painter, const QRectF& area,
+                           const QColor& symbolColor, Symbol symbol);
 
     // Доступ к текущим анимированным цветам (для тестирования).
     QColor currentBackgroundColor() const { return currentBackground_; }
@@ -52,8 +57,7 @@ private:
     QColor targetBackground_;
     QColor targetBorder_;
     Symbol symbol_ = Symbol::None;
+    bool accent_ = false;
 
     void startAnimation(const QColor& targetBg, const QColor& targetBorder);
-    void drawSymbol(QPainter& painter, const QRectF& area,
-                    const QColor& symbolColor) const;
 };

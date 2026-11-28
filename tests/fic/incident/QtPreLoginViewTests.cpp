@@ -3,9 +3,6 @@
 #include <QApplication>
 #include <QPushButton>
 #include <QLabel>
-#include <QMessageBox>
-#include <QAbstractButton>
-#include <QTimer>
 #include <QTest>
 #include <QEnterEvent>
 #include <stdexcept>
@@ -168,10 +165,88 @@ int main(int argc,char** argv){
   require(enabledDark<110,"enabled icon is not dark");
   require(disabledDark>enabledDark+25,"disabled icon keeps dark color");
  }
- for(const bool confirm:{false,true}){
-  int actions=0;QtPreLoginView view([&](char action){require(action=='R',"wrong power action");++actions;});
-  view.show();QTimer::singleShot(0,[&]{auto* box=qobject_cast<QMessageBox*>(QApplication::activeModalWidget());require(box,"missing power confirmation");box->button(confirm?QMessageBox::Yes:QMessageBox::No)->click();});
-  view.findChild<QPushButton*>("reboot")->click();require(actions==(confirm?1:0),"power confirmation bypassed");
+ // Confirmation is a child overlay, so view.grab() includes the actual dialog.
+ for(const char action:{'R','P'}){
+  for(const QSize resolution:{QSize(800,600),QSize(1024,768),QSize(1280,720),QSize(1536,1024),QSize(1920,1080)}){
+   std::vector<char> actions;
+   QtPreLoginView view([&](char sent){actions.push_back(sent);});
+   view.resize(resolution);view.show();app.processEvents();
+   const auto activeOverlay=[&view]() -> QWidget* {
+    for(auto* widget:view.findChildren<QWidget*>("powerConfirmation"))
+     if(widget->isVisible()) return widget;
+    return nullptr;
+   };
+   auto* trigger=view.findChild<QPushButton*>(action=='R'?"reboot":"poweroff");
+   auto* handoff=view.findChild<QPushButton*>("handoff");
+   trigger->click();app.processEvents();
+   auto* overlay=activeOverlay();
+   require(overlay&&overlay->isVisible(),"confirmation missing");
+   auto* card=overlay->findChild<QWidget*>("confirmationCard");
+   auto* cancel=overlay->findChild<AnimatedButton*>("confirmationCancel");
+   auto* accept=overlay->findChild<AnimatedButton*>("confirmationAccept");
+   auto* title=overlay->findChild<QLabel*>("confirmationTitle");
+   auto* description=overlay->findChild<QLabel*>("confirmationDescription");
+   require(card&&cancel&&accept&&title&&description,"confirmation contents missing");
+   require(title->text()==(action=='R'?QStringLiteral("Перезагрузка компьютера"):QStringLiteral("Выключение компьютера")),"wrong confirmation title");
+   require(description->text().contains(action=='R'?QStringLiteral("перезагрузить"):QStringLiteral("выключить")),"wrong confirmation text");
+   require(cancel->text()==QStringLiteral("Отмена")&&accept->text()==(action=='R'?QStringLiteral("Перезагрузить"):QStringLiteral("Выключить")),"wrong confirmation buttons");
+   require(cancel->hasFocus(),"cancel lacks initial focus");
+   require(!handoff->isEnabled()&&!trigger->isEnabled(),"base actions enabled under confirmation");
+   require(view.rect().contains(mappedRect(view,card)),"confirmation outside view");
+   require(card->width()<=520&&card->height()<resolution.height(),"confirmation too large");
+   const QRect cardRect=mappedRect(view,card);
+   require(cardRect.contains(mappedRect(view,title))&&cardRect.contains(mappedRect(view,description)),"confirmation text clipped");
+   std::vector<QRect> placed;
+   checkButton(view,cancel,cardRect,placed,"cancel");
+   checkButton(view,accept,cardRect,placed,"accept");
+   require(cancel->height()==accept->height(),"confirmation button heights differ");
+   require(cancel->width()>=cancel->fontMetrics().horizontalAdvance(cancel->text())+28,"cancel label clipped");
+   require(accept->width()>=accept->fontMetrics().horizontalAdvance(accept->text())+28,"accept label clipped");
+   trigger->click();handoff->click();
+   require(activeOverlay()==overlay&&actions.empty(),"reentrant or bypassed confirmation");
+   if(resolution==QSize(800,600)||resolution==QSize(1920,1080))
+    shot(view,QStringLiteral("%1_confirmation_%2x%3").arg(action=='R'?"reboot":"poweroff").arg(resolution.width()).arg(resolution.height()));
+   if(resolution==QSize(800,600)){
+    const auto status=nlohmann::json{{"state","DAEMON_UNAVAILABLE"},{"detail","new broker state"},
+        {"mode","ACTIVE"},{"severity","HARD"},{"startup","pending"}};
+    require(view.display(status),"broker update rejected under confirmation");
+    require(view.findChild<QLabel*>("detail")->text()==QStringLiteral("new broker state")&&overlay->isVisible(),
+        "broker update blocked by confirmation");
+   }
+   // Initial Enter is a safe cancel; Alt+D and the handoff Return shortcut are inactive.
+   QTest::keyClick(cancel,Qt::Key_Return);app.processEvents();
+   require(!activeOverlay()&&actions.empty(),"initial Enter did not cancel");
+   require(handoff->isEnabled()&&trigger->isEnabled(),"base buttons not restored");
+   trigger->click();app.processEvents();
+   overlay=activeOverlay();
+   cancel=overlay->findChild<AnimatedButton*>("confirmationCancel");
+   QTest::keyClick(cancel,Qt::Key_Escape);app.processEvents();
+   require(!activeOverlay()&&actions.empty(),"Escape did not cancel");
+   trigger->click();app.processEvents();
+   overlay=activeOverlay();
+   cancel=overlay->findChild<AnimatedButton*>("confirmationCancel");
+   accept=overlay->findChild<AnimatedButton*>("confirmationAccept");
+   QTest::keyClick(cancel,Qt::Key_D,Qt::AltModifier);app.processEvents();
+   require(actions.empty()&&overlay->isVisible(),"Alt+D bypassed confirmation");
+   QTest::keyClick(cancel,Qt::Key_Tab);app.processEvents();
+   require(accept->hasFocus(),"Tab did not focus accept");
+   QTest::keyClick(accept,Qt::Key_Backtab);app.processEvents();
+   require(cancel->hasFocus(),"Shift+Tab did not return to cancel");
+   accept->setFocus();
+   QTest::keyClick(accept,Qt::Key_Return);app.processEvents();
+   require(actions.size()==1&&actions.front()==action,"confirmation did not send exactly one correct action");
+   require(!handoff->isEnabled()&&!trigger->isEnabled(),"pending actions not disabled");
+   trigger->click();handoff->click();
+   require(actions.size()==1,"pending action sent twice");
+  }
+ }
+ {
+  QtPreLoginView view([](char){throw std::runtime_error("action on frontend close");});
+  view.resize(800,600);view.show();app.processEvents();
+  view.findChild<QPushButton*>("poweroff")->click();
+  require(view.findChild<QWidget*>("powerConfirmation")->isVisible(),"close fixture confirmation missing");
+  view.close();app.processEvents();
+  require(!view.isVisible(),"open confirmation blocked frontend close");
  }
 // --- Новые проверки анимации наведения ---
     {

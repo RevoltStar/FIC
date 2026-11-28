@@ -4,9 +4,6 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QMessageBox>
-#include <QAbstractButton>
-#include <QApplication>
 #include <QShortcut>
 #include <QScrollArea>
 #include <QFrame>
@@ -79,6 +76,120 @@ protected:
         painter.setBrush(QColor("#fdfeff"));
         painter.drawRoundedRect(r, 16, 16);
         painter.setPen(Qt::NoPen);
+    }
+};
+
+class ConfirmationIcon final : public QWidget {
+public:
+    ConfirmationIcon(AnimatedButton::Symbol symbol, const QColor& foreground,
+                     const QColor& background, QWidget* parent)
+        : QWidget(parent), symbol_(symbol), foreground_(foreground), background_(background) {
+        setFixedSize(72, 72);
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(background_);
+        painter.drawEllipse(rect());
+        AnimatedButton::drawSymbol(painter, QRectF(20, 20, 32, 32), foreground_, symbol_);
+    }
+private:
+    AnimatedButton::Symbol symbol_;
+    QColor foreground_, background_;
+};
+
+class ConfirmationCard final : public QWidget {
+public:
+    explicit ConfirmationCard(QWidget* parent) : QWidget(parent) {
+        setObjectName(QStringLiteral("confirmationCard"));
+    }
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor("#c4d5e6"), 1));
+        painter.setBrush(Qt::white);
+        painter.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 16, 16);
+    }
+};
+
+class PowerConfirmationOverlay final : public QWidget {
+public:
+    explicit PowerConfirmationOverlay(char action, QWidget* parent) : QWidget(parent) {
+        setObjectName(QStringLiteral("powerConfirmation"));
+        setFocusPolicy(Qt::StrongFocus);
+        const bool reboot = action == 'R';
+        auto* root = new QVBoxLayout(this);
+        root->setContentsMargins(20, 20, 20, 20);
+        root->addStretch();
+        auto* row = new QHBoxLayout;
+        row->addStretch();
+        auto* card = new ConfirmationCard(this);
+        card->setMaximumWidth(520);
+        auto* content = new QVBoxLayout(card);
+        content->setContentsMargins(32, 28, 32, 30);
+        content->setSpacing(12);
+        content->addWidget(new ConfirmationIcon(
+            reboot ? AnimatedButton::Symbol::Restart : AnimatedButton::Symbol::Power,
+            QColor(reboot ? "#2468b3" : "#be4147"),
+            QColor(reboot ? "#e8f2fd" : "#fdecec"), card), 0, Qt::AlignHCenter);
+        auto* title = new QLabel(reboot ? QStringLiteral("Перезагрузка компьютера")
+                                        : QStringLiteral("Выключение компьютера"), card);
+        title->setObjectName(QStringLiteral("confirmationTitle"));
+        title->setAlignment(Qt::AlignHCenter);
+        title->setWordWrap(true);
+        title->setStyleSheet(QStringLiteral("color:#16324f;font-size:24px;font-weight:bold;"));
+        content->addWidget(title);
+        auto* description = new QLabel(reboot
+            ? QStringLiteral("Вы действительно хотите перезагрузить компьютер?")
+            : QStringLiteral("Вы действительно хотите выключить компьютер?"), card);
+        description->setObjectName(QStringLiteral("confirmationDescription"));
+        description->setAlignment(Qt::AlignHCenter);
+        description->setWordWrap(true);
+        description->setStyleSheet(QStringLiteral("color:#5d7893;font-size:17px;"));
+        content->addWidget(description);
+        auto* divider = new QFrame(card);
+        divider->setFrameShape(QFrame::HLine);
+        divider->setStyleSheet(QStringLiteral("color:#e3edf7;"));
+        content->addWidget(divider);
+        auto* actions = new QHBoxLayout;
+        actions->setSpacing(12);
+        cancel = new AnimatedButton(QStringLiteral("Отмена"), card);
+        cancel->setObjectName(QStringLiteral("confirmationCancel"));
+        confirm = new AnimatedButton(reboot ? QStringLiteral("Перезагрузить")
+                                           : QStringLiteral("Выключить"), card);
+        confirm->setObjectName(QStringLiteral("confirmationAccept"));
+        confirm->setAccentColor(QColor(reboot ? "#2468b3" : "#be4147"));
+        for (auto* button : {cancel, confirm}) {
+            button->setFixedHeight(52);
+            actions->addWidget(button, 1);
+        }
+        content->addLayout(actions);
+        row->addWidget(card, 1);
+        row->addStretch();
+        root->addLayout(row);
+        root->addStretch();
+        QWidget::setTabOrder(cancel, confirm);
+        auto* escape = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+        escape->setContext(Qt::WidgetWithChildrenShortcut);
+        connect(escape, &QShortcut::activated, cancel, &AnimatedButton::click);
+        for (auto key : {Qt::Key_Return, Qt::Key_Enter}) {
+            auto* shortcut = new QShortcut(QKeySequence(key), this);
+            shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+            connect(shortcut, &QShortcut::activated, this, [this] {
+                (confirm->hasFocus() ? confirm : cancel)->click();
+            });
+        }
+        cancel->setFocus(Qt::OtherFocusReason);
+    }
+    AnimatedButton* cancel;
+    AnimatedButton* confirm;
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor(22, 50, 79, 75));
     }
 };
 
@@ -217,8 +328,8 @@ QtPreLoginView::QtPreLoginView(std::function<void(char)> action) : action_(std::
     note->setAlignment(Qt::AlignHCenter);
     cardLayout->addWidget(note);
 
-    auto* enter = new QShortcut(QKeySequence(Qt::Key_Return), this);
-    connect(enter, &QShortcut::activated, handoff_, &AnimatedButton::click);
+    handoffShortcut_ = new QShortcut(QKeySequence(Qt::Key_Return), this);
+    connect(handoffShortcut_, &QShortcut::activated, handoff_, &AnimatedButton::click);
 
     // Центрирование панели: по горизонтали и по возможности по вертикали.
     // Stretch-факторы растягивают панель до адаптивного максимума из
@@ -409,6 +520,7 @@ void QtPreLoginView::paintEvent(QPaintEvent* /*event*/) {
 
 void QtPreLoginView::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
+    if (confirmation_) confirmation_->setGeometry(rect());
     if (card_) {
         // Пропорции центральной панели приближены к эталону: на 1536×1024
         // панель занимает ~82% ширины; на 1920×1080 остаётся широкой
@@ -439,15 +551,32 @@ QString QtPreLoginView::warningBannerText() const {
 }
 
 void QtPreLoginView::request(char action) {
-    if(pending_) return;
-    if(action!='H') {
-        QMessageBox confirmation(QMessageBox::Question,QStringLiteral("Подтверждение"),
-            action=='R'?QStringLiteral("Перезагрузить компьютер?"):QStringLiteral("Выключить компьютер?"),
-            QMessageBox::Yes|QMessageBox::No,this);
-        confirmation.button(QMessageBox::Yes)->setText(QStringLiteral("Да"));
-        confirmation.button(QMessageBox::No)->setText(QStringLiteral("Нет"));
-        confirmation.setDefaultButton(QMessageBox::No);
-        if(confirmation.exec()!=QMessageBox::Yes) return;
+    if (pending_ || confirmation_) return;
+    if (action == 'R' || action == 'P') {
+        auto* overlay = new PowerConfirmationOverlay(action, this);
+        confirmation_ = overlay;
+        overlay->setGeometry(rect());
+        for (auto* button : {handoff_, reboot_, poweroff_}) button->setEnabled(false);
+        handoffShortcut_->setEnabled(false);
+        connect(overlay->cancel, &AnimatedButton::clicked, this, [this, overlay] {
+            confirmation_ = nullptr;
+            overlay->hide();
+            overlay->deleteLater();
+            for (auto* button : {handoff_, reboot_, poweroff_}) button->setEnabled(true);
+            handoffShortcut_->setEnabled(true);
+            handoff_->setFocus();
+        });
+        connect(overlay->confirm, &AnimatedButton::clicked, this, [this, overlay, action] {
+            confirmation_ = nullptr;
+            overlay->hide();
+            overlay->deleteLater();
+            pending_ = true;
+            action_(action);
+        });
+        overlay->show();
+        overlay->raise();
+        overlay->cancel->setFocus();
+        return;
     }
     pending_=true;
     for(auto* button:{handoff_,reboot_,poweroff_}) button->setEnabled(false);

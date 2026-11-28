@@ -53,6 +53,17 @@ void AnimatedButton::setSymbol(Symbol symbol) {
     update();
 }
 
+void AnimatedButton::setAccentColor(const QColor& color) {
+    accent_ = true;
+    normalBackground_ = color;
+    hoverBackground_ = color.lighter(112);
+    normalBorder_ = color;
+    hoverBorder_ = hoverBackground_;
+    currentBackground_ = normalBackground_;
+    currentBorder_ = normalBorder_;
+    update();
+}
+
 QSize AnimatedButton::sizeHint() const {
     QSize hint = QPushButton::sizeHint();
     if (symbol_ != Symbol::None) {
@@ -90,7 +101,7 @@ void AnimatedButton::startAnimation(const QColor& targetBg, const QColor& target
 }
 
 void AnimatedButton::drawSymbol(QPainter& painter, const QRectF& area,
-                                const QColor& symbolColor) const {
+                                const QColor& symbolColor, Symbol symbol) {
     painter.save();
     // Цвет символа передаётся из paintEvent и согласован с состоянием
     // кнопки (normal/hover/disabled/pressed) и цветом текста.
@@ -99,7 +110,7 @@ void AnimatedButton::drawSymbol(QPainter& painter, const QRectF& area,
     painter.setPen(pen);
     painter.setBrush(Qt::NoBrush);
     const QRectF r(area);
-    switch (symbol_) {
+    switch (symbol) {
         case Symbol::Monitor: {
             // Экран с подставкой.
             painter.drawRoundedRect(r.adjusted(1, 2, -1, -6), 2.5, 2.5);
@@ -149,6 +160,7 @@ void AnimatedButton::paintEvent(QPaintEvent* /*event*/) {
     QColor bg = currentBackground_;
     QColor border = currentBorder_;
     QColor textColor = QColor("#22384c");
+    if (accent_) textColor = Qt::white;
 
     if (!isEnabled()) {
         bg = QColor("#f2f4f7");
@@ -178,7 +190,7 @@ void AnimatedButton::paintEvent(QPaintEvent* /*event*/) {
         const QRect symbolRect(r.left() + 14,
                                r.center().y() - symbolSize / 2,
                                symbolSize, symbolSize);
-        drawSymbol(painter, symbolRect, textColor);
+        drawSymbol(painter, symbolRect, textColor, symbol_);
         textRect.setLeft(symbolRect.right() + symbolGap);
     }
 
